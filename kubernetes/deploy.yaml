@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Namespace
+metadata: { name: bloodbank }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bloodbank
+  namespace: bloodbank
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: bloodbank } }
+  template:
+    metadata: { labels: { app: bloodbank } }
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/your/image:latest # swap to your built image
+          env:
+            - name: RABBIT_URL
+              value: "amqp://user:pass@rabbitmq.rabbitmq:5672/" # adjust svc/namespace
+            - name: EXCHANGE_NAME
+              value: "bloodbank.events.v1"
+            - name: SERVICE_NAME
+              value: "bloodbank-api"
+          ports:
+            - containerPort: 8080
+          command: ["sh", "-lc"]
+          args:
+            - >
+              uvicorn bloodbank.http:app --host 0.0.0.0 --port 8080
+        - name: mcp
+          image: ghcr.io/your/image:latest
+          env:
+            - name: RABBIT_URL
+              value: "amqp://user:pass@rabbitmq.rabbitmq:5672/"
+          command:
+            [
+              "python",
+              "-c",
+              "from bloodbank.mcp_server import run_stdio; run_stdio()",
+            ]
+          # For HTTP/SSE transport you'd run a web server instead
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bloodbank
+  namespace: bloodbank
+spec:
+  selector: { app: bloodbank }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
