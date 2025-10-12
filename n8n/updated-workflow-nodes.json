@@ -1,0 +1,86 @@
+{
+  "description": "Updated n8n workflow nodes for durable RabbitMQ event publishing",
+  "modifications": [
+    {
+      "node_name": "Get a transcript",
+      "node_id": "8a5bda4c-31ae-4892-a3ef-3baa0dcf2b78",
+      "current_position": 398,
+      "changes": "Ensure this node fetches the full transcript data including URL/link",
+      "recommended_parameters": {
+        "resource": "transcript",
+        "operation": "get",
+        "meetingId": "={{ $json.body.meetingId }}",
+        "additionalFields": {
+          "includeTranscript": true,
+          "includeSummary": true
+        }
+      }
+    },
+    {
+      "node_name": "Transform for RabbitMQ",
+      "node_type": "n8n-nodes-base.function",
+      "insert_after": "Get a transcript",
+      "insert_before": "RabbitMQ",
+      "position": [
+        -900,
+        800
+      ],
+      "parameters": {
+        "functionCode": "// Transform Fireflies transcript data into event payload\nconst webhookData = $('Webhook').first().json;\nconst transcriptData = $input.first().json;\n\nconst event = {\n  meetingId: webhookData.body.meetingId,\n  eventType: webhookData.body.eventType,\n  transcriptUrl: transcriptData.transcript_url || `https://fireflies.ai/view/${webhookData.body.meetingId}`,\n  audioUrl: transcriptData.audio_url,\n  videoUrl: transcriptData.video_url,\n  transcript: {\n    title: transcriptData.title,\n    date: transcriptData.date || transcriptData.dateString,\n    duration: transcriptData.duration,\n    participants: transcriptData.meeting_attendees?.map(a => a.name || a.displayName) || [],\n    sentences: transcriptData.sentences,\n    summary: transcriptData.summary?.overview || transcriptData.summary?.short_summary || transcriptData.summary\n  },\n  metadata: {\n    timestamp: new Date().toISOString(),\n    source: 'n8n-fireflies-workflow',\n    version: '1.0.0',\n    workflowId: $workflow.id,\n    executionId: $execution.id\n  }\n};\n\nreturn { json: event };"
+      }
+    },
+    {
+      "node_name": "RabbitMQ",
+      "node_id": "58d9c8db-eec6-4302-82dd-f1c79d0dfd12",
+      "current_position": 414,
+      "changes": "Update to publish with proper exchange, routing key, and durability",
+      "updated_parameters": {
+        "mode": "sendToExchange",
+        "exchange": "fireflies.events",
+        "exchangeType": "topic",
+        "routingKey": "fireflies.transcript.completed",
+        "message": "={{ JSON.stringify($json) }}",
+        "options": {
+          "durable": true,
+          "persistent": true,
+          "priority": 5,
+          "headers": {
+            "content-type": "application/json",
+            "event-type": "fireflies.transcript.ready",
+            "schema-version": "1.0.0"
+          }
+        },
+        "credentials": {
+          "rabbitmq": {
+            "id": "Qcyu9sxyAMT3p8Hx",
+            "name": "RabbitMQ account"
+          }
+        }
+      }
+    }
+  ],
+  "new_connections": {
+    "Get a transcript": {
+      "main": [
+        [
+          {
+            "node": "Transform for RabbitMQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform for RabbitMQ": {
+      "main": [
+        [
+          {
+            "node": "RabbitMQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

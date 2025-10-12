@@ -1,0 +1,602 @@
+{
+  "name": "Fireflies Audio Upload Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "resource": "audio",
+        "url": "=https://ss.delo.sh/oY8rZmxXoH8+CEAFcVOE0+9KWzbEcXXZQD33aafGvXw=.mp3",
+        "title": "={{ $('Call Copy file to be hosted at ss.delo.sh').item.json.filename }}",
+        "additionalFields": {}
+      },
+      "type": "@firefliesai/n8n-nodes-fireflies.fireflies",
+      "typeVersion": 1,
+      "position": [
+        80,
+        272
+      ],
+      "id": "26040402-a6b4-4c84-bf0b-4f59ce077bca",
+      "name": "Upload audio",
+      "credentials": {
+        "firefliesApi": {
+          "id": "J8ACBvVvc74ainxd",
+          "name": "Fireflies account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "triggerOn": "folder",
+        "path": "=/home/delorenj/Videos",
+        "events": [
+          "add"
+        ],
+        "options": {
+          "awaitWriteFinish": true,
+          "ignoreInitial": true
+        }
+      },
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1056,
+        192
+      ],
+      "id": "8c4e1fca-ea94-45ff-8754-386abffdadf2",
+      "name": "New Transcriable Media File Found"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5a4c23c3-dfa6-4b40-abee-d3711fdb65bb",
+              "leftValue": "={{ $('New Transcriable Media File Found').item.json.path }}",
+              "rightValue": "mkv",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            },
+            {
+              "id": "15173a59-7f96-426a-8047-fe1fa142d748",
+              "leftValue": "={{ $('New Transcriable Media File Found').item.json.path }}",
+              "rightValue": "mp4",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -624,
+        176
+      ],
+      "id": "6d0ecf9c-87ef-4e03-9c87-7ed588ba7429",
+      "name": "If file contains video..."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d5f144e2-c009-4c97-95c9-703201d21351",
+              "leftValue": "={{ $('New Transcriable Media File Found').item.json.path }}",
+              "rightValue": "mp3",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            },
+            {
+              "id": "ae0d0a1c-c774-4975-abbc-f3cb6bff3e64",
+              "leftValue": "={{ $('New Transcriable Media File Found').item.json.path }}",
+              "rightValue": "wav",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        -352,
+        400
+      ],
+      "id": "d39d2bb3-7529-4528-a8c2-81b86d15c049",
+      "name": "Only let audio files through..."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1cd52e5b-3c14-4602-8511-9397743d2403",
+              "leftValue": "={{ $json.path }}",
+              "rightValue": ".*\\.(mkv|mp4|mp3|mov|flac|wav|webm)\\s*$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        -848,
+        176
+      ],
+      "id": "0a58696d-f1bc-4596-8b34-ff928e3c012c",
+      "name": "Filter media files"
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "url": "=https://ss.delo.sh/oY8rZmxXoH8CEAFcVOE09KWzbEcXXZQD33aafGvXw.mp3",
+        "title": "={{ $('Filter media files').item.json.path }}",
+        "additionalFields": {}
+      },
+      "type": "@firefliesai/n8n-nodes-fireflies.fireflies",
+      "typeVersion": 1,
+      "position": [
+        80,
+        80
+      ],
+      "id": "a5ebd7c3-f866-4dc7-be19-da96e2eb4681",
+      "name": "Upload audio1",
+      "credentials": {
+        "firefliesApi": {
+          "id": "J8ACBvVvc74ainxd",
+          "name": "Fireflies account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "z9StbEdVEX9k6Ffr",
+          "mode": "list"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "success": "={{ $json.success }}"
+          },
+          "matchingColumns": [
+            "success"
+          ],
+          "schema": [
+            {
+              "id": "success",
+              "displayName": "success",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        368,
+        80
+      ],
+      "name": "Call Handle Response1",
+      "id": "1b232c2b-9d11-44ba-bfa5-dcce17a8734f"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "z9StbEdVEX9k6Ffr",
+          "mode": "list"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "success": "={{ $json.success }}"
+          },
+          "matchingColumns": [
+            "success"
+          ],
+          "schema": [
+            {
+              "id": "success",
+              "displayName": "success",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        384,
+        272
+      ],
+      "name": "Call Handle Response",
+      "id": "fc94d805-1222-43a6-ab3f-844ca5352102"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IkvgTCgcUH0jxirj",
+          "mode": "list",
+          "cachedResultName": "Copy file to be hosted at ss.delo.sh"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [
+            "file_path"
+          ],
+          "schema": [
+            {
+              "id": "file_path",
+              "displayName": "file_path",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -160,
+        400
+      ],
+      "name": "Call Copy file to be hosted at ss.delo.sh",
+      "id": "829f2bfe-f1e0-4886-bea4-2fff3e0b8ea1"
+    },
+    {
+      "parameters": {
+        "content": "Extracted audio is placed in ss.delo.sh as hosted asset",
+        "height": 272,
+        "width": 400
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -400,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "8974128e-2d14-4d70-bd18-8208af45af07",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "Audio already exists, **no need to extract**.\n\nJust needs to be placed in ss.delo.sh as a hosted asset",
+        "height": 320,
+        "width": 400
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -400,
+        288
+      ],
+      "typeVersion": 1,
+      "id": "d6ba9e9d-ee10-4792-94fe-a90f03b63e29",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "When any new files are detected in `/home/delorenj/Video` fire this workflow off.\n\nWe're ONLY interested in files that contain audio, so we have a filter to ensure nothing else gets through.",
+        "height": 400,
+        "width": 608,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1312,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "285ae9c7-7ad2-4670-b434-afb1a4294507",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "executeOnce": false,
+        "command": "=ffmpeg -i \"{{ $json.path }}\" -vn -acodec mp3 /home/delorenj/code/utils/ssbnk/ssbnk-backend/web/html/oY8rZmxXoH8CEAFcVOE09KWzbEcXXZQD33aafGvXw.mp3 -y"
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        80
+      ],
+      "id": "5914620b-b349-4af5-8b52-4a5f89fab662",
+      "name": "Extract audio",
+      "executeOnce": false,
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fireflies",
+        "options": {
+          "allowedOrigins": "delo.sh,fireflies.ai",
+          "binaryPropertyName": "data",
+          "rawBody": true
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1312,
+        800
+      ],
+      "id": "5658a598-98a1-414f-bc3a-b8489daf7ba5",
+      "name": "Webhook",
+      "webhookId": "8d4dedbf-1695-44b0-8c3f-0148bcfe75ef"
+    },
+    {
+      "parameters": {},
+      "type": "@firefliesai/n8n-nodes-fireflies.fireflies",
+      "typeVersion": 1,
+      "position": [
+        -1008,
+        800
+      ],
+      "id": "8a5bda4c-31ae-4892-a3ef-3baa0dcf2b78",
+      "name": "Get a transcript",
+      "credentials": {
+        "firefliesApi": {
+          "id": "J8ACBvVvc74ainxd",
+          "name": "Fireflies account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "exchange",
+        "options": {
+          "durable": true
+        }
+      },
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        800
+      ],
+      "id": "58d9c8db-eec6-4302-82dd-f1c79d0dfd12",
+      "name": "RabbitMQ",
+      "credentials": {
+        "rabbitmq": {
+          "id": "Qcyu9sxyAMT3p8Hx",
+          "name": "RabbitMQ account"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.delo.sh",
+            "user-agent": "axios/1.11.0",
+            "content-length": "80",
+            "accept": "application/json, text/plain, */*",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "baggage": "sentry-environment=production,sentry-release=1.65.4,sentry-public_key=010261725034495cbd9605cd1d3c1a2d,sentry-trace_id=9c0a9538bd70413fb6a6863ffe0c2b6f",
+            "content-type": "application/json",
+            "sentry-trace": "9c0a9538bd70413fb6a6863ffe0c2b6f-992659ff0845d2a9",
+            "x-forwarded-for": "{remote_addr}, 34.121.56.80",
+            "x-forwarded-host": "n8n.delo.sh",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "a5692d9d13e9",
+            "x-hub-signature": "sha256=889edbc2f22293efc11361e3d1e8bb4f7d91511f50e1213a8ba01efb15860fef",
+            "x-real-ip": "{remote_addr}"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "meetingId": "01K78EDVB8F67J0SMJE31331NC",
+            "eventType": "Transcription completed"
+          },
+          "webhookUrl": "https://n8n.delo.sh/webhook/fireflies",
+          "executionMode": "production"
+        },
+        "binary": {
+          "data": {
+            "data": "eyJtZWV0aW5nSWQiOiIwMUs3OEVEVkI4RjY3SjBTTUpFMzEzMzFOQyIsImV2ZW50VHlwZSI6IlRyYW5zY3JpcHRpb24gY29tcGxldGVkIn0=",
+            "mimeType": "application/json"
+          }
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Upload audio": {
+      "main": [
+        [
+          {
+            "node": "Call Handle Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Transcriable Media File Found": {
+      "main": [
+        [
+          {
+            "node": "Filter media files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If file contains video...": {
+      "main": [
+        [
+          {
+            "node": "Extract audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Only let audio files through...",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only let audio files through...": {
+      "main": [
+        [
+          {
+            "node": "Call Copy file to be hosted at ss.delo.sh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter media files": {
+      "main": [
+        [
+          {
+            "node": "If file contains video...",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload audio1": {
+      "main": [
+        [
+          {
+            "node": "Call Handle Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Copy file to be hosted at ss.delo.sh": {
+      "main": [
+        [
+          {
+            "node": "Upload audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract audio": {
+      "main": [
+        [
+          {
+            "node": "Upload audio1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get a transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a transcript": {
+      "main": [
+        [
+          {
+            "node": "RabbitMQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "versionId": "ef656f31-de3d-4b23-b128-56fbf91fc9a9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d3c84561a28d140faaca6df3dd8af78ebe62704589f3369fc804248a689e90aa"
+  },
+  "id": "Gjb9aPqfpAjLhe9z",
+  "tags": []
+}

@@ -3,6 +3,16 @@ kind: Namespace
 metadata: { name: bloodbank }
 
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bloodbank-amqp
+  namespace: bloodbank
+type: Opaque
+stringData:
+  rabbit-url: "amqp://default_user_zzIpiEjlmSTwglmTYfs:KwA0UCPXeCt4ey6H4sskm1YNObGSsyJE@bloodbank.messaging.svc:5672/"
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,7 +29,10 @@ spec:
           image: ghcr.io/your/image:latest # swap to your built image
           env:
             - name: RABBIT_URL
-              value: "amqp://user:pass@rabbitmq.rabbitmq:5672/" # adjust svc/namespace
+              valueFrom:
+                secretKeyRef:
+                  name: bloodbank-amqp
+                  key: rabbit-url
             - name: EXCHANGE_NAME
               value: "bloodbank.events.v1"
             - name: SERVICE_NAME
@@ -34,7 +47,10 @@ spec:
           image: ghcr.io/your/image:latest
           env:
             - name: RABBIT_URL
-              value: "amqp://user:pass@rabbitmq.rabbitmq:5672/"
+              valueFrom:
+                secretKeyRef:
+                  name: bloodbank-amqp
+                  key: rabbit-url
           command:
             [
               "python",
