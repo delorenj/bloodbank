@@ -1,0 +1,347 @@
+{
+  "name": "Bloodbank RabbitMQ - Pub/Sub",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000001",
+      "name": "Manual Trigger - Publish",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "queue": "bloodbank.events.v1",
+        "options": {
+          "arguments": {
+            "argument": [
+              {
+                "key": "x-message-ttl",
+                "value": "86400000"
+              }
+            ]
+          },
+          "durable": true
+        }
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000002",
+      "name": "RabbitMQ Trigger - Consumer",
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [240, 600],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "Bloodbank RabbitMQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "routing_key",
+              "value": "llm.prompt"
+            },
+            {
+              "name": "event_type",
+              "value": "llm_interaction"
+            }
+          ],
+          "number": [
+            {
+              "name": "timestamp",
+              "value": "={{ $now.toUnixInteger() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000003",
+      "name": "Build Test Event - LLM Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [460, 200]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "routing_key",
+              "value": "artifact.created"
+            },
+            {
+              "name": "event_type",
+              "value": "artifact"
+            }
+          ],
+          "number": [
+            {
+              "name": "timestamp",
+              "value": "={{ $now.toUnixInteger() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000004",
+      "name": "Build Test Event - Artifact",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "queue": "={{ $json.routing_key }}",
+        "message": "={{ JSON.stringify($json) }}",
+        "options": {
+          "arguments": {
+            "argument": []
+          },
+          "persistent": true
+        },
+        "sendInputData": true
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000005",
+      "name": "Publish to Exchange",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "Bloodbank RabbitMQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.content }}",
+              "operation": "contains",
+              "value2": "llm"
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000006",
+      "name": "Route by Type",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 600]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse the RabbitMQ message\nconst message = JSON.parse($input.item.json.content);\n\n// Add routing metadata\nreturn {\n  json: {\n    ...message,\n    consumed_at: new Date().toISOString(),\n    consumer: 'n8n-bloodbank',\n    routing_key: message.routing_key || 'unknown'\n  }\n};"
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000007",
+      "name": "Process LLM Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 500]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse the RabbitMQ message\nconst message = JSON.parse($input.item.json.content);\n\n// Add routing metadata\nreturn {\n  json: {\n    ...message,\n    consumed_at: new Date().toISOString(),\n    consumer: 'n8n-bloodbank',\n    routing_key: message.routing_key || 'unknown'\n  }\n};"
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000008",
+      "name": "Process Other Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 700]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Events",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000009",
+      "name": "Log to Sheets (optional)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [900, 500],
+      "disabled": true,
+      "notes": "Enable this to log events to Google Sheets"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.webhook_url }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000010",
+      "name": "Forward to Webhook (optional)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 700],
+      "disabled": true,
+      "notes": "Enable to forward events to external webhooks"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll"
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000011",
+      "name": "Merge Events",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "content": "## 🩸 Bloodbank RabbitMQ Publisher\n\nThis branch publishes test events to your RabbitMQ exchange.\n\n### Available Events:\n- **LLM Prompt**: `llm.prompt`\n- **Artifact Created**: `artifact.created`\n\n### Setup:\n1. Configure RabbitMQ credentials\n2. Use exchange: `bloodbank.events.v1`\n3. Make sure it's a **topic** exchange\n4. Messages are persistent and durable",
+        "height": 400,
+        "width": 300
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000012",
+      "name": "Sticky Note - Publisher",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [220, 80]
+    },
+    {
+      "parameters": {
+        "content": "## 🔔 Bloodbank RabbitMQ Consumer\n\nThis branch listens for events and routes them.\n\n### Queue Setup:\n- Binds to exchange: `bloodbank.events.v1`\n- Pattern: `#` (all events)\n- Durable queue with 24h TTL\n\n### Processing:\n- Routes LLM events vs others\n- Parses and enriches messages\n- Optional: log to sheets or forward to webhooks",
+        "height": 400,
+        "width": 300
+      },
+      "id": "a1b2c3d4-5678-90ab-cdef-000000000013",
+      "name": "Sticky Note - Consumer",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [220, 480]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger - Publish": {
+      "main": [
+        [
+          {
+            "node": "Build Test Event - LLM Prompt",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Test Event - Artifact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Test Event - LLM Prompt": {
+      "main": [
+        [
+          {
+            "node": "Merge Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Test Event - Artifact": {
+      "main": [
+        [
+          {
+            "node": "Merge Events",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Events": {
+      "main": [
+        [
+          {
+            "node": "Publish to Exchange",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RabbitMQ Trigger - Consumer": {
+      "main": [
+        [
+          {
+            "node": "Route by Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Type": {
+      "main": [
+        [
+          {
+            "node": "Process LLM Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Other Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process LLM Event": {
+      "main": [
+        [
+          {
+            "node": "Log to Sheets (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Other Event": {
+      "main": [
+        [
+          {
+            "node": "Forward to Webhook (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "12345678-90ab-cdef-1234-567890abcdef",
+  "id": "bloodbank-rabbitmq",
+  "meta": {
+    "instanceId": "your-instance-id"
+  },
+  "tags": []
+}

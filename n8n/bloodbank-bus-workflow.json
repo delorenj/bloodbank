@@ -1,0 +1,164 @@
+{
+  "name": "Bloodbank Bus Bridge",
+  "nodes": [
+    {
+      "id": "2a4d51f1-9c36-4a3c-bbf0-3f94bd6d7a27",
+      "name": "Artifact Listener",
+      "type": "n8n-nodes-base.amqpTrigger",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -20
+      ],
+      "parameters": {
+        "queue": "artifact-n8n",
+        "exchange": "bloodbank.events.v1",
+        "type": "topic",
+        "routingKey": "artifact.#",
+        "options": {
+          "durable": true,
+          "prefetchCount": 3,
+          "acknowledge": true
+        }
+      },
+      "credentials": {
+        "amqp": {
+          "name": "Bloodbank RabbitMQ"
+        }
+      }
+    },
+    {
+      "id": "789d4c8f-4cd0-4dc1-b8f9-591fce9cc47e",
+      "name": "Log Artifact",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        -20
+      ],
+      "parameters": {
+        "functionCode": "const payload = items[0].json;\nconst content = payload.content ?? payload.message ?? '';\nconst body = typeof content === 'string' ? content : Buffer.from(content).toString('utf8');\nconst envelope = JSON.parse(body);\nreturn [{ json: envelope }];"
+      }
+    },
+    {
+      "id": "9f8322f5-0877-404f-ad0c-e1a12095dc4c",
+      "name": "Fireflies Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        260
+      ],
+      "parameters": {
+        "path": "bloodbank/fireflies",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "3f8b0c4a-3d5d-4b43-8f3c-92f8f4526b26",
+      "name": "Build Artifact Event",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        260
+      ],
+      "parameters": {
+        "functionCode": "const crypto = require('crypto');\nconst body = items[0].json;\nconst data = body.data || {};\nconst artifact = {\n  action: 'created',\n  kind: 'transcript',\n  uri: data.url,\n  title: data.title,\n  metadata: {\n    source: 'fireflies',\n    meetingId: data.meeting_id || data.id || null,\n    speakerCount: data.speakers?.length || undefined,\n  },\n};\nconst envelope = {\n  id: crypto.randomUUID(),\n  ts: new Date().toISOString(),\n  event_type: 'artifact.created',\n  source: 'n8n/fireflies',\n  tags: ['webhook', 'fireflies'],\n  data: artifact,\n};\nreturn [{ json: { routingKey: 'artifact.created', envelope } }];"
+      }
+    },
+    {
+      "id": "f4d7b636-6f16-4bcb-9bb7-6b1a0c0280a7",
+      "name": "Publish Artifact",
+      "type": "n8n-nodes-base.amqp",
+      "typeVersion": 1,
+      "position": [
+        160,
+        260
+      ],
+      "parameters": {
+        "operation": "sendMessage",
+        "exchange": "bloodbank.events.v1",
+        "routingKey": "={{$json[\"routingKey\"]}}",
+        "content": "={{JSON.stringify($json.envelope)}}",
+        "options": {
+          "persistent": true,
+          "contentType": "application/json"
+        }
+      },
+      "credentials": {
+        "amqp": {
+          "name": "Bloodbank RabbitMQ"
+        }
+      }
+    },
+    {
+      "id": "b1bb0bdc-8d59-4a7f-837b-7dfad5685b4c",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        420,
+        260
+      ],
+      "parameters": {
+        "responseBody": "={{JSON.stringify({ status: 'ok', eventId: $items(\"Build Artifact Event\")[0].json.envelope.id, routingKey: $items(\"Build Artifact Event\")[0].json.routingKey })}}"
+      }
+    }
+  ],
+  "connections": {
+    "Artifact Listener": {
+      "main": [
+        [
+          {
+            "node": "Log Artifact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fireflies Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Artifact Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Artifact Event": {
+      "main": [
+        [
+          {
+            "node": "Publish Artifact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Artifact": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "5a23ad7a-5850-4de0-8f84-aa3af381bb77"
+}
