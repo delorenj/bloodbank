@@ -1,48 +1,49 @@
 # Gemini Code Assistant Context
 
-This document provides context for the "Bloodbank" project, an event-driven system for tracking and routing events within a software development ecosystem.
+This repository contains two main components:
 
-## Project Overview
+1.  **Bloodbank Event Bus:** A generic, RabbitMQ-based event bus system.
+2.  **Event Producers:** A collection of personal tools and services that produce events for the Bloodbank bus.
 
-Bloodbank is a Python-based event bus that uses RabbitMQ for message queuing. It provides a central exchange (`bloodbank.events.v1`) where various "producer" applications can publish events. These events are then routed to "consumer" applications that subscribe to specific event types.
+## Bloodbank Event Bus
 
-The primary goal of Bloodbank is to create a decoupled, scalable, and observable architecture for automating and tracking development-related activities.
+This is the core of the repository. It provides the infrastructure for a generic, event-driven architecture using RabbitMQ.
 
 ### Core Technologies
 
 *   **Python 3.11+**
-*   **FastAPI:** For the web server (`http.py`) that ingests events from webhooks.
 *   **RabbitMQ:** The message broker.
 *   **aio-pika:** Asynchronous Python client for RabbitMQ.
-*   **Pydantic:** For data validation and settings management.
-*   **Typer:** For the command-line interface (`cli.py`).
+*   **Pydantic:** For settings management.
 *   **Kubernetes:** The target deployment environment (see `kubernetes/deploy.yaml`).
-*   **n8n:** For workflow automation (see `n8n/` directory).
 
-### Architecture
+### Key Files
 
-The system is composed of the following key components:
+*   `rabbit.py`: Contains the `Publisher` class for connecting to and publishing messages to RabbitMQ.
+*   `config.py`: Manages application settings using Pydantic and environment variables.
+*   `pyproject.toml`: Defines project dependencies.
+*   `kubernetes/deploy.yaml`: Kubernetes deployment configuration.
+*   `TASK.md`: A detailed guide to understanding and using the RabbitMQ event bus.
 
-*   **Producers:**
-    *   `http.py`: A FastAPI server that exposes endpoints to receive events from external sources (e.g., webhooks from services like Fireflies).
-    *   `mcp_server.py`: A "Master Control Program" server that provides tools for internal services to publish events.
-    *   `cli.py`: A command-line interface for interacting with the system.
-*   **RabbitMQ:**
-    *   A central `topic` exchange named `bloodbank.events.v1` is used for routing events.
-    *   Events are published with a routing key (e.g., `llm.prompt`, `artifact.created`).
-*   **Consumers:**
-    *   Various applications can consume events by creating their own queues and binding them to the `bloodbank.events.v1` exchange with specific routing key patterns.
-    *   Examples include Trello sync, artifact archivers, and analytics services.
+## Event Producers
 
-### Event Structure
+This directory contains a collection of personal tools and services that are specific to the user's projects. These tools produce events and publish them to the Bloodbank event bus.
 
-Events are defined in `events.py` using Pydantic models. All events are wrapped in an `EventEnvelope` which contains metadata such as a unique ID, timestamp, source, and correlation ID.
+### Core Technologies
 
-The main event types are:
+*   **FastAPI:** For the web server (`event_producers/http.py`) that ingests events from webhooks.
+*   **Typer:** For the command-line interface (`event_producers/cli.py`).
+*   **n8n:** For workflow automation (see `event_producers/n8n/` directory).
 
-*   `LLMPrompt`: Represents a prompt sent to a large language model.
-*   `LLMResponse`: Represents a response from a large language model.
-*   `Artifact`: Represents a created or updated artifact, such as a file, transcript, or image.
+### Key Files
+
+*   `event_producers/cli.py`: A command-line interface for publishing events.
+*   `event_producers/events.py`: Defines the Pydantic models for the events used in the user's personal projects (`LLMPrompt`, `LLMResponse`, `Artifact`).
+*   `event_producers/http.py`: A FastAPI server that exposes endpoints for receiving events from external sources (e.g., webhooks).
+*   `event_producers/mcp_server.py`: A "Master Control Program" server that provides tools for internal services to publish events.
+*   `event_producers/watch.py`: A script that watches a directory for file changes and publishes `artifact.updated` events.
+*   `event_producers/n8n/`: Contains n8n workflows for automation.
+*   `event_producers/scripts/`: Contains utility scripts, such as a sample `artifact_consumer.py`.
 
 ## Building and Running
 
@@ -51,17 +52,17 @@ The main event types are:
 Install the required Python packages using pip:
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
-*(Note: A `requirements.txt` file is not present, but one could be generated from `pyproject.toml`)*
+*(Note: This will install the project in editable mode, which is recommended for development.)*
 
 ### Running the Web Server
 
-To run the FastAPI web server locally:
+To run the FastAPI web server for the event producers:
 
 ```bash
-uvicorn bloodbank.http:app --reload
+uvicorn event_producers.http:app --reload
 ```
 
 The server will be available at `http://localhost:8682`.
@@ -71,20 +72,13 @@ The server will be available at `http://localhost:8682`.
 The MCP server can be run as a standalone process:
 
 ```bash
-python -m bloodbank.mcp_server
+python -m event_producers.mcp_server
 ```
 
 ### Command-Line Interface
 
-The project includes a CLI for interacting with the system. Use the `--help` flag to see available commands:
+The project includes a CLI for interacting with the event producers. Use the `--help` flag to see available commands:
 
 ```bash
-python -m bloodbank.cli --help
+python -m event_producers.cli --help
 ```
-
-## Development Conventions
-
-*   **Configuration:** Application settings are managed using Pydantic and environment variables (see `config.py`).
-*   **Asynchronous Code:** The project uses `asyncio` and `aio-pika` for non-blocking communication with RabbitMQ.
-*   **Testing:** (TODO: Add information about testing practices once test files are available).
-*   **Linting and Formatting:** (TODO: Add information about linting and formatting tools if they are used).
