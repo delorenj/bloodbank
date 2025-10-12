@@ -1,8 +1,7 @@
 import asyncio
-import json
 import orjson
 import aio_pika
-from .config import settings
+from config import settings
 
 
 class Publisher:

@@ -59,6 +59,12 @@ class Artifact(BaseModel):
     title: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
+class CalendarEvent(BaseModel):
+    summary: str
+    start_time: datetime
+    end_time: datetime
+    location: Optional[str] = None
+
 
 def envelope_for(
     event_type: str, source: str, data: BaseModel, **kwargs

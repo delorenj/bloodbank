@@ -1,8 +1,8 @@
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from .events import LLMPrompt, LLMResponse, Artifact, envelope_for
-from .rabbit import Publisher
-from .config import settings
+from events import LLMPrompt, LLMResponse, Artifact, CalendarEvent, envelope_for
+from rabbit import Publisher
+from config import settings
 
 app = FastAPI(title="bloodbank", version="0.1.0")
 publisher = Publisher()
@@ -58,6 +58,14 @@ async def publish_artifact(ev: Artifact, request: Request):
     await publisher.publish(
         f"artifact.{ev.action}", env.model_dump(), message_id=env.id
     )
+    return JSONResponse(env.model_dump())
+
+@app.post("/events/calendar")
+async def publish_calendar_event(ev: CalendarEvent, request: Request):
+    env = envelope_for(
+        "calendar.event.created", source="http/" + request.client.host, data=ev
+    )
+    await publisher.publish("calendar.event.created", env.model_dump(), message_id=env.id)
     return JSONResponse(env.model_dump())
 
 
