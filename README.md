@@ -2,6 +2,12 @@
 
 This project provides a robust, asynchronous event bus for a home network, using RabbitMQ as the message broker and FastAPI for publishing events via a simple HTTP interface.
 
+## Quick Start
+
+For new deployments, see **[GREENFIELD_DEPLOYMENT.md](GREENFIELD_DEPLOYMENT.md)** for a simplified setup guide with correlation tracking enabled by default.
+
+For migrations from v1, see **[MIGRATION_v1_to_v2.md](docs/MIGRATION_v1_to_v2.md)** for phased rollout instructions.
+
 ## Architecture
 
 The system is composed of three main parts:
