@@ -1,0 +1,19 @@
+# Testing dependencies for bloodbank event publisher v2.0
+
+# Core testing framework
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+pytest-timeout>=2.2.0
+
+# Mock and testing utilities
+fakeredis[aioredis]>=2.21.0
+pytest-mock>=3.12.0
+
+# Code quality
+black>=24.0.0
+ruff>=0.1.0
+mypy>=1.8.0
+
+# Async testing utilities
+asynctest>=0.13.0
