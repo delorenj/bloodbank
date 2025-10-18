@@ -1,0 +1,146 @@
+[
+  {
+    "fields": {
+      "consumerTag": "amq.ctag-wI3qY_Op_jZbSFFJEO73_w",
+      "deliveryTag": 1,
+      "redelivered": false,
+      "exchange": "amq.topic",
+      "routingKey": "fireflies.transcriptReady"
+    },
+    "properties": {
+      "headers": {}
+    },
+    "content": {
+      "success": true,
+      "data": {
+        "id": "01K7CKT5XHEY6DP8BH4CND1QKZ",
+        "sentences": [
+          {
+            "index": 0,
+            "speaker_name": null,
+            "speaker_id": 0,
+            "raw_text": "They said it was impossible.",
+            "start_time": 0.24,
+            "end_time": 3.52,
+            "ai_filters": {
+              "text_cleanup": "They said it was impossible.",
+              "task": null,
+              "pricing": null,
+              "metric": null,
+              "question": null,
+              "date_and_time": null,
+              "sentiment": "neutral"
+            },
+            "text": "They said it was impossible."
+          },
+          {
+            "index": 1,
+            "speaker_name": null,
+            "speaker_id": 0,
+            "raw_text": "The hours you'll never get back.",
+            "start_time": 6,
+            "end_time": 7.84,
+            "ai_filters": {
+              "text_cleanup": "The hours you'll never get back.",
+              "task": null,
+              "pricing": null,
+              "metric": null,
+              "question": null,
+              "date_and_time": null,
+              "sentiment": "neutral"
+            },
+            "text": "The hours you'll never get back."
+          },
+          {
+            "index": 2,
+            "speaker_name": null,
+            "speaker_id": 0,
+            "raw_text": "The systems that keep you fragmented until now.",
+            "start_time": 9.52,
+            "end_time": 19.44,
+            "ai_filters": {
+              "text_cleanup": "The systems that keep you fragmented until now.",
+              "task": null,
+              "pricing": null,
+              "metric": null,
+              "question": null,
+              "date_and_time": null,
+              "sentiment": "neutral"
+            },
+            "text": "The systems that keep you fragmented until now."
+          },
+          {
+            "index": 3,
+            "speaker_name": null,
+            "speaker_id": 0,
+            "raw_text": "A new intelligence is here.",
+            "start_time": 23.28,
+            "end_time": 25.2,
+            "ai_filters": {
+              "text_cleanup": "A new intelligence is here.",
+              "task": null,
+              "pricing": null,
+              "metric": null,
+              "question": null,
+              "date_and_time": null,
+              "sentiment": "neutral"
+            },
+            "text": "A new intelligence is here."
+          },
+          {
+            "index": 4,
+            "speaker_name": null,
+            "speaker_id": 0,
+            "raw_text": "Intelliforia.",
+            "start_time": 34.96,
+            "end_time": 36.08,
+            "ai_filters": {
+              "text_cleanup": "Intelliforia.",
+              "task": null,
+              "pricing": null,
+              "metric": null,
+              "question": null,
+              "date_and_time": null,
+              "sentiment": "neutral"
+            },
+            "text": "Intelliforia."
+          }
+        ],
+        "title": "home delorenj Videos Recordings IntelliForiaMicroTeaser-finalcut.mp4",
+        "host_email": "jaradd@gmail.com",
+        "organizer_email": "jaradd@gmail.com",
+        "user": {
+          "user_id": "GFxHx6c9jT",
+          "email": "jaradd@gmail.com",
+          "integrations": ["google-doc", "zoom"],
+          "user_groups": [],
+          "name": "Jarad DeLorenzo",
+          "num_transcripts": 274,
+          "recent_transcript": "01K7CKT5XHEY6DP8BH4CND1QKZ",
+          "recent_meeting": "01K7CKT5XHEY6DP8BH4CND1QKZ",
+          "minutes_consumed": 14301.509765625,
+          "is_admin": true
+        },
+        "fireflies_users": [],
+        "privacy": "link",
+        "participants": [],
+        "date": 1760286300000,
+        "duration": 0.7900000214576721,
+        "summary": null,
+        "meeting_info": {
+          "silent_meeting": false,
+          "summary_status": null,
+          "fred_joined": null
+        },
+        "transcript_url": "https://app.fireflies.ai/view/01K7CKT5XHEY6DP8BH4CND1QKZ",
+        "dateString": "2025-10-12T16:24:43.000Z",
+        "meeting_attendees": [],
+        "speakers": [],
+        "calendar_id": null,
+        "cal_id": null,
+        "calendar_type": null,
+        "meeting_link": null
+      }
+    }
+  }
+]
