@@ -13,41 +13,50 @@ The event system is built on the following components:
 
 ### Event Structure
 
-Events are defined as Pydantic models in `event_producers/events.py`. All events are wrapped in a generic `EventEnvelope`, which contains metadata about the event, such as its `event_id`, `event_type`, `timestamp`, and `source`.
+Events are defined as Pydantic models in `event_producers/events.py`. All events use a generic `EventEnvelope[T]` that contains metadata and a typed payload.
 
-The `EventEnvelope` has the following structure:
+The `EventEnvelope` structure:
 
 ```python
 class EventEnvelope(BaseModel, Generic[T]):
-    event_id: uuid.UUID
-    event_type: str
-    timestamp: datetime
-    version: str
+    event_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    event_type: str  # e.g., claude.skill.task.completed
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    version: str = "1.0.0"
     source: Source
-    correlation_id: Optional[uuid.UUID]
-    agent_context: Optional[AgentContext]
-    payload: T
+    correlation_id: Optional[uuid.UUID] = None
+    agent_context: Optional[AgentContext] = None
+    payload: T  # Your typed event data
 ```
-
-The `payload` field contains the specific data for the event, which is also a Pydantic model.
 
 ### Publishing Events
 
-Events are published to a RabbitMQ exchange using the `Publisher` class in `rabbit.py`. The `Publisher` class handles the connection to RabbitMQ and the publication of messages.
+Use the real `Publisher` class from `rabbit.py`:
 
-The `publish` method of the `Publisher` class takes the following arguments:
+```python
+from event_producers.events import EventEnvelope, Source, AgentContext
+from rabbit import Publisher
 
-- `routing_key`: A string that determines how the message is routed to consumers.
-- `body`: A dictionary containing the event data.
-- `message_id`: An optional string to identify the message.
-- `correlation_id`: An optional string to correlate messages.
+# Create typed envelope
+envelope = EventEnvelope[YourPayloadType](
+    event_type="your.event.type",
+    source=Source(component="claude-skill", host_id="localhost"),
+    agent_context=AgentContext(agent_instance_id="claude-session"),
+    payload=your_payload_instance
+)
+
+# Publish
+publisher = Publisher()
+await publisher.start()
+await publisher.publish("your.routing.key", envelope.model_dump(mode="json"))
+await publisher.close()
+```
 
 ## How to Create and Publish a New Event
 
-To create and publish a new event, you need to follow these steps:
+1. **Define the event payload:** Create a Pydantic model for your event data
+2. **Import the real classes:** Use `EventEnvelope`, `Source`, `AgentContext` from `event_producers.events`
+3. **Use the real Publisher:** Import from `rabbit.py` (not a mock)
+4. **Create typed envelope:** Use `EventEnvelope[YourPayloadType]` for type safety
 
-1. **Define the event payload:** Create a new Pydantic model in `event_producers/events.py` that defines the structure of the event's payload.
-
-2. **Publish the event:** Use the `Publisher` class to publish the event to the event bus. You will need to create an instance of the `Publisher` class, create an `EventEnvelope` for your event, and then call the `publish` method.
-
-See the `example.py` file for a practical demonstration of how to publish an event.
+See `example.py` for a working demonstration using the actual event system.
