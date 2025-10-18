@@ -24,7 +24,7 @@ def publish_prompt(provider: str, model: str = "", prompt: str = typer.Argument(
     payload = {"provider": provider, "model": model or None, "prompt": prompt}
     env = {"project": project, "working_dir": cwd, "domain": None, "tags": ["cli"]}
     body = payload | env
-    r = httpx.post("http://localhost:8080/events/llm/prompt", json=payload)
+    r = httpx.post("http://localhost:8682/events/agent/thread/prompt", json=payload)
     typer.echo(r.json())
 
 
@@ -43,7 +43,7 @@ def wrap(ctx: typer.Context, program: str, provider: str = "other"):
     stdin_data = sys.stdin.read() if not sys.stdin.isatty() else None
     if stdin_data and stdin_data.strip():
         httpx.post(
-            "http://localhost:8080/events/llm/prompt",
+            "http://localhost:8682/events/agent/thread/prompt",
             json={"provider": provider, "prompt": stdin_data, "model": None},
         )
 
@@ -69,7 +69,7 @@ def wrap(ctx: typer.Context, program: str, provider: str = "other"):
 
     if response_chunks:
         httpx.post(
-            "http://localhost:8080/events/llm/response",
+            "http://localhost:8682/events/agent/thread/response",
             json={
                 "provider": provider,
                 "prompt_id": "unknown",  # if you want, stash the ID from prompt call above

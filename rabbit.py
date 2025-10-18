@@ -13,8 +13,8 @@ import orjson
 import aio_pika
 import logging
 
-from .config import settings
-from .correlation_tracker import CorrelationTracker
+from config import settings
+from correlation_tracker import CorrelationTracker
 
 logger = logging.getLogger(__name__)
 
