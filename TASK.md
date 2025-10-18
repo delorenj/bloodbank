@@ -1,259 +1,131 @@
-# Bloodbank + RabbitMQ + K8s: QuickStart (for impatient, highly capable humans)
+# TASK
 
-This is the “get your bearings fast” guide so you can ship events **today** and learn the theory on the way. We’ll keep it punchy, layered, and slightly cheeky.
+I had a long planning session with my dev team and they produced the following output. Can you integrate it all into this repo?
 
----
+@claude_updates/
 
-## 0) TL;DR mental model (what’s what)
+## Context
 
-- **RabbitMQ** = the _mailroom_. You publish messages to an **exchange**; consumers bind **queues** to that exchange using routing keys.
-- **AMQP** = the _protocol_ your code uses to talk to RabbitMQ.
-- **Exchange (topic)** = the _router_. You publish to `exchange=bloodbank.events.v1` with a routing key like `llm.prompt`. Routing rules send copies into queues that asked for them.
-- **Queue** = the _inbox_ for a consumer (e.g., “trello-sync”). Consumers read from queues, not exchanges.
-- **Kubernetes (K8s)** = the _city_. Pods run containers; Services give stable DNS names; Namespaces separate neighborhoods.
-- **In-cluster** = code running inside K8s, reaching services by DNS like `bloodbank.messaging.svc`.
+Perfect! Let me make these changes. First, let me check out your current codebase structure:Got it! I'll create all the updated files in `/home/claude` and you can copy them over. Let me build out the improvements:
 
-Think:
-`bloodbank (your app) → [AMQP] → exchange (router) → queues (inboxes) → consumers (workers)`
+## 1. First, let's create the deterministic event ID generator and correlation tracker## 2. Now let's create the updated events.py with all improvements## 3. Update rabbit.py to integrate correlation tracking## 4. Update http.py with new correlation tracking## 5. Update config.py to include Redis settings## 6. Update pyproject.toml with Redis dependency## 7. Create the final comprehensive SKILL.md## 8. Create Migration Guide## 9. Create README for the updates package## 10. Create installation script## 11. Create Summary DocumentPerfect! I've built everything you asked for. Here's what I've created:
 
----
+## 📦 Complete Package: `/home/claude/bloodbank_updates/`
 
-## 1) What you already have
+### 🎯 Core Files (Ready to Deploy)
 
-- RabbitMQ **broker** running via the official Cluster Operator:
-  - Namespace: `messaging`
-  - Service: `bloodbank.messaging.svc`
-  - Ports: `5672` (AMQP), `15672` (management UI)
+1. **`correlation_tracker.py`** - Redis-backed correlation tracking system
+2. **`events.py`** - Updated with:
+   - `correlation_ids: List[UUID]` (was Optional[UUID])
+   - Error event payloads (`.failed` patterns)
+   - Complete Fireflies schemas (full webhook data)
+3. **`rabbit.py`** - Publisher with integrated correlation tracking
+4. **`http.py`** - Updated with debug endpoints + correlation support
+5. **`config.py`** - Added Redis settings
+6. **`pyproject.toml`** - Added `redis>=5.0.0` dependency
 
-- Default user + pass (you printed them).
-- Working port-forward to your laptop:
-  - UI at `http://localhost:15672`
-  - AMQP tunneled on `localhost:5673` (your choice)
+### 📚 Documentation
 
----
+7. **`SUMMARY.md`** ← **START HERE!** Quick overview of everything
+8. **`README.md`** - Complete installation guide
+9. **`SKILL.md`** - Comprehensive v2.0 documentation (production-ready)
+10. **`MIGRATION_v1_to_v2.md`** - Upgrade guide with find/replace patterns
 
-## 2) 10-minute smoke test: publish a message end-to-end
+### 🚀 Tooling
 
-### A) Open the management UI
+11. **`install.sh`** - Automated installation script (just run it!)
 
-```bash
-kubectl -n messaging port-forward svc/bloodbank 15672:15672
-# then visit http://localhost:15672 and log in
-```
+## 🎁 What You Got (Your Questions Answered)
 
-Peek under **Exchanges**—you’ll see `amq.*` built-ins. Ours will appear after first declare.
+| Your Question             | My Answer                          | Implementation                                       |
+| ------------------------- | ---------------------------------- | ---------------------------------------------------- |
+| Event versioning?         | **Simple version bump**            | `version: "1.0.0"` field in envelope                 |
+| Redis for correlation?    | **Full implementation**            | `correlation_tracker.py` + integrated into Publisher |
+| Error events?             | **Standardized `.failed` pattern** | All error payloads in `events.py`                    |
+| Idempotent event IDs?     | **Deterministic UUIDs**            | `publisher.generate_event_id()`                      |
+| Multiple correlation IDs? | **List support**                   | `correlation_ids: List[UUID]`                        |
 
-### B) Publish a message (local via port-forward)
-
-```bash
-python - <<'PY'
-import os, pika
-U="default_user_…"; P="…password…"
-url=f"amqp://{U}:{P}@localhost:5673/%2F"
-ch=pika.BlockingConnection(pika.URLParameters(url)).channel()
-ch.exchange_declare(exchange="bloodbank.events.v1", exchange_type="topic", durable=True)
-ch.basic_publish(exchange="bloodbank.events.v1", routing_key="llm.prompt", body=b'hello-bloodbank')
-print("published ok")
-PY
-```
-
-If it prints `published ok`, you just declared the exchange and published.
-
-### C) See it land (bind a test queue in the UI)
-
-- In UI: **Queues** → **Add a new queue** → name: `debug` (durable).
-- In UI: **Exchanges** → `bloodbank.events.v1` → **Bindings**:
-  - Destination: `debug`, Routing key: `llm.*` → **Bind**.
-
-- Back in **Queues** → `debug` → **Get messages** → **Get Message(s)**.
-  You’ll see your payload. Magic trick complete.
-
-> In real life you’d create queues/bindings with IaC, not clicks. But this shows the pipes are alive.
-
----
-
-## 3) Run the same test **inside** the cluster (no tunnels)
+## 🚀 Quick Start (30 Seconds)
 
 ```bash
-kubectl -n messaging run amqp-test --rm -it --image=python:3.11 -- bash -lc '
-pip -q install pika && python - <<PY
-import os, pika
-U="default_user_…"; P="…password…"
-url=f"amqp://{U}:{P}@bloodbank.messaging.svc:5672/%2F"
-ch=pika.BlockingConnection(pika.URLParameters(url)).channel()
-ch.exchange_declare(exchange="bloodbank.events.v1", exchange_type="topic", durable=True)
-ch.basic_publish(exchange="bloodbank.events.v1", routing_key="llm.response", body=b"in-cluster-ok")
-print("in-cluster published ok")
-PY'
+# 1. Start Redis (if not running)
+brew services start redis
+
+# 2. Run automated installer
+cd /home/claude/bloodbank_updates
+./install.sh
+
+# That's it! The script:
+# - Backs up your code
+# - Copies all files
+# - Installs dependencies
+# - Updates .env
+# - Runs tests
 ```
 
-If you get `in-cluster published ok`, DNS + Service wiring are good.
+## 🌟 Coolest Features
 
----
+### Automatic Correlation Tracking
 
-## 4) Configure Bloodbank app (env you actually use)
+```python
+# Just publish with parent_event_ids - Redis tracks everything!
+await publisher.publish(
+    routing_key="fireflies.transcript.ready",
+    body=envelope.model_dump(),
+    event_id=ready_id,
+    parent_event_ids=[upload_id]  # ← Auto-tracked in Redis!
+)
 
-**In-cluster (Deployment/Pod):**
-
-```
-RABBIT_URL=amqp://<user>:<pass>@bloodbank.messaging.svc:5672/
-EXCHANGE_NAME=bloodbank.events.v1
-```
-
-**Local dev (using your 5673 tunnel):**
-
-```
-RABBIT_URL=amqp://<user>:<pass>@localhost:5673/
-EXCHANGE_NAME=bloodbank.events.v1
+# Query the chain anytime
+chain = publisher.get_correlation_chain(ready_id, "ancestors")
 ```
 
-Best practice: store the full URL in a Secret and mount as env var.
+### Debug Endpoints
 
 ```bash
-kubectl -n messaging create secret generic bb-amqp \
-  --from-literal=url="amqp://<user>:<pass>@bloodbank.messaging.svc:5672/"
+# View full correlation data
+curl http://localhost:8682/debug/correlation/{event_id}
+
+# Get ancestor/descendant chains
+curl http://localhost:8682/debug/correlation/{event_id}/chain?direction=ancestors
 ```
 
-Then in your Deployment:
+### Idempotent Events
 
-```yaml
-env:
-  - name: RABBIT_URL
-    valueFrom:
-      secretKeyRef:
-        name: bb-amqp
-        key: url
+```python
+# Same inputs = same UUID (webhook retries handled!)
+event_id = publisher.generate_event_id(
+    "fireflies.transcript.upload",
+    meeting_id="abc123"
+)
 ```
 
----
+## 📖 Read These in Order
 
-## 5) Minimal RabbitMQ theory (90 seconds)
+1. **`SUMMARY.md`** (this file) - Overview
+2. **`README.md`** - Installation instructions
+3. **`SKILL.md`** - Complete v2.0 documentation
+4. **`MIGRATION_v1_to_v2.md`** - If you have existing v1.0 code
 
-- **Exchange types**:
-  - `direct`: exact routing key match
-  - **`topic`**: wildcard routing (`*` one token, `#` many) ← **we use this**
-  - `fanout`: send to everyone, no keys
+## 🎯 Your Project Path
 
-- **Durable** exchange/queue + **persistent** messages = survive broker restarts.
-- **Publisher confirms** (enable in client) = broker acks your publish → fewer “it vanished” mysteries.
-- **Dead-letter queues** (DLQ) + TTL = retry and quarantine bad messages like a responsible adult.
-
-For Bloodbank v0: declare `bloodbank.events.v1` as **topic**, durable, and publish with `delivery_mode=persistent`.
-
----
-
-## 6) Common commands (bookmark this)
-
-```bash
-# What’s running
-kubectl -n messaging get pods -o wide
-kubectl -n messaging get svc
-
-# Logs (operator and server)
-kubectl -n rabbitmq-system logs deploy/cluster-operator
-kubectl -n messaging logs statefulset/bloodbank-server
-
-# Port-forward UI + AMQP (alt local port if 5672 busy)
-kubectl -n messaging port-forward svc/bloodbank 15672:15672 5673:5672
-```
-
----
-
-## 7) First consumer (quick pattern to prove bindings)
-
-Spin a tiny consumer that listens to `llm.#`:
-
-```bash
-python - <<'PY'
-import os, pika
-U="default_user_…"; P="…password…"
-url=f"amqp://{U}:{P}@localhost:5673/%2F"
-params=pika.URLParameters(url)
-conn=pika.BlockingConnection(params)
-ch=conn.channel()
-ch.exchange_declare(exchange="bloodbank.events.v1", exchange_type="topic", durable=True)
-
-# durable queue that survives restarts
-q = ch.queue_declare(queue="dev-llm", durable=True)
-ch.queue_bind(queue="dev-llm", exchange="bloodbank.events.v1", routing_key="llm.#")
-
-def handle(ch_, method, props, body):
-    print(f"[{method.routing_key}] {body.decode()}")
-    ch_.basic_ack(method.delivery_tag)
-
-ch.basic_qos(prefetch_count=10)
-ch.basic_consume(queue="dev-llm", on_message_callback=handle)
-print("listening on dev-llm (llm.#)…")
-ch.start_consuming()
-PY
-```
-
-Publish something (`llm.prompt`, `llm.response`), watch it print.
-
----
-
-## 8) Troubleshooting cheats
-
-- **UI loads but login fails** → wrong creds; re-print:
-
-  ```bash
-  kubectl -n messaging get secret bloodbank-default-user -o jsonpath='{.data.username}' | base64 -d; echo
-  kubectl -n messaging get secret bloodbank-default-user -o jsonpath='{.data.password}' | base64 -d; echo
-  ```
-
-- **Port-forward “address already in use”** → something on 5672; use `5673:5672` locally.
-- **Publish hangs/fails in cluster** → verify Service endpoints:
-
-  ```bash
-  kubectl -n messaging get endpoints bloodbank
-  ```
-
-- **No messages in queue** → check:
-  - Did you **bind** the queue to the exchange?
-  - Does the **routing key pattern** match (e.g., queue expects `llm.*` and you published `artifact.created`)?
-
----
-
-## 9) Production-ish knobs (when ready)
-
-- Add **DLX** (dead-letter exchange) + per-queue **TTL** for retries.
-- Turn on **publisher confirms** in your Bloodbank publisher.
-- Use **NetworkPolicies** so only your namespace talks to RabbitMQ.
-- Export broker metrics via **Prometheus** (the Operator exposes 15692).
-
----
-
-## 10) Where Bloodbank slots in
-
-- **Producers**: `bloodbank.http` (webhooks & REST), `bloodbank.mcp_server` (tools), `bb wrap` (CLI siphon) → all **publish** to `bloodbank.events.v1`.
-- **Consumers**: Trello sync, n8n flows, artifact archiver, weekly analytics → each creates its own **queue** and **binds** what it cares about:
-  - `trello-sync` binds `llm.prompt`
-  - `artifact-writer` binds `artifact.#`
-  - `metrics` binds `llm.#` and `artifact.#`
-
-ASCII vibes:
+The installer will copy files to:
 
 ```
-[Producers] --> [Exchange: bloodbank.events.v1 (topic)] --> [queue: trello-sync] -> Trello
-                                          \--> [queue: artifact-writer] -> Vault
-                                          \--> [queue: metrics] -> Timeseries
+~/code/projects/33GOD/bloodbank/
+├── correlation_tracker.py        ← NEW
+├── rabbit.py                     ← UPDATED
+├── config.py                     ← UPDATED
+├── pyproject.toml                ← UPDATED
+├── event_producers/
+│   ├── events.py                 ← UPDATED
+│   └── http.py                   ← UPDATED
+├── claude_skills/bloodbank_event_publisher/
+│   └── SKILL.md                  ← UPDATED
+└── docs/
+    └── MIGRATION_v1_to_v2.md     ← NEW
 ```
 
----
+Everything is written at Staff Engineer level (no hand-holding), follows your tool preferences (zsh, mise, uv, etc.), and is production-ready with comprehensive error handling.
 
-## 11) Next 15 minutes to make it “real”
-
-1. Put `RABBIT_URL` in a Secret and mount it in the Bloodbank Deployment.
-   - `kubernetes/deploy.yaml` now ships a `bloodbank-amqp` Secret; patch it with your real creds.
-   - Both API + MCP containers read `RABBIT_URL` from that Secret via `valueFrom`.
-2. On Bloodbank startup, **declare** the exchange and **fail fast** if it can’t connect.
-   - `rabbit.Publisher.start()` guards against double-starts and raises immediately with a redacted endpoint if RabbitMQ is unreachable.
-3. Create one consumer (n8n or tiny Python) that binds `artifact.#` and logs payloads.
-   - Run `python scripts/artifact_consumer.py` (optionally set `ARTIFACT_QUEUE` / `ARTIFACT_ROUTING_KEY`).
-   - It declares the queue, binds to `artifact.#`, and pretty-prints JSON bodies.
-   - Prefer n8n? Import `n8n/bloodbank-bus-workflow.json` for a prewired AMQP trigger + publisher pair.
-4. Point a real webhook (e.g., Fireflies) at `/webhooks/fireflies` and watch artifacts flow.
-   - Fireflies POSTs will emit `artifact.created`; keep the consumer running to see them land.
-   - Customize the webhook handler if your provider uses different payload fields.
-
-You now have a living bus, a clear mental model, and the muscle memory to drive it. The BB API is just the sugar on top—let’s wire your first real producer and a Trello consumer next so your graph of life starts automating itself like the layered wonderland it is.
+**Want to install?** Just run `./install.sh` and you're done! 🎉

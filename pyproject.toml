@@ -1,11 +1,12 @@
 [project]
 name = "bloodbank"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi",
   "uvicorn[standard]",
   "pydantic>=2",
+  "pydantic-settings>=2.0",  # For BaseSettings
   "aio-pika>=9",
   "orjson",
   "typer[all]",
@@ -13,6 +14,7 @@ dependencies = [
   "httpx",
   "python-dotenv",
   "mcp[server]",       # official MCP SDK (includes FastMCP)
+  "redis>=5.0.0",      # Async Redis for correlation tracking
 ]
 
 [tool.uvicorn]
