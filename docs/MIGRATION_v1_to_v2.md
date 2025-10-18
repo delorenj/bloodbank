@@ -1,3 +1,11 @@
+# IMPORTANT: This is for FUTURE reference only
+
+This guide documents how to migrate FROM v1.0 TO v2.0 **if you are already running v1.0**.
+
+**If you are deploying Bloodbank for the first time, ignore this document** and use the standard deployment instructions in INTEGRATION_SUMMARY.md instead.
+
+---
+
 # Bloodbank v1.0 → v2.0 Migration Guide
 
 This guide helps you migrate from Bloodbank v1.0 to v2.0, which introduces Redis-backed correlation tracking, deterministic event IDs, multiple correlation IDs, and standardized error events.

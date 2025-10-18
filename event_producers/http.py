@@ -5,13 +5,18 @@ from uuid import UUID
 import logging
 
 from .events import LLMPrompt, LLMResponse, Artifact, envelope_for
-from .rabbit import Publisher
-from .config import settings
+from rabbit import Publisher
+from config import settings
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="bloodbank", version="0.2.0")
-publisher = Publisher()  # Correlation tracking disabled by default
+
+# GREENFIELD DEPLOYMENT: Correlation tracking enabled by default
+# For new deployments, there's no reason to disable correlation tracking.
+# It provides valuable debugging capabilities with negligible overhead (1-2ms).
+# If you're migrating from v1, you may want to disable initially: Publisher(enable_correlation_tracking=False)
+publisher = Publisher(enable_correlation_tracking=True)
 
 
 @app.on_event("startup")

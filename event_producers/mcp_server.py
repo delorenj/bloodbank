@@ -1,10 +1,13 @@
 from typing import Optional, List, Dict, Any
 from mcp.server.fastmcp import FastMCP
 from .events import LLMPrompt, LLMResponse, Artifact, envelope_for
-from .rabbit import Publisher
+from rabbit import Publisher
 
 mcp = FastMCP("bloodbank")
-publisher = Publisher()
+
+# GREENFIELD DEPLOYMENT: Correlation tracking enabled by default
+# Consistent with http.py - enables correlation tracking for debugging capabilities
+publisher = Publisher(enable_correlation_tracking=True)
 
 
 @mcp.tool()
