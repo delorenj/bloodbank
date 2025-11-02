@@ -17,6 +17,12 @@ dependencies = [
   "redis>=5.0.0",      # Async Redis for correlation tracking
 ]
 
+[project.scripts]
+bb = "event_producers.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["event_producers*", "events*"]
+
 [tool.uvicorn]
 host = "0.0.0.0"
 port = 8682

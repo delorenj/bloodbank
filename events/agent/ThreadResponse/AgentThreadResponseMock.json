@@ -1,0 +1,8 @@
+{
+  "provider": "anthropic",
+  "prompt_id": null,
+  "response": "I'll refactor the event system into domain-based modules. First, I'll create the following structure:\n\nevents/\n├── fireflies/\n├── agent/\n└── core/\n\nEach domain will contain self-contained event modules with their event definitions, mock data, and type definitions.",
+  "model": "claude-sonnet-4",
+  "tokens_used": 1250,
+  "duration_ms": 3500
+}

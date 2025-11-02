@@ -1,0 +1,16 @@
+{
+  "failed_stage": "processing",
+  "error_message": "RAG ingestion failed: Vector store connection timeout",
+  "error_code": "RAG_CONNECTION_TIMEOUT",
+  "transcript_id": "ff-transcript-def456",
+  "media_file": "/path/to/recordings/meeting-2025-10-30.mp3",
+  "timestamp": "2025-10-30T16:15:00Z",
+  "retry_count": 2,
+  "is_retryable": true,
+  "metadata": {
+    "vector_store": "qdrant",
+    "last_successful_chunk": 12,
+    "total_chunks": 28,
+    "error_timestamp": "2025-10-30T16:15:00Z"
+  }
+}
