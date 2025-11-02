@@ -1,7 +1,7 @@
 ---
 name: bloodbank-event-publisher
-description: Complete guide for creating, publishing, and consuming events in the DeLoNET home network's 33GOD agentic developer pipeline. Built on RabbitMQ with strict type safety via Pydantic, async Python (aio-pika), FastAPI, and Redis-backed correlation tracking. This skill is REQUIRED for any work involving the home network event bus.
-version: 2.0.0
+description: Complete guide for creating, publishing, and consuming events in the DeLoNET home network's 33GOD agentic developer pipeline. Built on RabbitMQ with strict type safety via Pydantic, async Python (aio-pika), FastAPI, and Redis-backed correlation tracking. Features modular event architecture with domain-based organization and auto-discovery registry. This skill is REQUIRED for any work involving the home network event bus.
+version: 2.1.0
 ---
 
 # Bloodbank Event Publishing Guide
@@ -423,14 +423,23 @@ else:
 ```
 bloodbank/
 ├── rabbit.py                    # Publisher class with correlation tracking
-├── correlation_tracker.py       # ← NEW: Redis-backed correlation tracking
+├── correlation_tracker.py       # Redis-backed correlation tracking
 ├── config.py                    # Settings via Pydantic (includes Redis config)
-├── pyproject.toml               # Dependencies (now includes redis)
+├── pyproject.toml               # Dependencies (includes redis)
 ├── kubernetes/
 │   └── deploy.yaml              # K8s deployment
 └── event_producers/
     ├── __init__.py
-    ├── events.py                # ← ALL EVENT PAYLOADS (with error events!)
+    ├── events/                  # Modular event package
+    │   ├── __init__.py          # Package exports
+    │   ├── base.py              # Core envelope types (EventEnvelope, Source, etc.)
+    │   ├── registry.py          # Event registry with auto-discovery
+    │   ├── utils.py             # Helper functions (create_envelope)
+    │   └── domains/             # Domain-specific events
+    │       ├── __init__.py      # Domain auto-discovery
+    │       ├── fireflies.py     # Fireflies domain (4 events)
+    │       ├── agent_thread.py  # AgentThread domain (3 events)
+    │       └── github.py        # GitHub domain (1 event)
     ├── cli.py                   # Typer CLI for publishing
     ├── http.py                  # FastAPI HTTP endpoints (with debug endpoints)
     ├── mcp_server.py            # MCP server for agents
@@ -443,13 +452,65 @@ bloodbank/
         └── rag_transcript_consumer.py  # RAG ingestion consumer
 ```
 
-## How to Define New Events
+## Modular Event Architecture
 
-### Step 1: Define Payload Model in `event_producers/events.py`
+Events are organized into domain-specific modules for maintainability and clarity.
+
+### Structure
+
+```
+event_producers/events/
+├── base.py              # Core types: EventEnvelope, Source, AgentContext
+├── registry.py          # Auto-discovery and validation
+├── utils.py             # create_envelope() helper
+└── domains/             # Domain modules
+    ├── fireflies.py     # Fireflies events
+    ├── agent_thread.py  # AgentThread events
+    └── github.py        # GitHub events
+```
+
+### Import Patterns
 
 ```python
+from event_producers.events.base import EventEnvelope, Source, TriggerType
+from event_producers.events.domains.fireflies import FirefliesTranscriptReadyPayload
+from event_producers.events.domains.agent_thread import AgentThreadPrompt
+from event_producers.events.utils import create_envelope
+```
+
+### Event Registry
+
+The registry provides runtime validation and introspection:
+
+```python
+from event_producers.events import get_registry
+
+# Get registry (auto-discovers all domains)
+registry = get_registry()
+
+# Validate event type
+if registry.is_valid_event_type("fireflies.transcript.ready"):
+    payload_type = registry.get_payload_type("fireflies.transcript.ready")
+
+# List domains and events
+domains = registry.list_domains()  # ['agent_thread', 'fireflies', 'github']
+events = registry.list_domain_events("fireflies")  # 4 events
+
+# Get JSON schema
+schema = registry.get_schema("agent.thread.prompt")
+```
+
+## How to Define New Events
+
+### Option 1: Add to Existing Domain
+
+Edit the appropriate domain file in `event_producers/events/domains/`:
+
+```python
+# In event_producers/events/domains/your_domain.py
+
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 
 class YourEventPayload(BaseModel):
@@ -463,49 +524,96 @@ class YourEventPayload(BaseModel):
     # Required fields
     some_id: str
     content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Optional fields
     metadata: Optional[dict] = None
     tags: List[str] = Field(default_factory=list)
 
-    class Config:
-        # Example values for documentation
-        json_schema_extra = {
-            "example": {
-                "some_id": "abc123",
-                "content": "Example content",
-                "timestamp": "2025-10-18T12:00:00Z",
-                "tags": ["example", "documentation"]
-            }
-        }
+# Add to routing keys mapping at bottom of file
+ROUTING_KEYS = {
+    "YourEventPayload": "namespace.entity.action",
+    # ... other events
+}
 ```
 
-### Step 2: Create Envelope Function (Helper)
+### Option 2: Create New Domain Module
+
+**Step 1:** Create new domain file `event_producers/events/domains/new_domain.py`
 
 ```python
-def create_your_event(
-    payload: YourEventPayload,
-    source_host: str,
-    source_app: str,
-    correlation_id: Optional[UUID] = None,
-    agent_context: Optional[AgentContext] = None
-) -> EventEnvelope[YourEventPayload]:
-    """Helper to create properly-formed event envelope"""
-    return EventEnvelope[YourEventPayload](
-        event_id=uuid4(),
-        event_type="namespace.entity.action",
-        timestamp=datetime.now(timezone.utc),
-        version="1.0.0",
-        source=Source(
-            host=source_host,
-            type=TriggerType.MANUAL,  # Adjust as needed
-            app=source_app
-        ),
-        correlation_id=correlation_id,
-        agent_context=agent_context,
-        payload=payload
-    )
+"""
+NewDomain domain events.
+
+Event Types:
+- newdomain.entity.action: Description
+"""
+
+from pydantic import BaseModel, Field
+from datetime import datetime, timezone
+from typing import Optional
+
+class NewDomainEventPayload(BaseModel):
+    """Event payload for new domain."""
+
+    some_id: str
+    content: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# Map payload classes to routing keys
+ROUTING_KEYS = {
+    "NewDomainEventPayload": "newdomain.entity.action",
+}
+```
+
+**Step 2:** Import in `event_producers/events/domains/__init__.py`
+
+```python
+from . import new_domain
+
+__all__ = [
+    "fireflies",
+    "agent_thread",
+    "github",
+    "new_domain",  # <-- Add here
+    "list_available_domains",
+    "list_domain_events",
+]
+```
+
+**Step 3:** Optionally add to main `event_producers/events/__init__.py` for convenience
+
+```python
+from .domains.new_domain import NewDomainEventPayload
+
+__all__ = [
+    # ... existing exports
+    "NewDomainEventPayload",  # <-- Add here
+]
+```
+
+**That's it!** The registry auto-discovers and registers your events.
+
+### Creating Event Envelopes
+
+Use the `create_envelope()` helper from `event_producers.events.utils`:
+
+```python
+from event_producers.events import create_envelope, Source, TriggerType
+from uuid import uuid4
+
+envelope = create_envelope(
+    event_type="namespace.entity.action",
+    payload=your_payload,
+    source=Source(
+        host="workstation",
+        type=TriggerType.MANUAL,
+        app="your-service"
+    ),
+    correlation_ids=[],  # Or [parent_event_id] to link
+    agent_context=None,  # Or AgentContext(...) if agent-triggered
+    event_id=uuid4()     # Or use deterministic ID
+)
 ```
 
 ## How to Publish Events
