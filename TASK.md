@@ -1,131 +1,50 @@
 # TASK
 
-I had a long planning session with my dev team and they produced the following output. Can you integrate it all into this repo?
+## References
 
-@claude_updates/
+### Skills
 
-## Context
+[LEGACY] `./claude_skills/bloodbank_event_publisher/SKILL.md`
+The original skill can be found here.
 
-Perfect! Let me make these changes. First, let me check out your current codebase structure:Got it! I'll create all the updated files in `/home/claude` and you can copy them over. Let me build out the improvements:
+[LEGACY] `./claude_updates/SKILL.md`
+This skill was created after changing correlation IDs to arrays and adding error events.
 
-## 1. First, let's create the deterministic event ID generator and correlation tracker## 2. Now let's create the updated events.py with all improvements## 3. Update rabbit.py to integrate correlation tracking## 4. Update http.py with new correlation tracking## 5. Update config.py to include Redis settings## 6. Update pyproject.toml with Redis dependency## 7. Create the final comprehensive SKILL.md## 8. Create Migration Guide## 9. Create README for the updates package## 10. Create installation script## 11. Create Summary DocumentPerfect! I've built everything you asked for. Here's what I've created:
+[TARGET] `/home/delorenj/.claude/skills/bloodbank-n8n-event-driven-workflows/SKILL.md`
+This is the ACTUAL skill used in Claude's environment. I am taking it upon myself to write it from scratch to ensure it works exactly as intended.
 
-## 📦 Complete Package: `/home/claude/bloodbank_updates/`
+### Code
 
-### 🎯 Core Files (Ready to Deploy)
+`./event_producers/cli.py`
+This is the code for the Bloodbank Event Producer CLI.
 
-1. **`correlation_tracker.py`** - Redis-backed correlation tracking system
-2. **`events.py`** - Updated with:
-   - `correlation_ids: List[UUID]` (was Optional[UUID])
-   - Error event payloads (`.failed` patterns)
-   - Complete Fireflies schemas (full webhook data)
-3. **`rabbit.py`** - Publisher with integrated correlation tracking
-4. **`http.py`** - Updated with debug endpoints + correlation support
-5. **`config.py`** - Added Redis settings
-6. **`pyproject.toml`** - Added `redis>=5.0.0` dependency
+`./event_producers/events.py`
+This is where all the event definitions are currently stored.
 
-### 📚 Documentation
+## Goal
 
-7. **`SUMMARY.md`** ← **START HERE!** Quick overview of everything
-8. **`README.md`** - Complete installation guide
-9. **`SKILL.md`** - Comprehensive v2.0 documentation (production-ready)
-10. **`MIGRATION_v1_to_v2.md`** - Upgrade guide with find/replace patterns
+The [TARGET] skill describes some scenarios that dictate how I want to use the Bloobank CLI. The goal of this task is to implement the Bloodbank Event Producer CLI according to those specifications.
 
-### 🚀 Tooling
+## Requirements
 
-11. **`install.sh`** - Automated installation script (just run it!)
+- [ ] I can run `bloodbank list-events` to see a list of all available events.
+- [ ] I can run `bb list-commands` to see a list of all available commands (subset of mutable events).
+- [ ] I can run `bloodbank publish someEventName [--mock|-m]` to publish an event using the mock data defined in the `./someEventName/mock.json` file.
+- [ ] I can run `bloodbank show someEventName` to see the full event definition for `someEventName`.
+- [ ] I can run `bloodbank help` to see a help menu broken down by 'Events', 'Commands', 'Publishing Events', and 'Adding Events', 'Extending Types' (content can be sparse, just need the structure).
+- [ ] The CLI should provide helpful error messages when an invalid event name or command is provided
+- [ ] All events should derive from `BaseEvent`
+- [ ] All commands should derive from `Command` (which itself derives from BaseEvent)
+- [ ] Events and commands should be organized by domain (e.g. fireflies, github, llm, task, etc)
+- [ ] Events should be organized into folders called Event Modules. Each EventModule should be self-contained and include its own event definitions, mock data, type definitions, factory classes, and builder classes.
 
-## 🎁 What You Got (Your Questions Answered)
-
-| Your Question             | My Answer                          | Implementation                                       |
-| ------------------------- | ---------------------------------- | ---------------------------------------------------- |
-| Event versioning?         | **Simple version bump**            | `version: "1.0.0"` field in envelope                 |
-| Redis for correlation?    | **Full implementation**            | `correlation_tracker.py` + integrated into Publisher |
-| Error events?             | **Standardized `.failed` pattern** | All error payloads in `events.py`                    |
-| Idempotent event IDs?     | **Deterministic UUIDs**            | `publisher.generate_event_id()`                      |
-| Multiple correlation IDs? | **List support**                   | `correlation_ids: List[UUID]`                        |
-
-## 🚀 Quick Start (30 Seconds)
-
-```bash
-# 1. Start Redis (if not running)
-brew services start redis
-
-# 2. Run automated installer
-cd /home/claude/bloodbank_updates
-./install.sh
-
-# That's it! The script:
-# - Backs up your code
-# - Copies all files
-# - Installs dependencies
-# - Updates .env
-# - Runs tests
-```
-
-## 🌟 Coolest Features
-
-### Automatic Correlation Tracking
-
-```python
-# Just publish with parent_event_ids - Redis tracks everything!
-await publisher.publish(
-    routing_key="fireflies.transcript.ready",
-    body=envelope.model_dump(),
-    event_id=ready_id,
-    parent_event_ids=[upload_id]  # ← Auto-tracked in Redis!
-)
-
-# Query the chain anytime
-chain = publisher.get_correlation_chain(ready_id, "ancestors")
-```
-
-### Debug Endpoints
-
-```bash
-# View full correlation data
-curl http://localhost:8682/debug/correlation/{event_id}
-
-# Get ancestor/descendant chains
-curl http://localhost:8682/debug/correlation/{event_id}/chain?direction=ancestors
-```
-
-### Idempotent Events
-
-```python
-# Same inputs = same UUID (webhook retries handled!)
-event_id = publisher.generate_event_id(
-    "fireflies.transcript.upload",
-    meeting_id="abc123"
-)
-```
-
-## 📖 Read These in Order
-
-1. **`SUMMARY.md`** (this file) - Overview
-2. **`README.md`** - Installation instructions
-3. **`SKILL.md`** - Complete v2.0 documentation
-4. **`MIGRATION_v1_to_v2.md`** - If you have existing v1.0 code
-
-## 🎯 Your Project Path
-
-The installer will copy files to:
+Example folder structure:
 
 ```
-~/code/projects/33GOD/bloodbank/
-├── correlation_tracker.py        ← NEW
-├── rabbit.py                     ← UPDATED
-├── config.py                     ← UPDATED
-├── pyproject.toml                ← UPDATED
-├── event_producers/
-│   ├── events.py                 ← UPDATED
-│   └── http.py                   ← UPDATED
-├── claude_skills/bloodbank_event_publisher/
-│   └── SKILL.md                  ← UPDATED
-└── docs/
-    └── MIGRATION_v1_to_v2.md     ← NEW
+./events/
+|-- fireflies/
+|   |-- AudioUploaded/
+|       |-- FirefliesAudioUploadedEvent.py
+|       |-- FirefliesAudioUploadedMock.json
+|       |-- FirefliesAudioUploadedType.py
 ```
-
-Everything is written at Staff Engineer level (no hand-holding), follows your tool preferences (zsh, mise, uv, etc.), and is production-ready with comprehensive error handling.
-
-**Want to install?** Just run `./install.sh` and you're done! 🎉

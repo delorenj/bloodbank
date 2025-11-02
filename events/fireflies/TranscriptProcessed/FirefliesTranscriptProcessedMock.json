@@ -1,0 +1,17 @@
+{
+  "transcript_id": "ff-transcript-abc123",
+  "rag_document_id": "rag-doc-xyz789",
+  "title": "Q4 Product Roadmap Discussion",
+  "ingestion_timestamp": "2025-10-30T15:50:00Z",
+  "sentence_count": 142,
+  "speaker_count": 2,
+  "duration_minutes": 45.5,
+  "vector_store": "qdrant",
+  "chunk_count": 28,
+  "embedding_model": "text-embedding-3-large",
+  "metadata": {
+    "collection_name": "fireflies_transcripts",
+    "processing_duration_seconds": 12.3,
+    "chunks_per_minute": 0.62
+  }
+}

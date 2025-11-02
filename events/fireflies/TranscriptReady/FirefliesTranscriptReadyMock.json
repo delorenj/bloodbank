@@ -1,0 +1,77 @@
+{
+  "id": "ff-transcript-abc123",
+  "title": "Q4 Product Roadmap Discussion",
+  "date": "2025-10-30T15:00:00Z",
+  "duration": 45.5,
+  "transcript_url": "https://app.fireflies.ai/view/ff-transcript-abc123",
+  "audio_url": "https://fireflies-transcripts.s3.amazonaws.com/abc123.mp3",
+  "video_url": null,
+  "sentences": [
+    {
+      "index": 0,
+      "speaker_name": "Jarad DeLorenzo",
+      "speaker_id": 1,
+      "raw_text": "Alright everyone, let's dive into our Q4 roadmap priorities.",
+      "text": "Alright everyone, let's dive into our Q4 roadmap priorities.",
+      "start_time": 0.0,
+      "end_time": 3.5,
+      "ai_filters": {
+        "text_cleanup": "Alright everyone, let's dive into our Q4 roadmap priorities.",
+        "task": "Review Q4 roadmap",
+        "pricing": null,
+        "metric": null,
+        "question": null,
+        "date_and_time": "Q4",
+        "sentiment": "neutral"
+      }
+    },
+    {
+      "index": 1,
+      "speaker_name": "Sarah Chen",
+      "speaker_id": 2,
+      "raw_text": "We need to prioritize the agent orchestration features for 33GOD.",
+      "text": "We need to prioritize the agent orchestration features for 33GOD.",
+      "start_time": 3.5,
+      "end_time": 7.2,
+      "ai_filters": {
+        "text_cleanup": "We need to prioritize the agent orchestration features for 33GOD.",
+        "task": "Prioritize agent orchestration features",
+        "pricing": null,
+        "metric": null,
+        "question": null,
+        "date_and_time": null,
+        "sentiment": "positive"
+      }
+    }
+  ],
+  "summary": "The team discussed Q4 product roadmap priorities, focusing on agent orchestration features for the 33GOD ecosystem and event-driven architecture improvements.",
+  "participants": [
+    {
+      "name": "Jarad DeLorenzo",
+      "email": "jarad@33god.com"
+    },
+    {
+      "name": "Sarah Chen",
+      "email": "sarah@33god.com"
+    }
+  ],
+  "speakers": ["Jarad DeLorenzo", "Sarah Chen"],
+  "user": {
+    "user_id": "user-123",
+    "email": "jarad@33god.com",
+    "name": "Jarad DeLorenzo",
+    "num_transcripts": 42,
+    "minutes_consumed": 1250.5,
+    "is_admin": true
+  },
+  "host_email": "jarad@33god.com",
+  "organizer_email": "jarad@33god.com",
+  "privacy": "private",
+  "meeting_link": "https://meet.google.com/xyz-abc-def",
+  "calendar_id": "primary",
+  "calendar_type": "google",
+  "raw_meeting_info": {
+    "platform": "google_meet",
+    "recording_source": "automatic"
+  }
+}
