@@ -49,4 +49,3 @@ sdist/
 var/
 wheels/
 *.egg
-*.egg-info/
