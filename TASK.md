@@ -23,7 +23,7 @@ This is where all the event definitions are currently stored.
 
 ## Goal
 
-The [TARGET] skill describes some scenarios that dictate how I want to use the Bloobank CLI. The goal of this task is to implement the Bloodbank Event Producer CLI according to those specifications.
+The [TARGET] skill describes some scenarios that dictate how I want to use the Bloodbank CLI. The goal of this task is to implement the Bloodbank Event Producer CLI according to those specifications.
 
 ## Requirements
 

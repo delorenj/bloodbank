@@ -3,11 +3,8 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import importlib
-import inspect
 from rich.console import Console
-from rich.table import Table
 from rich.syntax import Syntax
-from rich import print as rprint
 
 # Fix Python path for installed tool to find local modules
 if __name__ == "__main__":
@@ -16,12 +13,6 @@ if __name__ == "__main__":
     project_root = current_file.parent.parent
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
-
-# Note: config import is optional for core CLI functionality
-try:
-    from .config import settings
-except ImportError:
-    settings = None
 
 app = typer.Typer(help="bloodbank CLI - Event-driven system for 33GOD ecosystem")
 console = Console()
