@@ -2,11 +2,9 @@
 Base classes for all Bloodbank events.
 """
 
-from pydantic import BaseModel, Field
-from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
-from uuid import UUID, uuid4
-from enum import Enum
+from pydantic import BaseModel
+from datetime import datetime
+from uuid import UUID
 
 
 class BaseEvent(BaseModel):
