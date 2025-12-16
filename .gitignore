@@ -1,3 +1,9 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 
 # Claude Flow generated files
 .claude/settings.local.json
