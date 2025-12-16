@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 
 [[package]]
@@ -72,7 +72,7 @@ wheels = [
 [[package]]
 name = "bloodbank"
 version = "0.2.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "aio-pika" },
     { name = "fastapi" },
@@ -93,13 +93,13 @@ requires-dist = [
     { name = "aio-pika", specifier = ">=9" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "mcp", extras = ["server"] },
+    { name = "mcp" },
     { name = "orjson" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "python-dotenv" },
     { name = "redis", specifier = ">=5.0.0" },
-    { name = "typer", extras = ["all"] },
+    { name = "typer" },
     { name = "uvicorn", extras = ["standard"] },
     { name = "watchfiles" },
 ]
