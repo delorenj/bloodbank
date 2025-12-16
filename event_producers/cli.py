@@ -8,6 +8,15 @@ from rich.console import Console
 from rich.table import Table
 from rich.syntax import Syntax
 from rich import print as rprint
+
+# Fix Python path for installed tool to find local modules
+if __name__ == "__main__":
+    # When running as installed script, add project root to path
+    current_file = Path(__file__).resolve()
+    project_root = current_file.parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
 # Note: config import is optional for core CLI functionality
 try:
     from .config import settings

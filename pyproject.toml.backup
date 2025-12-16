@@ -1,0 +1,28 @@
+[project]
+name = "bloodbank"
+version = "0.2.0"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "pydantic>=2",
+  "pydantic-settings>=2.0",  # For BaseSettings
+  "aio-pika>=9",
+  "orjson",
+  "typer[all]",
+  "watchfiles",        # or watchdog, your call
+  "httpx",
+  "python-dotenv",
+  "mcp[server]",       # official MCP SDK (includes FastMCP)
+  "redis>=5.0.0",      # Async Redis for correlation tracking
+]
+
+[project.scripts]
+bb = "event_producers.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["event_producers*", "events*"]
+
+[tool.uvicorn]
+host = "0.0.0.0"
+port = 8682
