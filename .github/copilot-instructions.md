@@ -134,12 +134,22 @@ ROUTING_KEYS = {
    await publisher.publish("github.pr.created", envelope.model_dump_json())
    ```
 
-3. **List Available Events**:
-   ```bash
-   python -m event_producers.cli list-events
-   python -m event_producers.cli list-commands  # Command events only
-   python -m event_producers.cli show github.pr.created  # Show schema
+3. **Discover Available Events**:
+   ```python
+   # Use the event registry programmatically
+   from event_producers.events.registry import get_registry
+   
+   registry = get_registry()
+   domains = registry.list_domains()
+   for domain in domains:
+       events = registry.list_domain_events(domain)
+       print(f"{domain}: {events}")
+   
+   # Get schema for specific event
+   schema = registry.get_schema("github.pr.created")
    ```
+   
+   Note: CLI commands like `bloodbank list-events` are planned but not yet implemented.
 
 ### Running Services
 
