@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 import logging
 
-from .events import AgentThreadPrompt, AgentThreadResponse
+from .events.domains.agent_thread import AgentThreadPrompt, AgentThreadResponse
 from rabbit import Publisher
 from config import settings
 

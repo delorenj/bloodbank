@@ -31,14 +31,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from correlation_tracker import CorrelationTracker, link_events, generate_idempotent_id
 from rabbit import Publisher
-from event_producers.events import (
-    EventEnvelope,
-    Source,
+from event_producers.events.base import EventEnvelope, Source
+from event_producers.events.domains.fireflies import (
     FirefliesTranscriptReadyPayload,
-    Sentence,
+    TranscriptSentence,
     AIFilters,
     FirefliesUser,
-    MeetingInfo,
+    MeetingParticipant,
 )
 
 
@@ -71,43 +70,38 @@ class EventFactory:
         """Create a test Fireflies transcript payload."""
         return FirefliesTranscriptReadyPayload(
             id=meeting_id,
+            title=title,
+            date=datetime.fromtimestamp(1234567890),
+            duration=120.0,
+            transcript_url="https://example.com/transcript",
             sentences=[
-                Sentence(
+                TranscriptSentence(
                     index=0,
                     speaker_name="John Doe",
                     speaker_id=1,
                     raw_text="Hello world",
+                    text="Hello world",
                     start_time=0.0,
                     end_time=2.5,
-                    ai_filters=AIFilters(),
-                    text="Hello world",
+                    ai_filters=AIFilters(
+                        text_cleanup="Hello world",
+                        sentiment="neutral"
+                    ),
                 )
             ],
-            title=title,
-            host_email="host@example.com",
-            organizer_email="organizer@example.com",
             user=FirefliesUser(
                 user_id="user-123",
                 email="user@example.com",
-                integrations=[],
-                user_groups=[],
                 name="Test User",
                 num_transcripts=1,
-                recent_transcript="",
-                recent_meeting="",
                 minutes_consumed=0.0,
                 is_admin=False,
             ),
-            fireflies_users=[],
+            host_email="host@example.com",
+            organizer_email="organizer@example.com",
             privacy="private",
             participants=[],
-            date=1234567890,
-            duration=120.0,
-            meeting_info=MeetingInfo(silent_meeting=False),
-            transcript_url="https://example.com/transcript",
-            dateString="2023-01-01T00:00:00Z",
-            meeting_attendees=[],
-            speakers=[],
+            speakers=["John Doe"],
         )
 
     @staticmethod
