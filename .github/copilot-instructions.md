@@ -148,8 +148,6 @@ ROUTING_KEYS = {
    # Get schema for specific event
    schema = registry.get_schema("github.pr.created")
    ```
-   
-   Note: CLI commands like `bloodbank list-events` are planned but not yet implemented.
 
 ### Running Services
 
