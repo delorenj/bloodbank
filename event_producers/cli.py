@@ -97,7 +97,7 @@ def discover_events() -> List[Dict[str, Any]]:
                     "module_path": module_path,
                     "mock_file": mock_file_path,
                 })
-            except Exception as e:
+            except (ImportError, AttributeError) as e:
                 console.print(f"[yellow]Warning: Could not load {event_class_name}: {e}[/yellow]")
                 continue
 
