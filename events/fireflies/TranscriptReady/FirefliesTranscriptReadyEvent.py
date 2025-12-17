@@ -75,7 +75,7 @@ class FirefliesTranscriptReadyEvent(BaseEvent):
     """
 
     # Core identifiers
-    id: str = Field(..., description="Fireflies meeting/transcript ID")
+    transcript_id: str = Field(..., alias="id", description="Fireflies meeting/transcript ID")
     title: str
     date: datetime  # Meeting date/time
     duration: float  # Duration in minutes
