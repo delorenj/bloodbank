@@ -3,7 +3,7 @@
   "model": "claude-sonnet-4",
   "prompt": "Refactor the event system to use domain-based modules",
   "project": "bloodbank",
-  "working_dir": "/home/delorenj/code/projects/33GOD/bloodbank/feat-list-events",
+  "working_dir": "./bloodbank",
   "domain": "architecture",
   "tags": ["refactoring", "event-system", "architecture"]
 }

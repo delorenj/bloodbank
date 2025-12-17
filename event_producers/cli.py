@@ -10,12 +10,11 @@ from rich.syntax import Syntax
 from rich import print as rprint
 
 # Fix Python path for installed tool to find local modules
-if __name__ == "__main__":
-    # When running as installed script, add project root to path
-    current_file = Path(__file__).resolve()
-    project_root = current_file.parent.parent
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
+# When running as installed script, add project root to path
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 # Note: config import is optional for core CLI functionality
 try:
@@ -68,6 +67,9 @@ def discover_events() -> List[Dict[str, Any]]:
             event_files = list(event_module_dir.glob("*Event.py"))
             if not event_files:
                 continue
+
+            if len(event_files) > 1:
+                console.print(f"[yellow]Warning: Multiple event files found in {event_module_dir}, using first match[/yellow]")
 
             event_file = event_files[0]
             event_class_name = event_file.stem
