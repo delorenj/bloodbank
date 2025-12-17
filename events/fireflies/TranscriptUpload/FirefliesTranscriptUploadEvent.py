@@ -19,7 +19,7 @@ class FirefliesTranscriptUploadEvent(BaseEvent):
     Generate deterministic event_id using:
         tracker.generate_event_id(
             "fireflies.transcript.upload",
-            unique_key=f"{user_id}|{file_path}"
+            unique_key=f"{user_id}|{media_file}"
         )
     """
 

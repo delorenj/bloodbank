@@ -27,11 +27,9 @@ The [TARGET] skill describes some scenarios that dictate how I want to use the B
 
 ## Requirements
 
-- [ ] I can run `bloodbank list-events` to see a list of all available events.
-- [ ] I can run `bb list-commands` to see a list of all available commands (subset of mutable events).
-- [ ] I can run `bloodbank publish someEventName [--mock|-m]` to publish an event using the mock data defined in the `./someEventName/mock.json` file.
-- [ ] I can run `bloodbank show someEventName` to see the full event definition for `someEventName`.
-- [ ] I can run `bloodbank help` to see a help menu broken down by 'Events', 'Commands', 'Publishing Events', and 'Adding Events', 'Extending Types' (content can be sparse, just need the structure).
+[project.scripts]
+bb = "event_producers.cli:app"
+bloodbank = "event_producers.cli:app"
 - [ ] The CLI should provide helpful error messages when an invalid event name or command is provided
 - [ ] All events should derive from `BaseEvent`
 - [ ] All commands should derive from `Command` (which itself derives from BaseEvent)
