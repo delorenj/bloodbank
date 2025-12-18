@@ -33,16 +33,8 @@ async def publish_llm_prompt(
         tools=tools or [],
         metadata=metadata or {},
     )
-    source = create_source(
-        host="bloodbank",
-        trigger_type="manual",
-        app="mcp"
-    )
-    env = create_envelope(
-        "llm.prompt",
-        ev,
-        source=source
-    )
+    source = create_source(host="bloodbank", trigger_type="manual", app="mcp")
+    env = create_envelope("llm.prompt", ev, source=source)
     await publisher.publish("llm.prompt", env.model_dump(), message_id=env.event_id)
     return {"event_id": env.event_id}
 
@@ -66,16 +58,12 @@ async def publish_llm_response(
         usage=usage,
         metadata=metadata or {},
     )
-    source = create_source(
-        host="bloodbank",
-        trigger_type="manual",
-        app="mcp"
-    )
+    source = create_source(host="bloodbank", trigger_type="manual", app="mcp")
     env = create_envelope(
-        "llm.response", 
-        ev, 
+        "llm.response",
+        ev,
         source=source,
-        correlation_ids=[prompt_id] if prompt_id else None
+        correlation_ids=[prompt_id] if prompt_id else None,
     )
     await publisher.publish(
         "llm.response",
@@ -101,7 +89,9 @@ async def publish_artifact(
     )
     source = create_source(host="bloodbank", trigger_type="manual", app="mcp")
     env = create_envelope(f"artifact.{action}", ev, source)
-    await publisher.publish(f"artifact.{action}", env.model_dump(), message_id=env.event_id)
+    await publisher.publish(
+        f"artifact.{action}", env.model_dump(), message_id=env.event_id
+    )
     return {"event_id": env.event_id}
 
 

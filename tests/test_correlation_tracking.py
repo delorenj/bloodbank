@@ -17,8 +17,8 @@ import pytest
 import asyncio
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
-from typing import Dict, Any, List
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, List
+from unittest.mock import AsyncMock, patch
 import fakeredis.aioredis
 import orjson
 
@@ -31,13 +31,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from correlation_tracker import CorrelationTracker, link_events, generate_idempotent_id
 from rabbit import Publisher
-from event_producers.events.base import EventEnvelope, Source
+from event_producers.events.base import EventEnvelope, Source, TriggerType
 from event_producers.events.domains.fireflies import (
     FirefliesTranscriptReadyPayload,
     TranscriptSentence,
     AIFilters,
     FirefliesUser,
-    MeetingParticipant,
 )
 
 
@@ -52,14 +51,15 @@ class EventFactory:
     @staticmethod
     def create_source(
         component: str = "test-component",
-        host_id: str = "test-host-123",
+        host: str = "test-host-123",
         session_id: str = "test-session-456",
     ) -> Source:
         """Create a test Source object."""
         return Source(
-            component=component,
-            host_id=host_id,
-            session_id=session_id,
+            host=host,
+            type=TriggerType.MANUAL,
+            app=component,
+            meta={"session_id": session_id},
         )
 
     @staticmethod
@@ -84,8 +84,7 @@ class EventFactory:
                     start_time=0.0,
                     end_time=2.5,
                     ai_filters=AIFilters(
-                        text_cleanup="Hello world",
-                        sentiment="neutral"
+                        text_cleanup="Hello world", sentiment="neutral"
                     ),
                 )
             ],
@@ -256,12 +255,16 @@ class TestCorrelationTrackerInitialization:
     @pytest.mark.asyncio
     async def test_connection_failure_graceful_degradation(self):
         """Test graceful degradation when Redis is unavailable."""
-        tracker = CorrelationTracker(redis_host="nonexistent-host", connection_timeout=0.1)
+        tracker = CorrelationTracker(
+            redis_host="nonexistent-host", connection_timeout=0.1
+        )
 
         # Mock redis.from_url to raise an error
         async def mock_from_url(*args, **kwargs):
             mock_redis = AsyncMock()
-            mock_redis.ping = AsyncMock(side_effect=ConnectionError("Connection refused"))
+            mock_redis.ping = AsyncMock(
+                side_effect=ConnectionError("Connection refused")
+            )
             return mock_redis
 
         with patch("correlation_tracker.redis.from_url", side_effect=mock_from_url):
@@ -433,7 +436,9 @@ class TestAddingCorrelations:
         assert str(child_id) in children
 
     @pytest.mark.asyncio
-    async def test_add_multiple_parent_correlation(self, correlation_tracker, fake_redis):
+    async def test_add_multiple_parent_correlation(
+        self, correlation_tracker, fake_redis
+    ):
         """Test adding a correlation with multiple parents."""
         parent_id_1 = uuid4()
         parent_id_2 = uuid4()
@@ -524,7 +529,9 @@ class TestAddingCorrelations:
         )
 
     @pytest.mark.asyncio
-    async def test_link_events_convenience_function(self, correlation_tracker, fake_redis):
+    async def test_link_events_convenience_function(
+        self, correlation_tracker, fake_redis
+    ):
         """Test the link_events convenience function."""
         parent_id = uuid4()
         child_id = uuid4()
@@ -645,7 +652,9 @@ class TestQueryingCorrelationChains:
         await correlation_tracker.add_correlation(event_d, [event_c])
 
         # Query ancestors from D
-        ancestors = await correlation_tracker.get_correlation_chain(event_d, "ancestors")
+        ancestors = await correlation_tracker.get_correlation_chain(
+            event_d, "ancestors"
+        )
 
         # Should include A, B, C, D (in topological order)
         assert len(ancestors) == 4
@@ -668,7 +677,9 @@ class TestQueryingCorrelationChains:
         await correlation_tracker.add_correlation(event_d, [event_c])
 
         # Query descendants from A
-        descendants = await correlation_tracker.get_correlation_chain(event_a, "descendants")
+        descendants = await correlation_tracker.get_correlation_chain(
+            event_a, "descendants"
+        )
 
         # Should include A, B, C, D
         assert len(descendants) == 4
@@ -690,7 +701,9 @@ class TestQueryingCorrelationChains:
         await correlation_tracker.add_correlation(event_d, [event_b, event_c])
 
         # Query ancestors from D
-        ancestors = await correlation_tracker.get_correlation_chain(event_d, "ancestors")
+        ancestors = await correlation_tracker.get_correlation_chain(
+            event_d, "ancestors"
+        )
 
         # Should include A, B, C, D
         assert len(ancestors) == 4
@@ -700,7 +713,9 @@ class TestQueryingCorrelationChains:
         assert event_d in ancestors
 
     @pytest.mark.asyncio
-    async def test_get_correlation_chain_descendants_branching(self, correlation_tracker):
+    async def test_get_correlation_chain_descendants_branching(
+        self, correlation_tracker
+    ):
         """Test descendant chain with branching: A -> B, A -> C."""
         event_a = uuid4()
         event_b = uuid4()
@@ -711,7 +726,9 @@ class TestQueryingCorrelationChains:
         await correlation_tracker.add_correlation(event_c, [event_a])
 
         # Query descendants from A
-        descendants = await correlation_tracker.get_correlation_chain(event_a, "descendants")
+        descendants = await correlation_tracker.get_correlation_chain(
+            event_a, "descendants"
+        )
 
         # Should include A, B, C
         assert len(descendants) == 3
@@ -741,8 +758,12 @@ class TestQueryingCorrelationChains:
         """Test getting chain for event with no correlations."""
         event_id = uuid4()
 
-        ancestors = await correlation_tracker.get_correlation_chain(event_id, "ancestors")
-        descendants = await correlation_tracker.get_correlation_chain(event_id, "descendants")
+        ancestors = await correlation_tracker.get_correlation_chain(
+            event_id, "ancestors"
+        )
+        descendants = await correlation_tracker.get_correlation_chain(
+            event_id, "descendants"
+        )
 
         assert ancestors == []
         assert descendants == []
@@ -785,7 +806,9 @@ class TestGracefulDegradation:
         assert debug["children"] == []
 
     @pytest.mark.asyncio
-    async def test_operations_after_redis_failure(self, correlation_tracker, fake_redis):
+    async def test_operations_after_redis_failure(
+        self, correlation_tracker, fake_redis
+    ):
         """Test operations continue gracefully after Redis fails."""
         parent_id = uuid4()
         child_id = uuid4()
@@ -838,14 +861,18 @@ class TestPublisherIntegration:
     """Test Publisher integration with correlation tracking enabled/disabled."""
 
     @pytest.mark.asyncio
-    async def test_publisher_without_tracking_initialization(self, publisher_without_tracking):
+    async def test_publisher_without_tracking_initialization(
+        self, publisher_without_tracking
+    ):
         """Test Publisher initializes correctly without correlation tracking."""
         assert publisher_without_tracking.enable_correlation_tracking is False
         assert publisher_without_tracking.tracker is None
         assert publisher_without_tracking._started is True
 
     @pytest.mark.asyncio
-    async def test_publisher_with_tracking_initialization(self, publisher_with_tracking):
+    async def test_publisher_with_tracking_initialization(
+        self, publisher_with_tracking
+    ):
         """Test Publisher initializes correctly with correlation tracking."""
         assert publisher_with_tracking.enable_correlation_tracking is True
         assert publisher_with_tracking.tracker is not None
@@ -966,7 +993,9 @@ class TestPublisherIntegration:
         assert isinstance(event_id_1, UUID)
 
     @pytest.mark.asyncio
-    async def test_generate_event_id_without_tracking_raises(self, publisher_without_tracking):
+    async def test_generate_event_id_without_tracking_raises(
+        self, publisher_without_tracking
+    ):
         """Test that generate_event_id raises when tracking disabled."""
         with pytest.raises(RuntimeError, match="Correlation tracking is disabled"):
             publisher_without_tracking.generate_event_id(
@@ -986,7 +1015,9 @@ class TestPublisherIntegration:
         await publisher_with_tracking.tracker.add_correlation(event_c, [event_b])
 
         # Query via Publisher
-        chain = await publisher_with_tracking.get_correlation_chain(event_c, "ancestors")
+        chain = await publisher_with_tracking.get_correlation_chain(
+            event_c, "ancestors"
+        )
 
         assert len(chain) == 3
         assert event_a in chain
@@ -1048,8 +1079,8 @@ class TestPublisherIntegration:
         )
 
         # Verify metadata was stored
-        stored_metadata = await publisher_with_tracking.tracker.get_correlation_metadata(
-            child_id
+        stored_metadata = (
+            await publisher_with_tracking.tracker.get_correlation_metadata(child_id)
         )
         assert stored_metadata == metadata
 
@@ -1146,7 +1177,9 @@ class TestDebugEndpoints:
         assert debug["metadata"] == {"test": "data"}
 
     @pytest.mark.asyncio
-    async def test_debug_correlation_without_tracking_raises(self, publisher_without_tracking):
+    async def test_debug_correlation_without_tracking_raises(
+        self, publisher_without_tracking
+    ):
         """Test that debug_correlation raises when tracking disabled."""
         with pytest.raises(RuntimeError, match="Correlation tracking is disabled"):
             await publisher_without_tracking.debug_correlation(uuid4())
@@ -1166,7 +1199,9 @@ class TestDebugEndpoints:
             child_id, [parent_id], metadata=metadata
         )
 
-        retrieved_metadata = await correlation_tracker.get_correlation_metadata(child_id)
+        retrieved_metadata = await correlation_tracker.get_correlation_metadata(
+            child_id
+        )
 
         assert retrieved_metadata == metadata
 

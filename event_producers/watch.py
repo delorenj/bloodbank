@@ -1,5 +1,8 @@
 from watchfiles import awatch
-import asyncio, httpx, os, pathlib
+import asyncio
+import httpx
+import os
+import pathlib
 
 
 async def run_watch(path: str):

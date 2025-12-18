@@ -1,6 +1,5 @@
-from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
-from typing import Optional
 from uuid import UUID
 import logging
 
@@ -37,10 +36,10 @@ async def healthz():
 @app.post("/events/agent/thread/prompt")
 async def publish_prompt(ev: AgentThreadPrompt, request: Request):
     client_host = request.client.host if request.client else "unknown"
-    env = create_http_envelope(
-        "agent.thread.prompt", ev, client_host
+    env = create_http_envelope("agent.thread.prompt", ev, client_host)
+    await publisher.publish(
+        "agent.thread.prompt", env.model_dump(), message_id=env.event_id
     )
-    await publisher.publish("agent.thread.prompt", env.model_dump(), message_id=env.event_id)
     return JSONResponse(env.model_dump())
 
 
@@ -48,10 +47,10 @@ async def publish_prompt(ev: AgentThreadPrompt, request: Request):
 async def publish_response(ev: AgentThreadResponse, request: Request):
     client_host = request.client.host if request.client else "unknown"
     env = create_http_envelope(
-        "agent.thread.response", 
-        ev, 
+        "agent.thread.response",
+        ev,
         client_host,
-        correlation_ids=[ev.prompt_id] if ev.prompt_id else None
+        correlation_ids=[ev.prompt_id] if ev.prompt_id else None,
     )
     await publisher.publish(
         "agent.thread.response",

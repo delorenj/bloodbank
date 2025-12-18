@@ -9,13 +9,11 @@ import json
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
-import sys
 import time
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -25,13 +23,13 @@ class TranscriptRAGConsumer:
 
     def __init__(
         self,
-        rabbitmq_host: str = 'localhost',
+        rabbitmq_host: str = "localhost",
         rabbitmq_port: int = 5672,
-        rabbitmq_user: str = 'guest',
-        rabbitmq_password: str = 'guest',
-        exchange_name: str = 'fireflies.events',
-        queue_name: str = 'transcripts.rag.ingestion',
-        routing_key: str = 'fireflies.transcript.completed'
+        rabbitmq_user: str = "guest",
+        rabbitmq_password: str = "guest",
+        exchange_name: str = "fireflies.events",
+        queue_name: str = "transcripts.rag.ingestion",
+        routing_key: str = "fireflies.transcript.completed",
     ):
         self.rabbitmq_host = rabbitmq_host
         self.rabbitmq_port = rabbitmq_port
@@ -50,8 +48,7 @@ class TranscriptRAGConsumer:
         """Establish connection to RabbitMQ"""
         try:
             credentials = pika.PlainCredentials(
-                self.rabbitmq_user,
-                self.rabbitmq_password
+                self.rabbitmq_user, self.rabbitmq_password
             )
 
             parameters = pika.ConnectionParameters(
@@ -59,7 +56,7 @@ class TranscriptRAGConsumer:
                 port=self.rabbitmq_port,
                 credentials=credentials,
                 heartbeat=600,
-                blocked_connection_timeout=300
+                blocked_connection_timeout=300,
             )
 
             self.connection = pika.BlockingConnection(parameters)
@@ -67,9 +64,7 @@ class TranscriptRAGConsumer:
 
             # Declare exchange (idempotent)
             self.channel.exchange_declare(
-                exchange=self.exchange_name,
-                exchange_type='topic',
-                durable=True
+                exchange=self.exchange_name, exchange_type="topic", durable=True
             )
 
             # Declare queue with dead-letter configuration
@@ -77,25 +72,29 @@ class TranscriptRAGConsumer:
                 queue=self.queue_name,
                 durable=True,
                 arguments={
-                    'x-message-ttl': 86400000,  # 24 hours
-                    'x-dead-letter-exchange': f'{self.exchange_name}.dlx',
-                    'x-dead-letter-routing-key': 'transcript.failed'
-                }
+                    "x-message-ttl": 86400000,  # 24 hours
+                    "x-dead-letter-exchange": f"{self.exchange_name}.dlx",
+                    "x-dead-letter-routing-key": "transcript.failed",
+                },
             )
 
             # Bind queue to exchange
             self.channel.queue_bind(
                 queue=self.queue_name,
                 exchange=self.exchange_name,
-                routing_key=self.routing_key
+                routing_key=self.routing_key,
             )
 
             # Set QoS - prefetch 1 message at a time
             self.channel.basic_qos(prefetch_count=1)
 
-            logger.info(f"Connected to RabbitMQ at {self.rabbitmq_host}:{self.rabbitmq_port}")
+            logger.info(
+                f"Connected to RabbitMQ at {self.rabbitmq_host}:{self.rabbitmq_port}"
+            )
             logger.info(f"Listening on queue: {self.queue_name}")
-            logger.info(f"Exchange: {self.exchange_name}, Routing key: {self.routing_key}")
+            logger.info(
+                f"Exchange: {self.exchange_name}, Routing key: {self.routing_key}"
+            )
 
             return True
 
@@ -114,10 +113,10 @@ class TranscriptRAGConsumer:
             bool: True if processing succeeded, False otherwise
         """
         try:
-            meeting_id = event_data.get('meetingId')
-            transcript = event_data.get('transcript', {})
-            transcript_url = event_data.get('transcriptUrl')
-            metadata = event_data.get('metadata', {})
+            meeting_id = event_data.get("meetingId")
+            transcript = event_data.get("transcript", {})
+            transcript_url = event_data.get("transcriptUrl")
+            metadata = event_data.get("metadata", {})
 
             logger.info(f"Processing transcript for meeting: {meeting_id}")
             logger.info(f"Transcript URL: {transcript_url}")
@@ -132,23 +131,23 @@ class TranscriptRAGConsumer:
 
             # Prepare document for RAG ingestion
             document = {
-                'id': meeting_id,
-                'title': transcript.get('title', f"Transcript {meeting_id}"),
-                'content': transcript_text,
-                'metadata': {
-                    'source': 'fireflies',
-                    'meeting_id': meeting_id,
-                    'date': transcript.get('date'),
-                    'duration': transcript.get('duration'),
-                    'participants': transcript.get('participants', []),
-                    'summary': transcript.get('summary'),
-                    'url': transcript_url,
-                    'audio_url': event_data.get('audioUrl'),
-                    'video_url': event_data.get('videoUrl'),
-                    'ingested_at': datetime.utcnow().isoformat(),
-                    'workflow_id': metadata.get('workflowId'),
-                    'execution_id': metadata.get('executionId')
-                }
+                "id": meeting_id,
+                "title": transcript.get("title", f"Transcript {meeting_id}"),
+                "content": transcript_text,
+                "metadata": {
+                    "source": "fireflies",
+                    "meeting_id": meeting_id,
+                    "date": transcript.get("date"),
+                    "duration": transcript.get("duration"),
+                    "participants": transcript.get("participants", []),
+                    "summary": transcript.get("summary"),
+                    "url": transcript_url,
+                    "audio_url": event_data.get("audioUrl"),
+                    "video_url": event_data.get("videoUrl"),
+                    "ingested_at": datetime.utcnow().isoformat(),
+                    "workflow_id": metadata.get("workflowId"),
+                    "execution_id": metadata.get("executionId"),
+                },
             }
 
             # TODO: Replace with actual RAG ingestion logic
@@ -169,18 +168,21 @@ class TranscriptRAGConsumer:
     def _extract_transcript_text(self, transcript: Dict[str, Any]) -> str:
         """Extract text content from transcript object"""
         # Handle different transcript formats
-        if isinstance(transcript.get('sentences'), list):
+        if isinstance(transcript.get("sentences"), list):
             # Format: array of sentence objects
-            return ' '.join([
-                s.get('text', '') for s in transcript['sentences']
-                if isinstance(s, dict) and s.get('text')
-            ])
-        elif isinstance(transcript.get('sentences'), str):
+            return " ".join(
+                [
+                    s.get("text", "")
+                    for s in transcript["sentences"]
+                    if isinstance(s, dict) and s.get("text")
+                ]
+            )
+        elif isinstance(transcript.get("sentences"), str):
             # Format: raw text
-            return transcript['sentences']
+            return transcript["sentences"]
         else:
             # Fallback to any text field
-            return str(transcript.get('text', ''))
+            return str(transcript.get("text", ""))
 
     def _ingest_to_rag(self, document: Dict[str, Any]) -> bool:
         """
@@ -209,12 +211,12 @@ class TranscriptRAGConsumer:
         ch: pika.channel.Channel,
         method: pika.spec.Basic.Deliver,
         properties: pika.spec.BasicProperties,
-        body: bytes
+        body: bytes,
     ):
         """Callback for processing messages from RabbitMQ"""
         try:
             # Parse message
-            event_data = json.loads(body.decode('utf-8'))
+            event_data = json.loads(body.decode("utf-8"))
 
             logger.info(f"Received event: {event_data.get('eventType')}")
 
@@ -229,12 +231,14 @@ class TranscriptRAGConsumer:
                 # Reject and requeue if retries available
                 if self.retry_count < self.max_retries:
                     self.retry_count += 1
-                    logger.warning(f"Requeuing message (retry {self.retry_count}/{self.max_retries})")
+                    logger.warning(
+                        f"Requeuing message (retry {self.retry_count}/{self.max_retries})"
+                    )
                     ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
                     time.sleep(5 * self.retry_count)  # Exponential backoff
                 else:
                     # Send to dead letter queue
-                    logger.error(f"Max retries exceeded, sending to DLQ")
+                    logger.error("Max retries exceeded, sending to DLQ")
                     ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
                     self.retry_count = 0
 
@@ -256,9 +260,7 @@ class TranscriptRAGConsumer:
 
             logger.info("Starting consumer...")
             self.channel.basic_consume(
-                queue=self.queue_name,
-                on_message_callback=self.callback,
-                auto_ack=False
+                queue=self.queue_name, on_message_callback=self.callback, auto_ack=False
             )
 
             logger.info("Waiting for transcript events. Press CTRL+C to exit.")
@@ -289,17 +291,17 @@ def main():
 
     # Configuration from environment variables or defaults
     consumer = TranscriptRAGConsumer(
-        rabbitmq_host=os.getenv('RABBITMQ_HOST', 'localhost'),
-        rabbitmq_port=int(os.getenv('RABBITMQ_PORT', 5672)),
-        rabbitmq_user=os.getenv('RABBITMQ_USER', 'guest'),
-        rabbitmq_password=os.getenv('RABBITMQ_PASSWORD', 'guest'),
-        exchange_name=os.getenv('RABBITMQ_EXCHANGE', 'fireflies.events'),
-        queue_name=os.getenv('RABBITMQ_QUEUE', 'transcripts.rag.ingestion'),
-        routing_key=os.getenv('RABBITMQ_ROUTING_KEY', 'fireflies.transcript.completed')
+        rabbitmq_host=os.getenv("RABBITMQ_HOST", "localhost"),
+        rabbitmq_port=int(os.getenv("RABBITMQ_PORT", 5672)),
+        rabbitmq_user=os.getenv("RABBITMQ_USER", "guest"),
+        rabbitmq_password=os.getenv("RABBITMQ_PASSWORD", "guest"),
+        exchange_name=os.getenv("RABBITMQ_EXCHANGE", "fireflies.events"),
+        queue_name=os.getenv("RABBITMQ_QUEUE", "transcripts.rag.ingestion"),
+        routing_key=os.getenv("RABBITMQ_ROUTING_KEY", "fireflies.transcript.completed"),
     )
 
     consumer.start_consuming()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

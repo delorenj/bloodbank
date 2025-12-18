@@ -16,13 +16,11 @@ Usage:
 
 import importlib
 import inspect
-import os
 import pkgutil
 from typing import Dict, List, Optional, Type, Any
 from pathlib import Path
 from pydantic import BaseModel
 
-from event_producers.events.base import EventEnvelope
 
 
 class EventDomain:
@@ -145,7 +143,12 @@ class EventRegistry:
             raise ValueError(f"Domain '{domain.name}' is already registered")
         self.domains[domain.name] = domain
 
-    def register(self, event_type: str, payload_class: Type[BaseModel], domain_name: Optional[str] = None) -> None:
+    def register(
+        self,
+        event_type: str,
+        payload_class: Type[BaseModel],
+        domain_name: Optional[str] = None,
+    ) -> None:
         """
         Register an event type with its payload class.
 
@@ -346,9 +349,9 @@ class EventRegistry:
                         # Check if it's a class defined in this module that inherits from BaseModel
                         # and is referenced in ROUTING_KEYS
                         if (
-                            issubclass(obj, BaseModel) and
-                            obj.__module__ == full_module_name and
-                            name in routing_keys
+                            issubclass(obj, BaseModel)
+                            and obj.__module__ == full_module_name
+                            and name in routing_keys
                         ):
                             payload_classes[name] = obj
 
@@ -372,7 +375,9 @@ class EventRegistry:
             print(f"Warning: Failed to import domains package: {e}")
 
     def __repr__(self) -> str:
-        total_events = sum(len(domain.payload_types) for domain in self.domains.values())
+        total_events = sum(
+            len(domain.payload_types) for domain in self.domains.values()
+        )
         return f"EventRegistry(domains={len(self.domains)}, events={total_events})"
 
 
@@ -410,7 +415,9 @@ def get_registry() -> EventRegistry:
     return _global_registry
 
 
-def register_event(event_type: str, payload_class: Type[BaseModel], domain_name: Optional[str] = None) -> None:
+def register_event(
+    event_type: str, payload_class: Type[BaseModel], domain_name: Optional[str] = None
+) -> None:
     """
     Helper function to register an event type with the global registry.
 

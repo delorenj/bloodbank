@@ -47,7 +47,7 @@ class ImportTest:
             "description": description,
             "status": "PASS",
             "error": None,
-            "imported_objects": {}
+            "imported_objects": {},
         }
 
         try:
@@ -57,13 +57,11 @@ class ImportTest:
             # Verify each name exists
             for name in names:
                 if not hasattr(imported_module, name):
-                    raise AttributeError(
-                        f"Module '{module}' has no attribute '{name}'"
-                    )
+                    raise AttributeError(f"Module '{module}' has no attribute '{name}'")
                 obj = getattr(imported_module, name)
                 test_result["imported_objects"][name] = {
                     "type": type(obj).__name__,
-                    "module": getattr(obj, "__module__", "unknown")
+                    "module": getattr(obj, "__module__", "unknown"),
                 }
 
             self.passed_tests += 1
@@ -111,7 +109,9 @@ class ImportTest:
             print(f"\n{GREEN}{BOLD}✓ All imports are backward compatible!{RESET}\n")
             return 0
         else:
-            print(f"\n{RED}{BOLD}✗ Some imports failed - backward compatibility is broken!{RESET}\n")
+            print(
+                f"\n{RED}{BOLD}✗ Some imports failed - backward compatibility is broken!{RESET}\n"
+            )
             return 1
 
 
@@ -123,21 +123,28 @@ def main():
     tester.test_import(
         "event_producers.events",
         ["AgentThreadPrompt", "AgentThreadResponse"],
-        "http.py imports (AgentThread events)"
+        "http.py imports (AgentThread events)",
     )
 
     # Test 2: mcp_server.py imports (these may fail if not migrated)
     tester.test_import(
         "event_producers.events",
         ["LLMPrompt", "LLMResponse", "Artifact", "envelope_for"],
-        "mcp_server.py imports (LLM events - DEPRECATED)"
+        "mcp_server.py imports (LLM events - DEPRECATED)",
     )
 
     # Test 3: Core base types
     tester.test_import(
         "event_producers.events",
-        ["EventEnvelope", "TriggerType", "Source", "AgentType", "AgentContext", "CodeState"],
-        "Core event envelope types"
+        [
+            "EventEnvelope",
+            "TriggerType",
+            "Source",
+            "AgentType",
+            "AgentContext",
+            "CodeState",
+        ],
+        "Core event envelope types",
     )
 
     # Test 4: Fireflies events
@@ -149,28 +156,26 @@ def main():
             "FirefliesTranscriptProcessedPayload",
             "FirefliesTranscriptFailedPayload",
         ],
-        "Fireflies domain events"
+        "Fireflies domain events",
     )
 
     # Test 5: GitHub events
     tester.test_import(
-        "event_producers.events",
-        ["GitHubPRCreatedPayload"],
-        "GitHub domain events"
+        "event_producers.events", ["GitHubPRCreatedPayload"], "GitHub domain events"
     )
 
     # Test 6: Registry and utilities
     tester.test_import(
         "event_producers.events",
         ["EventRegistry", "get_registry", "register_event", "create_envelope"],
-        "Event registry and utilities"
+        "Event registry and utilities",
     )
 
     # Test 7: Direct domain imports (new modular structure)
     tester.test_import(
         "event_producers.events.domains.agent_thread",
         ["AgentThreadPrompt", "AgentThreadResponse", "AgentThreadErrorPayload"],
-        "Direct import from agent_thread domain"
+        "Direct import from agent_thread domain",
     )
 
     # Test 8: Direct domain imports for fireflies
@@ -180,9 +185,9 @@ def main():
             "FirefliesTranscriptReadyPayload",
             "TranscriptSentence",
             "AIFilters",
-            "SentimentType"
+            "SentimentType",
         ],
-        "Direct import from fireflies domain"
+        "Direct import from fireflies domain",
     )
 
     # Print results and return exit code

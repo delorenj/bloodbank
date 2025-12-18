@@ -17,12 +17,10 @@ Usage:
 import importlib
 import inspect
 import os
-import pkgutil
 from typing import Dict, List, Optional, Type, Any
 from pathlib import Path
 from pydantic import BaseModel
 
-from event_producers.events.base import EventEnvelope
 
 
 class EventDomain:
@@ -145,7 +143,12 @@ class EventRegistry:
             raise ValueError(f"Domain '{domain.name}' is already registered")
         self.domains[domain.name] = domain
 
-    def register(self, event_type: str, payload_class: Type[BaseModel], domain_name: Optional[str] = None) -> None:
+    def register(
+        self,
+        event_type: str,
+        payload_class: Type[BaseModel],
+        domain_name: Optional[str] = None,
+    ) -> None:
         """
         Register an event type with its payload class.
 
@@ -173,7 +176,9 @@ class EventRegistry:
 
         # Create domain if it doesn't exist
         if domain_name not in self.domains:
-            module_name = f"event_producers.events.domains.{domain_name.replace('/', '.')}"
+            module_name = (
+                f"event_producers.events.domains.{domain_name.replace('/', '.')}"
+            )
             domain = EventDomain(domain_name, module_name)
             self.domains[domain_name] = domain
 
@@ -286,7 +291,7 @@ class EventRegistry:
         Supports nested domain structures like:
         - domains/fireflies.py -> fireflies.*
         - domains/agent/thread.py -> agent.thread.*
-        
+
         For each module, it:
         1. Imports the module
         2. Reads the ROUTING_KEYS dictionary to identify event type mappings
@@ -324,7 +329,7 @@ class EventRegistry:
             for module_info in self._discover_modules_recursive(package_path):
                 module_name = module_info.name
                 full_module_name = module_info.full_name
-                
+
                 # Skip __init__ and private modules
                 if module_name.startswith("_"):
                     continue
@@ -341,7 +346,9 @@ class EventRegistry:
 
                     # Create domain name from module path
                     # For nested modules like agent.thread, domain becomes "agent/thread"
-                    relative_path = full_module_name.replace("event_producers.events.domains.", "")
+                    relative_path = full_module_name.replace(
+                        "event_producers.events.domains.", ""
+                    )
                     domain_name = relative_path.replace(".", "/")
 
                     # Create domain
@@ -355,9 +362,9 @@ class EventRegistry:
                         # Check if it's a class defined in this module that inherits from BaseModel
                         # and is referenced in ROUTING_KEYS
                         if (
-                            issubclass(obj, BaseModel) and
-                            obj.__module__ == full_module_name and
-                            name in routing_keys
+                            issubclass(obj, BaseModel)
+                            and obj.__module__ == full_module_name
+                            and name in routing_keys
                         ):
                             payload_classes[name] = obj
 
@@ -379,47 +386,53 @@ class EventRegistry:
 
         except ImportError as e:
             print(f"Warning: Failed to import domains package: {e}")
-    
+
     def _discover_modules_recursive(self, package_path: Path):
         """
         Recursively discover all Python modules in the domains package.
-        
+
         Returns a list of ModuleInfo objects with name and full_name attributes.
         """
-        
+
         class ModuleInfo:
             def __init__(self, name: str, full_name: str):
                 self.name = name
                 self.full_name = full_name
-        
+
         modules = []
-        
+
         for root, dirs, files in os.walk(package_path):
             # Skip __pycache__ directories
             if "__pycache__" in root:
                 continue
-                
+
             for file in files:
                 if file.endswith(".py") and not file.startswith("__"):
                     # Get the relative path from package_path
                     rel_path = Path(root).relative_to(package_path)
                     module_name = file[:-3]  # Remove .py extension
-                    
+
                     # Build the module path components
                     if rel_path == Path("."):
                         # Direct child of domains package
-                        full_module_name = f"event_producers.events.domains.{module_name}"
+                        full_module_name = (
+                            f"event_producers.events.domains.{module_name}"
+                        )
                     else:
                         # Nested module (e.g., agent/thread)
                         path_parts = list(rel_path.parts) + [module_name]
-                        full_module_name = "event_producers.events.domains." + ".".join(path_parts)
-                    
+                        full_module_name = "event_producers.events.domains." + ".".join(
+                            path_parts
+                        )
+
                     modules.append(ModuleInfo(module_name, full_module_name))
-        
+
         return modules
 
     def __repr__(self) -> str:
-        total_events = sum(len(domain.payload_types) for domain in self.domains.values())
+        total_events = sum(
+            len(domain.payload_types) for domain in self.domains.values()
+        )
         return f"EventRegistry(domains={len(self.domains)}, events={total_events})"
 
 
@@ -457,7 +470,9 @@ def get_registry() -> EventRegistry:
     return _global_registry
 
 
-def register_event(event_type: str, payload_class: Type[BaseModel], domain_name: Optional[str] = None) -> None:
+def register_event(
+    event_type: str, payload_class: Type[BaseModel], domain_name: Optional[str] = None
+) -> None:
     """
     Helper function to register an event type with the global registry.
 
