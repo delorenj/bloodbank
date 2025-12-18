@@ -387,11 +387,11 @@ class EventRegistry:
         Returns a list of ModuleInfo objects with name and full_name attributes.
         """
         
-        class ModuleInfo:
-            def __init__(self, name: str, full_name: str):
-                self.name = name
-                self.full_name = full_name
-        
+        from typing import NamedTuple
+
+        class ModuleInfo(NamedTuple):
+            name: str
+            full_name: str
         modules = []
         
         for root, dirs, files in os.walk(package_path):
