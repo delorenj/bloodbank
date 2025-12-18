@@ -5,8 +5,9 @@ from uuid import UUID
 import logging
 
 from .events.domains.agent_thread import AgentThreadPrompt, AgentThreadResponse
-from rabbit import Publisher
 from config import settings
+from rabbit import Publisher
+from .events import create_http_envelope
 
 logger = logging.getLogger(__name__)
 
@@ -35,26 +36,28 @@ async def healthz():
 
 @app.post("/events/agent/thread/prompt")
 async def publish_prompt(ev: AgentThreadPrompt, request: Request):
-    env = envelope_for(
-        "agent.thread.prompt", source="http/" + request.client.host, data=ev
+    client_host = request.client.host if request.client else "unknown"
+    env = create_http_envelope(
+        "agent.thread.prompt", ev, client_host
     )
-    await publisher.publish("agent.thread.prompt", env.model_dump(), message_id=env.id)
+    await publisher.publish("agent.thread.prompt", env.model_dump(), message_id=env.event_id)
     return JSONResponse(env.model_dump())
 
 
 @app.post("/events/agent/thread/response")
 async def publish_response(ev: AgentThreadResponse, request: Request):
-    env = envelope_for(
-        "agent.thread.response",
-        source="http/" + request.client.host,
-        data=ev,
-        correlation_id=ev.prompt_id,
+    client_host = request.client.host if request.client else "unknown"
+    env = create_http_envelope(
+        "agent.thread.response", 
+        ev, 
+        client_host,
+        correlation_ids=[ev.prompt_id] if ev.prompt_id else None
     )
     await publisher.publish(
         "agent.thread.response",
         env.model_dump(),
-        message_id=env.id,
-        correlation_id=env.correlation_id,
+        message_id=env.event_id,
+        correlation_id=env.correlation_ids[0] if env.correlation_ids else None,
     )
     return JSONResponse(env.model_dump())
 
