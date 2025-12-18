@@ -48,7 +48,7 @@ from event_producers.events.domains.fireflies import (
 )
 
 # AgentThread domain
-from event_producers.events.domains.agent_thread import (
+from event_producers.events.domains.agent.thread import (
     AgentThreadPrompt,
     AgentThreadResponse,
     AgentThreadErrorPayload,
