@@ -5,9 +5,18 @@ A Textual-based terminal user interface for managing the Bloodbank event ecosyst
 Provides tree navigation of events, schema viewing, payload editing, and publishing.
 """
 
+import os
+from pathlib import Path
 from sys import path
-path.insert(0, '/home/delorenj/code/bloodbank/trunk-main')
 
+# Determine the project root dynamically to avoid hardcoded absolute paths.
+# Prefer an environment variable if provided, otherwise derive it from this file's location.
+project_root = os.getenv("BLOODBANK_ROOT")
+if project_root is None:
+    # Assuming this file is located at <project_root>/event_producers/tui/app.py
+    project_root = str(Path(__file__).resolve().parents[3])
+if project_root not in path:
+    path.insert(0, project_root)
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, Tree, Static, Button
