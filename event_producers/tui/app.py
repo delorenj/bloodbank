@@ -1,4 +1,5 @@
-#!/usr/bin/env python3"""
+#!/usr/bin/env python3
+"""
 Main Bloodbank TUI Application.
 
 A Textual-based terminal user interface for managing the Bloodbank event ecosystem.
