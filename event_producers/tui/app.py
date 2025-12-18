@@ -195,11 +195,11 @@ class BloodbankTUI(App):
 
         try:
             # Create event envelope
-            from event_producers.events.envelope import create_source, create_envelope
-            from event_producers.events.base import TriggerType
+            from event_producers.events.base import EventEnvelope, create_envelope, Source, TriggerType
+            import socket
 
-            source = create_source(
-                host="localhost", trigger_type=TriggerType.MANUAL, app="bloodbank-tui"
+            source = Source(
+                host=socket.gethostname(), trigger_type=TriggerType.MANUAL, app="bloodbank-tui"
             )
 
             envelope = create_envelope(
@@ -211,7 +211,7 @@ class BloodbankTUI(App):
             # Publish via HTTP
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    "http://localhost:8000/events/custom", json=envelope.model_dump()
+                    "http://localhost:8682/events/custom", json=envelope.model_dump()
                 )
                 response.raise_for_status()
 
