@@ -1,15 +1,28 @@
 """
-Event producers events package.
+Event producers events package with unified envelope system.
 
 This package contains event payload definitions organized by domain:
 - base: Core event envelope types
-- domains: Domain-specific event payloads (fireflies, agent_thread, github, etc.)
+- domains: Domain-specific event payloads (fireflies, agent_thread, github, llm, artifact, etc.)
 - registry: Event type registry for validation and schema introspection
 - utils: Utility functions for working with events
+- envelope: Unified envelope creation system
 
+The envelope module provides a unified interface for creating event envelopes.
 This __init__.py provides backward-compatible re-exports from the new modular structure.
 All types that were previously in events.py are now re-exported from their new locations.
 """
+
+# Unified envelope system (NEW)
+from .envelope import (
+    create_envelope,
+    create_source,
+    create_agent_context,
+    create_http_envelope,
+    create_agent_envelope,
+    create_scheduled_envelope,
+    envelope_for,  # Backward compatibility
+)
 
 # Base types
 from event_producers.events.base import (
@@ -41,13 +54,26 @@ from event_producers.events.domains.agent_thread import (
     AgentThreadErrorPayload,
 )
 
+# LLM domain
+from event_producers.events.domains.llm import (
+    LLMPrompt,
+    LLMResponse,
+    LLMErrorPayload,
+)
+
+# Artifact domain
+from event_producers.events.domains.artifact import (
+    Artifact,
+    ArtifactIngestionFailedPayload,
+)
+
 # GitHub domain
 from event_producers.events.domains.github import (
     GitHubPRCreatedPayload,
 )
 
-# Utilities
-from event_producers.events.utils import create_envelope
+# Utilities (legacy - renamed to avoid conflicts)
+from event_producers.events.utils import create_envelope as legacy_create_envelope
 
 # Registry
 from event_producers.events.registry import (
@@ -58,6 +84,16 @@ from event_producers.events.registry import (
 )
 
 __all__ = [
+    # Unified envelope system (NEW)
+    "create_envelope",
+    "create_source", 
+    "create_agent_context",
+    "create_http_envelope",
+    "create_agent_envelope",
+    "create_scheduled_envelope",
+    "envelope_for",  # Backward compatibility
+    "legacy_create_envelope",  # Old utils version
+    
     # Base types
     "EventEnvelope",
     "TriggerType",
@@ -65,6 +101,7 @@ __all__ = [
     "AgentType",
     "AgentContext",
     "CodeState",
+    
     # Fireflies types
     "SentimentType",
     "AIFilters",
@@ -75,14 +112,24 @@ __all__ = [
     "FirefliesTranscriptReadyPayload",
     "FirefliesTranscriptProcessedPayload",
     "FirefliesTranscriptFailedPayload",
+    
     # AgentThread types
     "AgentThreadPrompt",
     "AgentThreadResponse",
     "AgentThreadErrorPayload",
+    
+    # LLM types
+    "LLMPrompt",
+    "LLMResponse",
+    "LLMErrorPayload",
+    
+    # Artifact types
+    "Artifact",
+    "ArtifactIngestionFailedPayload",
+    
     # GitHub types
     "GitHubPRCreatedPayload",
-    # Utilities
-    "create_envelope",
+    
     # Registry
     "EventDomain",
     "EventRegistry",
