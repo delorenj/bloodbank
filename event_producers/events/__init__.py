@@ -86,14 +86,13 @@ from event_producers.events.registry import (
 __all__ = [
     # Unified envelope system (NEW)
     "create_envelope",
-    "create_source", 
+    "create_source",
     "create_agent_context",
     "create_http_envelope",
     "create_agent_envelope",
     "create_scheduled_envelope",
     "envelope_for",  # Backward compatibility
     "legacy_create_envelope",  # Old utils version
-    
     # Base types
     "EventEnvelope",
     "TriggerType",
@@ -101,7 +100,6 @@ __all__ = [
     "AgentType",
     "AgentContext",
     "CodeState",
-    
     # Fireflies types
     "SentimentType",
     "AIFilters",
@@ -112,24 +110,19 @@ __all__ = [
     "FirefliesTranscriptReadyPayload",
     "FirefliesTranscriptProcessedPayload",
     "FirefliesTranscriptFailedPayload",
-    
     # AgentThread types
     "AgentThreadPrompt",
     "AgentThreadResponse",
     "AgentThreadErrorPayload",
-    
     # LLM types
     "LLMPrompt",
     "LLMResponse",
     "LLMErrorPayload",
-    
     # Artifact types
     "Artifact",
     "ArtifactIngestionFailedPayload",
-    
     # GitHub types
     "GitHubPRCreatedPayload",
-    
     # Registry
     "EventDomain",
     "EventRegistry",

@@ -28,13 +28,13 @@ def create_source(
 ) -> Source:
     """
     Create a Source object with proper type conversion.
-    
+
     Args:
         host: Machine that generated the event
         trigger_type: How the event was triggered (string or TriggerType enum)
         app: Application name
         meta: Additional context metadata
-        
+
     Returns:
         Source object with proper typing
     """
@@ -43,13 +43,8 @@ def create_source(
             trigger_type = TriggerType(trigger_type)
         except ValueError:
             trigger_type = TriggerType.MANUAL  # Fallback to manual
-            
-    return Source(
-        host=host,
-        type=trigger_type,
-        app=app,
-        meta=meta or {}
-    )
+
+    return Source(host=host, type=trigger_type, app=app, meta=meta or {})
 
 
 def create_agent_context(
@@ -66,7 +61,7 @@ def create_agent_context(
 ) -> AgentContext:
     """
     Create an AgentContext object with proper type conversion.
-    
+
     Args:
         agent_type: Type of agent (string or AgentType enum)
         name: Agent's persona/name
@@ -78,7 +73,7 @@ def create_agent_context(
         code_state: Git state snapshot
         checkpoint_id: For checkpoint-based agents
         meta: Additional metadata
-        
+
     Returns:
         AgentContext object with proper typing
     """
@@ -87,7 +82,7 @@ def create_agent_context(
             agent_type = AgentType(agent_type)
         except ValueError:
             agent_type = AgentType.CUSTOM  # Fallback to custom
-            
+
     return AgentContext(
         type=agent_type,
         name=name,
@@ -98,7 +93,7 @@ def create_agent_context(
         url_references=url_references or [],
         code_state=code_state,
         checkpoint_id=checkpoint_id,
-        meta=meta or {}
+        meta=meta or {},
     )
 
 
@@ -112,11 +107,11 @@ def create_envelope(
 ) -> EventEnvelope:
     """
     Create a properly-formed event envelope with flexible source handling.
-    
+
     This is the primary envelope creation function for the entire application.
     It handles both simple string sources and full Source objects for backward
     compatibility and ease of use.
-    
+
     Args:
         event_type: Routing key (e.g., "fireflies.transcript.ready")
         payload: Your typed payload
@@ -124,10 +119,10 @@ def create_envelope(
         correlation_ids: List of parent event IDs (UUIDs or strings)
         agent_context: Agent metadata (if source.type == AGENT)
         event_id: Optional explicit event ID (for deterministic IDs)
-        
+
     Returns:
         EventEnvelope with proper typing
-        
+
     Examples:
         >>> # Simple usage with string source
         >>> envelope = create_envelope(
@@ -135,7 +130,7 @@ def create_envelope(
         ...     payload={"data": "test"},
         ...     source="http/127.0.0.1"
         ... )
-        
+
         >>> # Advanced usage with full Source and AgentContext
         >>> source = create_source(
         ...     host="localhost",
@@ -161,20 +156,16 @@ def create_envelope(
             parts = source.split("/", 1)
             app, host = parts[0], parts[1]
             source_obj = create_source(
-                host=host,
-                trigger_type=TriggerType.MANUAL,
-                app=app
+                host=host, trigger_type=TriggerType.MANUAL, app=app
             )
         else:
             # Simple string, treat as app name
             source_obj = create_source(
-                host="unknown",
-                trigger_type=TriggerType.MANUAL,
-                app=source
+                host="unknown", trigger_type=TriggerType.MANUAL, app=source
             )
     else:
         source_obj = source
-        
+
     # Convert correlation IDs to UUIDs if they're strings
     if correlation_ids:
         correlation_uuids = []
@@ -189,7 +180,7 @@ def create_envelope(
                 correlation_uuids.append(corr_id)
     else:
         correlation_uuids = []
-        
+
     return EventEnvelope(
         event_id=event_id or uuid4(),
         event_type=event_type,
@@ -203,72 +194,70 @@ def create_envelope(
 
 
 # Backward compatibility alias - DEPRECATED
-def envelope_for(event_type: str, source: str, data: Any, correlation_id: Optional[Union[UUID, str]] = None):
+def envelope_for(
+    event_type: str,
+    source: str,
+    data: Any,
+    correlation_id: Optional[Union[UUID, str]] = None,
+):
     """
     DEPRECATED: Use create_envelope() instead.
-    
+
     This function exists for backward compatibility with old code.
     It will be removed in a future version.
-    
+
     Args:
         event_type: Event type/routing key
         source: Source string (e.g., "http/bloodbank")
         data: Event payload
         correlation_id: Single correlation ID (deprecated, use correlation_ids in create_envelope)
-        
+
     Returns:
         EventEnvelope
     """
     import warnings
+
     warnings.warn(
         "envelope_for() is deprecated. Use create_envelope() instead.",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
-    
+
     correlation_ids = [correlation_id] if correlation_id else []
-    
+
     return create_envelope(
         event_type=event_type,
         payload=data,
         source=source,
-        correlation_ids=correlation_ids
+        correlation_ids=correlation_ids,
     )
 
 
 # Convenience functions for common patterns
 
+
 def create_http_envelope(
-    event_type: str,
-    payload: Any,
-    client_host: str,
-    app_name: str = "http",
-    **kwargs
+    event_type: str, payload: Any, client_host: str, app_name: str = "http", **kwargs
 ) -> EventEnvelope:
     """
     Create an envelope for HTTP-triggered events.
-    
+
     Args:
         event_type: Event type/routing key
         payload: Event payload
         client_host: Client IP address or hostname
         app_name: Application name (default: "http")
         **kwargs: Additional arguments passed to create_envelope
-        
+
     Returns:
         EventEnvelope configured for HTTP source
     """
     source = create_source(
-        host=client_host,
-        trigger_type=TriggerType.MANUAL,
-        app=app_name
+        host=client_host, trigger_type=TriggerType.MANUAL, app=app_name
     )
-    
+
     return create_envelope(
-        event_type=event_type,
-        payload=payload,
-        source=source,
-        **kwargs
+        event_type=event_type, payload=payload, source=source, **kwargs
     )
 
 
@@ -278,11 +267,11 @@ def create_agent_envelope(
     agent_type: Union[str, AgentType],
     agent_name: Optional[str] = None,
     host: str = "localhost",
-    **kwargs
+    **kwargs,
 ) -> EventEnvelope:
     """
     Create an envelope for agent-triggered events.
-    
+
     Args:
         event_type: Event type/routing key
         payload: Event payload
@@ -290,27 +279,20 @@ def create_agent_envelope(
         agent_name: Agent's name/persona
         host: Host where agent is running
         **kwargs: Additional arguments passed to create_envelope
-        
+
     Returns:
         EventEnvelope configured for agent source
     """
-    source = create_source(
-        host=host,
-        trigger_type=TriggerType.AGENT,
-        app="agent"
-    )
-    
-    agent_context = create_agent_context(
-        agent_type=agent_type,
-        name=agent_name
-    )
-    
+    source = create_source(host=host, trigger_type=TriggerType.AGENT, app="agent")
+
+    agent_context = create_agent_context(agent_type=agent_type, name=agent_name)
+
     return create_envelope(
         event_type=event_type,
         payload=payload,
         source=source,
         agent_context=agent_context,
-        **kwargs
+        **kwargs,
     )
 
 
@@ -319,30 +301,23 @@ def create_scheduled_envelope(
     payload: Any,
     app_name: str = "scheduler",
     host: str = "localhost",
-    **kwargs
+    **kwargs,
 ) -> EventEnvelope:
     """
     Create an envelope for scheduled/cron-triggered events.
-    
+
     Args:
         event_type: Event type/routing key
         payload: Event payload
         app_name: Application name (default: "scheduler")
         host: Host where scheduler is running
         **kwargs: Additional arguments passed to create_envelope
-        
+
     Returns:
         EventEnvelope configured for scheduled source
     """
-    source = create_source(
-        host=host,
-        trigger_type=TriggerType.SCHEDULED,
-        app=app_name
-    )
-    
+    source = create_source(host=host, trigger_type=TriggerType.SCHEDULED, app=app_name)
+
     return create_envelope(
-        event_type=event_type,
-        payload=payload,
-        source=source,
-        **kwargs
+        event_type=event_type, payload=payload, source=source, **kwargs
     )
