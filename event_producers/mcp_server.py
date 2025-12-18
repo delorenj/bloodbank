@@ -69,7 +69,7 @@ async def publish_llm_response(
         "llm.response",
         env.model_dump(),
         message_id=env.event_id,
-        correlation_id=env.correlation_ids[0] if env.correlation_ids else None,
+        correlation_id=str(env.correlation_ids[0]) if env.correlation_ids else None,
     )
     return {"event_id": env.event_id}
 

@@ -174,7 +174,8 @@ def create_envelope(
                 try:
                     correlation_uuids.append(UUID(corr_id))
                 except ValueError:
-                    # Skip invalid UUIDs
+                    import logging
+                    logging.warning(f"Invalid UUID string in correlation_ids: '{corr_id}'. Skipping.")
                     continue
             else:
                 correlation_uuids.append(corr_id)
