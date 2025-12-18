@@ -23,7 +23,7 @@ To add a new domain:
 """
 
 # Re-export all domain types for convenient access
-from event_producers.events.domains.agent_thread import (
+from event_producers.events.domains.agent.thread import (
     AgentThreadPrompt,
     AgentThreadResponse,
     AgentThreadErrorPayload,
