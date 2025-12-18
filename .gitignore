@@ -28,7 +28,6 @@ hive-mind-prompt-*.txt
 
 .gemini/
 gha-creds-*.json
-*.egg-info/
 
 # Python
 __pycache__/
