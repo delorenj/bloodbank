@@ -18,12 +18,6 @@ project_root = current_file.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-# Note: config import is optional for core CLI functionality
-try:
-    from .config import settings
-except ImportError:
-    settings = None
-
 app = typer.Typer(help="bloodbank CLI - Event-driven system for 33GOD ecosystem")
 console = Console()
 
