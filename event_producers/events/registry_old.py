@@ -16,7 +16,7 @@ Usage:
 
 import importlib
 import inspect
-import os
+import pkgutil
 from typing import Dict, List, Optional, Type, Any
 from pathlib import Path
 from pydantic import BaseModel
@@ -25,14 +25,14 @@ from pydantic import BaseModel
 
 class EventDomain:
     """
-    Represents a domain of related events (e.g., fireflies, agent/thread, github).
+    Represents a domain of related events (e.g., fireflies, agent_thread, github).
 
     A domain groups together logically related events and their payload types.
     Each domain corresponds to a module in event_producers.events.domains that
     contains payload class definitions and a ROUTING_KEYS dictionary.
 
     Attributes:
-        name: Domain name (e.g., "fireflies", "agent/thread")
+        name: Domain name (e.g., "fireflies", "agent_thread")
         module_name: Full Python module path (e.g., "event_producers.events.domains.fireflies")
         payload_types: Mapping of event type (routing key) to payload class
 
@@ -48,7 +48,7 @@ class EventDomain:
         Initialize an event domain.
 
         Args:
-            name: Short domain name (e.g., "fireflies", "agent/thread")
+            name: Short domain name (e.g., "fireflies")
             module_name: Full Python module path containing the domain's events
         """
         self.name = name
@@ -106,7 +106,7 @@ class EventRegistry:
 
     The registry auto-discovers event payload classes from domain modules and
     provides type-safe access to event metadata. It scans modules in
-    event_producers.events.domains recursively to find:
+    event_producers.events.domains to find:
     - Classes ending with "Payload" that inherit from BaseModel
     - ROUTING_KEYS dictionary mapping class names to routing keys
 
@@ -120,7 +120,7 @@ class EventRegistry:
         >>> registry = EventRegistry()
         >>> registry.auto_discover_domains()
         >>> registry.list_domains()
-        ['agent/thread', 'fireflies', 'github']
+        ['agent_thread', 'fireflies', 'github']
         >>> payload_type = registry.get_payload_type("fireflies.transcript.ready")
         >>> schema = registry.get_schema("fireflies.transcript.ready")
     """
@@ -176,9 +176,7 @@ class EventRegistry:
 
         # Create domain if it doesn't exist
         if domain_name not in self.domains:
-            module_name = (
-                f"event_producers.events.domains.{domain_name.replace('/', '.')}"
-            )
+            module_name = f"event_producers.events.domains.{domain_name}"
             domain = EventDomain(domain_name, module_name)
             self.domains[domain_name] = domain
 
@@ -235,7 +233,7 @@ class EventRegistry:
 
         Example:
             >>> registry.list_domains()
-            ['agent/thread', 'fireflies', 'github']
+            ['agent_thread', 'fireflies', 'github']
         """
         return sorted(self.domains.keys())
 
@@ -287,11 +285,7 @@ class EventRegistry:
         """
         Automatically discover and register all event domains.
 
-        Scans the event_producers.events.domains package recursively for domain modules.
-        Supports nested domain structures like:
-        - domains/fireflies.py -> fireflies.*
-        - domains/agent/thread.py -> agent.thread.*
-
+        Scans the event_producers.events.domains package for domain modules.
         For each module, it:
         1. Imports the module
         2. Reads the ROUTING_KEYS dictionary to identify event type mappings
@@ -325,10 +319,9 @@ class EventRegistry:
             # Get the package path
             package_path = Path(domains_package.__file__).parent
 
-            # Discover modules recursively
-            for module_info in self._discover_modules_recursive(package_path):
+            # Iterate through all modules in the domains package
+            for module_info in pkgutil.iter_modules([str(package_path)]):
                 module_name = module_info.name
-                full_module_name = module_info.full_name
 
                 # Skip __init__ and private modules
                 if module_name.startswith("_"):
@@ -336,6 +329,7 @@ class EventRegistry:
 
                 try:
                     # Import the domain module
+                    full_module_name = f"event_producers.events.domains.{module_name}"
                     module = importlib.import_module(full_module_name)
 
                     # Get ROUTING_KEYS dictionary
@@ -344,15 +338,8 @@ class EventRegistry:
                         # Skip modules without ROUTING_KEYS
                         continue
 
-                    # Create domain name from module path
-                    # For nested modules like agent.thread, domain becomes "agent/thread"
-                    relative_path = full_module_name.replace(
-                        "event_producers.events.domains.", ""
-                    )
-                    domain_name = relative_path.replace(".", "/")
-
                     # Create domain
-                    domain = EventDomain(domain_name, full_module_name)
+                    domain = EventDomain(module_name, full_module_name)
 
                     # Find all payload classes in the module
                     # We look for classes that are referenced in ROUTING_KEYS
@@ -386,47 +373,6 @@ class EventRegistry:
 
         except ImportError as e:
             print(f"Warning: Failed to import domains package: {e}")
-
-    def _discover_modules_recursive(self, package_path: Path):
-        """
-        Recursively discover all Python modules in the domains package.
-
-        Returns a list of ModuleInfo objects with name and full_name attributes.
-        """
-        modules = []
-
-        class ModuleInfo:
-            def __init__(self, name: str, full_name: str):
-                self.name = name
-                self.full_name = full_name
-
-        for root, dirs, files in os.walk(package_path):
-            # Skip __pycache__ directories
-            if "__pycache__" in root:
-                continue
-
-            for file in files:
-                if file.endswith(".py") and not file.startswith("__"):
-                    # Get the relative path from package_path
-                    rel_path = Path(root).relative_to(package_path)
-                    module_name = file[:-3]  # Remove .py extension
-
-                    # Build the module path components
-                    if rel_path == Path("."):
-                        # Direct child of domains package
-                        full_module_name = (
-                            f"event_producers.events.domains.{module_name}"
-                        )
-                    else:
-                        # Nested module (e.g., agent/thread)
-                        path_parts = list(rel_path.parts) + [module_name]
-                        full_module_name = "event_producers.events.domains." + ".".join(
-                            path_parts
-                        )
-
-                    modules.append(ModuleInfo(module_name, full_module_name))
-
-        return modules
 
     def __repr__(self) -> str:
         total_events = sum(

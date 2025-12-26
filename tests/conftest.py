@@ -7,7 +7,6 @@ discovered by pytest and made available to all test modules.
 
 import pytest
 import asyncio
-from typing import Generator
 import logging
 
 # Configure logging for tests

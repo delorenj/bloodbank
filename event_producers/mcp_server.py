@@ -1,6 +1,6 @@
 from typing import Optional, List, Dict, Any
 from mcp.server.fastmcp import FastMCP
-from .events import LLMPrompt, LLMResponse, Artifact, envelope_for
+from .events import LLMPrompt, LLMResponse, Artifact, create_envelope, create_source
 from rabbit import Publisher
 
 mcp = FastMCP("bloodbank")
@@ -33,17 +33,10 @@ async def publish_llm_prompt(
         tools=tools or [],
         metadata=metadata or {},
     )
-    env = envelope_for(
-        "llm.prompt",
-        source="mcp/bloodbank",
-        data=ev,
-        project=project,
-        working_dir=working_dir,
-        domain=domain,
-        tags=tags or [],
-    )
-    await publisher.publish("llm.prompt", env.model_dump(), message_id=env.id)
-    return {"event_id": env.id}
+    source = create_source(host="bloodbank", trigger_type="manual", app="mcp")
+    env = create_envelope("llm.prompt", ev, source=source)
+    await publisher.publish("llm.prompt", env.model_dump(), message_id=env.event_id)
+    return {"event_id": env.event_id}
 
 
 @mcp.tool()
@@ -65,16 +58,20 @@ async def publish_llm_response(
         usage=usage,
         metadata=metadata or {},
     )
-    env = envelope_for(
-        "llm.response", source="mcp/bloodbank", data=ev, correlation_id=prompt_id
+    source = create_source(host="bloodbank", trigger_type="manual", app="mcp")
+    env = create_envelope(
+        "llm.response",
+        ev,
+        source=source,
+        correlation_ids=[prompt_id] if prompt_id else None,
     )
     await publisher.publish(
         "llm.response",
         env.model_dump(),
-        message_id=env.id,
-        correlation_id=env.correlation_id,
+        message_id=env.event_id,
+        correlation_id=str(env.correlation_ids[0]) if env.correlation_ids else None,
     )
-    return {"event_id": env.id}
+    return {"event_id": env.event_id}
 
 
 @mcp.tool()
@@ -90,9 +87,12 @@ async def publish_artifact(
     ev = Artifact(
         action=action, kind=kind, uri=uri, title=title, metadata=metadata or {}
     )
-    env = envelope_for(f"artifact.{action}", source="mcp/bloodbank", data=ev)
-    await publisher.publish(f"artifact.{action}", env.model_dump(), message_id=env.id)
-    return {"event_id": env.id}
+    source = create_source(host="bloodbank", trigger_type="manual", app="mcp")
+    env = create_envelope(f"artifact.{action}", ev, source)
+    await publisher.publish(
+        f"artifact.{action}", env.model_dump(), message_id=env.event_id
+    )
+    return {"event_id": env.event_id}
 
 
 def run_stdio():
