@@ -10,6 +10,7 @@ version: 2.1.0
 
 **ALWAYS use this skill when:**
 
+
 - Working with any component in the DeLoNET home network
 - Building or modifying agentic workflows in 33GOD
 - Integrating external services (webhooks, APIs) with the home network
@@ -17,6 +18,7 @@ version: 2.1.0
 - Debugging event flows or troubleshooting message routing
 
 **This skill is NOT needed for:**
+
 
 - Standalone scripts with no home network integration
 - Work outside the DeLoNET ecosystem
@@ -179,6 +181,7 @@ AgentContext(
 
 **Features:**
 
+
 - **Deterministic Event IDs:** Generate the same UUID for identical events (idempotency)
 - **Automatic Correlation Tracking:** Redis stores parent→child relationships
 - **Multiple Parents:** Events can be caused by multiple parent events
@@ -248,7 +251,34 @@ REDIS_PASSWORD=optional
 CORRELATION_TTL_DAYS=30
 ```
 
-### 6. Correlation ID Pattern
+### 5. Multiple Correlation IDs
+
+**NEW in v2.0:** `correlation_ids` is now a **List[UUID]** (not Optional[UUID])!
+
+Events can be caused by multiple parent events:
+
+```python
+# Example: Transcript combines audio from two recordings
+processed_envelope = EventEnvelope(
+    event_type="transcript.processed",
+    correlation_ids=[
+        recording1_event_id,
+        recording2_event_id
+    ],  # ← Multiple parents!
+    payload=...
+)
+```
+
+**Use cases:**
+- Merging multiple recordings into one transcript
+- Aggregating data from multiple sources
+- Fan-in patterns (multiple events → one result)
+
+### 6. Correlation ID Pattern (Legacy Note)
+
+**In v1.0:** We used `correlation_id` (singular) and manually set it.
+
+**In v2.0:** Use `correlation_ids` (plural, list) + automatic Redis tracking via `parent_event_ids` parameter in `publish()`.
 
 **Example Flow:**
 
@@ -315,6 +345,7 @@ chain = publisher.get_correlation_chain(processed_event_id, "ancestors")
 
 **Examples:**
 
+
 - `fireflies.transcript.upload` - Fireflies namespace, transcript entity, upload action
 - `fireflies.transcript.ready` - Same namespace/entity, ready action
 - `fireflies.transcript.processed` - Same namespace/entity, processed action
@@ -325,6 +356,7 @@ chain = publisher.get_correlation_chain(processed_event_id, "ancestors")
 
 **Wildcard Subscription Patterns:**
 
+
 - `fireflies.*` - All events in fireflies namespace (any entity.action)
 - `*.transcript.*` - All transcript events across namespaces
 - `*.*.ready` - All "ready" events across all namespaces/entities
@@ -332,10 +364,11 @@ chain = publisher.get_correlation_chain(processed_event_id, "ancestors")
 
 ## Error Event Patterns
 
+**NEW in v2.0:** Standardized error events for failure tracking!
+
 **Convention:** Use `.failed` or `.error` suffix on the base event type.
 
 **Examples:**
-
 - `fireflies.transcript.failed` - Transcription failed at any stage
 - `llm.error` - LLM call failed
 - `artifact.ingestion.failed` - RAG ingestion failed
@@ -343,6 +376,7 @@ chain = publisher.get_correlation_chain(processed_event_id, "ancestors")
 **Error Event Structure:**
 
 All error events should include:
+
 
 ```python
 class SomeErrorPayload(BaseModel):
@@ -760,6 +794,7 @@ async def publish_event(
 
 **Usage from Claude:**
 
+
 ```
 I need to publish a transcript.ready event. Let me use the MCP tool...
 ```
@@ -864,13 +899,14 @@ if __name__ == "__main__":
 
 2. **Process the message**
 
+
    ```javascript
    // n8n Function node
    const envelope = JSON.parse($json.content);
    return {
-     event_id: envelope.event_id,
-     event_type: envelope.event_type,
-     payload: envelope.payload,
+       event_id: envelope.event_id,
+       event_type: envelope.event_type,
+       payload: envelope.payload
    };
    ```
 
@@ -1084,11 +1120,13 @@ class RAGTranscriptConsumer:
 
 ✅ **DO:**
 
+
 - Use lowercase with dots: `fireflies.transcript.ready`
 - Follow namespace.entity.action pattern
 - Be specific: `llm.thread.response` not `llm.response`
 
 ❌ **DON'T:**
+
 
 - Use camelCase: `fireflies.transcriptReady`
 - Mix concerns: `fireflies.transcript.ready.and.processed`
@@ -1098,12 +1136,14 @@ class RAGTranscriptConsumer:
 
 ✅ **DO:**
 
+
 - Include enough data to avoid additional API calls
 - Use ISO 8601 for timestamps
 - Provide example values in docstrings
 - Version your payload schemas
 
 ❌ **DON'T:**
+
 
 - Include sensitive credentials or tokens
 - Make payloads enormous (>1MB) - use URLs/references
@@ -1112,6 +1152,7 @@ class RAGTranscriptConsumer:
 ### 3. Idempotency & Deduplication
 
 ✅ **DO:**
+
 
 - Use deterministic event IDs when possible:
   ```python
@@ -1125,6 +1166,7 @@ class RAGTranscriptConsumer:
 - Handle duplicate events gracefully (idempotent operations)
 
 ❌ **DON'T:**
+
 
 - Assume events arrive only once
 - Process the same event multiple times
@@ -1163,12 +1205,14 @@ class IdempotentConsumer:
 
 ✅ **DO:**
 
+
 - Always set correlation_ids when event is caused by another event
 - Use parent_event_ids parameter for automatic tracking
 - Document correlation patterns in payload docstrings
 - Query chains for debugging: `publisher.get_correlation_chain()`
 
 ❌ **DON'T:**
+
 
 - Create circular references (A → B → A)
 - Lose the correlation chain (always link to immediate parent)
@@ -1177,6 +1221,7 @@ class IdempotentConsumer:
 ### 5. Error Handling
 
 ✅ **DO:**
+
 
 - Publish error events (e.g., `namespace.entity.failed`)
 - Include error details in payload (failed_stage, error_message, error_code)
@@ -1187,6 +1232,7 @@ class IdempotentConsumer:
 - Track retry_count to prevent infinite loops
 
 ❌ **DON'T:**
+
 
 - Silently swallow errors
 - Retry indefinitely (set max retry count = 3)
@@ -1241,12 +1287,14 @@ except Exception as e:
 
 ✅ **DO:**
 
+
 - Test with real RabbitMQ instance (use docker-compose)
 - Verify routing keys match event_type
 - Check correlation IDs propagate correctly
 - Monitor queue depths in production
 
 ❌ **DON'T:**
+
 
 - Test only with mocks (routing is complex!)
 - Assume events arrive in order
@@ -1257,6 +1305,7 @@ except Exception as e:
 ### Messages not being consumed
 
 1. **Check queue bindings:**
+
 
    ```bash
    kubectl -n messaging exec statefulset/bloodbank-server -- \
@@ -1293,6 +1342,7 @@ except Exception as e:
 ### Correlation IDs not linking
 
 1. **Check event_id → correlation_id mapping:**
+
 
    ```python
    # When handling event A
