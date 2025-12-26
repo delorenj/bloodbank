@@ -26,7 +26,6 @@ Usage:
     chain = await tracker.get_correlation_chain(event_id)
 """
 
-import hashlib
 import orjson
 from typing import List, Optional, Dict, Any
 from uuid import UUID, uuid5, NAMESPACE_OID
@@ -50,7 +49,7 @@ class CorrelationTracker:
         redis_password: Optional[str] = None,
         ttl_days: int = 30,
         max_retries: int = 3,
-        connection_timeout: float = 5.0
+        connection_timeout: float = 5.0,
     ):
         """
         Initialize correlation tracker.
@@ -88,16 +87,15 @@ class CorrelationTracker:
                     password=self.redis_password,
                     decode_responses=True,
                     socket_timeout=self.connection_timeout,
-                    socket_connect_timeout=self.connection_timeout
+                    socket_connect_timeout=self.connection_timeout,
                 )
                 # Test connection
                 await asyncio.wait_for(
-                    self.redis.ping(),
-                    timeout=self.connection_timeout
+                    self.redis.ping(), timeout=self.connection_timeout
                 )
                 self._started = True
                 logger.info("CorrelationTracker: Redis connection established")
-            except (RedisError, asyncio.TimeoutError) as e:
+            except (RedisError, asyncio.TimeoutError, ConnectionError) as e:
                 logger.error(f"Failed to connect to Redis: {e}")
                 # Don't raise - allow graceful degradation
                 self.redis = None
@@ -113,10 +111,7 @@ class CorrelationTracker:
                 logger.info("CorrelationTracker: Redis connection closed")
 
     def generate_event_id(
-        self,
-        event_type: str,
-        unique_key: str,
-        namespace: str = "bloodbank"
+        self, event_type: str, unique_key: str, namespace: str = "bloodbank"
     ) -> UUID:
         """
         Generate deterministic UUID for idempotency (sync operation).
@@ -153,7 +148,7 @@ class CorrelationTracker:
         self,
         child_event_id: UUID,
         parent_event_ids: List[UUID],
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Record correlation between child event and parent event(s).
@@ -177,7 +172,9 @@ class CorrelationTracker:
             ... )
         """
         if not self._started or not self.redis:
-            logger.warning("CorrelationTracker not started, skipping correlation tracking")
+            logger.warning(
+                "CorrelationTracker not started, skipping correlation tracking"
+            )
             return
 
         try:
@@ -190,13 +187,13 @@ class CorrelationTracker:
                 correlation_data = {
                     "parent_event_ids": [str(pid) for pid in parent_event_ids],
                     "created_at": datetime.utcnow().isoformat(),
-                    "metadata": metadata or {}
+                    "metadata": metadata or {},
                 }
 
                 await pipe.setex(
                     key_forward,
                     self.ttl_seconds,
-                    orjson.dumps(correlation_data).decode()
+                    orjson.dumps(correlation_data).decode(),
                 )
 
                 # Store reverse mappings: parent → children (for querying)
@@ -229,8 +226,7 @@ class CorrelationTracker:
         try:
             key = f"bloodbank:correlation:forward:{str(event_id)}"
             data = await asyncio.wait_for(
-                self.redis.get(key),
-                timeout=self.connection_timeout
+                self.redis.get(key), timeout=self.connection_timeout
             )
 
             if not data:
@@ -259,8 +255,7 @@ class CorrelationTracker:
         try:
             key = f"bloodbank:correlation:reverse:{str(event_id)}"
             child_ids = await asyncio.wait_for(
-                self.redis.smembers(key),
-                timeout=self.connection_timeout
+                self.redis.smembers(key), timeout=self.connection_timeout
             )
 
             return [UUID(cid) for cid in child_ids]
@@ -270,10 +265,7 @@ class CorrelationTracker:
             return []
 
     async def get_correlation_chain(
-        self,
-        event_id: UUID,
-        direction: str = "ancestors",
-        max_depth: int = 100
+        self, event_id: UUID, direction: str = "ancestors", max_depth: int = 100
     ) -> List[UUID]:
         """
         Get full correlation chain (all ancestors or descendants).
@@ -316,12 +308,18 @@ class CorrelationTracker:
                 for parent in parents:
                     await traverse(parent, current_depth + 1)
 
-            chain.append(eid)
-
-            if direction == "descendants":
+            elif direction == "descendants":
                 children = await self.get_children(eid)
                 for child in children:
                     await traverse(child, current_depth + 1)
+
+            # Only add event if it's not the starting event OR if starting event has correlations
+            if eid != event_id:
+                chain.append(eid)
+            elif direction == "ancestors" and await self.get_parents(eid):
+                chain.append(eid)
+            elif direction == "descendants" and await self.get_children(eid):
+                chain.append(eid)
 
         try:
             await traverse(event_id, 0)
@@ -330,7 +328,9 @@ class CorrelationTracker:
             logger.error(f"Failed to get correlation chain for {event_id}: {e}")
             return []
 
-    async def get_correlation_metadata(self, event_id: UUID) -> Optional[Dict[str, Any]]:
+    async def get_correlation_metadata(
+        self, event_id: UUID
+    ) -> Optional[Dict[str, Any]]:
         """
         Get metadata about a correlation relationship.
 
@@ -346,8 +346,7 @@ class CorrelationTracker:
         try:
             key = f"bloodbank:correlation:forward:{str(event_id)}"
             data = await asyncio.wait_for(
-                self.redis.get(key),
-                timeout=self.connection_timeout
+                self.redis.get(key), timeout=self.connection_timeout
             )
 
             if not data:
@@ -374,19 +373,22 @@ class CorrelationTracker:
             "event_id": str(event_id),
             "parents": [str(p) for p in await self.get_parents(event_id)],
             "children": [str(c) for c in await self.get_children(event_id)],
-            "ancestors": [str(a) for a in await self.get_correlation_chain(event_id, "ancestors")],
-            "descendants": [str(d) for d in await self.get_correlation_chain(event_id, "descendants")],
-            "metadata": await self.get_correlation_metadata(event_id)
+            "ancestors": [
+                str(a) for a in await self.get_correlation_chain(event_id, "ancestors")
+            ],
+            "descendants": [
+                str(d)
+                for d in await self.get_correlation_chain(event_id, "descendants")
+            ],
+            "metadata": await self.get_correlation_metadata(event_id),
         }
 
 
 # Convenience functions for common patterns
 
+
 async def link_events(
-    tracker: CorrelationTracker,
-    parent: UUID,
-    child: UUID,
-    reason: Optional[str] = None
+    tracker: CorrelationTracker, parent: UUID, child: UUID, reason: Optional[str] = None
 ) -> None:
     """
     Convenience function to link two events.
@@ -402,9 +404,7 @@ async def link_events(
 
 
 def generate_idempotent_id(
-    tracker: CorrelationTracker,
-    event_type: str,
-    **unique_fields
+    tracker: CorrelationTracker, event_type: str, **unique_fields
 ) -> UUID:
     """
     Generate idempotent event ID from event type and unique fields (sync).

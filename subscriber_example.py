@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from config import settings
 from events import EventEnvelope
 
+
 async def main():
     """
     An example of a standalone subscriber service.
@@ -30,10 +31,12 @@ async def main():
     # - "llm.prompt" will only receive messages with that exact key.
     # - "artifact.*" will receive messages for artifact.created, artifact.updated, etc.
     # - "#" will receive all messages published to the exchange.
-    binding_key = "#" # Listen for all events
+    binding_key = "#"  # Listen for all events
     await queue.bind(exchange, routing_key=binding_key)
 
-    print(f"[*] Waiting for messages with binding key '{binding_key}'. To exit press CTRL+C")
+    print(
+        f"[*] Waiting for messages with binding key '{binding_key}'. To exit press CTRL+C"
+    )
 
     async with queue.iterator() as queue_iter:
         async for message in queue_iter:
@@ -45,7 +48,7 @@ async def main():
                     # We can validate the incoming data against our Pydantic model.
                     envelope = EventEnvelope.model_validate(body)
 
-                    print(f"\n[✔] Received Event:")
+                    print("\n[✔] Received Event:")
                     print(f"  - ID: {envelope.id}")
                     print(f"  - Timestamp: {envelope.ts}")
                     print(f"  - Event Type: {envelope.event_type}")

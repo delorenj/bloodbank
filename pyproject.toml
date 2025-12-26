@@ -19,6 +19,8 @@ dependencies = [
   "python-dotenv",
   "mcp",               # official MCP SDK (includes FastMCP)
   "redis>=5.0.0",      # Async Redis for correlation tracking
+  "textual>=0.44.0",   # TUI framework
+  "rich>=13.0.0",      # Rich text and formatting (used by Textual)
 ]
 
 [project.scripts]

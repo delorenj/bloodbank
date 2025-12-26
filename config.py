@@ -30,11 +30,7 @@ class Settings(BaseSettings):
     http_host: str = "0.0.0.0"
     http_port: int = 8682
 
-    model_config = {
-        "env_file": ".env",
-        "env_file_encoding": "utf-8",
-        "extra": "ignore"
-    }
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

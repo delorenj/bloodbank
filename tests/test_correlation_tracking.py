@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from correlation_tracker import CorrelationTracker, link_events, generate_idempotent_id
 from rabbit import Publisher
-from event_producers.events.base import EventEnvelope, Source
+from event_producers.events.base import EventEnvelope, Source, TriggerType
 from event_producers.events.domains.fireflies import (
     FirefliesTranscriptReadyPayload,
     TranscriptSentence,
@@ -51,15 +51,15 @@ class EventFactory:
 
     @staticmethod
     def create_source(
-        component: str = "test-component",
-        host_id: str = "test-host-123",
-        session_id: str = "test-session-456",
+        host: str = "test-host-123",
+        trigger_type: str = "manual",
+        app: str = "test-component",
     ) -> Source:
         """Create a test Source object."""
         return Source(
-            component=component,
-            host_id=host_id,
-            session_id=session_id,
+            host=host,
+            type=TriggerType(trigger_type),
+            app=app,
         )
 
     @staticmethod
