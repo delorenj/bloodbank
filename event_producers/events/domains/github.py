@@ -31,7 +31,9 @@ class GitHubPRCreatedPayload(BaseModel):
         )
     """
 
-    cache_key: str = Field(..., description="Key to retrieve PR data from cache (e.g., 'trinote|423')")
+    cache_key: str = Field(
+        ..., description="Key to retrieve PR data from cache (e.g., 'trinote|423')"
+    )
     cache_type: Literal["redis", "memory", "file"] = Field(
         default="redis", description="Type of cache storage used"
     )

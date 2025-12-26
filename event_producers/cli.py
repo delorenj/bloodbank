@@ -1,5 +1,10 @@
-import typer, os, subprocess, json, shlex, pathlib, httpx, sys, time
-from datetime import datetime, timezone
+import typer
+import os
+import subprocess
+import json
+import pathlib
+import httpx
+import sys
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import importlib
@@ -7,12 +12,11 @@ from rich.console import Console
 from rich.syntax import Syntax
 
 # Fix Python path for installed tool to find local modules
-if __name__ == "__main__":
-    # When running as installed script, add project root to path
-    current_file = Path(__file__).resolve()
-    project_root = current_file.parent.parent
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
+# When running as installed script, add project root to path
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 app = typer.Typer(help="bloodbank CLI - Event-driven system for 33GOD ecosystem")
 console = Console()
@@ -45,7 +49,11 @@ def discover_events() -> List[Dict[str, Any]]:
 
     # Scan domain directories
     for domain_dir in events_dir.iterdir():
-        if not domain_dir.is_dir() or domain_dir.name.startswith("_") or domain_dir.name == "core":
+        if (
+            not domain_dir.is_dir()
+            or domain_dir.name.startswith("_")
+            or domain_dir.name == "core"
+        ):
             continue
 
         domain = domain_dir.name
@@ -60,12 +68,19 @@ def discover_events() -> List[Dict[str, Any]]:
             if not event_files:
                 continue
 
+            if len(event_files) > 1:
+                console.print(
+                    f"[yellow]Warning: Multiple event files found in {event_module_dir}, using first match[/yellow]"
+                )
+
             event_file = event_files[0]
             event_class_name = event_file.stem
 
             try:
                 # Dynamically import the event class
-                module_path = f"events.{domain}.{event_module_dir.name}.{event_class_name}"
+                module_path = (
+                    f"events.{domain}.{event_module_dir.name}.{event_class_name}"
+                )
                 module = importlib.import_module(module_path)
                 event_class = getattr(module, event_class_name)
 
@@ -77,17 +92,21 @@ def discover_events() -> List[Dict[str, Any]]:
                 mock_filename = f"{event_class_name.replace('Event', '')}Mock.json"
                 mock_file_path = event_module_dir / mock_filename
 
-                events.append({
-                    "name": event_class_name,
-                    "class": event_class,
-                    "routing_key": routing_key,
-                    "domain": domain,
-                    "is_command": is_command,
-                    "module_path": module_path,
-                    "mock_file": mock_file_path,
-                })
+                events.append(
+                    {
+                        "name": event_class_name,
+                        "class": event_class,
+                        "routing_key": routing_key,
+                        "domain": domain,
+                        "is_command": is_command,
+                        "module_path": module_path,
+                        "mock_file": mock_file_path,
+                    }
+                )
             except (ImportError, AttributeError) as e:
-                console.print(f"[yellow]Warning: Could not load {event_class_name}: {e}[/yellow]")
+                console.print(
+                    f"[yellow]Warning: Could not load {event_class_name}: {e}[/yellow]"
+                )
                 continue
 
     return sorted(events, key=lambda x: (x["domain"], x["name"]))
@@ -141,8 +160,12 @@ def get_event_by_name(event_name: str) -> Optional[Dict[str, Any]]:
 
 @app.command(name="list-events")
 def list_events(
-    domain: Optional[str] = typer.Option(None, "--domain", "-d", help="Filter by domain"),
-    event_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by type (event or command)"),
+    domain: Optional[str] = typer.Option(
+        None, "--domain", "-d", help="Filter by domain"
+    ),
+    event_type: Optional[str] = typer.Option(
+        None, "--type", "-t", help="Filter by type (event or command)"
+    ),
 ):
     """
     List all available events in the system.
@@ -152,7 +175,9 @@ def list_events(
     events = discover_events()
 
     if not events:
-        console.print("[yellow]No events found. Check that the events/ directory exists.[/yellow]")
+        console.print(
+            "[yellow]No events found. Check that the events/ directory exists.[/yellow]"
+        )
         return
 
     # Apply filters
@@ -174,15 +199,21 @@ def list_events(
     for domain_name, domain_events in by_domain.items():
         console.print(f"\n[bold cyan]Domain: {domain_name}[/bold cyan]")
         for event in domain_events:
-            event_type_label = "[yellow](command)[/yellow]" if event["is_command"] else ""
-            console.print(f"  - {event['routing_key']} ({event['name']}) {event_type_label}")
+            event_type_label = (
+                "[yellow](command)[/yellow]" if event["is_command"] else ""
+            )
+            console.print(
+                f"  - {event['routing_key']} ({event['name']}) {event_type_label}"
+            )
 
     console.print(f"\n[dim]Total: {len(events)} event(s)[/dim]")
 
 
 @app.command(name="list-commands")
 def list_commands(
-    domain: Optional[str] = typer.Option(None, "--domain", "-d", help="Filter by domain"),
+    domain: Optional[str] = typer.Option(
+        None, "--domain", "-d", help="Filter by domain"
+    ),
 ):
     """
     List all command events (mutable operations).
@@ -236,8 +267,12 @@ def show_event(event_name: str = typer.Argument(..., help="Event name or routing
 @app.command(name="publish")
 def publish_event(
     event_name: str = typer.Argument(..., help="Event name or routing key"),
-    mock: bool = typer.Option(False, "--mock", "-m", help="Use mock data from JSON file"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print payload without publishing"),
+    mock: bool = typer.Option(
+        False, "--mock", "-m", help="Use mock data from JSON file"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print payload without publishing"
+    ),
 ):
     """
     Publish an event to the event bus.
@@ -254,7 +289,9 @@ def publish_event(
         raise typer.Exit(1)
 
     if not mock:
-        console.print("[red]Error: --mock flag is required (custom payloads not yet implemented)[/red]")
+        console.print(
+            "[red]Error: --mock flag is required (custom payloads not yet implemented)[/red]"
+        )
         raise typer.Exit(1)
 
     # Load mock data
@@ -303,7 +340,9 @@ def publish_event(
             timeout=5.0,
         )
         response.raise_for_status()
-        console.print(f"[green]✓ Published {event_info['routing_key']} (event_id: {envelope.event_id})[/green]")
+        console.print(
+            f"[green]✓ Published {event_info['routing_key']} (event_id: {envelope.event_id})[/green]"
+        )
     except httpx.HTTPError as e:
         console.print(f"[yellow]Warning: Could not publish via HTTP: {e}[/yellow]")
         console.print("[dim]Event payload:[/dim]")
@@ -323,7 +362,9 @@ def show_help():
     console.print("=" * 60)
 
     console.print("\n[bold]Events[/bold]")
-    console.print("Events are immutable messages that notify the system something happened.")
+    console.print(
+        "Events are immutable messages that notify the system something happened."
+    )
     console.print("Naming: <domain>.<entity>.<past-tense-action>")
     console.print("Example: fireflies.transcript.ready")
 
@@ -379,8 +420,6 @@ def detect_project_and_cwd():
 def publish_prompt(provider: str, model: str = "", prompt: str = typer.Argument(...)):
     project, cwd = detect_project_and_cwd()
     payload = {"provider": provider, "model": model or None, "prompt": prompt}
-    env = {"project": project, "working_dir": cwd, "domain": None, "tags": ["cli"]}
-    body = payload | env
     r = httpx.post("http://localhost:8682/events/agent/thread/prompt", json=payload)
     typer.echo(r.json())
 

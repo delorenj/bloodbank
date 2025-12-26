@@ -71,7 +71,7 @@ class Publisher:
         enable_correlation_tracking: bool = False,
         redis_host: Optional[str] = None,
         redis_port: Optional[int] = None,
-        redis_password: Optional[str] = None
+        redis_password: Optional[str] = None,
     ):
         """
         Initialize publisher.
@@ -92,9 +92,10 @@ class Publisher:
         self.enable_correlation_tracking = enable_correlation_tracking
         if enable_correlation_tracking:
             self.tracker = CorrelationTracker(
-                redis_host=redis_host or getattr(settings, 'redis_host', 'localhost'),
-                redis_port=redis_port or getattr(settings, 'redis_port', 6379),
-                redis_password=redis_password or getattr(settings, 'redis_password', None)
+                redis_host=redis_host or getattr(settings, "redis_host", "localhost"),
+                redis_port=redis_port or getattr(settings, "redis_port", 6379),
+                redis_password=redis_password
+                or getattr(settings, "redis_password", None),
             )
         else:
             self.tracker = None
@@ -110,7 +111,9 @@ class Publisher:
 
             # Connect to RabbitMQ
             if not settings.rabbit_url:
-                raise RuntimeError("RABBIT_URL is not configured; set the environment variable.")
+                raise RuntimeError(
+                    "RABBIT_URL is not configured; set the environment variable."
+                )
 
             try:
                 self._conn = await asyncio.wait_for(
@@ -120,7 +123,9 @@ class Publisher:
                 self._exchange = await self._channel.declare_exchange(
                     settings.exchange_name, aio_pika.ExchangeType.TOPIC, durable=True
                 )
-                logger.info(f"Publisher: Connected to RabbitMQ exchange '{settings.exchange_name}'")
+                logger.info(
+                    f"Publisher: Connected to RabbitMQ exchange '{settings.exchange_name}'"
+                )
             except Exception as exc:
                 safe_url = _redacted_url(settings.rabbit_url)
                 raise RuntimeError(
@@ -133,7 +138,9 @@ class Publisher:
                     await self.tracker.start()
                     logger.info("Publisher: Correlation tracking enabled")
                 except Exception as e:
-                    logger.warning(f"Publisher: Correlation tracking disabled due to error: {e}")
+                    logger.warning(
+                        f"Publisher: Correlation tracking disabled due to error: {e}"
+                    )
                     # Don't fail startup - correlation tracking is optional
                     self.enable_correlation_tracking = False
 
@@ -182,18 +189,27 @@ class Publisher:
         if event_id is None:
             event_id_str = body.get("event_id")
             if event_id_str:
-                event_id = UUID(event_id_str) if isinstance(event_id_str, str) else event_id_str
+                event_id = (
+                    UUID(event_id_str)
+                    if isinstance(event_id_str, str)
+                    else event_id_str
+                )
 
         # Track correlation if enabled
-        if self.enable_correlation_tracking and self.tracker and event_id and parent_event_ids:
+        if (
+            self.enable_correlation_tracking
+            and self.tracker
+            and event_id
+            and parent_event_ids
+        ):
             try:
                 await asyncio.wait_for(
                     self.tracker.add_correlation(
                         child_event_id=event_id,
                         parent_event_ids=parent_event_ids,
-                        metadata=correlation_metadata
+                        metadata=correlation_metadata,
                     ),
-                    timeout=1.0  # Don't block publishing for correlation tracking
+                    timeout=1.0,  # Don't block publishing for correlation tracking
                 )
             except asyncio.TimeoutError:
                 logger.warning(f"Correlation tracking timed out for event {event_id}")
@@ -252,7 +268,9 @@ class Publisher:
 
         return self.tracker.generate_event_id(event_type, unique_key)
 
-    async def get_correlation_chain(self, event_id: UUID, direction: str = "ancestors") -> List[UUID]:
+    async def get_correlation_chain(
+        self, event_id: UUID, direction: str = "ancestors"
+    ) -> List[UUID]:
         """
         Get full correlation chain for an event.
 
