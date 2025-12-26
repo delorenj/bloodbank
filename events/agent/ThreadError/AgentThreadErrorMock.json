@@ -1,8 +1,0 @@
-{
-  "provider": "anthropic",
-  "model": "claude-sonnet-4",
-  "error_message": "Rate limit exceeded: Too many requests in 1 minute",
-  "error_code": "rate_limit_error",
-  "is_retryable": true,
-  "retry_count": 1
-}

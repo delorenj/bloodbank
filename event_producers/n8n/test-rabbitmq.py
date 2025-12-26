@@ -33,11 +33,7 @@ def declare_exchange(ch, exchange_name):
     """Ensure exchange exists"""
     print(f"\n📢 Declaring exchange: {exchange_name}")
     try:
-        ch.exchange_declare(
-            exchange=exchange_name,
-            exchange_type="topic",
-            durable=True
-        )
+        ch.exchange_declare(exchange=exchange_name, exchange_type="topic", durable=True)
         print(f"✅ Exchange '{exchange_name}' ready")
     except Exception as e:
         print(f"❌ Exchange declaration failed: {e}")
@@ -53,8 +49,8 @@ def publish_test_events(ch, exchange_name):
                 "event_type": "llm_interaction",
                 "prompt": "Test prompt from CLI",
                 "timestamp": datetime.utcnow().isoformat(),
-                "source": "test_script"
-            }
+                "source": "test_script",
+            },
         },
         {
             "routing_key": "llm.response",
@@ -62,8 +58,8 @@ def publish_test_events(ch, exchange_name):
                 "event_type": "llm_interaction",
                 "response": "Test response from CLI",
                 "timestamp": datetime.utcnow().isoformat(),
-                "source": "test_script"
-            }
+                "source": "test_script",
+            },
         },
         {
             "routing_key": "artifact.created",
@@ -72,8 +68,8 @@ def publish_test_events(ch, exchange_name):
                 "artifact_id": "test-artifact-001",
                 "type": "markdown",
                 "timestamp": datetime.utcnow().isoformat(),
-                "source": "test_script"
-            }
+                "source": "test_script",
+            },
         },
         {
             "routing_key": "webhook.test",
@@ -82,9 +78,9 @@ def publish_test_events(ch, exchange_name):
                 "webhook_name": "test",
                 "payload": {"test": "data"},
                 "timestamp": datetime.utcnow().isoformat(),
-                "source": "test_script"
-            }
-        }
+                "source": "test_script",
+            },
+        },
     ]
 
     print(f"\n📨 Publishing {len(events)} test events...")
@@ -96,8 +92,8 @@ def publish_test_events(ch, exchange_name):
                 body=json.dumps(event["data"]),
                 properties=pika.BasicProperties(
                     delivery_mode=2,  # persistent
-                    content_type="application/json"
-                )
+                    content_type="application/json",
+                ),
             )
             print(f"  ✅ Published: {event['routing_key']}")
             time.sleep(0.1)  # Small delay between publishes
@@ -114,16 +110,22 @@ def main():
     print("=" * 60)
 
     # Configuration - will prompt for actual credentials
-    print(f"\n📋 Configuration:")
-    print(f"   Exchange: bloodbank.events.v1")
+    print("\n📋 Configuration:")
+    print("   Exchange: bloodbank.events.v1")
 
     # Get credentials from user
     print("\n🔑 Enter RabbitMQ credentials:")
-    host = input("   Host (localhost or bloodbank.messaging.svc) [localhost]: ").strip() or "localhost"
-    port = input("   Port (5673 for port-forward, 5672 for in-cluster) [5673]: ").strip() or "5673"
+    host = (
+        input("   Host (localhost or bloodbank.messaging.svc) [localhost]: ").strip()
+        or "localhost"
+    )
+    port = (
+        input("   Port (5673 for port-forward, 5672 for in-cluster) [5673]: ").strip()
+        or "5673"
+    )
     user = input("   Username: ").strip()
     password = input("   Password: ").strip()
-    
+
     RABBIT_URL = f"amqp://{user}:{password}@{host}:{port}/"
     EXCHANGE_NAME = "bloodbank.events.v1"
 

@@ -1,0 +1,27 @@
+layout {
+    default_tab {
+        pane size=1 borderless=true {
+            plugin location="file:/tmp/motd"
+        }
+        pane {
+            split direction="vertical" {
+                pane size=30% {
+                    command { "bash" "-c" "cd /home/delorenj/code/bloodbank/trunk-main && PYTHONPATH=/home/delorenj/code/bloodbank/trunk-main python -m event_producers.tui.app" }
+                    name "TUI"
+                }
+                pane {
+                    split direction="horizontal" {
+                        pane size=50% {
+                            command { "bash" "-c" "cd /home/delorenj/code/bloodbank/trunk-main && python -m http.server 8000" }
+                            name "HTTP Server"
+                        }
+                        pane {
+                            command { "bash" "-c" "cd /home/delorenj/code/bloodbank/trunk-main && watch -n 1 'ps aux | grep python'" }
+                            name "Process Monitor"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
