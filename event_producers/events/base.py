@@ -9,7 +9,7 @@ This module contains the fundamental building blocks for all events:
 All events in the system are wrapped in EventEnvelope[T] where T is your payload type.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Generic, TypeVar
 from uuid import UUID, uuid4
@@ -101,8 +101,10 @@ class EventEnvelope(BaseModel, Generic[T]):
     agent_context: Optional[AgentContext] = None  # Agent metadata (if applicable)
     payload: T  # Your typed event data
 
-    class Config:
-        json_encoders = {UUID: str, datetime: lambda v: v.isoformat()}
+    model_config = ConfigDict(
+        # Pydantic v2 handles UUID and datetime serialization automatically
+        # No need for json_encoders
+    )
 
 
 # ============================================================================

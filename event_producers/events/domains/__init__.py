@@ -42,6 +42,17 @@ from event_producers.events.domains.fireflies import (
 from event_producers.events.domains.github import (
     GitHubPRCreatedPayload,
 )
+from event_producers.events.domains.theboard import (
+    MeetingCreatedPayload,
+    MeetingStartedPayload,
+    RoundCompletedPayload,
+    CommentExtractedPayload,
+    MeetingConvergedPayload,
+    MeetingCompletedPayload,
+    MeetingFailedPayload,
+    ParticipantAddedPayload,
+    ParticipantTurnCompletedPayload,
+)
 
 __all__ = [
     # AgentThread domain
@@ -60,4 +71,14 @@ __all__ = [
     "FirefliesTranscriptFailedPayload",
     # GitHub domain
     "GitHubPRCreatedPayload",
+    # TheBoard domain
+    "MeetingCreatedPayload",
+    "MeetingStartedPayload",
+    "RoundCompletedPayload",
+    "CommentExtractedPayload",
+    "MeetingConvergedPayload",
+    "MeetingCompletedPayload",
+    "MeetingFailedPayload",
+    "ParticipantAddedPayload",
+    "ParticipantTurnCompletedPayload",
 ]

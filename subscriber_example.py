@@ -2,8 +2,8 @@ import asyncio
 import orjson
 import aio_pika
 from pydantic import ValidationError
-from config import settings
-from events import EventEnvelope
+from event_producers.config import settings
+from event_producers.events import EventEnvelope
 
 
 async def main():

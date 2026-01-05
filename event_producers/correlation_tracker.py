@@ -29,7 +29,7 @@ Usage:
 import orjson
 from typing import List, Optional, Dict, Any
 from uuid import UUID, uuid5, NAMESPACE_OID
-from datetime import datetime
+from datetime import datetime, timezone
 import redis.asyncio as redis
 from redis.exceptions import RedisError
 import asyncio
@@ -186,7 +186,7 @@ class CorrelationTracker:
                 key_forward = f"bloodbank:correlation:forward:{child_id_str}"
                 correlation_data = {
                     "parent_event_ids": [str(pid) for pid in parent_event_ids],
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                     "metadata": metadata or {},
                 }
 

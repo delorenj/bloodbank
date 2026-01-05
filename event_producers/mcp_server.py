@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any
 from mcp.server.fastmcp import FastMCP
 from .events import LLMPrompt, LLMResponse, Artifact, create_envelope, create_source
-from rabbit import Publisher
+from event_producers.rabbit import Publisher
 
 mcp = FastMCP("bloodbank")
 

@@ -8,7 +8,7 @@ import pika
 import json
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 
 # Configure logging
@@ -144,7 +144,7 @@ class TranscriptRAGConsumer:
                     "url": transcript_url,
                     "audio_url": event_data.get("audioUrl"),
                     "video_url": event_data.get("videoUrl"),
-                    "ingested_at": datetime.utcnow().isoformat(),
+                    "ingested_at": datetime.now(timezone.utc).isoformat(),
                     "workflow_id": metadata.get("workflowId"),
                     "execution_id": metadata.get("executionId"),
                 },

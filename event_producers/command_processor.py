@@ -5,7 +5,7 @@ from event_producers.events.core.consumer import Consumer
 from event_producers.events.core.manager import CommandManager
 from event_producers.events.base import EventEnvelope
 from event_producers.events.registry import get_registry
-from rabbit import Publisher
+from event_producers.rabbit import Publisher
 
 # Configure Logging
 logging.basicConfig(

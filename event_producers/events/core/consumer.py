@@ -3,7 +3,7 @@ import logging
 import orjson
 import aio_pika
 from typing import Callable, Awaitable, List
-from config import settings
+from event_producers.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -75,3 +75,7 @@ class Consumer:
     async def close(self):
         if self._conn:
             await self._conn.close()
+
+
+# Alias for backward compatibility
+EventConsumer = Consumer

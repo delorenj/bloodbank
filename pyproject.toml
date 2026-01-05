@@ -23,11 +23,21 @@ dependencies = [
   "rich>=13.0.0",      # Rich text and formatting (used by Textual)
 ]
 
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
+  "pytest-cov>=4.1.0",
+  "pytest-timeout>=2.2.0",
+  "fakeredis[aioredis]>=2.21.0",
+  "pytest-mock>=3.12.0",
+]
+
 [project.scripts]
 bb = "event_producers.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["event_producers", "events"]
+packages = ["event_producers"]
 
 [tool.uv]
 package = true

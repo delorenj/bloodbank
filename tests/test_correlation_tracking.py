@@ -23,14 +23,8 @@ import fakeredis.aioredis
 import orjson
 
 # Import modules under test
-import sys
-from pathlib import Path
-
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from correlation_tracker import CorrelationTracker, link_events, generate_idempotent_id
-from rabbit import Publisher
+from event_producers.correlation_tracker import CorrelationTracker, link_events, generate_idempotent_id
+from event_producers.rabbit import Publisher
 from event_producers.events.base import EventEnvelope, Source, TriggerType
 from event_producers.events.domains.fireflies import (
     FirefliesTranscriptReadyPayload,
@@ -152,7 +146,7 @@ async def correlation_tracker(fake_redis):
     )
 
     # Inject fake Redis
-    with patch("correlation_tracker.redis.from_url", return_value=fake_redis):
+    with patch("event_producers.correlation_tracker.redis.from_url", return_value=fake_redis):
         await tracker.start()
 
     yield tracker
@@ -184,8 +178,8 @@ async def publisher_with_tracking(fake_redis, mock_rabbitmq):
     publisher = Publisher(enable_correlation_tracking=True)
 
     # Mock RabbitMQ connection
-    with patch("rabbit.aio_pika.connect_robust", return_value=mock_rabbitmq["conn"]):
-        with patch("correlation_tracker.redis.from_url", return_value=fake_redis):
+    with patch("event_producers.rabbit.aio_pika.connect_robust", return_value=mock_rabbitmq["conn"]):
+        with patch("event_producers.correlation_tracker.redis.from_url", return_value=fake_redis):
             await publisher.start()
 
     yield publisher
@@ -199,7 +193,7 @@ async def publisher_without_tracking(mock_rabbitmq):
     publisher = Publisher(enable_correlation_tracking=False)
 
     # Mock RabbitMQ connection
-    with patch("rabbit.aio_pika.connect_robust", return_value=mock_rabbitmq["conn"]):
+    with patch("event_producers.rabbit.aio_pika.connect_robust", return_value=mock_rabbitmq["conn"]):
         await publisher.start()
 
     yield publisher
@@ -264,7 +258,7 @@ class TestCorrelationTrackerInitialization:
             mock_redis.ping = AsyncMock(side_effect=ConnectionError("Connection refused"))
             return mock_redis
 
-        with patch("correlation_tracker.redis.from_url", side_effect=mock_from_url):
+        with patch("event_producers.correlation_tracker.redis.from_url", side_effect=mock_from_url):
             await tracker.start()
 
         # Should not raise, but should not be started
@@ -285,7 +279,7 @@ class TestCorrelationTrackerInitialization:
         """Test closing Redis connection."""
         tracker = CorrelationTracker()
 
-        with patch("correlation_tracker.redis.from_url", return_value=fake_redis):
+        with patch("event_producers.correlation_tracker.redis.from_url", return_value=fake_redis):
             await tracker.start()
 
         assert tracker._started is True
