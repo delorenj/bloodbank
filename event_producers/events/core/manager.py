@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from typing import Any
-from rabbit import Publisher
+from event_producers.rabbit import Publisher
 from event_producers.events.base import EventEnvelope
 from event_producers.events.core.abstraction import Invokable, CommandContext, EventCollector
 from event_producers.events.registry import get_registry

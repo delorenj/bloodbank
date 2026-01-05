@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager, suppress
 import aio_pika
 from aio_pika.abc import AbstractQueue
 
-from config import settings
+from event_producers.config import settings
 
 
 async def _connect():

@@ -10,7 +10,7 @@ from event_producers.events.core.factory import get_command_factory
 from event_producers.events.domains.agent.commands import ProcessAgentPromptCommand
 from event_producers.events.domains.agent.thread import AgentThreadPrompt
 from event_producers.events.base import create_envelope, Source, TriggerType
-from rabbit import Publisher
+from event_producers.rabbit import Publisher
 
 # Mock Publisher for testing without RabbitMQ connection
 class MockPublisher(Publisher):

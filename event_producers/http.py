@@ -4,8 +4,8 @@ from uuid import UUID, uuid4
 import logging
 import socket
 
-from config import settings
-from rabbit import Publisher
+from event_producers.config import settings
+from event_producers.rabbit import Publisher
 from event_producers.events.base import EventEnvelope, Source, TriggerType, create_envelope
 from event_producers.events.core.abstraction import BaseEvent
 from event_producers.events.domains.agent.thread import AgentThreadPrompt, AgentThreadResponse
