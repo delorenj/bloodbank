@@ -23,6 +23,10 @@ To add a new domain:
 """
 
 # Re-export all domain types for convenient access
+from event_producers.events.domains.agent.feedback import (
+    AgentFeedbackRequested,
+    AgentFeedbackResponse,
+)
 from event_producers.events.domains.agent.thread import (
     AgentThreadPrompt,
     AgentThreadResponse,
@@ -56,6 +60,8 @@ from event_producers.events.domains.theboard import (
 
 __all__ = [
     # AgentThread domain
+    "AgentFeedbackRequested",
+    "AgentFeedbackResponse",
     "AgentThreadPrompt",
     "AgentThreadResponse",
     "AgentThreadErrorPayload",

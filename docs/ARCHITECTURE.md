@@ -440,29 +440,25 @@ async def publish_event_object(event: BaseEvent, source: Source):
 
 ### 2.7 Consumer Layer
 
-**Location:** `/home/delorenj/code/bloodbank/trunk-main/event_producers/events/core/consumer.py`
+**Location:** `/home/delorenj/code/bloodbank/trunk-main/event_producers/consumer.py`
 
-Generic RabbitMQ consumer with routing key binding:
+The system uses **FastStream** for robust, type-safe event consumption:
 
 ```python
-consumer = Consumer(service_name="my_service")
+from event_producers.consumer import broker
+from event_producers.events.domains.fireflies import FirefliesTranscriptReadyPayload
 
-async def process_message(payload: dict):
-    envelope = EventEnvelope(**payload)
-    # Process the event
-    logger.info(f"Received: {envelope.event_type}")
-
-await consumer.start(
-    callback=process_message,
-    routing_keys=["fireflies.#", "agent.thread.prompt"]
-)
+@broker.subscriber("fireflies_service_queue", exchange="bloodbank.events.v1", routing_key="fireflies.transcript.ready")
+async def handle_transcript_ready(payload: FirefliesTranscriptReadyPayload):
+    # Payload is automatically validated and typed
+    print(f"Transcript ready: {payload.title}")
 ```
 
 **Features:**
-- Automatic queue declaration and binding
-- Configurable QoS (prefetch_count)
-- Automatic message acknowledgment
-- Error handling with dead-letter support (TODO)
+- **Type Safety:** Automatic Pydantic validation of payloads
+- **AsyncAPI:** Auto-generated documentation for consumers
+- **Dependency Injection:** Support for testable dependencies
+- **Resilience:** Built-in connection management and retries
 
 ---
 
@@ -1395,20 +1391,17 @@ await publisher.publish(
 )
 ```
 
-**Consume Events:**
+**Consume Events (FastStream):**
 ```python
-from event_producers.events.core.consumer import Consumer
+from event_producers.consumer import broker
+from event_producers.events.domains.fireflies import FirefliesTranscriptReadyPayload
 
-consumer = Consumer(service_name="my_service")
+# Define a subscriber
+@broker.subscriber("my_queue", exchange="bloodbank.events.v1", routing_key="fireflies.#")
+async def process(payload: FirefliesTranscriptReadyPayload):
+    print(f"Received: {payload.id}")
 
-async def process(payload: dict):
-    envelope = EventEnvelope(**payload)
-    print(f"Received: {envelope.event_type}")
-
-await consumer.start(
-    callback=process,
-    routing_keys=["fireflies.#"]
-)
+# Run via CLI: faststream run my_service:app
 ```
 
 **Create Command:**
