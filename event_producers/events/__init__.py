@@ -47,7 +47,11 @@ from event_producers.events.domains.fireflies import (
     FirefliesTranscriptFailedPayload,
 )
 
-# AgentThread domain
+# Agent domain
+from event_producers.events.domains.agent.feedback import (
+    AgentFeedbackRequested,
+    AgentFeedbackResponse,
+)
 from event_producers.events.domains.agent.thread import (
     AgentThreadPrompt,
     AgentThreadResponse,
@@ -83,6 +87,22 @@ from event_producers.events.registry import (
     register_event,
 )
 
+# Type-safe event types
+from event_producers.events.types import (
+    BloodbankEventType,
+    FirefliesEventType,
+    AgentThreadEventType,
+    AgentFeedbackEventType,
+    GitHubEventType,
+    TheBoardEventType,
+    LLMEventType,
+    ArtifactEventType,
+    EventCategory,
+    get_event_category,
+    get_payload_class,
+    EVENT_TYPE_TO_PAYLOAD,
+)
+
 __all__ = [
     # Unified envelope system (NEW)
     "create_envelope",
@@ -111,6 +131,8 @@ __all__ = [
     "FirefliesTranscriptProcessedPayload",
     "FirefliesTranscriptFailedPayload",
     # AgentThread types
+    "AgentFeedbackRequested",
+    "AgentFeedbackResponse",
     "AgentThreadPrompt",
     "AgentThreadResponse",
     "AgentThreadErrorPayload",
@@ -128,4 +150,17 @@ __all__ = [
     "EventRegistry",
     "get_registry",
     "register_event",
+    # Type-safe event types
+    "BloodbankEventType",
+    "FirefliesEventType",
+    "AgentThreadEventType",
+    "AgentFeedbackEventType",
+    "GitHubEventType",
+    "TheBoardEventType",
+    "LLMEventType",
+    "ArtifactEventType",
+    "EventCategory",
+    "get_event_category",
+    "get_payload_class",
+    "EVENT_TYPE_TO_PAYLOAD",
 ]

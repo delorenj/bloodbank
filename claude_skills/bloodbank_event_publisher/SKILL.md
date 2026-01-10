@@ -801,95 +801,81 @@ I need to publish a transcript.ready event. Let me use the MCP tool...
 
 ## How to Consume Events
 
-### Pattern 1: Python Consumer (Long-Running Service)
+### Method 1: Python Consumer with FastStream (Recommended)
+
+We use [FastStream](https://faststream.airt.ai/) for building robust, type-safe event consumers.
+
+1.  **Define your consumer:**
 
 ```python
-import asyncio
-import aio_pika
-import json
-from typing import Callable
-from event_producers.events import EventEnvelope, YourEventPayload
+# services/my_consumer.py
+from event_producers.consumer import broker
+from event_producers.events.domains.fireflies import FirefliesTranscriptReadyPayload
+from event_producers.events.domains.agent_thread import AgentThreadPrompt
 
-class YourConsumer:
-    def __init__(self, rabbitmq_url: str):
-        self.rabbitmq_url = rabbitmq_url
-        self.connection = None
-        self.channel = None
+# Subscribe to specific events
+@broker.subscriber(
+    queue="my_service_fireflies_queue",
+    exchange="bloodbank.events.v1",
+    routing_key="fireflies.transcript.ready"
+)
+async def handle_transcript(payload: FirefliesTranscriptReadyPayload):
+    """
+    Handle new transcript events.
+    The payload is automatically validated against the Pydantic model.
+    """
+    print(f"Received transcript: {payload.title} ({payload.id})")
+    
+    # Process the transcript...
+    # (FastStream automatically acks the message if this function returns successfully)
 
-    async def start(self):
-        """Connect to RabbitMQ and start consuming"""
-        self.connection = await aio_pika.connect_robust(self.rabbitmq_url)
-        self.channel = await self.connection.channel()
-
-        # Declare exchange (idempotent)
-        exchange = await self.channel.declare_exchange(
-            "amq.topic",
-            aio_pika.ExchangeType.TOPIC,
-            durable=True
-        )
-
-        # Create queue
-        queue = await self.channel.declare_queue(
-            "your-service-queue",
-            durable=True
-        )
-
-        # Bind to routing keys you care about
-        await queue.bind(exchange, routing_key="namespace.entity.*")
-
-        # Start consuming
-        await queue.consume(self._handle_message)
-        print("✓ Consumer started, waiting for messages...")
-
-    async def _handle_message(self, message: aio_pika.IncomingMessage):
-        """Process incoming message"""
-        async with message.process():
-            try:
-                # Parse envelope
-                data = json.loads(message.body.decode())
-                envelope = EventEnvelope[YourEventPayload](**data)
-
-                # Handle event
-                await self._process_event(envelope)
-
-                # Message auto-acked via context manager
-
-            except Exception as e:
-                print(f"✗ Error processing message: {e}")
-                # Message will be requeued or sent to DLQ
-
-    async def _process_event(self, envelope: EventEnvelope[YourEventPayload]):
-        """Your business logic here"""
-        print(f"Processing event {envelope.event_id}")
-        print(f"  Type: {envelope.event_type}")
-        print(f"  Payload: {envelope.payload}")
-
-        # Do something with the event
-        # ...
-
-    async def stop(self):
-        """Clean shutdown"""
-        if self.channel:
-            await self.channel.close()
-        if self.connection:
-            await self.connection.close()
-
-# Run the consumer
-async def main():
-    consumer = YourConsumer("amqp://user:pass@localhost:5673/")
-    await consumer.start()
-
-    # Keep running
-    try:
-        await asyncio.Future()  # Run forever
-    except KeyboardInterrupt:
-        await consumer.stop()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# Subscribe to multiple topics using wildcards
+@broker.subscriber(
+    queue="my_service_agent_queue",
+    exchange="bloodbank.events.v1",
+    routing_key="agent.thread.*"
+)
+async def handle_agent_events(msg: dict):
+    # For wildcards, you might receive different payload types
+    print(f"Agent event received: {msg}")
 ```
 
-### Pattern 2: n8n Workflow (No Code)
+2.  **Run the consumer:**
+
+Use the `faststream` CLI to run your application.
+
+```bash
+# Run with hot-reloading for development
+faststream run services.my_consumer:app --reload
+```
+
+3.  **Testing:**
+
+FastStream makes testing easy with the `TestBroker` context manager.
+
+```python
+import pytest
+from faststream.rabbit import TestRabbitBroker
+from event_producers.consumer import broker
+from services.my_consumer import handle_transcript
+
+@pytest.mark.asyncio
+async def test_transcript_handler():
+    async with TestRabbitBroker(broker) as br:
+        # Publish a fake message to the queue
+        await br.publish(
+            {
+                "id": "123", 
+                "title": "Test Meeting",
+                # ... other required fields
+            }, 
+            queue="my_service_fireflies_queue"
+        )
+        
+        # In a real test, you'd spy on the handler or check side effects
+```
+
+### Method 2: n8n Workflow (No Code)
 
 1. **Add RabbitMQ Trigger node**
    - Mode: `receiver`
