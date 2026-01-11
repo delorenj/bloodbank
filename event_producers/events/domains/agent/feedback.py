@@ -7,7 +7,7 @@ All events are wrapped in EventEnvelope[T] where T is your payload type.
 from typing import Optional, Dict, Any, List, Literal
 from pydantic import Field
 
-from event_producers.events.core.abstraction import BaseCommand, BaseEvent, CommandContext, EventCollector
+from event_producers.events.core.abstraction import BaseEvent
 
 
 class AgentFeedbackResponse(BaseEvent):
@@ -29,13 +29,16 @@ class AgentFeedbackResponse(BaseEvent):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class AgentFeedbackRequested(BaseCommand[AgentFeedbackResponse]):
+class AgentFeedbackRequested(BaseEvent):
     """
     Request feedback from a specific agent.
 
     Published when: A system needs mid-session feedback
-    Consumed by: Agent feedback router service
+    Consumed by: Agent feedback router service (standalone)
     Routing Key: agent.feedback.requested
+
+    Note: This is a pure event (fact), not a command. The agent-feedback-router
+    service consumes this event and handles the agent invocation.
     """
 
     agent_id: str = Field(..., description="AgentForge registry ID")
@@ -45,13 +48,6 @@ class AgentFeedbackRequested(BaseCommand[AgentFeedbackResponse]):
         default=None, description="Optional context for the agent"
     )
     tags: List[str] = Field(default_factory=list)
-
-    async def execute(
-        self, context: CommandContext, collector: EventCollector
-    ) -> AgentFeedbackResponse:
-        raise NotImplementedError(
-            "Agent feedback requests are handled by the agent-feedback-router service."
-        )
 
 
 ROUTING_KEYS = {
