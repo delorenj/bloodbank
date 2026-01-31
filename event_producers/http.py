@@ -9,6 +9,14 @@ from event_producers.rabbit import Publisher
 from event_producers.events.base import EventEnvelope, Source, TriggerType, create_envelope
 from event_producers.events.core.abstraction import BaseEvent
 from event_producers.events.domains.agent.thread import AgentThreadPrompt, AgentThreadResponse
+from event_producers.events.domains.claude_code import (
+    SessionAgentToolAction,
+    SessionThreadEnd,
+    SessionThreadStart,
+    SessionThreadMessage,
+    SessionThreadError,
+    ThinkingEvent,
+)
 from event_producers.events.registry import get_registry
 
 logger = logging.getLogger(__name__)
@@ -123,4 +131,121 @@ async def publish_prompt(ev: AgentThreadPrompt, request: Request):
         return JSONResponse(envelope.model_dump())
     except Exception as e:
         logger.error(f"Failed to publish prompt: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# Claude Code Events API
+# ============================================================================
+
+@app.post("/events/claude-code/tool-action")
+async def publish_tool_action(ev: SessionAgentToolAction, request: Request):
+    """
+    Publish Claude Code tool usage event.
+
+    Endpoint: POST /events/claude-code/tool-action
+    Event Type: session.thread.agent.action
+    """
+    try:
+        client_host = request.client.host if request.client else "unknown"
+        source = Source(host=client_host, type=TriggerType.AGENT, app="claude-code")
+
+        envelope = await publish_event_object(ev, source)
+        return JSONResponse(envelope.model_dump())
+    except Exception as e:
+        logger.error(f"Failed to publish tool action: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/events/claude-code/session-start")
+async def publish_session_start(ev: SessionThreadStart, request: Request):
+    """
+    Publish Claude Code session start event.
+
+    Endpoint: POST /events/claude-code/session-start
+    Event Type: session.thread.start
+    """
+    try:
+        client_host = request.client.host if request.client else "unknown"
+        source = Source(host=client_host, type=TriggerType.AGENT, app="claude-code")
+
+        envelope = await publish_event_object(ev, source)
+        return JSONResponse(envelope.model_dump())
+    except Exception as e:
+        logger.error(f"Failed to publish session start: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/events/claude-code/session-end")
+async def publish_session_end(ev: SessionThreadEnd, request: Request):
+    """
+    Publish Claude Code session end event.
+
+    Endpoint: POST /events/claude-code/session-end
+    Event Type: session.thread.end
+    """
+    try:
+        client_host = request.client.host if request.client else "unknown"
+        source = Source(host=client_host, type=TriggerType.AGENT, app="claude-code")
+
+        envelope = await publish_event_object(ev, source)
+        return JSONResponse(envelope.model_dump())
+    except Exception as e:
+        logger.error(f"Failed to publish session end: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/events/claude-code/message")
+async def publish_session_message(ev: SessionThreadMessage, request: Request):
+    """
+    Publish Claude Code message event.
+
+    Endpoint: POST /events/claude-code/message
+    Event Type: session.thread.message
+    """
+    try:
+        client_host = request.client.host if request.client else "unknown"
+        source = Source(host=client_host, type=TriggerType.AGENT, app="claude-code")
+
+        envelope = await publish_event_object(ev, source)
+        return JSONResponse(envelope.model_dump())
+    except Exception as e:
+        logger.error(f"Failed to publish session message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/events/claude-code/error")
+async def publish_session_error(ev: SessionThreadError, request: Request):
+    """
+    Publish Claude Code error event.
+
+    Endpoint: POST /events/claude-code/error
+    Event Type: session.thread.error
+    """
+    try:
+        client_host = request.client.host if request.client else "unknown"
+        source = Source(host=client_host, type=TriggerType.AGENT, app="claude-code")
+
+        envelope = await publish_event_object(ev, source)
+        return JSONResponse(envelope.model_dump())
+    except Exception as e:
+        logger.error(f"Failed to publish session error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/events/claude-code/thinking")
+async def publish_thinking_event(ev: ThinkingEvent, request: Request):
+    """
+    Publish Claude Code thinking/reasoning event.
+
+    Endpoint: POST /events/claude-code/thinking
+    Event Type: session.thread.agent.thinking
+    """
+    try:
+        client_host = request.client.host if request.client else "unknown"
+        source = Source(host=client_host, type=TriggerType.AGENT, app="claude-code")
+
+        envelope = await publish_event_object(ev, source)
+        return JSONResponse(envelope.model_dump())
+    except Exception as e:
+        logger.error(f"Failed to publish thinking event: {e}")
         raise HTTPException(status_code=500, detail=str(e))

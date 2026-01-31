@@ -22,6 +22,7 @@ dependencies = [
   "textual>=0.44.0",   # TUI framework
   "rich>=13.0.0",      # Rich text and formatting (used by Textual)
   "faststream[rabbit]>=0.5.0", # FastStream for RabbitMQ consumers
+  "jsonschema>=4.25.1",
 ]
 
 [project.optional-dependencies]

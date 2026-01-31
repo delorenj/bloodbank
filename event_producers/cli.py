@@ -1,3 +1,4 @@
+import asyncio
 import typer
 import os
 import subprocess
@@ -5,11 +6,18 @@ import json
 import pathlib
 import httpx
 import sys
+import socket
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-import importlib
+from uuid import UUID, uuid4
 from rich.console import Console
 from rich.syntax import Syntax
+
+from event_producers.events import EventEnvelope, Source, TriggerType, create_envelope
+from event_producers.events.registry import get_registry
+from event_producers.rabbit import Publisher
+from event_producers.schema_validator import validate_event
 
 # Fix Python path for installed tool to find local modules
 # When running as installed script, add project root to path
@@ -27,87 +35,31 @@ console = Console()
 # ============================================================================
 
 
-def get_events_dir() -> Path:
-    """Get the events directory path."""
-    current_file = Path(__file__).resolve()
-    project_root = current_file.parent.parent
-    return project_root / "events"
-
-
 def discover_events() -> List[Dict[str, Any]]:
     """
-    Auto-discover all event classes from the events/ directory structure.
+    Auto-discover all event classes from the registry.
 
     Returns:
         List of event metadata dicts with keys: name, class, routing_key, domain, is_command, module_path
     """
-    events = []
-    events_dir = get_events_dir()
+    events: List[Dict[str, Any]] = []
+    registry = get_registry()
+    registry.auto_discover_domains()
 
-    if not events_dir.exists():
-        return events
-
-    # Scan domain directories
-    for domain_dir in events_dir.iterdir():
-        if (
-            not domain_dir.is_dir()
-            or domain_dir.name.startswith("_")
-            or domain_dir.name == "core"
-        ):
-            continue
-
-        domain = domain_dir.name
-
-        # Scan event modules within each domain
-        for event_module_dir in domain_dir.iterdir():
-            if not event_module_dir.is_dir() or event_module_dir.name.startswith("_"):
-                continue
-
-            # Look for the event class file
-            event_files = list(event_module_dir.glob("*Event.py"))
-            if not event_files:
-                continue
-
-            if len(event_files) > 1:
-                console.print(
-                    f"[yellow]Warning: Multiple event files found in {event_module_dir}, using first match[/yellow]"
-                )
-
-            event_file = event_files[0]
-            event_class_name = event_file.stem
-
-            try:
-                # Dynamically import the event class
-                module_path = (
-                    f"events.{domain}.{event_module_dir.name}.{event_class_name}"
-                )
-                module = importlib.import_module(module_path)
-                event_class = getattr(module, event_class_name)
-
-                # Get metadata from the class
-                routing_key = event_class.get_routing_key()
-                is_command = event_class.is_command()
-
-                # Construct mock file path correctly
-                mock_filename = f"{event_class_name.replace('Event', '')}Mock.json"
-                mock_file_path = event_module_dir / mock_filename
-
-                events.append(
-                    {
-                        "name": event_class_name,
-                        "class": event_class,
-                        "routing_key": routing_key,
-                        "domain": domain,
-                        "is_command": is_command,
-                        "module_path": module_path,
-                        "mock_file": mock_file_path,
-                    }
-                )
-            except (ImportError, AttributeError) as e:
-                console.print(
-                    f"[yellow]Warning: Could not load {event_class_name}: {e}[/yellow]"
-                )
-                continue
+    for domain_name, domain in registry.domains.items():
+        for routing_key in domain.list_events():
+            payload_class = domain.payload_types[routing_key]
+            events.append(
+                {
+                    "name": payload_class.__name__,
+                    "class": payload_class,
+                    "routing_key": routing_key,
+                    "domain": domain_name,
+                    "is_command": False,
+                    "module_path": payload_class.__module__,
+                    "mock_file": None,
+                }
+            )
 
     return sorted(events, key=lambda x: (x["domain"], x["name"]))
 
@@ -122,7 +74,9 @@ def load_mock_data(event_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     Returns:
         Parsed JSON dict or None if file doesn't exist
     """
-    mock_file = event_info["mock_file"]
+    mock_file = event_info.get("mock_file")
+    if not mock_file:
+        return None
     if not mock_file.exists():
         return None
 
@@ -132,6 +86,52 @@ def load_mock_data(event_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except json.JSONDecodeError as e:
         console.print(f"[red]Error parsing mock file {mock_file}: {e}[/red]")
         return None
+
+
+def _load_json_arg(value: str) -> Dict[str, Any]:
+    """
+    Load JSON from an inline string, @file, or stdin (-).
+    """
+    if value == "-":
+        data = sys.stdin.read()
+    elif value.startswith("@"):
+        data = Path(value[1:]).read_text()
+    else:
+        data = value
+    return json.loads(data)
+
+
+def _parse_uuid_list(values: List[str]) -> List[UUID]:
+    out: List[UUID] = []
+    for v in values:
+        try:
+            out.append(UUID(v))
+        except ValueError:
+            console.print(f"[yellow]Skipping invalid UUID: {v}[/yellow]")
+    return out
+
+
+def _resolve_event(event_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Resolve event by routing key or class name using registry discovery.
+    """
+    events = discover_events()
+    for event in events:
+        if event["routing_key"] == event_name or event["name"] == event_name:
+            return event
+    return None
+
+
+async def _publish_envelope(routing_key: str, envelope: EventEnvelope) -> None:
+    publisher = Publisher(enable_correlation_tracking=True)
+    await publisher.start()
+    await publisher.publish(
+        routing_key=routing_key,
+        body=envelope.model_dump(mode="json"),
+        event_id=envelope.event_id,
+        parent_event_ids=envelope.correlation_ids,
+    )
+    await publisher.close()
 
 
 def get_event_by_name(event_name: str) -> Optional[Dict[str, Any]]:
@@ -144,13 +144,7 @@ def get_event_by_name(event_name: str) -> Optional[Dict[str, Any]]:
     Returns:
         Event metadata dict or None if not found
     """
-    events = discover_events()
-
-    for event in events:
-        if event["name"] == event_name or event["routing_key"] == event_name:
-            return event
-
-    return None
+    return _resolve_event(event_name)
 
 
 # ============================================================================
@@ -270,84 +264,239 @@ def publish_event(
     mock: bool = typer.Option(
         False, "--mock", "-m", help="Use mock data from JSON file"
     ),
+    payload_json: Optional[str] = typer.Option(
+        None,
+        "--json",
+        "-j",
+        help="Payload JSON string, @file, or '-' for stdin",
+    ),
+    payload_file: Optional[Path] = typer.Option(
+        None,
+        "--payload-file",
+        help="Path to JSON payload file",
+    ),
+    envelope_json: Optional[str] = typer.Option(
+        None,
+        "--envelope-json",
+        help="Envelope JSON string, @file, or '-' for stdin",
+    ),
+    envelope_file: Optional[Path] = typer.Option(
+        None,
+        "--envelope-file",
+        help="Path to envelope JSON file",
+    ),
+    event_id: Optional[str] = typer.Option(
+        None, "--event-id", help="Override event_id for the envelope"
+    ),
+    correlation_id: List[str] = typer.Option(
+        [], "--correlation-id", "-c", help="Parent event id(s) for correlation"
+    ),
+    source_type: TriggerType = typer.Option(
+        TriggerType.MANUAL, "--source-type", help="Event source type"
+    ),
+    source_app: str = typer.Option(
+        "bloodbank-cli", "--source-app", help="Event source application"
+    ),
+    source_host: Optional[str] = typer.Option(
+        None, "--source-host", help="Event source host (defaults to hostname)"
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Print payload without publishing"
+    ),
+    skip_validation: bool = typer.Option(
+        False, "--skip-validation", help="Skip schema validation (not recommended)"
+    ),
+    strict_validation: bool = typer.Option(
+        True, "--strict-validation/--permissive-validation", help="Fail if schema not found"
     ),
 ):
     """
     Publish an event to the event bus.
 
     Examples:
-        bloodbank publish fireflies.transcript.ready --mock
-        bloodbank publish AgentThreadPromptEvent --mock --dry-run
+        bb publish fireflies.transcript.ready --payload-file payload.json
+        bb publish fireflies.transcript.ready --envelope-file envelope.json
+        bb publish fireflies.transcript.ready --json '{"id":"..."}'
+        bb publish fireflies.transcript.ready --json - < payload.json
     """
     event_info = get_event_by_name(event_name)
 
+    # If event not found in registry, treat it as an ad-hoc event type
+    # This allows publishing events defined only in HolyFields schemas
     if not event_info:
-        console.print(f"[red]Error: Event '{event_name}' not found.[/red]")
-        console.print("[dim]Run 'bloodbank list-events' to see available events.[/dim]")
-        raise typer.Exit(1)
+        console.print(f"[yellow]Event '{event_name}' not found in registry.[/yellow]")
+        console.print(f"[dim]Treating as ad-hoc event type (routing key: {event_name})[/dim]")
 
-    if not mock:
+        # For ad-hoc events, use basic payload structure
+        event_class = None
+        routing_key = event_name
+        is_ad_hoc = True
+    else:
+        event_class = event_info["class"]
+        routing_key = event_info["routing_key"]
+        is_ad_hoc = False
+
+    using_envelope = envelope_json is not None or envelope_file is not None
+    using_payload = payload_json is not None or payload_file is not None
+
+    if sum([mock, using_payload, using_envelope]) == 0:
         console.print(
-            "[red]Error: --mock flag is required (custom payloads not yet implemented)[/red]"
+            "[red]Error: provide --mock, --json/--payload-file, or --envelope-json/--envelope-file[/red]"
         )
         raise typer.Exit(1)
 
-    # Load mock data
-    mock_data = load_mock_data(event_info)
-    if not mock_data:
-        console.print(f"[red]Error: No mock data found for {event_info['name']}[/red]")
+    if sum([mock, using_payload, using_envelope]) > 1:
+        console.print(
+            "[red]Error: choose only one of --mock, --json/--payload-file, or --envelope-json/--envelope-file[/red]"
+        )
         raise typer.Exit(1)
 
-    # Create event instance
-    try:
-        event_class = event_info["class"]
-        event_instance = event_class(**mock_data)
-    except Exception as e:
-        console.print(f"[red]Error creating event instance: {e}[/red]")
-        raise typer.Exit(1)
+    if using_envelope:
+        if envelope_json:
+            envelope_data = _load_json_arg(envelope_json)
+        else:
+            envelope_data = json.loads(envelope_file.read_text())
 
-    # Wrap in EventEnvelope
-    from events.core import EventEnvelope, Source, TriggerType
-    import socket
+        event_type = envelope_data.get("event_type") or routing_key
+        payload_data = envelope_data.get("payload") or {}
 
-    envelope = EventEnvelope(
-        event_type=event_info["routing_key"],
-        payload=event_instance.model_dump(),
-        source=Source(
-            host=socket.gethostname(),
-            type=TriggerType.MANUAL,
-            app="bloodbank-cli",
-        ),
-    )
+        # Create payload instance (if event class available)
+        if event_class:
+            try:
+                payload_instance = event_class(**payload_data)
+            except Exception as e:
+                console.print(f"[red]Error creating event payload: {e}[/red]")
+                raise typer.Exit(1)
+        else:
+            # Ad-hoc event: use raw dict payload
+            payload_instance = payload_data
 
-    payload_json = envelope.model_dump_json(indent=2)
+        source_data = envelope_data.get("source") or {
+            "host": source_host or socket.gethostname(),
+            "type": source_type,
+            "app": source_app,
+        }
+
+        correlation_ids: List[UUID] = []
+        for c in envelope_data.get("correlation_ids", []):
+            try:
+                correlation_ids.append(UUID(str(c)))
+            except ValueError:
+                console.print(f"[yellow]Skipping invalid correlation id: {c}[/yellow]")
+
+        timestamp = envelope_data.get("timestamp") or datetime.now(timezone.utc)
+
+        envelope = EventEnvelope(
+            event_id=UUID(str(envelope_data["event_id"])) if envelope_data.get("event_id") else (UUID(event_id) if event_id else uuid4()),
+            event_type=event_type,
+            timestamp=timestamp,
+            version=envelope_data.get("version", "1.0.0"),
+            source=Source.model_validate(source_data),
+            correlation_ids=correlation_ids,
+            agent_context=envelope_data.get("agent_context"),
+            payload=payload_instance.model_dump() if hasattr(payload_instance, 'model_dump') else payload_instance,
+        )
+        routing_key = event_type
+    else:
+        if mock:
+            if is_ad_hoc:
+                console.print(f"[red]Error: --mock not supported for ad-hoc events[/red]")
+                raise typer.Exit(1)
+            payload_data = load_mock_data(event_info)
+            if not payload_data:
+                console.print(f"[red]Error: No mock data found for {event_info['name']}[/red]")
+                raise typer.Exit(1)
+        elif payload_json:
+            payload_data = _load_json_arg(payload_json)
+        else:
+            payload_data = json.loads(payload_file.read_text())
+
+        # Create payload instance (if event class available)
+        if event_class:
+            try:
+                payload_instance = event_class(**payload_data)
+            except Exception as e:
+                console.print(f"[red]Error creating event payload: {e}[/red]")
+                raise typer.Exit(1)
+        else:
+            # Ad-hoc event: use raw dict payload
+            payload_instance = payload_data
+
+        # Allow routing keys with templates like artifact.{action}
+        if "{" in routing_key:
+            try:
+                routing_key = routing_key.format(**payload_data)
+            except KeyError as e:
+                console.print(f"[red]Missing key for routing_key format: {e}[/red]")
+                raise typer.Exit(1)
+
+        source = Source(
+            host=source_host or socket.gethostname(),
+            type=source_type,
+            app=source_app,
+        )
+
+        correlation_ids = _parse_uuid_list(correlation_id)
+
+        # Create envelope (handle both Pydantic models and dicts)
+        if is_ad_hoc or not hasattr(payload_instance, 'model_dump'):
+            # Manual envelope creation for ad-hoc events
+            envelope = EventEnvelope(
+                event_id=UUID(event_id) if event_id else uuid4(),
+                event_type=routing_key,
+                timestamp=datetime.now(timezone.utc),
+                version="1.0.0",
+                source=source,
+                correlation_ids=correlation_ids,
+                agent_context=None,
+                payload=payload_instance if isinstance(payload_instance, dict) else payload_instance,
+            )
+        else:
+            envelope = create_envelope(
+                event_type=routing_key,
+                payload=payload_instance,
+                source=source,
+                correlation_ids=correlation_ids,
+                event_id=UUID(event_id) if event_id else None,
+            )
+
+    # Validate payload against HolyFields schema (unless skipped)
+    if not skip_validation:
+        console.print(f"\n[dim]Validating payload against HolyFields schema...[/dim]")
+        validation_result = validate_event(
+            event_type=routing_key,
+            payload=envelope.payload,
+            envelope=envelope.model_dump(),
+            strict=strict_validation
+        )
+
+        if not validation_result.valid:
+            console.print(f"\n[red]Schema validation failed:[/red]")
+            for error in validation_result.errors:
+                console.print(f"  [red]✗[/red] {error}")
+
+            if strict_validation:
+                console.print("\n[yellow]Tip: Use --skip-validation to bypass schema validation[/yellow]")
+                console.print("[yellow]Tip: Use --permissive-validation to allow missing schemas[/yellow]")
+                raise typer.Exit(1)
+            else:
+                console.print("\n[yellow]Continuing with permissive validation...[/yellow]")
+        else:
+            console.print(f"[green]✓ Schema validation passed[/green] ({validation_result.schema_path})")
+
+    payload_json_out = envelope.model_dump_json(indent=2)
 
     if dry_run:
         console.print("\n[bold]Dry run - would publish:[/bold]")
-        syntax = Syntax(payload_json, "json", theme="monokai", line_numbers=True)
+        syntax = Syntax(payload_json_out, "json", theme="monokai", line_numbers=True)
         console.print(syntax)
         return
 
-    # Publish to event bus
     try:
-        # TODO: Implement actual RabbitMQ publishing
-        # For now, use HTTP endpoint if available
-        response = httpx.post(
-            f"http://localhost:8682/events/{event_info['routing_key']}",
-            json=json.loads(payload_json),
-            timeout=5.0,
-        )
-        response.raise_for_status()
+        asyncio.run(_publish_envelope(routing_key, envelope))
         console.print(
-            f"[green]✓ Published {event_info['routing_key']} (event_id: {envelope.event_id})[/green]"
+            f"[green]✓ Published {routing_key} (event_id: {envelope.event_id})[/green]"
         )
-    except httpx.HTTPError as e:
-        console.print(f"[yellow]Warning: Could not publish via HTTP: {e}[/yellow]")
-        console.print("[dim]Event payload:[/dim]")
-        syntax = Syntax(payload_json, "json", theme="monokai", line_numbers=True)
-        console.print(syntax)
     except Exception as e:
         console.print(f"[red]Error publishing event: {e}[/red]")
         raise typer.Exit(1)
