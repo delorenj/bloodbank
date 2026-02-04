@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     http_host: str = "0.0.0.0"
     http_port: int = 8682
 
+    # Webhook secrets
+    # (Set in .env / mise env block; do NOT commit real values)
+    plane_webhook_secret: Optional[str] = None
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from uuid import UUID, uuid4
 import logging
+import re
 import socket
 
 from event_producers.config import settings
@@ -41,6 +42,90 @@ async def _shutdown():
 @app.get("/healthz")
 async def healthz():
     return {"ok": True, "service": settings.service_name}
+
+
+def _normalize_event_key(value: str) -> str:
+    """Normalize arbitrary provider event names into a routing-key-friendly token."""
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9._-]+", ".", value)
+    value = re.sub(r"\.+", ".", value)
+    return value.strip(".")
+
+
+@app.post("/event")
+async def ingest_generic_event(request: Request):
+    """Generic webhook ingress.
+
+    Designed for providers like Plane that will POST arbitrary JSON.
+
+    Security: if PLANE_WEBHOOK_SECRET is set, require it via:
+    - query param: ?secret=... (or ?key=...)
+    - header: x-webhook-secret / x-plane-webhook-secret / authorization: Bearer ...
+    """
+
+    # Best-effort secret check
+    expected = settings.plane_webhook_secret
+    provided = (
+        request.query_params.get("secret")
+        or request.query_params.get("key")
+        or request.headers.get("x-webhook-secret")
+        or request.headers.get("x-plane-webhook-secret")
+    )
+    if not provided:
+        auth = request.headers.get("authorization")
+        if auth and auth.lower().startswith("bearer "):
+            provided = auth.split(" ", 1)[1].strip()
+
+    if expected:
+        if not provided:
+            raise HTTPException(status_code=401, detail="Missing webhook secret")
+        if provided != expected:
+            raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
+    # Parse body
+    try:
+        body = await request.json()
+    except Exception:
+        body = {"raw": (await request.body()).decode("utf-8", errors="replace")}
+
+    # Try to derive a useful routing key
+    header_event = (
+        request.headers.get("x-plane-event")
+        or request.headers.get("x-event-type")
+        or request.headers.get("x-webhook-event")
+    )
+    body_event = None
+    if isinstance(body, dict):
+        body_event = body.get("event") or body.get("type") or body.get("action")
+
+    event_suffix = _normalize_event_key(str(header_event or body_event or "unknown"))
+    routing_key = f"webhook.plane.{event_suffix}" if event_suffix else "webhook.plane"
+
+    source = Source(
+        host=(request.client.host if request.client else socket.gethostname()),
+        type=TriggerType.HOOK,
+        app="plane-webhook",
+    )
+
+    envelope = create_envelope(
+        event_type=routing_key,
+        payload={
+            "provider": "plane",
+            "event": header_event or body_event,
+            "path": str(request.url.path),
+            "body": body,
+        },
+        source=source,
+        event_id=uuid4(),
+    )
+
+    await publisher.publish(
+        routing_key=routing_key,
+        body=envelope.model_dump(mode="json"),
+        event_id=envelope.event_id,
+    )
+
+    return {"ok": True, "event_type": routing_key, "event_id": str(envelope.event_id)}
 
 
 async def publish_event_object(event: BaseEvent, source: Source = None):
