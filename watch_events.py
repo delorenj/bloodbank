@@ -54,10 +54,19 @@ async def main():
     console.print("\n[bold green]Bloodbank Event Watcher[/]")
     console.print("[dim]Listening for all events... (Ctrl+C to stop)[/]\n")
 
+    # Start consuming (this sets up background tasks and returns)
+    await consumer.start(handle_event, routing_keys=["#"])
+
+    # Block forever so the process doesn't exit immediately.
     try:
-        await consumer.start(handle_event, routing_keys=["#"])
-    except KeyboardInterrupt:
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, asyncio.CancelledError):
         console.print("\n[yellow]Stopped[/]")
+    finally:
+        # Ensure we close the aio-pika/aiormq connection cleanly to avoid
+        # 'Task was destroyed but it is pending' warnings on exit.
+        await consumer.close()
 
 
 if __name__ == "__main__":
