@@ -12,7 +12,7 @@ For migrations from v1, see **[MIGRATION_v1_to_v2.md](docs/MIGRATION_v1_to_v2.md
 
 The system is composed of three main parts:
 
-1.  **RabbitMQ Broker:** A central RabbitMQ instance that routes messages. It uses a single, durable topic exchange (`events`) which allows for flexible routing of messages based on a "routing key."
+1.  **RabbitMQ Broker:** A central RabbitMQ instance that routes messages. It uses a single, durable topic exchange (`bloodbank.events.v1`) which allows for flexible routing of messages based on a "routing key."
 2.  **Publisher Service (`http.py`):** A FastAPI application that exposes HTTP endpoints for publishing events. It takes a JSON payload, wraps it in a standardized `EventEnvelope`, and publishes it to the RabbitMQ exchange.
 3.  **Subscriber Services:** Any number of services that connect to RabbitMQ, bind a queue to the exchange with a specific routing key, and consume events asynchronously.
 

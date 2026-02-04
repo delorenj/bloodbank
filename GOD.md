@@ -243,7 +243,7 @@ class DLQPayload(BaseModel):
 
 - `RABBITMQ_URL`: RabbitMQ connection URL (default: `amqp://localhost:5672`)
 - `HOLYFIELDS_SCHEMA_DIR`: Path to Holyfields schemas
-- `BLOODBANK_EXCHANGE`: Exchange name (default: `bloodbank.events`)
+- `BLOODBANK_EXCHANGE`: Exchange name (default: `bloodbank.events.v1`)
 - `BLOODBANK_DLX`: Dead-letter exchange (default: `bloodbank.dlx`)
 
 **Config File** (`bloodbank/config.yaml`):
@@ -251,7 +251,7 @@ class DLQPayload(BaseModel):
 ```yaml
 rabbitmq:
   url: "amqp://localhost:5672"
-  exchange: "bloodbank.events"
+  exchange: "bloodbank.events.v1"
   exchange_type: "topic"
   durable: true
 
