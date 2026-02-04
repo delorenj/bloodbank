@@ -5,6 +5,7 @@ import json
 import pathlib
 import httpx
 import sys
+import asyncio
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import importlib
@@ -31,7 +32,8 @@ def get_events_dir() -> Path:
     """Get the events directory path."""
     current_file = Path(__file__).resolve()
     project_root = current_file.parent.parent
-    return project_root / "events"
+    # events are located in event_producers/events
+    return project_root / "event_producers" / "events"
 
 
 def discover_events() -> List[Dict[str, Any]]:
@@ -78,8 +80,9 @@ def discover_events() -> List[Dict[str, Any]]:
 
             try:
                 # Dynamically import the event class
+                # Updated path to match structure: event_producers.events...
                 module_path = (
-                    f"events.{domain}.{event_module_dir.name}.{event_class_name}"
+                    f"event_producers.events.{domain}.{event_module_dir.name}.{event_class_name}"
                 )
                 module = importlib.import_module(module_path)
                 event_class = getattr(module, event_class_name)
@@ -264,6 +267,20 @@ def show_event(event_name: str = typer.Argument(..., help="Event name or routing
         console.print("\n[yellow]No mock data available for this event.[/yellow]")
 
 
+async def _publish_rabbit(routing_key: str, payload: Dict[str, Any]):
+    """Helper to publish via RabbitMQ"""
+    from event_producers.rabbit import Publisher
+    publisher = Publisher()
+    await publisher.start()
+    try:
+        await publisher.publish(
+            routing_key=routing_key,
+            body=payload
+        )
+    finally:
+        await publisher.close()
+
+
 @app.command(name="publish")
 def publish_event(
     event_name: str = typer.Argument(..., help="Event name or routing key"),
@@ -309,7 +326,7 @@ def publish_event(
         raise typer.Exit(1)
 
     # Wrap in EventEnvelope
-    from events.core import EventEnvelope, Source, TriggerType
+    from event_producers.events.base import EventEnvelope, Source, TriggerType
     import socket
 
     envelope = EventEnvelope(
@@ -331,26 +348,41 @@ def publish_event(
         return
 
     # Publish to event bus
+    # Prefer RabbitMQ directly
+    published = False
     try:
-        # TODO: Implement actual RabbitMQ publishing
-        # For now, use HTTP endpoint if available
-        response = httpx.post(
-            f"http://localhost:8682/events/{event_info['routing_key']}",
-            json=json.loads(payload_json),
-            timeout=5.0,
-        )
-        response.raise_for_status()
+        asyncio.run(_publish_rabbit(
+            routing_key=event_info['routing_key'],
+            payload=envelope.model_dump()
+        ))
+        published = True
         console.print(
             f"[green]✓ Published {event_info['routing_key']} (event_id: {envelope.event_id})[/green]"
         )
-    except httpx.HTTPError as e:
-        console.print(f"[yellow]Warning: Could not publish via HTTP: {e}[/yellow]")
-        console.print("[dim]Event payload:[/dim]")
-        syntax = Syntax(payload_json, "json", theme="monokai", line_numbers=True)
-        console.print(syntax)
     except Exception as e:
-        console.print(f"[red]Error publishing event: {e}[/red]")
-        raise typer.Exit(1)
+        # Fallback to HTTP
+        console.print(f"[dim]RabbitMQ publish failed: {e}. Falling back to HTTP.[/dim]")
+
+    if not published:
+        try:
+            # Use HTTP endpoint if RabbitMQ failed
+            response = httpx.post(
+                f"http://localhost:8682/events/{event_info['routing_key']}",
+                json=json.loads(payload_json),
+                timeout=5.0,
+            )
+            response.raise_for_status()
+            console.print(
+                f"[green]✓ Published {event_info['routing_key']} (event_id: {envelope.event_id})[/green]"
+            )
+        except httpx.HTTPError as e:
+            console.print(f"[yellow]Warning: Could not publish via HTTP: {e}[/yellow]")
+            console.print("[dim]Event payload:[/dim]")
+            syntax = Syntax(payload_json, "json", theme="monokai", line_numbers=True)
+            console.print(syntax)
+        except Exception as e:
+            console.print(f"[red]Error publishing event: {e}[/red]")
+            raise typer.Exit(1)
 
 
 @app.command(name="help")
