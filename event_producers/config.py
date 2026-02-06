@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # RabbitMQ settings
     rabbit_url: str = "amqp://guest:guest@rabbitmq:5672/"
     exchange_name: str = "bloodbank.events.v1"
+    rabbit_publish_timeout: float = 30.0  # Timeout for publish operations in seconds
 
     # Redis settings (for correlation tracking)
     redis_host: str = "localhost"
