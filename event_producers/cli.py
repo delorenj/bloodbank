@@ -272,14 +272,17 @@ async def _publish_rabbit(routing_key: str, payload: Dict[str, Any]):
     """Helper to publish via RabbitMQ"""
     from event_producers.rabbit import Publisher
     publisher = Publisher()
+    started = False
     await publisher.start()
+    started = True
     try:
         await publisher.publish(
             routing_key=routing_key,
             body=payload
         )
     finally:
-        await publisher.close()
+        if started:
+            await publisher.close()
 
 
 @app.command(name="publish")
