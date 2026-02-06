@@ -11,10 +11,8 @@ The solution is to:
 """
 
 import json
-import pytest
-from pathlib import Path
 from typer.testing import CliRunner
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from event_producers.cli import app
@@ -40,10 +38,8 @@ def test_publish_command_uses_publisher(tmp_path):
     payload_file.write_text(json.dumps(payload))
     
     # Create mock Publisher instance
+    # AsyncMock automatically creates async mock methods when accessed
     mock_publisher_instance = AsyncMock()
-    mock_publisher_instance.start = AsyncMock()
-    mock_publisher_instance.publish = AsyncMock()
-    mock_publisher_instance.close = AsyncMock()
     
     # Patch the Publisher class to return our mock instance
     with patch('event_producers.cli.Publisher', return_value=mock_publisher_instance) as mock_publisher_class:
@@ -89,10 +85,8 @@ def test_publish_command_with_correlation_id_uses_publisher(tmp_path):
     parent_id = str(uuid4())
     
     # Create mock Publisher instance
+    # AsyncMock automatically creates async mock methods when accessed
     mock_publisher_instance = AsyncMock()
-    mock_publisher_instance.start = AsyncMock()
-    mock_publisher_instance.publish = AsyncMock()
-    mock_publisher_instance.close = AsyncMock()
     
     # Patch the Publisher class
     with patch('event_producers.cli.Publisher', return_value=mock_publisher_instance):
