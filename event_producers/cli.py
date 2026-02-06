@@ -123,6 +123,7 @@ def _resolve_event(event_name: str) -> Optional[Dict[str, Any]]:
 
 
 async def _publish_envelope(routing_key: str, envelope: EventEnvelope) -> None:
+    """Helper to publish an envelope using the Publisher."""
     publisher = Publisher(enable_correlation_tracking=True)
     await publisher.start()
     await publisher.publish(
