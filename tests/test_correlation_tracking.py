@@ -139,9 +139,11 @@ def assert_publish_called_with_correct_args(
     Args:
         mock_exchange: The mocked exchange object
         expected_routing_key: Expected routing key value
-        expected_event_type: Expected event_type in the envelope (optional)
-        expected_event_id: Expected event_id in the envelope (optional)
-        expected_payload_fields: Dict of expected fields in the payload (optional)
+        expected_event_type: Expected event_type in the envelope (if EventEnvelope structure).
+                           Set to None for plain dict messages (non-EventEnvelope).
+        expected_event_id: Expected event_id in the message (optional)
+        expected_payload_fields: Dict of expected fields in the body for non-EventEnvelope 
+                               messages (optional)
     """
     # Verify publish was called once
     mock_exchange.publish.assert_called_once()
@@ -157,18 +159,18 @@ def assert_publish_called_with_correct_args(
     # Parse the message body
     published_body = orjson.loads(published_msg.body)
     
-    # Verify event_type if provided
-    if expected_event_type is not None:
-        assert "event_type" in published_body
-        assert published_body["event_type"] == expected_event_type
-    
     # Verify event_id if provided
     if expected_event_id is not None:
         assert "event_id" in published_body
         assert published_body["event_id"] == expected_event_id
     
-    # Verify basic envelope structure (for EventEnvelope)
+    # Verify EventEnvelope structure if expected_event_type is provided
     if expected_event_type is not None:
+        # Verify event_type
+        assert "event_type" in published_body
+        assert published_body["event_type"] == expected_event_type
+        
+        # Verify basic envelope structure
         assert "event_id" in published_body
         assert "timestamp" in published_body
         assert "version" in published_body
