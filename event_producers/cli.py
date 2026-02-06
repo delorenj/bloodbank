@@ -18,6 +18,7 @@ from event_producers.events import EventEnvelope, Source, TriggerType, create_en
 from event_producers.events.registry import get_registry
 from event_producers.rabbit import Publisher
 from event_producers.schema_validator import validate_event
+from event_producers.config import settings
 
 # Fix Python path for installed tool to find local modules
 # When running as installed script, add project root to path
@@ -123,7 +124,48 @@ def _resolve_event(event_name: str) -> Optional[Dict[str, Any]]:
 
 
 async def _publish_envelope(routing_key: str, envelope: EventEnvelope) -> None:
+    """
+    Publish an event envelope to RabbitMQ with timeout handling.
+    
+    Args:
+        routing_key: The routing key for the message
+        envelope: The event envelope to publish
+        
+    Raises:
+        asyncio.TimeoutError: If the publish operation exceeds the configured timeout
+        RuntimeError: If connection or publishing fails
+    """
     publisher = Publisher(enable_correlation_tracking=True)
+    
+    try:
+        # Wrap the entire publish operation with timeout
+        await asyncio.wait_for(
+            _do_publish(publisher, routing_key, envelope),
+            timeout=settings.rabbit_publish_timeout
+        )
+    except asyncio.TimeoutError:
+        # Ensure cleanup on timeout with a short timeout to avoid hanging on close
+        try:
+            await asyncio.wait_for(publisher.close(), timeout=2.0)
+        except (asyncio.TimeoutError, Exception):
+            # If cleanup also times out or fails, log but don't raise
+            # The main timeout error is more important to report to the user
+            pass
+        raise asyncio.TimeoutError(
+            f"RabbitMQ publish operation timed out after {settings.rabbit_publish_timeout} seconds. "
+            "Check RabbitMQ connectivity and consider increasing RABBIT_PUBLISH_TIMEOUT."
+        )
+    except Exception:
+        # Ensure cleanup on any error with a short timeout
+        try:
+            await asyncio.wait_for(publisher.close(), timeout=2.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
+        raise
+
+
+async def _do_publish(publisher: Publisher, routing_key: str, envelope: EventEnvelope) -> None:
+    """Helper function to perform the actual publish operation."""
     await publisher.start()
     await publisher.publish(
         routing_key=routing_key,
@@ -497,6 +539,10 @@ def publish_event(
         console.print(
             f"[green]✓ Published {routing_key} (event_id: {envelope.event_id})[/green]"
         )
+    except asyncio.TimeoutError as e:
+        console.print(f"[red]Timeout error: {e}[/red]")
+        console.print("[yellow]Tip: Check RabbitMQ connectivity or increase RABBIT_PUBLISH_TIMEOUT[/yellow]")
+        raise typer.Exit(1)
     except Exception as e:
         console.print(f"[red]Error publishing event: {e}[/red]")
         raise typer.Exit(1)
