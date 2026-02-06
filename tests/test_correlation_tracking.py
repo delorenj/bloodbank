@@ -1366,8 +1366,26 @@ class TestEdgeCasesAndErrorHandling:
             parent_event_ids=[parent_id],
         )
 
-        # Message should still be published
+        # Message should still be published with correct arguments
         mock_rabbitmq["exchange"].publish.assert_called_once()
+        
+        # Get the call arguments
+        call_args = mock_rabbitmq["exchange"].publish.call_args
+        published_msg = call_args[0][0]  # First positional argument
+        published_routing_key = call_args[1]["routing_key"]  # Keyword argument
+        
+        # Verify routing_key matches expected value
+        assert published_routing_key == "test.event"
+        
+        # Verify message body is a properly structured dict
+        import orjson
+        published_body = orjson.loads(published_msg.body)
+        
+        # Verify body contains expected fields
+        assert "event_id" in published_body
+        assert published_body["event_id"] == str(child_id)
+        assert "data" in published_body
+        assert published_body["data"] == "test"
 
 
 # ============================================================================
