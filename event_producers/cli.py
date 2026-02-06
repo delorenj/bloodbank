@@ -123,6 +123,7 @@ def _resolve_event(event_name: str) -> Optional[Dict[str, Any]]:
 
 
 async def _publish_envelope(routing_key: str, envelope: EventEnvelope) -> None:
+    """Helper to publish an envelope using the Publisher."""
     publisher = Publisher(enable_correlation_tracking=True)
     await publisher.start()
     await publisher.publish(
@@ -400,7 +401,7 @@ def publish_event(
     else:
         if mock:
             if is_ad_hoc:
-                console.print(f"[red]Error: --mock not supported for ad-hoc events[/red]")
+                console.print("[red]Error: --mock not supported for ad-hoc events[/red]")
                 raise typer.Exit(1)
             payload_data = load_mock_data(event_info)
             if not payload_data:
@@ -462,7 +463,7 @@ def publish_event(
 
     # Validate payload against HolyFields schema (unless skipped)
     if not skip_validation:
-        console.print(f"\n[dim]Validating payload against HolyFields schema...[/dim]")
+        console.print("\n[dim]Validating payload against HolyFields schema...[/dim]")
         validation_result = validate_event(
             event_type=routing_key,
             payload=envelope.payload,
@@ -471,7 +472,7 @@ def publish_event(
         )
 
         if not validation_result.valid:
-            console.print(f"\n[red]Schema validation failed:[/red]")
+            console.print("\n[red]Schema validation failed:[/red]")
             for error in validation_result.errors:
                 console.print(f"  [red]✗[/red] {error}")
 
