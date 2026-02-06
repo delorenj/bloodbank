@@ -361,7 +361,8 @@ def publish_event(
         )
     except Exception as e:
         # Fallback to HTTP
-        console.print(f"[dim]RabbitMQ publish failed: {e}. Falling back to HTTP.[/dim]")
+        console.print(f"[yellow]Warning: RabbitMQ publish failed: {e}. Falling back to HTTP.[/yellow]")
+        console.print_exception()
 
     if not published:
         try:
