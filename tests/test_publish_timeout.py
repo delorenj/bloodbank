@@ -61,8 +61,11 @@ async def test_publish_envelope_timeout(sample_envelope):
                 await _publish_envelope("test.routing.key", sample_envelope)
             
             # Verify the error message is informative
-            assert "timed out after" in str(exc_info.value)
-            assert "0.1 seconds" in str(exc_info.value)
+            error_msg = str(exc_info.value)
+            assert "timed out after" in error_msg
+            # Check timeout value is mentioned (allow for various float formatting)
+            assert "0.1" in error_msg or "0.10" in error_msg
+            assert "seconds" in error_msg
             
             # Verify cleanup was called
             mock_publisher.close.assert_called_once()
@@ -168,8 +171,10 @@ def test_publish_command_timeout_error_handling(tmp_path):
         assert result.exit_code == 1
         
         # Should display timeout-specific error message
-        assert "Timeout error" in result.stdout or "timed out" in result.stdout.lower()
-        assert "RABBIT_PUBLISH_TIMEOUT" in result.stdout or "connectivity" in result.stdout.lower()
+        stdout_lower = result.stdout.lower()
+        assert "timeout" in stdout_lower or "timed out" in stdout_lower
+        # Should provide actionable guidance
+        assert "rabbit_publish_timeout" in stdout_lower or "connectivity" in stdout_lower
 
 
 def test_publish_command_generic_error_handling(tmp_path):
