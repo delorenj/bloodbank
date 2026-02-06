@@ -126,6 +126,71 @@ def event_factory():
     return EventFactory()
 
 
+def assert_publish_called_with_correct_args(
+    mock_exchange,
+    expected_routing_key: str,
+    expected_event_type: str = None,
+    expected_event_id: str = None,
+    expected_payload_fields: Dict[str, Any] = None,
+):
+    """
+    Helper function to verify that exchange.publish was called with correct arguments.
+    
+    Args:
+        mock_exchange: The mocked exchange object
+        expected_routing_key: Expected routing key value
+        expected_event_type: Expected event_type in the envelope (optional)
+        expected_event_id: Expected event_id in the envelope (optional)
+        expected_payload_fields: Dict of expected fields in the payload (optional)
+    """
+    # Verify publish was called once
+    mock_exchange.publish.assert_called_once()
+    
+    # Get the call arguments
+    call_args = mock_exchange.publish.call_args
+    published_msg = call_args[0][0]  # First positional argument
+    published_routing_key = call_args[1]["routing_key"]  # Keyword argument
+    
+    # Verify routing_key matches expected value
+    assert published_routing_key == expected_routing_key
+    
+    # Parse the message body
+    published_body = orjson.loads(published_msg.body)
+    
+    # Verify event_type if provided
+    if expected_event_type is not None:
+        assert "event_type" in published_body
+        assert published_body["event_type"] == expected_event_type
+    
+    # Verify event_id if provided
+    if expected_event_id is not None:
+        assert "event_id" in published_body
+        assert published_body["event_id"] == expected_event_id
+    
+    # Verify basic envelope structure (for EventEnvelope)
+    if expected_event_type is not None:
+        assert "event_id" in published_body
+        assert "timestamp" in published_body
+        assert "version" in published_body
+        assert "source" in published_body
+        assert "correlation_ids" in published_body
+        assert "payload" in published_body
+        
+        # Verify source structure
+        assert isinstance(published_body["source"], dict)
+        assert "host" in published_body["source"]
+        assert "type" in published_body["source"]
+        assert "app" in published_body["source"]
+    
+    # Verify additional payload fields if provided
+    if expected_payload_fields is not None:
+        for field, expected_value in expected_payload_fields.items():
+            assert field in published_body
+            assert published_body[field] == expected_value
+    
+    return published_body
+
+
 @pytest.fixture
 async def fake_redis():
     """Provide a fake Redis instance for testing."""
@@ -863,35 +928,11 @@ class TestPublisherIntegration:
         )
 
         # Verify message was published with correct arguments
-        mock_rabbitmq["exchange"].publish.assert_called_once()
-        
-        # Get the call arguments
-        call_args = mock_rabbitmq["exchange"].publish.call_args
-        published_msg = call_args[0][0]  # First positional argument
-        published_routing_key = call_args[1]["routing_key"]  # Keyword argument
-        
-        # Verify routing_key matches expected value
-        assert published_routing_key == "fireflies.transcript.ready"
-        
-        # Verify message body is a properly structured EventEnvelope dict
-        import orjson
-        published_body = orjson.loads(published_msg.body)
-        
-        # Verify envelope contains expected fields
-        assert "event_type" in published_body
-        assert published_body["event_type"] == "fireflies.transcript.ready"
-        assert "event_id" in published_body
-        assert "timestamp" in published_body
-        assert "version" in published_body
-        assert "source" in published_body
-        assert "correlation_ids" in published_body
-        assert "payload" in published_body
-        
-        # Verify source structure
-        assert isinstance(published_body["source"], dict)
-        assert "host" in published_body["source"]
-        assert "type" in published_body["source"]
-        assert "app" in published_body["source"]
+        assert_publish_called_with_correct_args(
+            mock_rabbitmq["exchange"],
+            expected_routing_key="fireflies.transcript.ready",
+            expected_event_type="fireflies.transcript.ready",
+        )
 
     @pytest.mark.asyncio
     async def test_publish_with_tracking_no_correlation(
@@ -910,35 +951,11 @@ class TestPublisherIntegration:
         )
 
         # Should publish successfully with correct arguments
-        mock_rabbitmq["exchange"].publish.assert_called_once()
-        
-        # Get the call arguments
-        call_args = mock_rabbitmq["exchange"].publish.call_args
-        published_msg = call_args[0][0]  # First positional argument
-        published_routing_key = call_args[1]["routing_key"]  # Keyword argument
-        
-        # Verify routing_key matches expected value
-        assert published_routing_key == "fireflies.transcript.ready"
-        
-        # Verify message body is a properly structured EventEnvelope dict
-        import orjson
-        published_body = orjson.loads(published_msg.body)
-        
-        # Verify envelope contains expected fields
-        assert "event_type" in published_body
-        assert published_body["event_type"] == "fireflies.transcript.ready"
-        assert "event_id" in published_body
-        assert "timestamp" in published_body
-        assert "version" in published_body
-        assert "source" in published_body
-        assert "correlation_ids" in published_body
-        assert "payload" in published_body
-        
-        # Verify source structure
-        assert isinstance(published_body["source"], dict)
-        assert "host" in published_body["source"]
-        assert "type" in published_body["source"]
-        assert "app" in published_body["source"]
+        assert_publish_called_with_correct_args(
+            mock_rabbitmq["exchange"],
+            expected_routing_key="fireflies.transcript.ready",
+            expected_event_type="fireflies.transcript.ready",
+        )
 
     @pytest.mark.asyncio
     async def test_publish_with_correlation(
@@ -963,36 +980,12 @@ class TestPublisherIntegration:
         )
 
         # Verify message was published with correct arguments
-        mock_rabbitmq["exchange"].publish.assert_called_once()
-        
-        # Get the call arguments
-        call_args = mock_rabbitmq["exchange"].publish.call_args
-        published_msg = call_args[0][0]  # First positional argument
-        published_routing_key = call_args[1]["routing_key"]  # Keyword argument
-        
-        # Verify routing_key matches expected value
-        assert published_routing_key == "fireflies.transcript.processed"
-        
-        # Verify message body is a properly structured EventEnvelope dict
-        import orjson
-        published_body = orjson.loads(published_msg.body)
-        
-        # Verify envelope contains expected fields
-        assert "event_type" in published_body
-        assert published_body["event_type"] == "fireflies.transcript.processed"
-        assert "event_id" in published_body
-        assert str(child_event_id) == published_body["event_id"]
-        assert "timestamp" in published_body
-        assert "version" in published_body
-        assert "source" in published_body
-        assert "correlation_ids" in published_body
-        assert "payload" in published_body
-        
-        # Verify source structure
-        assert isinstance(published_body["source"], dict)
-        assert "host" in published_body["source"]
-        assert "type" in published_body["source"]
-        assert "app" in published_body["source"]
+        assert_publish_called_with_correct_args(
+            mock_rabbitmq["exchange"],
+            expected_routing_key="fireflies.transcript.processed",
+            expected_event_type="fireflies.transcript.processed",
+            expected_event_id=str(child_event_id),
+        )
 
         # Verify correlation was tracked
         parents = await publisher_with_tracking.tracker.get_parents(child_event_id)
@@ -1367,25 +1360,15 @@ class TestEdgeCasesAndErrorHandling:
         )
 
         # Message should still be published with correct arguments
-        mock_rabbitmq["exchange"].publish.assert_called_once()
-        
-        # Get the call arguments
-        call_args = mock_rabbitmq["exchange"].publish.call_args
-        published_msg = call_args[0][0]  # First positional argument
-        published_routing_key = call_args[1]["routing_key"]  # Keyword argument
-        
-        # Verify routing_key matches expected value
-        assert published_routing_key == "test.event"
-        
-        # Verify message body is a properly structured dict
-        import orjson
-        published_body = orjson.loads(published_msg.body)
-        
-        # Verify body contains expected fields
-        assert "event_id" in published_body
-        assert published_body["event_id"] == str(child_id)
-        assert "data" in published_body
-        assert published_body["data"] == "test"
+        assert_publish_called_with_correct_args(
+            mock_rabbitmq["exchange"],
+            expected_routing_key="test.event",
+            expected_event_type=None,  # Not an EventEnvelope, just a dict
+            expected_payload_fields={
+                "event_id": str(child_id),
+                "data": "test",
+            },
+        )
 
 
 # ============================================================================
