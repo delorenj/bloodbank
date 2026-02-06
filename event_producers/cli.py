@@ -80,7 +80,8 @@ def discover_events() -> List[Dict[str, Any]]:
 
             try:
                 # Dynamically import the event class
-                # Updated path to match structure: event_producers.events...
+                # Build module path for hierarchical event layout:
+                # event_producers.events.<domain>.<event_module>.<event_class>
                 module_path = (
                     f"event_producers.events.{domain}.{event_module_dir.name}.{event_class_name}"
                 )
