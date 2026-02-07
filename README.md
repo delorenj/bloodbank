@@ -130,6 +130,44 @@ if __name__ == "__main__":
 
 Subscribing to events is done by creating a consumer service that connects to RabbitMQ, declares a queue, and binds it to the main exchange with a routing key. The `subscriber_example.py` script provides a template for this.
 
+## Team Infra dispatcher (Plane Ready -> OpenClaw)
+
+This repo includes an event consumer at:
+
+- `event_producers/infra_dispatcher.py`
+
+It listens to `webhook.plane.#` events (already published by `/event`), filters
+for **Issue** events that are:
+
+- in state `unstarted` (configurable)
+- AND tagged with a ready label (`ready` by default; configurable)
+
+Then it forwards qualifying tickets to OpenClaw `/hooks/agent` so the
+orchestrator can delegate work.
+
+### Required env
+
+```bash
+OPENCLAW_HOOK_TOKEN=<shared-hook-token>
+```
+
+### Optional env
+
+```bash
+OPENCLAW_HOOK_URL=http://127.0.0.1:18789/hooks/agent
+OPENCLAW_HOOK_DELIVER=false
+INFRA_READY_STATES=unstarted
+INFRA_READY_LABELS=ready,automation:go
+INFRA_COMPONENT_LABEL_PREFIX=comp:
+INFRA_DISPATCH_STATE_PATH=.infra_dispatch_state.json
+```
+
+### Run
+
+```bash
+uv run python -m event_producers.infra_dispatcher
+```
+
 ### Running the Example Subscriber
 
 1.  **Open a new terminal** and navigate to the project directory.
