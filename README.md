@@ -145,6 +145,9 @@ for **Issue** events that are:
 Then it forwards qualifying tickets to OpenClaw `/hooks/agent` so the
 orchestrator can delegate work.
 
+Before forwarding, it runs an **M2 component check gate** (automated test/validation
+command per component) and includes the result in the hook context.
+
 ### Required env
 
 ```bash
@@ -160,6 +163,10 @@ INFRA_READY_STATES=unstarted
 INFRA_READY_LABELS=ready,automation:go
 INFRA_COMPONENT_LABEL_PREFIX=comp:
 INFRA_DISPATCH_STATE_PATH=.infra_dispatch_state.json
+INFRA_RUN_CHECKS=true
+INFRA_CHECK_TIMEOUT_SECONDS=900
+# Optional JSON override for component check map:
+# INFRA_COMPONENT_CHECKS_JSON={"bloodbank":{"cwd":"/home/delorenj/code/33GOD/bloodbank","command":"mise x -- uv run pytest -q tests/test_infra_dispatcher.py"}}
 ```
 
 ### Run

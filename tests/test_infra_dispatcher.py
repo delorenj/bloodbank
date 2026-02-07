@@ -12,6 +12,7 @@ spec.loader.exec_module(infra_dispatcher)
 _extract_labels = infra_dispatcher._extract_labels
 _extract_state_slug = infra_dispatcher._extract_state_slug
 _unwrap_plane_body = infra_dispatcher._unwrap_plane_body
+_load_component_checks = infra_dispatcher._load_component_checks
 evaluate_ready_issue = infra_dispatcher.evaluate_ready_issue
 build_dispatch_message = infra_dispatcher.build_dispatch_message
 
@@ -100,3 +101,34 @@ def test_build_dispatch_message_mentions_missing_component_route():
     message = build_dispatch_message(ticket)
     assert "Component route: UNKNOWN" in message
     assert "comp:<component>" in message
+
+
+def test_load_component_checks_accepts_json_map():
+    checks = _load_component_checks(
+        '{"bloodbank":{"cwd":"/tmp/bb","command":"pytest -q"}}'
+    )
+    assert checks["bloodbank"]["cwd"] == "/tmp/bb"
+    assert checks["bloodbank"]["command"] == "pytest -q"
+
+
+def test_build_dispatch_message_includes_m2_gate_context():
+    ticket = {
+        "issue_id": "issue-2",
+        "ticket_ref": "PERTH-2",
+        "title": "Run checks",
+        "state": "unstarted",
+        "labels": ["ready", "comp-bloodbank"],
+        "component": "bloodbank",
+        "url": "https://plane.example/issues/PERTH-2",
+        "m2_check": {
+            "status": "failed",
+            "command": "pytest -q",
+            "cwd": "/tmp/bb",
+            "exit_code": 1,
+            "stderr_tail": "E   AssertionError",
+        },
+    }
+    message = build_dispatch_message(ticket)
+    assert "M2 Test Gate:" in message
+    assert "Status: failed" in message
+    assert "stderr tail:" in message

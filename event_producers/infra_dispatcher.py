@@ -13,6 +13,9 @@ Environment variables:
 - INFRA_READY_LABELS             (default: ready,automation:go)
 - INFRA_COMPONENT_LABEL_PREFIX   (default: comp:)
 - INFRA_DISPATCH_STATE_PATH      (default: .infra_dispatch_state.json)
+- INFRA_RUN_CHECKS               (default: true)
+- INFRA_CHECK_TIMEOUT_SECONDS    (default: 900)
+- INFRA_COMPONENT_CHECKS_JSON    (optional JSON map of component -> {cwd, command})
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +36,29 @@ from event_producers.events.base import EventEnvelope
 from event_producers.events.core.consumer import EventConsumer
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_COMPONENT_CHECKS: dict[str, dict[str, str]] = {
+    "bloodbank": {
+        "cwd": "/home/delorenj/code/33GOD/bloodbank",
+        "command": "mise x -- uv run pytest -q tests/test_infra_dispatcher.py",
+    },
+    "candystore": {
+        "cwd": "/home/delorenj/code/33GOD/candystore",
+        "command": "mise x -- uv run pytest -q",
+    },
+    "candybar": {
+        "cwd": "/home/delorenj/code/33GOD/candybar",
+        "command": "bun run lint && bun run build",
+    },
+    "holyfields": {
+        "cwd": "/home/delorenj/code/33GOD/holyfields",
+        "command": "mise run test:all",
+    },
+    "pjangler": {
+        "cwd": "/home/delorenj/code/pjangler",
+        "command": "bun run build",
+    },
+}
 
 
 def _split_csv(value: str | None, default: list[str]) -> list[str]:
@@ -47,6 +74,43 @@ def _normalize_token(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
 
 
+def _decode_check_output(raw: bytes, limit: int = 1200) -> str:
+    text = raw.decode("utf-8", errors="replace").strip()
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
+
+
+def _load_component_checks(raw_json: str | None) -> dict[str, dict[str, str]]:
+    if not raw_json:
+        return dict(DEFAULT_COMPONENT_CHECKS)
+
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid INFRA_COMPONENT_CHECKS_JSON: {exc}") from exc
+
+    if not isinstance(parsed, dict):
+        raise RuntimeError("INFRA_COMPONENT_CHECKS_JSON must be a JSON object")
+
+    checks: dict[str, dict[str, str]] = {}
+    for component, cfg in parsed.items():
+        key = _normalize_token(str(component))
+        if not key or not isinstance(cfg, dict):
+            continue
+
+        command = str(cfg.get("command") or "").strip()
+        cwd = str(cfg.get("cwd") or "").strip()
+        if not command or not cwd:
+            continue
+
+        checks[key] = {"command": command, "cwd": cwd}
+
+    return checks
+
+
 @dataclass(slots=True)
 class DispatcherConfig:
     hook_token: str
@@ -56,6 +120,9 @@ class DispatcherConfig:
     ready_labels: tuple[str, ...] = ("ready", "automation-go")
     component_label_prefix: str = "comp:"
     state_path: Path = Path(".infra_dispatch_state.json")
+    run_checks: bool = True
+    check_timeout_seconds: int = 900
+    component_checks: dict[str, dict[str, str]] = None  # type: ignore[assignment]
 
     @classmethod
     def from_env(cls) -> "DispatcherConfig":
@@ -78,6 +145,19 @@ class DispatcherConfig:
 
         prefix = os.getenv("INFRA_COMPONENT_LABEL_PREFIX", "comp:").strip().lower()
         state_path = Path(os.getenv("INFRA_DISPATCH_STATE_PATH", ".infra_dispatch_state.json")).expanduser()
+        run_checks = os.getenv("INFRA_RUN_CHECKS", "true").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        timeout_raw = os.getenv("INFRA_CHECK_TIMEOUT_SECONDS", "900").strip()
+        try:
+            check_timeout_seconds = max(30, int(timeout_raw))
+        except ValueError:
+            check_timeout_seconds = 900
+
+        component_checks = _load_component_checks(os.getenv("INFRA_COMPONENT_CHECKS_JSON"))
 
         return cls(
             hook_token=token,
@@ -87,6 +167,9 @@ class DispatcherConfig:
             ready_labels=ready_labels,
             component_label_prefix=prefix,
             state_path=state_path,
+            run_checks=run_checks,
+            check_timeout_seconds=check_timeout_seconds,
+            component_checks=component_checks,
         )
 
 
@@ -260,9 +343,75 @@ def evaluate_ready_issue(
     }
 
 
+async def run_component_check(config: DispatcherConfig, ticket: dict[str, Any]) -> dict[str, Any]:
+    if not config.run_checks:
+        return {"status": "disabled"}
+
+    component = _normalize_token(ticket.get("component"))
+    if not component:
+        return {"status": "skipped", "reason": "missing_component"}
+
+    checks = config.component_checks or {}
+    check = checks.get(component)
+    if not check:
+        return {"status": "missing", "reason": "no_check_config", "component": component}
+
+    command = str(check.get("command") or "").strip()
+    cwd_raw = str(check.get("cwd") or "").strip()
+    cwd = Path(cwd_raw).expanduser()
+
+    if not command:
+        return {"status": "missing", "reason": "missing_command", "component": component}
+    if not cwd.exists():
+        return {
+            "status": "missing",
+            "reason": "missing_cwd",
+            "component": component,
+            "cwd": str(cwd),
+            "command": command,
+        }
+
+    started = time.monotonic()
+    proc = await asyncio.create_subprocess_shell(
+        command,
+        cwd=str(cwd),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=float(config.check_timeout_seconds),
+        )
+    except TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        return {
+            "status": "timeout",
+            "component": component,
+            "cwd": str(cwd),
+            "command": command,
+            "timeout_seconds": config.check_timeout_seconds,
+        }
+
+    duration = round(time.monotonic() - started, 2)
+    return {
+        "status": "passed" if proc.returncode == 0 else "failed",
+        "component": component,
+        "cwd": str(cwd),
+        "command": command,
+        "exit_code": proc.returncode,
+        "duration_seconds": duration,
+        "stdout_tail": _decode_check_output(stdout),
+        "stderr_tail": _decode_check_output(stderr),
+    }
+
+
 def build_dispatch_message(ticket: dict[str, Any]) -> str:
     component = ticket.get("component")
     routing = component if component else "UNKNOWN"
+    check = ticket.get("m2_check") if isinstance(ticket.get("m2_check"), dict) else None
 
     lines = [
         "Team Infra dispatch event from Bloodbank/Plane.",
@@ -273,12 +422,44 @@ def build_dispatch_message(ticket: dict[str, Any]) -> str:
         f"Labels: {', '.join(ticket['labels']) if ticket['labels'] else '(none)'}",
         f"Component route: {routing}",
         f"Plane URL: {ticket.get('url') or '(not provided)'}",
-        "",
-        "Dispatch policy:",
-        "1) If component route is missing, return a routing error summary: add label comp:<component>.",
-        "2) If route exists, delegate to matching Team Infra worker (or spawn focused subagents).",
-        "3) Keep this run internal (no external chat send in this hook turn); return concise dispatch summary only.",
     ]
+
+    if check:
+        lines.extend(
+            [
+                "",
+                "M2 Test Gate:",
+                f"- Status: {check.get('status', 'unknown')}",
+                f"- Command: {check.get('command', '(none)')}",
+                f"- CWD: {check.get('cwd', '(none)')}",
+            ]
+        )
+        if check.get("duration_seconds") is not None:
+            lines.append(f"- Duration: {check['duration_seconds']}s")
+        if check.get("exit_code") is not None:
+            lines.append(f"- Exit code: {check['exit_code']}")
+        if check.get("reason"):
+            lines.append(f"- Reason: {check['reason']}")
+
+        status = str(check.get("status") or "")
+        if status in {"failed", "timeout", "missing"}:
+            stderr_tail = str(check.get("stderr_tail") or "").strip()
+            stdout_tail = str(check.get("stdout_tail") or "").strip()
+            if stderr_tail:
+                lines.extend(["", "stderr tail:", stderr_tail])
+            elif stdout_tail:
+                lines.extend(["", "stdout tail:", stdout_tail])
+
+    lines.extend(
+        [
+            "",
+            "Dispatch policy:",
+            "1) If component route is missing, return a routing error summary: add label comp:<component>.",
+            "2) If M2 test gate failed/timeout/missing, return blocked summary with failing check context.",
+            "3) If route + test gate pass, delegate to matching Team Infra worker (or spawn focused subagents).",
+            "4) Keep this run internal (no external chat send in this hook turn); return concise dispatch summary only.",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -335,6 +516,16 @@ async def run_dispatcher(config: DispatcherConfig) -> None:
             ticket["ticket_ref"],
             ticket.get("component") or "unknown",
         )
+
+        check_result = await run_component_check(config, ticket)
+        ticket["m2_check"] = check_result
+        logger.info(
+            "M2 check for %s: status=%s component=%s",
+            ticket["ticket_ref"],
+            check_result.get("status"),
+            check_result.get("component") or ticket.get("component") or "unknown",
+        )
+
         try:
             await send_to_openclaw(config, ticket)
         except Exception as exc:  # pragma: no cover
