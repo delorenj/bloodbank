@@ -10,6 +10,20 @@ from event_producers.rabbit import Publisher
 from event_producers.events.base import EventEnvelope, Source, TriggerType, create_envelope
 from event_producers.events.core.abstraction import BaseEvent
 from event_producers.events.domains.agent.thread import AgentThreadPrompt, AgentThreadResponse
+from event_producers.events.domains.agent.openclaw import (
+    AgentMessageReceived,
+    AgentMessageSent,
+    AgentToolInvoked,
+    AgentToolCompleted,
+    AgentSubagentSpawned,
+    AgentSubagentCompleted,
+    AgentSessionStarted,
+    AgentSessionEnded,
+    AgentTaskAssigned,
+    AgentTaskCompleted,
+    AgentHeartbeat,
+    AgentError,
+)
 from event_producers.events.domains.claude_code import (
     SessionAgentToolAction,
     SessionThreadEnd,
@@ -333,4 +347,86 @@ async def publish_thinking_event(ev: ThinkingEvent, request: Request):
         return JSONResponse(envelope.model_dump())
     except Exception as e:
         logger.error(f"Failed to publish thinking event: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Agent (OpenClaw) Events API
+# ============================================================================
+
+# Maps action suffix to payload model class
+_AGENT_ACTION_TO_MODEL: dict[str, type[BaseEvent]] = {
+    "message.received": AgentMessageReceived,
+    "message.sent": AgentMessageSent,
+    "tool.invoked": AgentToolInvoked,
+    "tool.completed": AgentToolCompleted,
+    "subagent.spawned": AgentSubagentSpawned,
+    "subagent.completed": AgentSubagentCompleted,
+    "session.started": AgentSessionStarted,
+    "session.ended": AgentSessionEnded,
+    "task.assigned": AgentTaskAssigned,
+    "task.completed": AgentTaskCompleted,
+    "heartbeat": AgentHeartbeat,
+    "error": AgentError,
+}
+
+
+@app.post("/events/agent/{agent_name}/{action:path}")
+async def publish_agent_event(agent_name: str, action: str, request: Request):
+    """
+    Publish an agent lifecycle event.
+
+    Endpoint: POST /events/agent/{agent_name}/{action}
+    Routing Key: agent.{agent_name}.{action}
+
+    The agent name IS the route — no platform prefixes.
+    e.g. POST /events/agent/cack/message.received
+         → routing key: agent.cack.message.received
+    """
+    # Validate the action
+    model_class = _AGENT_ACTION_TO_MODEL.get(action)
+    if model_class is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown agent action: {action}. Valid actions: {sorted(_AGENT_ACTION_TO_MODEL.keys())}",
+        )
+
+    # Parse and validate the payload
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    try:
+        ev = model_class(**body)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Payload validation failed: {e}")
+
+    # Build routing key: agent.{agent_name}.{action}
+    routing_key = f"agent.{agent_name}.{action}"
+
+    try:
+        client_host = request.client.host if request.client else "unknown"
+        source = Source(host=client_host, type=TriggerType.AGENT, app="openclaw")
+
+        envelope = create_envelope(
+            event_type=routing_key,
+            payload=ev,
+            source=source,
+            event_id=uuid4(),
+        )
+
+        await publisher.publish(
+            routing_key=routing_key,
+            body=envelope.model_dump(mode="json"),
+            event_id=envelope.event_id,
+        )
+
+        return {
+            "ok": True,
+            "routing_key": routing_key,
+            "event_id": str(envelope.event_id),
+        }
+    except Exception as e:
+        logger.error(f"Failed to publish agent event {routing_key}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -32,6 +32,20 @@ from event_producers.events.domains.agent.thread import (
     AgentThreadResponse,
     AgentThreadErrorPayload,
 )
+from event_producers.events.domains.agent.openclaw import (
+    AgentMessageReceived,
+    AgentMessageSent,
+    AgentToolInvoked,
+    AgentToolCompleted,
+    AgentSubagentSpawned,
+    AgentSubagentCompleted,
+    AgentSessionStarted,
+    AgentSessionEnded,
+    AgentTaskAssigned,
+    AgentTaskCompleted,
+    AgentHeartbeat,
+    AgentError,
+)
 from event_producers.events.domains.fireflies import (
     SentimentType,
     AIFilters,
@@ -75,6 +89,19 @@ __all__ = [
     "FirefliesTranscriptReadyPayload",
     "FirefliesTranscriptProcessedPayload",
     "FirefliesTranscriptFailedPayload",
+    # Agent OpenClaw domain
+    "AgentMessageReceived",
+    "AgentMessageSent",
+    "AgentToolInvoked",
+    "AgentToolCompleted",
+    "AgentSubagentSpawned",
+    "AgentSubagentCompleted",
+    "AgentSessionStarted",
+    "AgentSessionEnded",
+    "AgentTaskAssigned",
+    "AgentTaskCompleted",
+    "AgentHeartbeat",
+    "AgentError",
     # GitHub domain
     "GitHubPRCreatedPayload",
     # TheBoard domain

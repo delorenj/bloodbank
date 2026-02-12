@@ -9,6 +9,21 @@ from event_producers.events.domains.agent.thread import (
     AgentThreadResponse,
     AgentThreadErrorPayload,
 )
+from event_producers.events.domains.agent.openclaw import (
+    AgentOpenClawEventType,
+    AgentMessageReceived,
+    AgentMessageSent,
+    AgentToolInvoked,
+    AgentToolCompleted,
+    AgentSubagentSpawned,
+    AgentSubagentCompleted,
+    AgentSessionStarted,
+    AgentSessionEnded,
+    AgentTaskAssigned,
+    AgentTaskCompleted,
+    AgentHeartbeat,
+    AgentError,
+)
 
 __all__ = [
     "AgentFeedbackRequested",
@@ -16,4 +31,18 @@ __all__ = [
     "AgentThreadPrompt",
     "AgentThreadResponse",
     "AgentThreadErrorPayload",
+    # OpenClaw agent events
+    "AgentOpenClawEventType",
+    "AgentMessageReceived",
+    "AgentMessageSent",
+    "AgentToolInvoked",
+    "AgentToolCompleted",
+    "AgentSubagentSpawned",
+    "AgentSubagentCompleted",
+    "AgentSessionStarted",
+    "AgentSessionEnded",
+    "AgentTaskAssigned",
+    "AgentTaskCompleted",
+    "AgentHeartbeat",
+    "AgentError",
 ]
