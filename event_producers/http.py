@@ -1,6 +1,8 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from uuid import UUID, uuid4
+import asyncio
 import logging
 import re
 import socket
@@ -37,6 +39,57 @@ from event_producers.events.registry import get_registry
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="bloodbank", version="0.2.0")
+
+# CORS middleware so Holocene (and other frontends) can connect
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------------------------------------------------------------------
+# WebSocket event stream
+# ---------------------------------------------------------------------------
+_ws_clients: set[WebSocket] = set()
+
+
+async def _broadcast_to_ws(routing_key: str, envelope_dict: dict):
+    """Broadcast event to all connected WebSocket clients."""
+    if not _ws_clients:
+        return
+    msg = {"type": "event", "routing_key": routing_key, "envelope": envelope_dict}
+    dead: list[WebSocket] = []
+    for ws in _ws_clients:
+        try:
+            await ws.send_json(msg)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _ws_clients.discard(ws)
+
+
+@app.websocket("/ws/events")
+async def ws_events(websocket: WebSocket):
+    """Stream all Bloodbank events to connected WebSocket clients in real-time."""
+    await websocket.accept()
+    _ws_clients.add(websocket)
+    logger.info("WebSocket client connected (%d total)", len(_ws_clients))
+    try:
+        while True:
+            try:
+                _data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                # Client can send filter patterns — ignored for now
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "ping"})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _ws_clients.discard(websocket)
+        logger.info("WebSocket client disconnected (%d remaining)", len(_ws_clients))
 
 publisher = Publisher(enable_correlation_tracking=True)
 
@@ -133,11 +186,15 @@ async def ingest_generic_event(request: Request):
         event_id=uuid4(),
     )
 
+    envelope_dict = envelope.model_dump(mode="json")
     await publisher.publish(
         routing_key=routing_key,
-        body=envelope.model_dump(mode="json"),
+        body=envelope_dict,
         event_id=envelope.event_id,
     )
+
+    # Broadcast to WebSocket clients
+    await _broadcast_to_ws(routing_key, envelope_dict)
 
     return {"ok": True, "event_type": routing_key, "event_id": str(envelope.event_id)}
 
@@ -184,11 +241,16 @@ async def publish_event_object(event: BaseEvent, source: Source = None):
     )
 
     # 3. Publish
+    envelope_dict = envelope.model_dump(mode="json")
     await publisher.publish(
         routing_key=routing_key,
-        body=envelope.model_dump(),
+        body=envelope_dict,
         event_id=envelope.event_id
     )
+
+    # Broadcast to WebSocket clients
+    await _broadcast_to_ws(routing_key, envelope_dict)
+
     return envelope
 
 
@@ -416,11 +478,15 @@ async def publish_agent_event(agent_name: str, action: str, request: Request):
             event_id=uuid4(),
         )
 
+        envelope_dict = envelope.model_dump(mode="json")
         await publisher.publish(
             routing_key=routing_key,
-            body=envelope.model_dump(mode="json"),
+            body=envelope_dict,
             event_id=envelope.event_id,
         )
+
+        # Broadcast to WebSocket clients
+        await _broadcast_to_ws(routing_key, envelope_dict)
 
         return {
             "ok": True,
