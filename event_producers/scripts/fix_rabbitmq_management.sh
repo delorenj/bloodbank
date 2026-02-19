@@ -1,5 +1,18 @@
 #!/bin/bash
 # Fix RabbitMQ Management Plugin Configuration
+# Usage: RABBITMQ_USER=delorenj RABBITMQ_PASS=yourpass ./fix_rabbitmq_management.sh
+
+set -e
+
+# Use environment variables for credentials
+RABBITMQ_USER="${RABBITMQ_USER:-delorenj}"
+RABBITMQ_PASS="${RABBITMQ_PASS:-}"
+
+if [ -z "$RABBITMQ_PASS" ]; then
+    echo "ERROR: RABBITMQ_PASS environment variable not set"
+    echo "Usage: RABBITMQ_USER=delorenj RABBITMQ_PASS=yourpass $0"
+    exit 1
+fi
 
 echo "Creating enabled_plugins file with management plugin..."
 sudo tee /etc/rabbitmq/enabled_plugins > /dev/null <<'EOF'
@@ -25,7 +38,7 @@ for i in {1..10}; do
         echo "  External: https://rabbit.delo.sh"
         echo "  Local: http://localhost:15672"
         echo ""
-        echo "Credentials: delorenj / REDACTED_CREDENTIAL"
+        echo "Credentials: ${RABBITMQ_USER} / [set via RABBITMQ_PASS env var]"
         exit 0
     fi
     echo "Attempt $i/10: Waiting for management interface..."

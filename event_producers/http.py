@@ -1,7 +1,10 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from uuid import UUID, uuid4
+import asyncio
 import logging
+import re
 import socket
 
 from event_producers.config import settings
@@ -9,6 +12,20 @@ from event_producers.rabbit import Publisher
 from event_producers.events.base import EventEnvelope, Source, TriggerType, create_envelope
 from event_producers.events.core.abstraction import BaseEvent
 from event_producers.events.domains.agent.thread import AgentThreadPrompt, AgentThreadResponse
+from event_producers.events.domains.agent.openclaw import (
+    AgentMessageReceived,
+    AgentMessageSent,
+    AgentToolInvoked,
+    AgentToolCompleted,
+    AgentSubagentSpawned,
+    AgentSubagentCompleted,
+    AgentSessionStarted,
+    AgentSessionEnded,
+    AgentTaskAssigned,
+    AgentTaskCompleted,
+    AgentHeartbeat,
+    AgentError,
+)
 from event_producers.events.domains.claude_code import (
     SessionAgentToolAction,
     SessionThreadEnd,
@@ -22,6 +39,57 @@ from event_producers.events.registry import get_registry
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="bloodbank", version="0.2.0")
+
+# CORS middleware so Holocene (and other frontends) can connect
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------------------------------------------------------------------
+# WebSocket event stream
+# ---------------------------------------------------------------------------
+_ws_clients: set[WebSocket] = set()
+
+
+async def _broadcast_to_ws(routing_key: str, envelope_dict: dict):
+    """Broadcast event to all connected WebSocket clients."""
+    if not _ws_clients:
+        return
+    msg = {"type": "event", "routing_key": routing_key, "envelope": envelope_dict}
+    dead: list[WebSocket] = []
+    for ws in _ws_clients:
+        try:
+            await ws.send_json(msg)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _ws_clients.discard(ws)
+
+
+@app.websocket("/ws/events")
+async def ws_events(websocket: WebSocket):
+    """Stream all Bloodbank events to connected WebSocket clients in real-time."""
+    await websocket.accept()
+    _ws_clients.add(websocket)
+    logger.info("WebSocket client connected (%d total)", len(_ws_clients))
+    try:
+        while True:
+            try:
+                _data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                # Client can send filter patterns — ignored for now
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "ping"})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _ws_clients.discard(websocket)
+        logger.info("WebSocket client disconnected (%d remaining)", len(_ws_clients))
 
 publisher = Publisher(enable_correlation_tracking=True)
 
@@ -41,6 +109,94 @@ async def _shutdown():
 @app.get("/healthz")
 async def healthz():
     return {"ok": True, "service": settings.service_name}
+
+
+def _normalize_event_key(value: str) -> str:
+    """Normalize arbitrary provider event names into a routing-key-friendly token."""
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9._-]+", ".", value)
+    value = re.sub(r"\.+", ".", value)
+    return value.strip(".")
+
+
+@app.post("/event")
+async def ingest_generic_event(request: Request):
+    """Generic webhook ingress.
+
+    Designed for providers like Plane that will POST arbitrary JSON.
+
+    Security: if PLANE_WEBHOOK_SECRET is set, require it via:
+    - query param: ?secret=... (or ?key=...)
+    - header: x-webhook-secret / x-plane-webhook-secret / authorization: Bearer ...
+    """
+
+    # Best-effort secret check
+    expected = settings.plane_webhook_secret
+    provided = (
+        request.query_params.get("secret")
+        or request.query_params.get("key")
+        or request.headers.get("x-webhook-secret")
+        or request.headers.get("x-plane-webhook-secret")
+    )
+    if not provided:
+        auth = request.headers.get("authorization")
+        if auth and auth.lower().startswith("bearer "):
+            provided = auth.split(" ", 1)[1].strip()
+
+    if expected:
+        if not provided:
+            raise HTTPException(status_code=401, detail="Missing webhook secret")
+        if provided != expected:
+            raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
+    # Parse body
+    try:
+        body = await request.json()
+    except Exception:
+        body = {"raw": (await request.body()).decode("utf-8", errors="replace")}
+
+    # Try to derive a useful routing key
+    header_event = (
+        request.headers.get("x-plane-event")
+        or request.headers.get("x-event-type")
+        or request.headers.get("x-webhook-event")
+    )
+    body_event = None
+    if isinstance(body, dict):
+        body_event = body.get("event") or body.get("type") or body.get("action")
+
+    event_suffix = _normalize_event_key(str(header_event or body_event or "unknown"))
+    routing_key = f"webhook.plane.{event_suffix}" if event_suffix else "webhook.plane"
+
+    source = Source(
+        host=(request.client.host if request.client else socket.gethostname()),
+        type=TriggerType.HOOK,
+        app="plane-webhook",
+    )
+
+    envelope = create_envelope(
+        event_type=routing_key,
+        payload={
+            "provider": "plane",
+            "event": header_event or body_event,
+            "path": str(request.url.path),
+            "body": body,
+        },
+        source=source,
+        event_id=uuid4(),
+    )
+
+    envelope_dict = envelope.model_dump(mode="json")
+    await publisher.publish(
+        routing_key=routing_key,
+        body=envelope_dict,
+        event_id=envelope.event_id,
+    )
+
+    # Broadcast to WebSocket clients
+    await _broadcast_to_ws(routing_key, envelope_dict)
+
+    return {"ok": True, "event_type": routing_key, "event_id": str(envelope.event_id)}
 
 
 async def publish_event_object(event: BaseEvent, source: Source = None):
@@ -85,11 +241,16 @@ async def publish_event_object(event: BaseEvent, source: Source = None):
     )
 
     # 3. Publish
+    envelope_dict = envelope.model_dump(mode="json")
     await publisher.publish(
         routing_key=routing_key,
-        body=envelope.model_dump(),
+        body=envelope_dict,
         event_id=envelope.event_id
     )
+
+    # Broadcast to WebSocket clients
+    await _broadcast_to_ws(routing_key, envelope_dict)
+
     return envelope
 
 
@@ -248,4 +409,90 @@ async def publish_thinking_event(ev: ThinkingEvent, request: Request):
         return JSONResponse(envelope.model_dump())
     except Exception as e:
         logger.error(f"Failed to publish thinking event: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Agent (OpenClaw) Events API
+# ============================================================================
+
+# Maps action suffix to payload model class
+_AGENT_ACTION_TO_MODEL: dict[str, type[BaseEvent]] = {
+    "message.received": AgentMessageReceived,
+    "message.sent": AgentMessageSent,
+    "tool.invoked": AgentToolInvoked,
+    "tool.completed": AgentToolCompleted,
+    "subagent.spawned": AgentSubagentSpawned,
+    "subagent.completed": AgentSubagentCompleted,
+    "session.started": AgentSessionStarted,
+    "session.ended": AgentSessionEnded,
+    "task.assigned": AgentTaskAssigned,
+    "task.completed": AgentTaskCompleted,
+    "heartbeat": AgentHeartbeat,
+    "error": AgentError,
+}
+
+
+@app.post("/events/agent/{agent_name}/{action:path}")
+async def publish_agent_event(agent_name: str, action: str, request: Request):
+    """
+    Publish an agent lifecycle event.
+
+    Endpoint: POST /events/agent/{agent_name}/{action}
+    Routing Key: agent.{agent_name}.{action}
+
+    The agent name IS the route — no platform prefixes.
+    e.g. POST /events/agent/cack/message.received
+         → routing key: agent.cack.message.received
+    """
+    # Validate the action
+    model_class = _AGENT_ACTION_TO_MODEL.get(action)
+    if model_class is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown agent action: {action}. Valid actions: {sorted(_AGENT_ACTION_TO_MODEL.keys())}",
+        )
+
+    # Parse and validate the payload
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    try:
+        ev = model_class(**body)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Payload validation failed: {e}")
+
+    # Build routing key: agent.{agent_name}.{action}
+    routing_key = f"agent.{agent_name}.{action}"
+
+    try:
+        client_host = request.client.host if request.client else "unknown"
+        source = Source(host=client_host, type=TriggerType.AGENT, app="openclaw")
+
+        envelope = create_envelope(
+            event_type=routing_key,
+            payload=ev,
+            source=source,
+            event_id=uuid4(),
+        )
+
+        envelope_dict = envelope.model_dump(mode="json")
+        await publisher.publish(
+            routing_key=routing_key,
+            body=envelope_dict,
+            event_id=envelope.event_id,
+        )
+
+        # Broadcast to WebSocket clients
+        await _broadcast_to_ws(routing_key, envelope_dict)
+
+        return {
+            "ok": True,
+            "routing_key": routing_key,
+            "event_id": str(envelope.event_id),
+        }
+    except Exception as e:
+        logger.error(f"Failed to publish agent event {routing_key}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -58,6 +58,22 @@ from event_producers.events.domains.agent.thread import (
     AgentThreadErrorPayload,
 )
 
+# Agent OpenClaw domain
+from event_producers.events.domains.agent.openclaw import (
+    AgentMessageReceived,
+    AgentMessageSent,
+    AgentToolInvoked,
+    AgentToolCompleted,
+    AgentSubagentSpawned,
+    AgentSubagentCompleted,
+    AgentSessionStarted,
+    AgentSessionEnded,
+    AgentTaskAssigned,
+    AgentTaskCompleted,
+    AgentHeartbeat,
+    AgentError,
+)
+
 # LLM domain
 from event_producers.events.domains.llm import (
     LLMPrompt,
@@ -93,6 +109,7 @@ from event_producers.events.types import (
     FirefliesEventType,
     AgentThreadEventType,
     AgentFeedbackEventType,
+    AgentOpenClawEventType,
     GitHubEventType,
     TheBoardEventType,
     LLMEventType,
@@ -136,6 +153,20 @@ __all__ = [
     "AgentThreadPrompt",
     "AgentThreadResponse",
     "AgentThreadErrorPayload",
+    # Agent OpenClaw types
+    "AgentOpenClawEventType",
+    "AgentMessageReceived",
+    "AgentMessageSent",
+    "AgentToolInvoked",
+    "AgentToolCompleted",
+    "AgentSubagentSpawned",
+    "AgentSubagentCompleted",
+    "AgentSessionStarted",
+    "AgentSessionEnded",
+    "AgentTaskAssigned",
+    "AgentTaskCompleted",
+    "AgentHeartbeat",
+    "AgentError",
     # LLM types
     "LLMPrompt",
     "LLMResponse",
@@ -155,6 +186,7 @@ __all__ = [
     "FirefliesEventType",
     "AgentThreadEventType",
     "AgentFeedbackEventType",
+    "AgentOpenClawEventType",
     "GitHubEventType",
     "TheBoardEventType",
     "LLMEventType",

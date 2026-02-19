@@ -46,6 +46,21 @@ AgentFeedbackEventType = Literal[
     "agent.feedback.response",
 ]
 
+AgentOpenClawEventType = Literal[
+    "agent.message.received",
+    "agent.message.sent",
+    "agent.tool.invoked",
+    "agent.tool.completed",
+    "agent.subagent.spawned",
+    "agent.subagent.completed",
+    "agent.session.started",
+    "agent.session.ended",
+    "agent.task.assigned",
+    "agent.task.completed",
+    "agent.heartbeat",
+    "agent.error",
+]
+
 
 # =============================================================================
 # GitHub Domain Events
@@ -105,6 +120,19 @@ BloodbankEventType = Literal[
     "agent.thread.error",
     "agent.feedback.requested",
     "agent.feedback.response",
+    # Agent OpenClaw
+    "agent.message.received",
+    "agent.message.sent",
+    "agent.tool.invoked",
+    "agent.tool.completed",
+    "agent.subagent.spawned",
+    "agent.subagent.completed",
+    "agent.session.started",
+    "agent.session.ended",
+    "agent.task.assigned",
+    "agent.task.completed",
+    "agent.heartbeat",
+    "agent.error",
     # GitHub
     "github.pr.created",
     # TheBoard
@@ -145,6 +173,20 @@ from event_producers.events.domains.agent.thread import (
     AgentThreadResponse,
     AgentThreadErrorPayload,
 )
+from event_producers.events.domains.agent.openclaw import (
+    AgentMessageReceived,
+    AgentMessageSent,
+    AgentToolInvoked,
+    AgentToolCompleted,
+    AgentSubagentSpawned,
+    AgentSubagentCompleted,
+    AgentSessionStarted,
+    AgentSessionEnded,
+    AgentTaskAssigned,
+    AgentTaskCompleted,
+    AgentHeartbeat,
+    AgentError,
+)
 from event_producers.events.domains.github import GitHubPRCreatedPayload
 from event_producers.events.domains.theboard import (
     MeetingCreatedPayload,
@@ -183,6 +225,19 @@ EVENT_TYPE_TO_PAYLOAD: Dict[str, Type[Any]] = {
     "agent.thread.error": AgentThreadErrorPayload,
     "agent.feedback.requested": AgentFeedbackRequested,
     "agent.feedback.response": AgentFeedbackResponse,
+    # Agent OpenClaw
+    "agent.message.received": AgentMessageReceived,
+    "agent.message.sent": AgentMessageSent,
+    "agent.tool.invoked": AgentToolInvoked,
+    "agent.tool.completed": AgentToolCompleted,
+    "agent.subagent.spawned": AgentSubagentSpawned,
+    "agent.subagent.completed": AgentSubagentCompleted,
+    "agent.session.started": AgentSessionStarted,
+    "agent.session.ended": AgentSessionEnded,
+    "agent.task.assigned": AgentTaskAssigned,
+    "agent.task.completed": AgentTaskCompleted,
+    "agent.heartbeat": AgentHeartbeat,
+    "agent.error": AgentError,
     # GitHub
     "github.pr.created": GitHubPRCreatedPayload,
     # TheBoard

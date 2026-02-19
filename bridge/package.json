@@ -1,0 +1,16 @@
+{
+  "name": "bloodbank-bridge",
+  "version": "1.0.0",
+  "description": "OpenClaw → Bloodbank event bridge. Watches JSONL session files and publishes events to Bloodbank HTTP API.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}
