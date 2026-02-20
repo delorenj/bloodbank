@@ -107,13 +107,23 @@ async def _handle_rabbitmq_event(payload: dict):
         logger.error(f"Error broadcasting RabbitMQ event to WebSocket: {e}")
 
 
+async def _start_consumer_task():
+    """Background task to start RabbitMQ consumer."""
+    try:
+        logger.info("Starting RabbitMQ consumer for WebSocket broadcasting...")
+        await consumer.start(_handle_rabbitmq_event, routing_keys=["#"])
+        logger.info("RabbitMQ consumer started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start RabbitMQ consumer: {e}", exc_info=True)
+
+
 @app.on_event("startup")
 async def _startup():
     await publisher.start()
     # Ensure registry is populated
     get_registry().auto_discover_domains()
     # Start consumer to feed WebSocket clients in background
-    asyncio.create_task(consumer.start(_handle_rabbitmq_event, routing_keys=["#"]))
+    asyncio.create_task(_start_consumer_task())
 
 
 @app.on_event("shutdown")
