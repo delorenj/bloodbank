@@ -9,6 +9,7 @@ import socket
 
 from event_producers.config import settings
 from event_producers.rabbit import Publisher
+from event_producers.events.core.consumer import Consumer
 from event_producers.events.base import EventEnvelope, Source, TriggerType, create_envelope
 from event_producers.events.core.abstraction import BaseEvent
 from event_producers.events.domains.agent.thread import AgentThreadPrompt, AgentThreadResponse
@@ -92,6 +93,18 @@ async def ws_events(websocket: WebSocket):
         logger.info("WebSocket client disconnected (%d remaining)", len(_ws_clients))
 
 publisher = Publisher(enable_correlation_tracking=True)
+consumer = Consumer("bloodbank-ws-broadcaster")
+
+
+async def _handle_rabbitmq_event(payload: dict):
+    """Consume events from RabbitMQ and broadcast to WebSocket clients."""
+    try:
+        envelope = EventEnvelope.model_validate(payload)
+        routing_key = envelope.event_type
+        envelope_dict = envelope.model_dump(mode="json")
+        await _broadcast_to_ws(routing_key, envelope_dict)
+    except Exception as e:
+        logger.error(f"Error broadcasting RabbitMQ event to WebSocket: {e}")
 
 
 @app.on_event("startup")
@@ -99,11 +112,14 @@ async def _startup():
     await publisher.start()
     # Ensure registry is populated
     get_registry().auto_discover_domains()
+    # Start consumer to feed WebSocket clients
+    await consumer.start(_handle_rabbitmq_event, routing_keys=["#"])
 
 
 @app.on_event("shutdown")
 async def _shutdown():
     await publisher.close()
+    await consumer.close()
 
 
 @app.get("/healthz")
