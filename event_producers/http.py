@@ -112,8 +112,8 @@ async def _startup():
     await publisher.start()
     # Ensure registry is populated
     get_registry().auto_discover_domains()
-    # Start consumer to feed WebSocket clients
-    await consumer.start(_handle_rabbitmq_event, routing_keys=["#"])
+    # Start consumer to feed WebSocket clients in background
+    asyncio.create_task(consumer.start(_handle_rabbitmq_event, routing_keys=["#"]))
 
 
 @app.on_event("shutdown")
