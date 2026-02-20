@@ -119,7 +119,12 @@ class Publisher:
                 self._conn = await asyncio.wait_for(
                     aio_pika.connect_robust(settings.rabbit_url), timeout=10
                 )
-                self._channel = await self._conn.channel(publisher_confirms=True)
+                # on_return_raises=True makes unroutable mandatory messages fail fast
+                # instead of appearing as "published" while never reaching any queue.
+                self._channel = await self._conn.channel(
+                    publisher_confirms=True,
+                    on_return_raises=True,
+                )
                 self._exchange = await self._channel.declare_exchange(
                     settings.exchange_name, aio_pika.ExchangeType.TOPIC, durable=True
                 )
@@ -227,9 +232,26 @@ class Publisher:
             content_encoding="utf-8",
         )
 
-        # Publish
-        await self._exchange.publish(msg, routing_key=routing_key)
-        logger.debug(f"Published message to {routing_key}: {msg.message_id}")
+        # Publish (mandatory routing + return-on-unroutable)
+        try:
+            result = await self._exchange.publish(
+                msg,
+                routing_key=routing_key,
+                mandatory=True,
+                timeout=5,
+            )
+            logger.debug(
+                "Published message to %s: %s (broker_result=%s)",
+                routing_key,
+                msg.message_id,
+                type(result).__name__ if result is not None else "None",
+            )
+        except Exception as exc:
+            # Typical cause: no queue binding for routing key (unroutable message).
+            raise RuntimeError(
+                f"Rabbit publish failed for routing_key='{routing_key}' "
+                f"on exchange='{settings.exchange_name}': {exc}"
+            ) from exc
 
     def generate_event_id(self, event_type: str, **unique_fields) -> UUID:
         """
