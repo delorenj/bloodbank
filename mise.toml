@@ -1,2 +1,66 @@
+# Bloodbank — mise.toml
+# Agents: run `mise build` here. Everything else is handled.
+
 [env]
 _.file = [".env"]
+
+[tasks.build]
+description = "Build Bloodbank: Python deps + Docker image"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+echo "▸ bloodbank: syncing Python deps..."
+uv sync --quiet 2>/dev/null || true
+echo "▸ bloodbank: building Docker image..."
+cd {{ config_root }}/..
+docker compose build bloodbank
+echo "✅ bloodbank: built"
+"""
+
+[tasks."build:relay"]
+description = "Build websocket-relay Docker image"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+echo "▸ bloodbank-ws-relay: building Docker image..."
+cd {{ config_root }}/..
+docker compose build bloodbank-ws-relay
+echo "✅ bloodbank-ws-relay: built"
+"""
+
+[tasks.deploy]
+description = "Deploy Bloodbank: rebuild + restart containers"
+depends = ["build", "build:relay"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+cd {{ config_root }}/..
+echo "▸ bloodbank: deploying..."
+docker compose up -d bloodbank bloodbank-ws-relay
+echo "✅ bloodbank + ws-relay: deployed"
+"""
+
+[tasks.test]
+description = "Run Bloodbank tests"
+run = "uv run pytest -q tests/"
+
+[tasks.lint]
+description = "Lint Bloodbank Python code"
+run = "uv run ruff check event_producers/ heartbeat/"
+
+[tasks.logs]
+description = "Tail Bloodbank container logs"
+run = "docker logs -f 33god-bloodbank"
+raw = true
+
+[tasks.health]
+description = "Check Bloodbank API + RabbitMQ health"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+echo "▸ API health:"
+curl -sS http://127.0.0.1:8682/healthz
+echo
+echo "▸ RabbitMQ queues:"
+docker exec theboard-rabbitmq rabbitmqctl list_queues name consumers messages -q 2>/dev/null || echo "  (rabbitmq unreachable)"
+"""
