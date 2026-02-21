@@ -282,6 +282,55 @@ async def publish_event_object(event: BaseEvent, source: Source = None):
 
 # --- publish endpoints ---
 
+@app.post("/publish")
+async def publish_generic_event(data: dict):
+    """
+    Generic publish endpoint for Postgres NOTIFY bridge and other internal services.
+    
+    Accepts: {"event_type": "asset.created", "payload": {...}}
+    Creates envelope, publishes to RabbitMQ, broadcasts to WebSocket clients.
+    """
+    try:
+        event_type = data.get("event_type")
+        payload = data.get("payload", {})
+        
+        if not event_type:
+            raise HTTPException(status_code=400, detail="Missing event_type")
+
+        source = Source(
+            host=socket.gethostname(),
+            type=TriggerType.HOOK,
+            app="postgres-notify-bridge"
+        )
+
+        envelope = create_envelope(
+            event_type=event_type,
+            payload=payload,
+            source=source,
+            event_id=uuid4()
+        )
+
+        envelope_dict = envelope.model_dump(mode="json")
+        await publisher.publish(
+            routing_key=event_type,
+            body=envelope_dict,
+            event_id=envelope.event_id
+        )
+
+        # Broadcast to WebSocket clients
+        await _broadcast_to_ws(event_type, envelope_dict)
+
+        return JSONResponse({
+            "status": "published",
+            "event_id": str(envelope.event_id),
+            "event_type": event_type
+        })
+        
+    except Exception as e:
+        logger.error(f"Error publishing event: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/events/custom")
 async def publish_custom_event(envelope: dict):
     """
