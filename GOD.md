@@ -11,18 +11,72 @@
 
 ## Product Overview
 
-**Bloodbank** is the **central event bus** of the 33GOD ecosystem. Every state change, agent action, and system event flows through Bloodbank as a typed event published to a RabbitMQ topic exchange.
+**Bloodbank** is the **central event bus** of the 33GOD ecosystem. It is the **nervous system** that transports every state change, agent action, and system event as a typed, immutable event through RabbitMQ. Bloodbank events are the **absolute lifeblood** of 33GOD—what sets it apart as the most powerful agentic pipeline.
+
+**Bloodbank's Role in the Event Flow:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         EVENT FLOW IN 33GOD                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   1. HOLYFIELDS          2. BLOODBANK (You Are Here)        3. CANDYSTORE   │
+│      (Definition)              (Transport)                  (Persistence)   │
+│         │                           │                            │          │
+│         │    Schema Definitions     │                            │          │
+│         │──────────────────────────→│                            │          │
+│         │                           │                            │          │
+│         │                           │      RabbitMQ Exchange       │          │
+│         │                           │    bloodbank.events.v1       │          │
+│         │                           │      (TOPIC, Durable)        │          │
+│         │                           │                            │          │
+│         │                           │         ↓ Routes            │          │
+│         │                           │                            │          │
+│         │                           │    ┌──────────────┐         │          │
+│         │                           │    │  Queues      │         │          │
+│         │                           │    │  • agent.*   │         │          │
+│         │                           │    │  • system.*  │         │          │
+│         │                           │    │  • webhook.* │         │          │
+│         │                           │    └──────────────┘         │          │
+│         │                           │                            │          │
+│         │                           │─────────────────────────────→│          │
+│         │                           │     Persist All (#)          │          │
+│         │                           │                            │          │
+│         │                           │──────────────────────────────┼──────────→
+│         │                           │                            │          │
+│         │                           │         ↓ Broadcast          │          │
+│         │                           │                            │          │
+│   4. HOLOCENE ←─────────────────────│     WS Relay (8683)         │          │
+│      (Visibility)                   │                            │          │
+│         │                           │         ↓ Route             │          │
+│         │                           │                            │          │
+│   5. AGENTS ←───────────────────────│   agent.{name}.inbox        │          │
+│      (Action)                       │                            │          │
+│         │                           │                            │          │
+│   6. HEARTBEATROUTER ←──────────────│   system.heartbeat.tick     │          │
+│      (Pulse)                        │     (every 60s)              │          │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 **Components:**
 - **Bloodbank API** (`event_producers/`) — FastAPI publisher at `:8682`
 - **WebSocket Relay** (`websocket-relay/`) — Real-time event broadcaster at `:8683`
-- **Heartbeat System** (`heartbeat/`) — Cron-driven event scheduler
+- **Heartbeat System** (`heartbeat/`) — Cron-driven event scheduler (every 60s)
 - **Consumer Template** (`consumer_template/`) — FastStream drop-in for agents
 - **hookd** (separate repo, `~/code/33GOD/hookd/`) — Rust daemon bridging Claude Code hooks → Bloodbank
 
 ---
 
 ## Architecture Position
+
+Bloodbank is the **transport layer** of the 33GOD event-driven architecture:
+
+```
+Holyfields (Definition) → Bloodbank (Transport) → Candystore (Persistence) → Holocene (Visibility) → Agents (Action)
+```
+
+### Event Flow Detail
 
 ```
 Producer (agent/cron/hook/API client)
@@ -32,18 +86,28 @@ Bloodbank API (:8682)
 RabbitMQ (bloodbank.events.v1 exchange, TOPIC, durable)
     ↓ routing_key matching
 Consumers:
-    ├── WS Relay (:8683) — exclusive queue, routing_key=#
+    ├── Candystore ────────────────→ PostgreSQL (persists ALL events)
+    │
+    ├── WS Relay (:8683) ──────────→ Holocene (real-time display)
     │       ↓ broadcast_event() wraps with type="event"
     │       ↓ WebSocket broadcast to all connected clients
     │       ↓ Holocene nginx proxy (/ws → relay:8683)
     │       ↓ useBloodbankStream hook (filters type==="event")
     │       ↓ EventsPanel + AgentGraph render
-    ├── infra-dispatcher — routing_key=webhook.plane.#
-    ├── Agent inbox queues — routing_key=agent.{name}.#
-    └── theboard-meeting-trigger — specific routing keys
+    │
+    ├── HeartbeatRouter ───────────→ Routes system.heartbeat.tick
+    │       ↓ Injects into agent sessions via OpenClaw hooks
+    │
+    ├── infra-dispatcher ──────────→ webhook.plane.#
+    │
+    ├── Agent inbox queues ────────→ agent.{name}.# (claimed by agents)
+    │
+    └── theboard-meeting-trigger ──→ specific routing keys
 ```
 
 **CRITICAL**: The WS relay MUST include `"type": "event"` in broadcast messages. Without it, the Holocene frontend hook silently drops all events.
+
+**CRITICAL**: Candystore binds with `#` (wildcard) to receive ALL events for persistence. This is what enables Holocene to query historical events.
 
 ---
 
@@ -130,6 +194,59 @@ Critical settings (learned the hard way):
 
 **Directory**: `heartbeat/`
 
+The heartbeat system is the **pulse of 33GOD**—driving agent orchestration, health monitoring, and periodic tasks across the entire ecosystem.
+
+### Heartbeat Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         HEARTBEAT FLOW                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   EVERY 60 SECONDS:                                                          │
+│                                                                              │
+│   Cron (system crontab)                                                      │
+│        │                                                                     │
+│        ▼                                                                     │
+│   emit-agent-status.py                                                       │
+│        │                                                                     │
+│        ├──→ system.heartbeat.tick ───────────────────┐                       │
+│        │   • tick_id (UUID)                          │                       │
+│        │   • sequence_number (monotonic)             │                       │
+│        │   • timestamp (ISO 8601)                    │                       │
+│        │                                             │                       │
+│        └──→ agent.{name}.status ─────────────────────┤                       │
+│            (for each registered agent)               │                       │
+│                                                      ▼                       │
+│                                              RabbitMQ Exchange               │
+│                                           bloodbank.events.v1                │
+│                                                                              │
+│                                                      │                       │
+│          ┌───────────────────────────────────────────┼──────────────────┐    │
+│          │                                           │                  │    │
+│          ▼                                           ▼                  ▼    │
+│   HeartbeatRouter                            Agent Inbox            Candystore│
+│        │                                      (agent.*)              (persists)│
+│        │                                           │                       │    │
+│        │                                           ▼                       │    │
+│        │                              ┌──────────────────────┐              │    │
+│        │                              │  Agent Consumer      │              │    │
+│        │                              │  (FastStream)        │              │    │
+│        │                              └──────────┬───────────┘              │    │
+│        │                                         │                          │    │
+│        │                                         ▼                          │    │
+│        │                              OpenClaw Agent Hook                   │    │
+│        │                                         │                          │    │
+│        │                                         ▼                          │    │
+│        └────────────────────────────→  Agent Session                         │    │
+│                                          (Heartbeat context                  │    │
+│                                           injected into session)             │    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Files
+
 | File | Purpose |
 |------|---------|
 | `heartbeat.py` | Cron-driven schedule runner (HHMM → entries) |
@@ -137,12 +254,74 @@ Critical settings (learned the hard way):
 | `events.py` | Pydantic schemas |
 | `emit-agent-status.py` | Per-minute agent status + system heartbeat emitter |
 
-**Cron entries** (system crontab):
-```
+### Cron Configuration
+
+```cron
+# System crontab - runs every minute
 * * * * * cd ~/code/33GOD/bloodbank && .venv/bin/python heartbeat/emit-agent-status.py
 ```
 
-`emit-agent-status.py` publishes 12 events per cycle: 11 agent statuses + 1 system heartbeat.
+### Heartbeat Event Schema
+
+**`system.heartbeat.tick`**
+```json
+{
+  "event_id": "uuid",
+  "event_type": "system.heartbeat.tick",
+  "timestamp": "2026-02-22T18:30:00Z",
+  "source": {
+    "host": "big-chungus",
+    "app": "bloodbank",
+    "type": "system"
+  },
+  "payload": {
+    "tick_id": "uuid",
+    "sequence_number": 12345,
+    "timestamp": "2026-02-22T18:30:00Z"
+  },
+  "routing_key": "system.heartbeat.tick"
+}
+```
+
+### HeartbeatRouter
+
+The **HeartbeatRouter** processes `system.heartbeat.tick` events and:
+1. Routes to appropriate agents via `agent.{name}.inbox`
+2. Tracks agent health and responsiveness
+3. Triggers periodic tasks (cleanup, sync, etc.)
+4. Injects heartbeat context into agent sessions via OpenClaw hooks
+
+### Agent Heartbeat Consumption
+
+Agents consume heartbeats via their inbox queue:
+
+```python
+# FastStream consumer example
+@broker.subscriber(
+    queue=RabbitQueue(
+        name="agent.myagent.inbox",
+        routing_key="agent.myagent.inbox",
+        durable=True
+    ),
+    exchange=RabbitExchange(name="bloodbank.events.v1", type=ExchangeType.TOPIC)
+)
+async def handle_inbox(message: dict):
+    if message.get("event_type") == "system.heartbeat.tick":
+        # Process heartbeat
+        await process_heartbeat(message["payload"])
+```
+
+### OpenClaw Hook Injection
+
+Heartbeat context is automatically injected into agent sessions:
+
+```python
+# OpenClaw hooks receive heartbeat context
+def on_heartbeat(tick_payload: dict):
+    tick_id = tick_payload["tick_id"]
+    sequence = tick_payload["sequence_number"]
+    # Agent can check for pending tasks, run health checks, etc.
+```
 
 ---
 

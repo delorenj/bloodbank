@@ -1,0 +1,26 @@
+{
+  "$schema": "heartbeat.v1",
+  "agent": "lala",
+  "role": "ic-cack-app",
+  "checks": {
+    "test_suite": {
+      "cadenceMs": 3600000,
+      "window": {"start": "00:00", "end": "23:59", "tz": "America/New_York"},
+      "lastRun": 0,
+      "priority": 1,
+      "handler": "test_suite",
+      "enabled": true,
+      "description": "Run Cack Engine test suite, check for regressions"
+    },
+    "ticket_progress": {
+      "cadenceMs": 14400000,
+      "window": {"start": "00:00", "end": "23:59", "tz": "America/New_York"},
+      "lastRun": 0,
+      "priority": 2,
+      "handler": "ticket_progress",
+      "enabled": true,
+      "description": "Check CACK Plane board for blocked/stale tickets"
+    }
+  },
+  "paused": {}
+}

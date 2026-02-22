@@ -1,0 +1,26 @@
+{
+  "$schema": "heartbeat.v1",
+  "agent": "dumply",
+  "role": "ic-digipop",
+  "checks": {
+    "content_pipeline": {
+      "cadenceMs": 3600000,
+      "window": {"start": "00:00", "end": "23:59", "tz": "America/New_York"},
+      "lastRun": 0,
+      "priority": 1,
+      "handler": "content_pipeline",
+      "enabled": true,
+      "description": "Check DigiPop content generation pipeline, Piwigo uploads"
+    },
+    "ticket_progress": {
+      "cadenceMs": 14400000,
+      "window": {"start": "00:00", "end": "23:59", "tz": "America/New_York"},
+      "lastRun": 0,
+      "priority": 2,
+      "handler": "ticket_progress",
+      "enabled": true,
+      "description": "Check DIGI Plane board for blocked/stale tickets"
+    }
+  },
+  "paused": {}
+}
