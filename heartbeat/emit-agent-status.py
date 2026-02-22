@@ -50,9 +50,14 @@ def get_agent_sessions() -> dict:
                     parts = key.split(":")
                     if len(parts) >= 2:
                         name = parts[1]
+                        total = s.get("totalTokens", 0)
+                        context_max = s.get("contextTokens", 0)
+                        pct = (total / context_max * 100) if context_max > 0 else 0
                         result[name] = {
-                            "status": "active" if s.get("totalTokens", 0) > 0 else "idle",
-                            "tokens": s.get("totalTokens", 0),
+                            "status": "active" if total > 0 else "idle",
+                            "tokens": total,
+                            "context_max": context_max,
+                            "context_pct": round(pct, 1),
                             "model": s.get("model", "unknown"),
                         }
     except Exception:
@@ -63,22 +68,65 @@ def main():
     sessions = get_agent_sessions()
 
     for agent in AGENTS:
-        info = sessions.get(agent, {"status": "idle", "tokens": 0, "model": "unknown"})
+        info = sessions.get(agent, {
+            "status": "idle", "tokens": 0, "context_max": 0,
+            "context_pct": 0, "model": "unknown",
+        })
+        check_time = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        # Standard status event
         publish_event(
             f"agent.{agent}.status",
             {
                 "agent": agent,
                 "status": info["status"],
                 "tokens": info["tokens"],
+                "context_max": info.get("context_max", 0),
+                "context_pct": info.get("context_pct", 0),
                 "model": info["model"],
-                "check_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "check_time": check_time,
             }
         )
 
-    # Also emit a system heartbeat
+        # Context threshold events (P2: early warning for stalls)
+        pct = info.get("context_pct", 0)
+        if pct >= 90:
+            publish_event(
+                f"agent.{agent}.context.critical",
+                {
+                    "agent": agent,
+                    "context_pct": pct,
+                    "tokens": info["tokens"],
+                    "context_max": info.get("context_max", 0),
+                    "model": info["model"],
+                    "severity": "critical",
+                    "message": f"{agent} at {pct}% context — imminent stall risk",
+                    "check_time": check_time,
+                }
+            )
+        elif pct >= 80:
+            publish_event(
+                f"agent.{agent}.context.warning",
+                {
+                    "agent": agent,
+                    "context_pct": pct,
+                    "tokens": info["tokens"],
+                    "context_max": info.get("context_max", 0),
+                    "model": info["model"],
+                    "severity": "warning",
+                    "message": f"{agent} at {pct}% context — approaching limit",
+                    "check_time": check_time,
+                }
+            )
+
+    # System heartbeat with context health summary
+    context_warnings = [a for a in AGENTS if sessions.get(a, {}).get("context_pct", 0) >= 80]
+    context_criticals = [a for a in AGENTS if sessions.get(a, {}).get("context_pct", 0) >= 90]
     publish_event("system.heartbeat", {
         "agents_checked": len(AGENTS),
         "agents_active": sum(1 for a in AGENTS if sessions.get(a, {}).get("status") == "active"),
+        "context_warnings": context_warnings,
+        "context_criticals": context_criticals,
         "check_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
 

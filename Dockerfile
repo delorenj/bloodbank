@@ -38,6 +38,9 @@ COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code
 COPY event_producers/ ./event_producers/
+COPY heartbeat_tick/ ./heartbeat_tick/
+COPY heartbeat/ ./heartbeat/
+COPY consumer_template/ ./consumer_template/
 
 # Activate virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
