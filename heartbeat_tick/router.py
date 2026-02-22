@@ -110,6 +110,10 @@ def _is_overdue(
 def scan_all_heartbeat_configs() -> list[tuple[str, str, HeartbeatConfig]]:
     """Scan workspace root for heartbeat.json files.
 
+    Supports two schemas:
+    1. Array format (Grolf's original): {agent, checks: [{id, interval_minutes, enabled, ...}]}
+    2. Dict format (new): {agent, checks: {check_id: {cadenceMs, lastRun, enabled, ...}}}
+
     Returns list of (workspace_dirname, session_key, config).
     """
     configs: list[tuple[str, str, HeartbeatConfig]] = []
@@ -139,13 +143,34 @@ def scan_all_heartbeat_configs() -> list[tuple[str, str, HeartbeatConfig]]:
                 continue
 
         try:
-            config = HeartbeatConfig.from_json(str(hb))
+            raw = json.loads(hb.read_text())
+            agent = raw.get("agent", dirname)
+            checks_raw = raw.get("checks", [])
+
+            # Normalize both formats to array of check objects
+            if isinstance(checks_raw, dict):
+                # New dict format: {check_id: {cadenceMs, lastRun, enabled, ...}}
+                checks = []
+                for check_id, check_data in checks_raw.items():
+                    cadence_ms = check_data.get("cadenceMs", 0)
+                    checks.append({
+                        "id": check_id,
+                        "interval_minutes": max(1, cadence_ms // 60000),  # convert ms → min
+                        "enabled": check_data.get("enabled", True),
+                        "prompt": check_data.get("description", f"Check {check_id}"),
+                        "conditions": {"day_of_week": [], "hour_range": [0, 23]},  # no time window in dict format
+                    })
+            else:
+                # Old array format: [{id, interval_minutes, enabled, prompt, conditions}]
+                checks = checks_raw
+
+            config = HeartbeatConfig(agent=agent, checks=checks)
             configs.append((dirname, session_key, config))
             logger.debug(
                 "Loaded %s: agent=%s, %d checks",
                 dirname,
-                config.agent,
-                len(config.checks),
+                agent,
+                len(checks),
             )
         except Exception as e:
             logger.error("Failed to parse %s: %s", hb, e)
@@ -275,30 +300,41 @@ async def handle_tick(tick_payload: dict[str, Any], exchange: Any) -> None:
         agent = config.agent
 
         for check in config.checks:
-            if not check.enabled:
+            # Handle both dict and object formats
+            check_id = check.get("id") if isinstance(check, dict) else check.id
+            enabled = check.get("enabled", True) if isinstance(check, dict) else check.enabled
+            interval_minutes = check.get("interval_minutes", 60) if isinstance(check, dict) else check.interval_minutes
+            prompt = check.get("prompt", f"Check {check_id}") if isinstance(check, dict) else check.prompt
+            
+            if not enabled:
                 continue
 
             # Check conditions (time of day, day of week, quarter)
-            if not check.conditions.matches(day, hour, quarter):
-                continue
+            conditions = check.get("conditions", {}) if isinstance(check, dict) else check.conditions
+            if isinstance(conditions, dict):
+                # Manual check: no time window in dict format, so always eligible
+                pass
+            elif hasattr(conditions, 'matches'):
+                if not conditions.matches(day, hour, quarter):
+                    continue
 
             # Check if overdue
-            if not _is_overdue(agent, check.id, check.interval_minutes, state):
+            if not _is_overdue(agent, check_id, interval_minutes, state):
                 continue
 
             # Dispatch
             success = await dispatch_check(
                 agent_name=agent,
                 session_key=session_key,
-                check_id=check.id,
-                prompt=check.prompt,
+                check_id=check_id,
+                prompt=prompt,
                 exchange=exchange,
             )
 
             if success:
                 if agent not in state:
                     state[agent] = {}
-                state[agent][check.id] = time.time()
+                state[agent][check_id] = time.time()
                 total_dispatched += 1
 
     _save_state(state)
