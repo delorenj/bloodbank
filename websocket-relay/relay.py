@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Configuration from environment
 RABBIT_URL = os.getenv("RABBIT_URL", "amqp://guest:guest@localhost:5672/")
 EXCHANGE_NAME = os.getenv("EXCHANGE_NAME", "bloodbank.events.v1")
-ROUTING_KEY = os.getenv("ROUTING_KEY", "agent.#")
+ROUTING_KEY = os.getenv("ROUTING_KEY", "#")
 WS_HOST = os.getenv("WS_HOST", "0.0.0.0")
 WS_PORT = int(os.getenv("WS_PORT", "8683"))
 
@@ -75,8 +75,9 @@ async def rabbitmq_consumer():
             try:
                 payload = orjson.loads(message.body)
                 
-                # Add routing key to the message for client context
+                # Add routing key and type tag for client context
                 event_data = {
+                    "type": "event",
                     "routing_key": message.routing_key,
                     "envelope": payload
                 }
