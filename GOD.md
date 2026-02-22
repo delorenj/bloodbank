@@ -1,378 +1,203 @@
-# Bloodbank - GOD Document
+# Bloodbank — GOD Document
 
-> **Guaranteed Organizational Document** - Developer-facing reference for Bloodbank
+> **Guaranteed Organizational Document** — Developer-facing reference for Bloodbank
 >
-> **Last Updated**: 2026-02-01
+> **Last Updated**: 2026-02-22
 > **Domain**: Infrastructure
 > **Status**: Production
+> **Owner**: Lenoon 🦎 (agent:infra)
 
 ---
 
 ## Product Overview
 
-**Bloodbank** is the **central event bus** of the 33GOD ecosystem, providing RabbitMQ-based messaging infrastructure with schema validation, correlation tracking, and dead-letter queue handling.
+**Bloodbank** is the **central event bus** of the 33GOD ecosystem. Every state change, agent action, and system event flows through Bloodbank as a typed event published to a RabbitMQ topic exchange.
 
-Every state change in 33GOD flows through Bloodbank as a typed event.
-
-**Key Capabilities:**
-- Topic-based event routing via RabbitMQ topic exchange
-- Schema validation against Holyfields definitions
-- Correlation ID tracking for distributed tracing
-- Dead Letter Queue (DLQ) for failed messages
-- Durable subscriptions for fault tolerance
+**Components:**
+- **Bloodbank API** (`event_producers/`) — FastAPI publisher at `:8682`
+- **WebSocket Relay** (`websocket-relay/`) — Real-time event broadcaster at `:8683`
+- **Heartbeat System** (`heartbeat/`) — Cron-driven event scheduler
+- **Consumer Template** (`consumer_template/`) — FastStream drop-in for agents
+- **hookd** (separate repo, `~/code/33GOD/hookd/`) — Rust daemon bridging Claude Code hooks → Bloodbank
 
 ---
 
 ## Architecture Position
 
-```mermaid
-graph TB
-    subgraph "33GOD Pipeline"
-        AGENTS[Agent Services]
-        WM[Workspace Mgmt]
-        MC[Meeting & Collab]
-        BB[Bloodbank<br/>Event Bus]
-        HF[Holyfields<br/>Schema Registry]
-        CS[Candystore<br/>Event Store]
-        CB[Candybar<br/>Monitoring]
-    end
-
-    HF -->|validates schemas| BB
-    AGENTS -->|publish/subscribe| BB
-    WM -->|publish/subscribe| BB
-    MC -->|publish/subscribe| BB
-
-    BB -->|persists| CS
-    BB -->|streams| CB
+```
+Producer (agent/cron/hook/API client)
+    ↓ POST /events/custom
+Bloodbank API (:8682)
+    ↓ aio_pika publish (mandatory=True, on_return_raises=True)
+RabbitMQ (bloodbank.events.v1 exchange, TOPIC, durable)
+    ↓ routing_key matching
+Consumers:
+    ├── WS Relay (:8683) — exclusive queue, routing_key=#
+    │       ↓ broadcast_event() wraps with type="event"
+    │       ↓ WebSocket broadcast to all connected clients
+    │       ↓ Holocene nginx proxy (/ws → relay:8683)
+    │       ↓ useBloodbankStream hook (filters type==="event")
+    │       ↓ EventsPanel + AgentGraph render
+    ├── infra-dispatcher — routing_key=webhook.plane.#
+    ├── Agent inbox queues — routing_key=agent.{name}.#
+    └── theboard-meeting-trigger — specific routing keys
 ```
 
-**Role in Pipeline**: Central nervous system routing all events between components with schema validation and guaranteed delivery.
+**CRITICAL**: The WS relay MUST include `"type": "event"` in broadcast messages. Without it, the Holocene frontend hook silently drops all events.
 
 ---
 
-## Event Contracts
+## Running Services
 
-### Bloodbank Events Emitted
+| Service | Container | Port | Purpose |
+|---------|-----------|------|---------|
+| Bloodbank API | `33god-bloodbank` | 8682 | Event publishing + health |
+| WS Relay | `33god-bloodbank-ws-relay` | 8683 | Real-time WebSocket broadcast |
+| RabbitMQ | `theboard-rabbitmq` | 5673 (AMQP) / 15673 (mgmt) | Message broker |
 
-| Event Name | Routing Key | Payload Schema | Trigger Condition |
-|------------|-------------|----------------|-------------------|
-| `bloodbank.health.status` | `bloodbank.health.status` | `HealthStatusPayload` | Health check endpoint polled |
-| `bloodbank.message.dlq` | `bloodbank.message.dlq` | `DLQPayload` | Message failed routing or validation |
-| `bloodbank.schema.validation_failed` | `bloodbank.schema.validation_failed` | `ValidationFailedPayload` | Event fails schema validation |
+### Build & Deploy
+```bash
+# From ~/code/33GOD/bloodbank/
+mise build          # Python deps + Docker images (bloodbank + ws-relay)
+mise deploy         # Build + restart containers
 
-### Bloodbank Events Consumed
-
-| Event Name | Routing Key | Handler | Purpose |
-|------------|-------------|---------|---------|
-| `*.*.*` | `#` | `route_event()` | Route all events to subscribers |
-
-**Special Note**: Bloodbank consumes all events for routing, but only emits its own operational events.
+# Or from root ~/code/33GOD/
+mise build:infra    # Same thing
+mise deploy:infra   # Same thing
+```
+See `~/code/33GOD/docs/OPS.md` for full ops reference.
 
 ---
 
-## Non-Event Interfaces
+## API Endpoints
 
-### CLI Interface
-
-_No CLI interface (service runs as daemon)_
-
-### API Interface
-
-**Base URL**: `http://localhost:8000`
-
-**Endpoints:**
+**Base URL**: `http://localhost:8682`
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Health check (uptime, queue counts) |
-| `/metrics` | GET | Prometheus metrics |
-| `/publish` | POST | Publish event (admin/testing) |
-| `/schemas` | GET | List loaded schemas |
-| `/schemas/{event_type}` | GET | Get schema for event type |
+| `/healthz` | GET | Health check → `{"ok": true, "service": "bloodbank"}` |
+| `/events/custom` | POST | Publish any event (generic) |
+| `/events/agent/thread/prompt` | POST | Agent thread prompt event |
+| `/events/claude/tool_use` | POST | Claude Code tool use event |
+| `/events/claude/error` | POST | Claude Code error event |
 
-**Example: Publish Event**
-
+### Publish Event Example
 ```bash
-curl -X POST http://localhost:8000/publish \
+curl -X POST http://localhost:8682/events/custom \
   -H "Content-Type: application/json" \
   -d '{
-    "event_type": "test.event.created",
-    "payload": {
-      "message": "Hello from Bloodbank"
-    }
+    "event_type": "agent.grolf.task.complete",
+    "event_id": "$(uuidgen)",
+    "payload": {"agent": "grolf", "task": "GOD doc update"},
+    "source": {"host": "big-chungus", "type": "manual", "app": "curl"},
+    "timestamp": "2026-02-22T10:00:00Z",
+    "version": "1.0.0"
   }'
 ```
 
+**Important**: `event_id` MUST be a valid UUID (hex characters only). Non-hex characters cause 500 errors.
+
 ---
 
-## Technical Deep-Dive
+## Publisher Implementation Details
 
-### Technology Stack
-- **Language**: Python 3.11+
-- **Framework**: FastStream (async messaging), FastAPI (REST API)
-- **Dependencies**:
-  - `aio-pika`: RabbitMQ async client
-  - `jsonschema`: Schema validation
-  - `pydantic`: Type-safe models
-  - `opentelemetry`: Distributed tracing
-  - `prometheus-client`: Metrics
+**File**: `event_producers/rabbit.py`
 
-### Architecture Pattern
+Critical settings (learned the hard way):
+- `channel(publisher_confirms=True, on_return_raises=True)` — fail fast on unroutable messages
+- `publish(mandatory=True, timeout=5)` — ensure messages reach at least one queue
+- Without `on_return_raises=True`, API returns 200 but queues stay empty (silent data loss)
 
-**Event-Driven Message Bus with Schema Validation:**
+**EventEnvelope** requires a `source` field. The `/events/custom` endpoint accepts raw dicts — events published without `source` work for RabbitMQ routing but log Pydantic validation warnings on the broadcast side.
 
+---
+
+## WebSocket Relay
+
+**File**: `websocket-relay/relay.py`
+
+- Connects to RabbitMQ, creates exclusive queue bound with routing_key `#`
+- Broadcasts to all connected WebSocket clients
+- **MUST** wrap messages with `{"type": "event", "routing_key": ..., "envelope": ...}`
+- Welcome message: `{"type": "welcome", ...}`
+- Config via env: `RABBIT_URL`, `EXCHANGE_NAME`, `ROUTING_KEY`, `WS_HOST`, `WS_PORT`
+
+**docker-compose.yml default**: `ROUTING_KEY: ${RELAY_ROUTING_KEY:-#}` (all events)
+
+---
+
+## Heartbeat System
+
+**Directory**: `heartbeat/`
+
+| File | Purpose |
+|------|---------|
+| `heartbeat.py` | Cron-driven schedule runner (HHMM → entries) |
+| `heartbeat-schedule.json` | Master schedule config |
+| `events.py` | Pydantic schemas |
+| `emit-agent-status.py` | Per-minute agent status + system heartbeat emitter |
+
+**Cron entries** (system crontab):
 ```
-Publisher → Bloodbank → Schema Validation → RabbitMQ → Subscribers
-                ↓                              ↓
-         Validation Failed              Dead Letter Queue
-                ↓
-          DLQ Event Emitted
-```
-
-**Key Components:**
-
-1. **Publisher API**: Accepts events, wraps in `EventEnvelope`
-2. **Schema Validator**: Validates against Holyfields schemas
-3. **RabbitMQ Client**: Publishes to topic exchange
-4. **Subscriber Framework**: Consumes from queues
-5. **DLQ Handler**: Routes failed messages to dead-letter exchange
-
-### Key Implementation Details
-
-**EventEnvelope Structure:**
-
-```python
-class EventEnvelope(BaseModel):
-    """Canonical event envelope."""
-    event_id: UUID
-    event_type: str                     # e.g., 'imi.worktree.created'
-    timestamp: datetime
-    version: str                        # Schema version ('v1')
-    source: dict[str, Any]              # Source metadata
-    correlation_id: UUID | None         # For tracing
-    payload: dict[str, Any]             # Event-specific data
+* * * * * cd ~/code/33GOD/bloodbank && .venv/bin/python heartbeat/emit-agent-status.py
 ```
 
-**Publisher Implementation:**
+`emit-agent-status.py` publishes 12 events per cycle: 11 agent statuses + 1 system heartbeat.
 
-```python
-class Publisher:
-    """Publishes events to Bloodbank topic exchange."""
+---
 
-    async def publish(
-        self,
-        event_type: str,
-        payload: dict[str, Any],
-        correlation_id: UUID | None = None
-    ) -> UUID:
-        # Create envelope
-        envelope = EventEnvelope(
-            event_id=uuid4(),
-            event_type=event_type,
-            timestamp=datetime.utcnow(),
-            version="v1",
-            source=self._get_source_metadata(),
-            correlation_id=correlation_id or uuid4(),
-            payload=payload
-        )
+## Consumer Template
 
-        # Validate against schema
-        await self.validator.validate(envelope)
+**Directory**: `consumer_template/`
 
-        # Publish to RabbitMQ
-        routing_key = event_type  # e.g., 'imi.worktree.created'
-        await self.channel.default_exchange.publish(
-            Message(body=envelope.model_dump_json().encode()),
-            routing_key=routing_key
-        )
+Standard FastStream consumer for agents to drop in:
+- Queue: `agent.{name}.inbox` (durable)
+- Binding: `agent.{name}.#` on `bloodbank.events.v1`
+- Retry: 3 retries with exponential backoff (5s/30s/120s)
+- DLQ: `agent.{name}.dlq`
 
-        return envelope.event_id
-```
+Handler signature: `async def handler(routing_key: str, payload: dict, envelope: dict)`
 
-**Schema Validation:**
+---
 
-```python
-class SchemaValidator:
-    """Validates events against Holyfields schemas."""
+## RabbitMQ Configuration
 
-    def __init__(self, schema_dir: Path):
-        self.schemas = self._load_schemas(schema_dir)
+- **Exchange**: `bloodbank.events.v1` (TOPIC, durable)
+- **Credentials**: Stored in `~/code/33GOD/.env` as `RABBITMQ_USER` / `RABBITMQ_PASS`
+- **Host port**: 5673 (mapped from container 5672)
+- **Management**: http://localhost:15673
 
-    async def validate(self, envelope: EventEnvelope) -> None:
-        schema = self.schemas.get(envelope.event_type)
-        if not schema:
-            raise ValidationError(f"No schema for {envelope.event_type}")
-
-        try:
-            jsonschema.validate(envelope.payload, schema)
-        except jsonschema.ValidationError as e:
-            # Emit validation failed event
-            await self.emit_validation_failed(envelope, str(e))
-            raise
-```
-
-### Data Models
-
-**Event Source Metadata:**
-
-```python
-class EventSource(BaseModel):
-    """Source metadata for event tracking."""
-    host: str                           # Hostname
-    app: str                            # Application name
-    trigger_type: str                   # 'cli', 'api', 'scheduled', 'event'
-    user_id: str | None = None          # User/agent ID if applicable
-```
-
-**DLQ Payload:**
-
-```python
-class DLQPayload(BaseModel):
-    """Dead-letter queue event payload."""
-    original_event_id: UUID
-    original_event_type: str
-    failure_reason: str                 # 'validation_failed', 'routing_failed'
-    error_message: str
-    retry_count: int
-    max_retries: int = 3
-```
-
-### Configuration
-
-**Environment Variables:**
-
-- `RABBITMQ_URL`: RabbitMQ connection URL (default: `amqp://localhost:5672`)
-- `HOLYFIELDS_SCHEMA_DIR`: Path to Holyfields schemas
-- `BLOODBANK_EXCHANGE`: Exchange name (default: `bloodbank.events.v1`)
-- `BLOODBANK_DLX`: Dead-letter exchange (default: `bloodbank.dlx`)
-
-**Config File** (`bloodbank/config.yaml`):
-
-```yaml
-rabbitmq:
-  url: "amqp://localhost:5672"
-  exchange: "bloodbank.events.v1"
-  exchange_type: "topic"
-  durable: true
-
-dead_letter:
-  exchange: "bloodbank.dlx"
-  queue: "bloodbank.dlq"
-  ttl_ms: 86400000  # 24 hours
-
-schema_validation:
-  enabled: true
-  schema_dir: "../holyfields/schemas"
-  strict_mode: true  # Reject unknown event types
-
-observability:
-  tracing_enabled: true
-  metrics_port: 9090
+**Password rotation protocol**: Update `.env` → restart ALL dependent containers atomically:
+```bash
+# Update .env, then:
+cd ~/code/33GOD && docker compose restart bloodbank bloodbank-ws-relay
 ```
 
 ---
 
-## Development
+## hookd (Rust Daemon)
 
-### Setup
-```bash
-# Clone Bloodbank repository
-git clone git@github.com:delorenj/bloodbank.git
-cd bloodbank
+**Source**: `~/code/33GOD/hookd/`
+**Purpose**: Bridges Claude Code tool-use hooks → Bloodbank events
+**Transport**: Unix socket at `/run/user/{uid}/hookd.sock`
+**Limitation**: Requires git context from file paths. NOT a general event producer. Drops events without file mutation context.
 
-# Install dependencies with uv
-uv sync
-
-# Start RabbitMQ (Docker)
-docker-compose up -d rabbitmq
-
-# Run Bloodbank
-uv run python -m bloodbank
-```
-
-### Running Locally
-```bash
-# Start Bloodbank service
-uv run python -m bloodbank
-
-# Publish test event
-curl -X POST http://localhost:8000/publish \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event_type": "test.event.created",
-    "payload": {"message": "test"}
-  }'
-
-# Monitor RabbitMQ Management UI
-open http://localhost:15672  # guest/guest
-```
-
-### Testing
-```bash
-# Unit tests
-uv run pytest tests/
-
-# Integration tests (requires RabbitMQ)
-docker-compose up -d rabbitmq
-uv run pytest tests/integration/
-
-# Load testing
-uv run locust -f tests/load/bloodbank_load_test.py
-```
+Start: `HOOKD_AMQP_URL="amqp://..." hookd/target/release/hookd`
 
 ---
 
-## Deployment
+## Known Issues
 
-**Docker Deployment:**
-
-```bash
-# Build image
-docker build -t bloodbank:latest .
-
-# Run with docker-compose
-docker-compose up -d bloodbank
-
-# Health check
-curl http://localhost:8000/health
-```
-
-**Docker Compose:**
-
-```yaml
-version: '3.8'
-services:
-  rabbitmq:
-    image: rabbitmq:3-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-
-  bloodbank:
-    image: bloodbank:latest
-    depends_on:
-      - rabbitmq
-    environment:
-      - RABBITMQ_URL=amqp://rabbitmq:5672
-      - HOLYFIELDS_SCHEMA_DIR=/schemas
-    volumes:
-      - ../holyfields/schemas:/schemas
-    ports:
-      - "8000:8000"
-```
-
-**System Requirements:**
-- Python 3.11+
-- RabbitMQ 3.11+
-- 512MB RAM minimum
-- CPU: 1 core minimum
+1. `/events/custom` doesn't inject `source` field → Pydantic warning on broadcast side (cosmetic, events still flow)
+2. hookd requires git context — silently drops non-file-mutation events
+3. Schema validation at publish time not enforced (Holyfields integration TODO)
 
 ---
 
 ## References
 
-- **Domain Doc**: `docs/domains/infrastructure/GOD.md`
-- **System Doc**: `docs/GOD.md`
-- **Source**: `bloodbank/trunk-main/`
-- **Event Schemas**: `holyfields/schemas/`
-- **RabbitMQ Management**: `http://localhost:15672`
+- **Domain Doc**: `~/code/33GOD/docs/domains/infrastructure/GOD.md`
+- **System Doc**: `~/code/33GOD/docs/GOD.md`
+- **Ops Doc**: `~/code/33GOD/docs/OPS.md`
+- **Event Schemas**: `~/code/33GOD/holyfields/schemas/`
+- **Consumer Template**: `bloodbank/consumer_template/README.md`
