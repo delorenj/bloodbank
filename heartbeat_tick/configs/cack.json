@@ -1,0 +1,63 @@
+{
+  "agent": "cack",
+  "version": "1.0.0",
+  "checks": [
+    {
+      "id": "sub_health",
+      "description": "Check all sub-agents for activity, dispatch idle ones, verify deliverables",
+      "interval_minutes": 15,
+      "action": "system_event",
+      "enabled": true,
+      "prompt": "SUB_HEALTH CHECK — Run sub-agent health assessment.\n\n1. Pull sessions_list for all agent sessions.\n2. For each agent: check last activity, context usage, assigned work.\n3. If idle >30 min with assigned work: dispatch next task.\n4. If context >80%: flag for compaction.\n5. Verify any self-reported 'completed' deliverables (spot-check files exist).\n6. Report summary to Jarad if anything needs attention.",
+      "conditions": {
+        "hour_range": [6, 23]
+      }
+    },
+    {
+      "id": "quarterly_compaction",
+      "description": "Compact agent sessions approaching context limits",
+      "interval_minutes": 360,
+      "action": "system_event",
+      "enabled": true,
+      "prompt": "QUARTERLY COMPACTION — Scan all agent sessions.\n\nFor each session with totalTokens/contextTokens > 70%: trigger compaction. For each session > 90%: force immediate restart with memory flush. Update memory with compaction results.",
+      "conditions": {
+        "hour_range": [4, 6]
+      }
+    },
+    {
+      "id": "git_status",
+      "description": "Check all repos for uncommitted changes, unpushed branches, stale PRs",
+      "interval_minutes": 120,
+      "action": "system_event",
+      "enabled": true,
+      "prompt": "GIT STATUS CHECK — Audit all active repositories.\n\nFor each repo in ~/code/: check for uncommitted changes, unpushed branches, stale feature branches. Report any repos with dirty state or branches >3 days old. Flag branches that should be merged or deleted.",
+      "conditions": {
+        "day_of_week": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+        "hour_range": [9, 18]
+      }
+    },
+    {
+      "id": "dream_cycle",
+      "description": "Nightly autonomous planning and prioritization",
+      "interval_minutes": 1440,
+      "action": "system_event",
+      "enabled": true,
+      "prompt": "DREAM CYCLE — Nightly autonomous planning.\n\n1. Review today's completed work across all agents.\n2. Identify tomorrow's top 5 priorities (revenue first).\n3. Pre-assign tasks to agents based on their domains.\n4. Update Plane boards with new priorities.\n5. Write summary to memory/dream-cycle-{date}.md.",
+      "conditions": {
+        "hour_range": [2, 4]
+      }
+    },
+    {
+      "id": "think_tank",
+      "description": "Strategic review of product-market fit and revenue pipeline",
+      "interval_minutes": 10080,
+      "action": "system_event",
+      "enabled": true,
+      "prompt": "THINK TANK — Weekly strategic review.\n\nAnalyze: (1) Revenue product status (ChoreScore, SVGMe, DigiPop, Wean, Overworld, Cack.io), (2) User metrics if available, (3) Competitor landscape, (4) Resource allocation efficiency. Write strategic memo to memory/think-tank-{date}.md and send summary to Jarad.",
+      "conditions": {
+        "day_of_week": ["Sunday"],
+        "hour_range": [8, 10]
+      }
+    }
+  ]
+}

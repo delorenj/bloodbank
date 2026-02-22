@@ -52,8 +52,15 @@ class CheckConditions:
         if self.day_of_week and day not in self.day_of_week:
             return False
         if self.hour_range and len(self.hour_range) == 2:
-            if not (self.hour_range[0] <= hour <= self.hour_range[1]):
-                return False
+            start, end = self.hour_range
+            if start <= end:
+                # Normal range: e.g. [9, 17]
+                if not (start <= hour <= end):
+                    return False
+            else:
+                # Wrap-around range: e.g. [10, 5] means 10:00 → midnight → 5:00
+                if not (hour >= start or hour <= end):
+                    return False
         if self.quarters and quarter not in self.quarters:
             return False
         return True

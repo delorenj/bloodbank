@@ -1,0 +1,39 @@
+{
+  "agent": "lenoon",
+  "version": "1.0.0",
+  "checks": [
+    {
+      "id": "infra_health",
+      "description": "Verify all 33GOD infrastructure services are running and healthy",
+      "interval_minutes": 15,
+      "action": "system_event",
+      "enabled": true,
+      "prompt": "INFRA HEALTH CHECK — Verify all 33GOD services.\n\n1. Run: docker ps --format '{{.Names}} {{.Status}}' | grep 33god\n2. Check each service is running and healthy: bloodbank, ws-relay, candystore, holocene, heartbeat-tick, postgres, redis.\n3. Check RabbitMQ: docker exec theboard-rabbitmq rabbitmqctl list_queues name messages consumers\n4. If any service is down or unhealthy: attempt restart with docker compose up -d {service}.\n5. Report findings to Grolf (agent:eng:main) if any issues found.",
+      "conditions": {
+        "hour_range": [0, 23]
+      }
+    },
+    {
+      "id": "docker_status",
+      "description": "Monitor Docker resource usage and container health",
+      "interval_minutes": 60,
+      "action": "system_event",
+      "enabled": true,
+      "prompt": "DOCKER STATUS CHECK — Monitor resource usage.\n\n1. Run: docker stats --no-stream --format 'table {{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}'\n2. Flag any container using >80% memory or >50% CPU sustained.\n3. Check disk usage: df -h /var/lib/docker\n4. If disk >80%: run docker system prune --force (only dangling images/containers).\n5. Report any concerns to Grolf.",
+      "conditions": {
+        "hour_range": [0, 23]
+      }
+    },
+    {
+      "id": "rabbitmq_health",
+      "description": "Deep RabbitMQ health check — queues, consumers, message rates",
+      "interval_minutes": 30,
+      "action": "system_event",
+      "enabled": true,
+      "prompt": "RABBITMQ HEALTH CHECK — Deep queue inspection.\n\n1. Check queue depths: docker exec theboard-rabbitmq rabbitmqctl list_queues name messages consumers\n2. Flag any queue with >1000 unacked messages (consumer may be stuck).\n3. Check exchange bindings: rabbitmqctl list_bindings\n4. Verify bloodbank.events.v1 exchange exists with correct type (topic).\n5. Check for DLQ buildup (any queue ending in .dlq with messages > 0).\n6. Report to Grolf if action needed.",
+      "conditions": {
+        "hour_range": [0, 23]
+      }
+    }
+  ]
+}
