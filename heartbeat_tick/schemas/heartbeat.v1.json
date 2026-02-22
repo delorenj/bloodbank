@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "heartbeat.v1",
+  "title": "Heartbeat Configuration Schema v1",
+  "description": "Configuration schema for per-agent heartbeat consumer in 33GOD Bloodbank",
+  "type": "object",
+  "required": ["$schema", "agent", "checks"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "const": "heartbeat.v1",
+      "description": "Schema version identifier"
+    },
+    "agent": {
+      "type": "string",
+      "description": "Agent name (must match queue routing)",
+      "examples": ["cack", "grolf", "lenoon"]
+    },
+    "checks": {
+      "type": "object",
+      "description": "Map of check names to their configurations",
+      "additionalProperties": {
+        "$ref": "#/definitions/checkConfig"
+      },
+      "minProperties": 1
+    },
+    "paused": {
+      "type": "object",
+      "description": "Reserved for future pause/resume functionality",
+      "default": {}
+    }
+  },
+  "definitions": {
+    "checkConfig": {
+      "type": "object",
+      "required": ["cadenceMs", "handler"],
+      "properties": {
+        "cadenceMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "description": "Check interval in milliseconds",
+          "examples": [900000, 21600000, 3600000]
+        },
+        "window": {
+          "$ref": "#/definitions/timeWindow",
+          "description": "Optional time window restriction"
+        },
+        "lastRun": {
+          "type": "integer",
+          "default": 0,
+          "description": "Unix timestamp (ms) of last successful run. Managed by consumer."
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Priority for tie-breaking when multiple checks are overdue (lower = higher priority)"
+        },
+        "handler": {
+          "type": "string",
+          "description": "Handler function name to execute",
+          "examples": ["sub_health", "quarterly_compaction", "custom_check"]
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this check is enabled"
+        },
+        "triggerOnQuarters": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["Q1", "Q2", "Q3", "Q4"]
+          },
+          "description": "Optional: only trigger on specific quarters (for quarterly checks)"
+        },
+        "meta": {
+          "type": "object",
+          "description": "Optional metadata for handler use"
+        }
+      }
+    },
+    "timeWindow": {
+      "type": "object",
+      "required": ["start", "end", "tz"],
+      "properties": {
+        "start": {
+          "type": "string",
+          "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$",
+          "description": "Start time in HH:MM format",
+          "examples": ["00:00", "09:00", "22:00"]
+        },
+        "end": {
+          "type": "string",
+          "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$",
+          "description": "End time in HH:MM format",
+          "examples": ["23:59", "17:00", "06:00"]
+        },
+        "tz": {
+          "type": "string",
+          "description": "Timezone for window evaluation",
+          "default": "America/New_York",
+          "examples": ["America/New_York", "UTC", "Europe/London"]
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "$schema": "heartbeat.v1",
+      "agent": "cack",
+      "checks": {
+        "sub_health": {
+          "cadenceMs": 900000,
+          "window": {"start": "00:00", "end": "23:59", "tz": "America/New_York"},
+          "lastRun": 0,
+          "priority": 1,
+          "handler": "sub_health",
+          "enabled": true
+        },
+        "quarterly_compaction": {
+          "cadenceMs": 21600000,
+          "triggerOnQuarters": ["Q1", "Q2", "Q3", "Q4"],
+          "lastRun": 0,
+          "priority": 2,
+          "handler": "quarterly_compaction",
+          "enabled": true
+        }
+      },
+      "paused": {}
+    }
+  ]
+}
