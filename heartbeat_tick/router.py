@@ -350,29 +350,16 @@ async def handle_tick(tick_payload: dict[str, Any], exchange: Any) -> None:
 # ─── Queue provisioning ──────────────────────────────────────────────────────
 
 
-async def provision_agent_inboxes(channel: Any, exchange: Any) -> int:
-    """Declare agent.{name}.inbox queues for all known agents, bound to agent.{name}.#.
-
-    Returns number of queues provisioned.
-    """
-    agents = [
-        "cack", "grolf", "lenoon", "rererere", "tonny", "tongy",
-        "rar", "pepe", "lalathing", "momothecat", "yi",
-        "overworld", "svgme", "wean", "dumpling", "cack-app",
-    ]
-
-    provisioned = 0
-    for agent in agents:
-        queue_name = f"agent.{agent}.inbox"
-        routing_key = f"agent.{agent}.#"
-
-        queue = await channel.declare_queue(queue_name, durable=True)
-        await queue.bind(exchange, routing_key=routing_key)
-
-        logger.info("Provisioned queue: %s → %s", queue_name, routing_key)
-        provisioned += 1
-
-    return provisioned
+## NOTE: Per-agent inbox queues DISABLED — no consumers exist yet.
+## These were accumulating thousands of unread messages per day.
+## Re-enable when per-agent consumer services are deployed.
+#
+# async def provision_agent_inboxes(channel: Any, exchange: Any) -> int:
+#     agents = ["cack", "grolf", "lenoon", ...]
+#     for agent in agents:
+#         queue = await channel.declare_queue(f"agent.{agent}.inbox", durable=True)
+#         await queue.bind(exchange, routing_key=f"agent.{agent}.#")
+#     return len(agents)
 
 
 # ─── Main consumer loop ──────────────────────────────────────────────────────
@@ -399,9 +386,8 @@ async def run() -> None:
         durable=True,
     )
 
-    # Provision per-agent inbox queues
-    n = await provision_agent_inboxes(channel, exchange)
-    logger.info("Provisioned %d agent inbox queues", n)
+    # NOTE: Per-agent inbox queue provisioning disabled — no consumers deployed.
+    # Re-enable when agent consumer services are ready.
 
     # Declare router's own queue — listens only to system.heartbeat.tick
     router_queue = await channel.declare_queue(
