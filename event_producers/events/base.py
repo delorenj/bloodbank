@@ -29,6 +29,7 @@ class TriggerType(str, Enum):
     SCHEDULED = "scheduled"  # Cron/timer triggered
     FILE_WATCH = "file_watch"  # File system event
     HOOK = "hook"  # External webhook
+    HEARTBEAT = "heartbeat"  # System heartbeat tick/dispatch events
 
 
 class Source(BaseModel):
