@@ -46,6 +46,7 @@ COPY bloodbank/heartbeat/ ./heartbeat/
 COPY bloodbank/consumer_template/ ./consumer_template/
 COPY bloodbank/command_adapter/ ./command_adapter/
 COPY bloodbank/command_fsm/ ./command_fsm/
+COPY bloodbank/hookd_bridge/ ./hookd_bridge/
 
 # Activate virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
