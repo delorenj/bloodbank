@@ -82,6 +82,7 @@ class OpenClawHookDispatcher:
 
         body = {
             "text": text,
+            "message": text,  # OpenClaw expects "message" field
             "sessionKey": session_key,
         }
 
