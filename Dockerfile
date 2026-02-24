@@ -14,8 +14,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Set working directory
 WORKDIR /app
 
+# Copy holyfields source (path dependency)
+COPY holyfields/ /holyfields/
+
 # Copy dependency files
-COPY pyproject.toml uv.lock ./
+COPY bloodbank/pyproject.toml bloodbank/uv.lock ./
 
 # Install dependencies
 RUN uv sync --frozen --no-install-project
@@ -37,10 +40,12 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code
-COPY event_producers/ ./event_producers/
-COPY heartbeat_tick/ ./heartbeat_tick/
-COPY heartbeat/ ./heartbeat/
-COPY consumer_template/ ./consumer_template/
+COPY bloodbank/event_producers/ ./event_producers/
+COPY bloodbank/heartbeat_tick/ ./heartbeat_tick/
+COPY bloodbank/heartbeat/ ./heartbeat/
+COPY bloodbank/consumer_template/ ./consumer_template/
+COPY bloodbank/command_adapter/ ./command_adapter/
+COPY bloodbank/command_fsm/ ./command_fsm/
 
 # Activate virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
