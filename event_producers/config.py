@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     environment: str = "dev"
 
     # RabbitMQ settings
-    rabbit_url: str = "amqp://guest:guest@rabbitmq:5672/"
+    # NEVER default to guest:guest — causes silent auth failures (2026-02-24 incident)
+    rabbit_url: str = "amqp://delorenj:MISSING_PASSWORD@rabbitmq:5672/"
     exchange_name: str = "bloodbank.events.v1"
 
     # Redis settings (for correlation tracking)

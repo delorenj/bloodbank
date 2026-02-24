@@ -19,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration from environment
-RABBIT_URL = os.getenv("RABBIT_URL", "amqp://guest:guest@localhost:5672/")
+RABBIT_URL = os.getenv("RABBIT_URL", "amqp://delorenj:MISSING_PASSWORD@rabbitmq:5672/")
 EXCHANGE_NAME = os.getenv("EXCHANGE_NAME", "bloodbank.events.v1")
 ROUTING_KEY = os.getenv("ROUTING_KEY", "#")
 WS_HOST = os.getenv("WS_HOST", "0.0.0.0")

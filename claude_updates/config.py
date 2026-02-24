@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     service_name: str = "bloodbank"
 
     # RabbitMQ settings
-    rabbit_url: str = "amqp://guest:guest@localhost:5672/"
+    rabbit_url: str = "amqp://delorenj:MISSING_PASSWORD@rabbitmq:5672/"
     exchange_name: str = "amq.topic"
 
     # Redis settings (for correlation tracking)

@@ -29,7 +29,7 @@ EnvelopeHandler = Callable[[str, dict[str, Any], dict[str, Any]], Awaitable[None
 @dataclass
 class ConsumerConfig:
     agent_name: str
-    rabbitmq_url: str = os.environ.get("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+    rabbitmq_url: str = os.environ.get("RABBITMQ_URL", "amqp://delorenj:MISSING_PASSWORD@rabbitmq:5672/")
     exchange_name: str = os.environ.get("BLOODBANK_EXCHANGE", "bloodbank.events.v1")
     retry_ttls_ms: tuple[int, int, int] = (5_000, 30_000, 120_000)
 
