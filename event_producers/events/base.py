@@ -27,9 +27,9 @@ class TriggerType(str, Enum):
     MANUAL = "manual"  # Human-initiated
     AGENT = "agent"  # AI agent triggered
     SCHEDULED = "scheduled"  # Cron/timer triggered
+    HEARTBEAT = "heartbeat"  # System heartbeat tick/dispatch
     FILE_WATCH = "file_watch"  # File system event
     HOOK = "hook"  # External webhook
-    HEARTBEAT = "heartbeat"  # System heartbeat tick/dispatch events
 
 
 class Source(BaseModel):
