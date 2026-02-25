@@ -40,6 +40,19 @@ class TestParseHookText:
         assert issued_by == "hookd-bridge"
         assert priority == "normal"
 
+    def test_git_maintenance_structured_alias(self):
+        text = "[Command] action=git-maintenance"
+        action, issued_by, priority, payload = parse_hook_text(text)
+        assert action == "run_git_maintenance"
+        assert issued_by == "hookd-bridge"
+        assert priority == "normal"
+
+    def test_git_maintenance_shorthand(self):
+        text = "git maintenance"
+        action, issued_by, priority, payload = parse_hook_text(text)
+        assert action == "run_git_maintenance"
+        assert issued_by == "hookd-bridge"
+
     def test_empty_text(self):
         action, issued_by, priority, payload = parse_hook_text("")
         assert action == "hook_dispatch"
@@ -71,6 +84,10 @@ class TestBuildEnvelope:
         assert env["payload"]["target_agent"] == "lenoon"
         assert env["payload"]["action"] == "run_drift_check"
         assert env["payload"]["issued_by"] == "grolf"
+        assert env["version"] == "1.0.0"
+        assert env["source"]["app"] == "hookd-bridge"
+        assert env["source"]["type"] == "webhook"
+        assert env["correlation_ids"] == [env["correlation_id"]]
 
     def test_with_payload(self):
         rk, env = build_command_envelope(

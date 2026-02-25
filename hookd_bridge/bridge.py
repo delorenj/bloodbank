@@ -50,8 +50,27 @@ COMMAND_RE = re.compile(
     r"(?:\s+priority=(?P<priority>\S+))?"
 )
 
+# Canonical action for repository hygiene/maintenance work.
+GIT_MAINTENANCE_ACTION = "run_git_maintenance"
+
+# Action aliases normalized by normalize_action() (lowercase, punctuation->underscore).
+ACTION_ALIASES: dict[str, str] = {
+    "git_maintenance": GIT_MAINTENANCE_ACTION,
+    "gitmaintenance": GIT_MAINTENANCE_ACTION,
+    "git_maint": GIT_MAINTENANCE_ACTION,
+    "run_git_maintenance": GIT_MAINTENANCE_ACTION,
+}
+
 # Regex to extract agent name from sessionKey: agent:{name}:main
 SESSION_KEY_RE = re.compile(r"^agent:(?P<agent>[^:]+):")
+
+
+def normalize_action(action: str) -> str:
+    """Normalize action names and collapse known aliases to canonical actions."""
+    normalized = action.strip().lower().replace("-", "_").replace(".", "_").replace(" ", "_")
+    if not normalized:
+        return "hook_dispatch"
+    return ACTION_ALIASES.get(normalized, normalized)
 
 
 # ---------------------------------------------------------------------------
@@ -73,14 +92,23 @@ def build_command_envelope(
     command_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
+    corr_id = correlation_id or str(uuid.uuid4())
+
     envelope = {
         "event_id": str(uuid.uuid4()),
         "event_type": "command.envelope",
         "timestamp": now,
-        "version": "1.0",
-        "source": "hookd-bridge",
-        "correlation_id": correlation_id or str(uuid.uuid4()),
-        "causation_id": None,
+        "version": "1.0.0",
+        # Include both `type` and `trigger_type` for compatibility across
+        # current/legacy consumers and schema validators.
+        "source": {
+            "host": os.uname().nodename,
+            "app": "hookd-bridge",
+            "type": "webhook",
+            "trigger_type": "webhook",
+        },
+        "correlation_id": corr_id,
+        "correlation_ids": [corr_id],
         "payload": {
             "command_id": command_id,
             "target_agent": target_agent,
@@ -105,7 +133,7 @@ def parse_hook_text(text: str) -> tuple[str, str, str, dict[str, Any]]:
     """
     m = COMMAND_RE.search(text)
     if m:
-        action = m.group("action") or "hook_dispatch"
+        action = normalize_action(m.group("action") or "hook_dispatch")
         issued_by = m.group("from") or "hookd-bridge"
         priority = m.group("priority") or "normal"
         # Everything after the [Command] line is payload
@@ -117,6 +145,10 @@ def parse_hook_text(text: str) -> tuple[str, str, str, dict[str, Any]]:
             except Exception:
                 extra = {"raw_text": remaining}
         return action, issued_by, priority, extra
+
+    # Lightweight shorthand support for direct git maintenance requests.
+    if normalize_action(text) in ACTION_ALIASES:
+        return GIT_MAINTENANCE_ACTION, "hookd-bridge", "normal", {"raw_text": text}
 
     # No structured command — treat entire text as a generic dispatch
     return "hook_dispatch", "hookd-bridge", "normal", {"raw_text": text}

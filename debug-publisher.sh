@@ -38,7 +38,7 @@ asyncio.run(test_connection())
 echo ""
 
 echo "4. Checking RabbitMQ queues:"
-docker exec theboard-rabbitmq rabbitmqctl list_queues name messages consumers | grep -E "blood|amq_"
+docker exec 33god-rabbitmq rabbitmqctl list_queues name messages consumers | grep -E "blood|amq_"
 echo ""
 
 echo "5. Publishing test event:"
@@ -50,7 +50,7 @@ echo ""
 
 echo "6. Checking queue messages after publish (should increment):"
 sleep 1
-docker exec theboard-rabbitmq rabbitmqctl list_queues name messages | grep -E "blood|amq_"
+docker exec 33god-rabbitmq rabbitmqctl list_queues name messages | grep -E "blood|amq_"
 echo ""
 
 echo "=== Debug Complete ==="
