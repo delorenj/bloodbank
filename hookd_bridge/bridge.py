@@ -154,6 +154,18 @@ def parse_hook_text(text: str) -> tuple[str, str, str, dict[str, Any]]:
     return "hook_dispatch", "hookd-bridge", "normal", {"raw_text": text}
 
 
+def is_empty_noop(text: str, action: str, command_payload: dict[str, Any]) -> bool:
+    """Return True when a hook contains no actionable content and should be dropped."""
+    if text.strip():
+        return False
+
+    if action != "hook_dispatch":
+        return False
+
+    raw_text = command_payload.get("raw_text")
+    return isinstance(raw_text, str) and not raw_text.strip()
+
+
 def extract_agent_from_session_key(session_key: str) -> str | None:
     """Extract agent name from sessionKey like 'agent:lenoon:main'."""
     m = SESSION_KEY_RE.match(session_key)
@@ -211,6 +223,8 @@ class HookdBridge:
             )
 
         text = body.get("text", "")
+        if not isinstance(text, str):
+            text = "" if text is None else str(text)
         session_key = body.get("sessionKey", "")
 
         # Extract agent name
@@ -224,6 +238,11 @@ class HookdBridge:
 
         # Parse text into command fields
         action, issued_by, priority, command_payload = parse_hook_text(text)
+
+        # Ignore no-op hook chatter (empty payloads).
+        if is_empty_noop(text, action, command_payload):
+            logger.info("Bridge: ignored empty no-op hook payload")
+            return web.Response(status=204)
 
         # Extract correlation_id from headers if present
         correlation_id = request.headers.get("X-Correlation-Id")

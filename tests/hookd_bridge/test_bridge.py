@@ -7,6 +7,7 @@ from hookd_bridge.bridge import (
     parse_hook_text,
     extract_agent_from_session_key,
     build_command_envelope,
+    is_empty_noop,
 )
 
 
@@ -56,6 +57,17 @@ class TestParseHookText:
     def test_empty_text(self):
         action, issued_by, priority, payload = parse_hook_text("")
         assert action == "hook_dispatch"
+
+
+class TestNoopFilter:
+    def test_empty_hook_dispatch_is_noop(self):
+        assert is_empty_noop("", "hook_dispatch", {"raw_text": ""}) is True
+
+    def test_non_empty_text_is_not_noop(self):
+        assert is_empty_noop("ping", "hook_dispatch", {"raw_text": "ping"}) is False
+
+    def test_non_dispatch_action_is_not_noop(self):
+        assert is_empty_noop("", "run_git_maintenance", {"raw_text": ""}) is False
 
 
 class TestExtractAgent:
