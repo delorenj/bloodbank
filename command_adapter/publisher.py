@@ -10,6 +10,7 @@ with the correct routing keys:
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -29,7 +30,7 @@ def _base_envelope(
     payload: dict[str, Any],
     correlation_id: Optional[str] = None,
     causation_id: Optional[str] = None,
-    source: str = "command-adapter",
+    source_app: str = "command-adapter",
 ) -> dict[str, Any]:
     """Build a base event envelope matching Holyfields base_event.v1 schema."""
     return {
@@ -37,7 +38,12 @@ def _base_envelope(
         "event_type": event_type,
         "timestamp": _now_iso(),
         "version": "1.0",
-        "source": source,
+        "source": {
+            "host": os.uname().nodename,
+            "type": "service",
+            "app": source_app,
+        },
+        "producer": f"service:{source_app}",  # GOD-14 compliance
         "correlation_id": correlation_id or str(uuid.uuid4()),
         "causation_id": causation_id,
         "payload": payload,

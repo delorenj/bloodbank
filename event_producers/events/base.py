@@ -30,6 +30,8 @@ class TriggerType(str, Enum):
     HEARTBEAT = "heartbeat"  # System heartbeat tick/dispatch
     FILE_WATCH = "file_watch"  # File system event
     HOOK = "hook"  # External webhook
+    WEBHOOK = "webhook"  # External HTTP webhook
+    SERVICE = "service"  # Internal microservice triggered
 
 
 class Source(BaseModel):
