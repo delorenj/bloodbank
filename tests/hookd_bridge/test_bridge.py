@@ -8,6 +8,7 @@ from hookd_bridge.bridge import (
     extract_agent_from_session_key,
     build_command_envelope,
     is_empty_noop,
+    extract_hook_text,
 )
 
 
@@ -68,6 +69,20 @@ class TestNoopFilter:
 
     def test_non_dispatch_action_is_not_noop(self):
         assert is_empty_noop("", "run_git_maintenance", {"raw_text": ""}) is False
+
+
+class TestHookTextAlias:
+    def test_prefers_text(self):
+        body = {"text": "primary", "message": "legacy"}
+        assert extract_hook_text(body) == "primary"
+
+    def test_falls_back_to_legacy_message(self):
+        body = {"text": "", "message": "legacy payload"}
+        assert extract_hook_text(body) == "legacy payload"
+
+    def test_handles_non_string_message(self):
+        body = {"message": 12345}
+        assert extract_hook_text(body) == "12345"
 
 
 class TestExtractAgent:

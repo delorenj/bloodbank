@@ -133,6 +133,25 @@ def build_command_envelope(
     return routing_key, envelope
 
 
+def extract_hook_text(body: dict[str, Any]) -> str:
+    """Extract canonical hook text with backward-compatible alias support.
+
+    Preferred key: `text`
+    Legacy alias: `message` (used by some older clients)
+    """
+    text = body.get("text", "")
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+
+    if text.strip():
+        return text
+
+    legacy = body.get("message", "")
+    if not isinstance(legacy, str):
+        legacy = "" if legacy is None else str(legacy)
+    return legacy
+
+
 def parse_hook_text(text: str) -> tuple[str, str, str, dict[str, Any]]:
     """
     Parse hook text to extract action, issued_by, priority, and remaining payload.
@@ -397,9 +416,7 @@ class HookdBridge:
                 {"error": "invalid JSON body"}, status=400
             )
 
-        text = body.get("text", "")
-        if not isinstance(text, str):
-            text = "" if text is None else str(text)
+        text = extract_hook_text(body)
         session_key = body.get("sessionKey", "")
 
         # Extract agent name
