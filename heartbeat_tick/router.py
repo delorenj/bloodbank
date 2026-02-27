@@ -201,7 +201,7 @@ async def dispatch_check(
     )
 
     payload = {
-        "message": message,
+        "text": message,
         "name": f"HeartbeatRouter:{check_id}",
         "sessionKey": session_key,
         "wakeMode": "now",
