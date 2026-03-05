@@ -21,6 +21,8 @@ jobs:
     - name: Checkout holyfields sibling dependency
       run: |
         git clone --depth 1 https://github.com/${{ github.repository_owner }}/33GOD.git /tmp/33GOD
+        git -C /tmp/33GOD config submodule.holyfields.url https://github.com/${{ github.repository_owner }}/holyfields.git
+        git -C /tmp/33GOD submodule update --init holyfields
         cp -R /tmp/33GOD/holyfields ../holyfields
 
     - name: Set up Python ${{ matrix.python-version }}
@@ -84,6 +86,8 @@ jobs:
     - name: Checkout holyfields sibling dependency
       run: |
         git clone --depth 1 https://github.com/${{ github.repository_owner }}/33GOD.git /tmp/33GOD
+        git -C /tmp/33GOD config submodule.holyfields.url https://github.com/${{ github.repository_owner }}/holyfields.git
+        git -C /tmp/33GOD submodule update --init holyfields
         cp -R /tmp/33GOD/holyfields ../holyfields
 
     - name: Set up Python 3.12
@@ -117,6 +121,8 @@ jobs:
     - name: Checkout holyfields sibling dependency
       run: |
         git clone --depth 1 https://github.com/${{ github.repository_owner }}/33GOD.git /tmp/33GOD
+        git -C /tmp/33GOD config submodule.holyfields.url https://github.com/${{ github.repository_owner }}/holyfields.git
+        git -C /tmp/33GOD submodule update --init holyfields
         cp -R /tmp/33GOD/holyfields ../holyfields
 
     - name: Set up Python 3.12
