@@ -19,7 +19,9 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Checkout holyfields sibling dependency
-      run: git clone --depth 1 https://github.com/${{ github.repository_owner }}/holyfields.git ../holyfields
+      run: |
+        git clone --depth 1 https://github.com/${{ github.repository_owner }}/33GOD.git /tmp/33GOD
+        cp -R /tmp/33GOD/holyfields ../holyfields
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
@@ -80,7 +82,9 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Checkout holyfields sibling dependency
-      run: git clone --depth 1 https://github.com/${{ github.repository_owner }}/holyfields.git ../holyfields
+      run: |
+        git clone --depth 1 https://github.com/${{ github.repository_owner }}/33GOD.git /tmp/33GOD
+        cp -R /tmp/33GOD/holyfields ../holyfields
 
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
@@ -111,7 +115,9 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Checkout holyfields sibling dependency
-      run: git clone --depth 1 https://github.com/${{ github.repository_owner }}/holyfields.git ../holyfields
+      run: |
+        git clone --depth 1 https://github.com/${{ github.repository_owner }}/33GOD.git /tmp/33GOD
+        cp -R /tmp/33GOD/holyfields ../holyfields
 
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
