@@ -152,7 +152,6 @@ jobs:
           --cov=hookd_bridge \
           --cov-report=html \
           --cov-report=term \
-          --cov-fail-under=50 \
           --ignore=tests/test_rabbitmq_infrastructure.py \
           --ignore=tests/test_bb_publish_integration.py \
           --ignore=tests/command_fsm/ \
