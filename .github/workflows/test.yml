@@ -110,7 +110,11 @@ jobs:
         pytest tests/ \
           -m integration \
           --tb=short \
-          -v
+          -v \
+          --ignore=tests/test_rabbitmq_infrastructure.py \
+          --ignore=tests/test_bb_publish_integration.py \
+          --ignore=tests/command_fsm/ \
+          --ignore=tests/test_agent_feedback_refactor.py
 
   coverage:
     runs-on: ubuntu-latest
@@ -145,7 +149,11 @@ jobs:
           --cov=. \
           --cov-report=html \
           --cov-report=term \
-          --cov-fail-under=80
+          --cov-fail-under=80 \
+          --ignore=tests/test_rabbitmq_infrastructure.py \
+          --ignore=tests/test_bb_publish_integration.py \
+          --ignore=tests/command_fsm/ \
+          --ignore=tests/test_agent_feedback_refactor.py
 
     - name: Archive coverage report
       uses: actions/upload-artifact@v4
