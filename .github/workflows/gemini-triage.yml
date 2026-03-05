@@ -18,6 +18,8 @@ defaults:
 
 jobs:
   triage:
+    if: |-
+      ${{ secrets.GEMINI_API_KEY != '' }}
     runs-on: 'ubuntu-latest'
     timeout-minutes: 7
     outputs:

@@ -47,7 +47,7 @@ jobs:
     # For comments: only if user types @gemini-cli and is OWNER/MEMBER/COLLABORATOR
     # For issues: only on open/reopen
     if: |-
-      (
+      secrets.GEMINI_API_KEY != '' && (
         github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.fork == false
       ) || (

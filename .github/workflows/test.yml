@@ -18,39 +18,38 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Checkout holyfields sibling dependency
-      run: |
-        git clone --depth 1 https://github.com/${{ github.repository_owner }}/33GOD.git /tmp/33GOD
-        git -C /tmp/33GOD config submodule.holyfields.url https://github.com/${{ github.repository_owner }}/holyfields.git
-        git -C /tmp/33GOD submodule update --init holyfields
-        cp -R /tmp/33GOD/holyfields ../holyfields
+    - name: Checkout holyfields dependency
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ github.repository_owner }}/holyfields
+        path: holyfields
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-
-    - name: Set up uv
-      uses: astral-sh/setup-uv@v5
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
-        uv sync --extra test
-        uv pip install -r tests/requirements-test.txt
+        python -m pip install --upgrade pip
+        pip install -e ./holyfields
+        pip install -e .
+        pip install -r tests/requirements-test.txt
 
     - name: Lint with ruff
       run: |
-        uv run ruff check .
+        ruff check .
       continue-on-error: true
 
     - name: Type check with mypy
       run: |
-        uv run mypy . --ignore-missing-imports
+        mypy . --ignore-missing-imports
       continue-on-error: true
 
     - name: Run tests with pytest
       run: |
-        uv run pytest tests/ \
+        pytest tests/ \
           --cov=. \
           --cov-report=xml \
           --cov-report=term-missing \
@@ -83,29 +82,28 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Checkout holyfields sibling dependency
-      run: |
-        git clone --depth 1 https://github.com/${{ github.repository_owner }}/33GOD.git /tmp/33GOD
-        git -C /tmp/33GOD config submodule.holyfields.url https://github.com/${{ github.repository_owner }}/holyfields.git
-        git -C /tmp/33GOD submodule update --init holyfields
-        cp -R /tmp/33GOD/holyfields ../holyfields
+    - name: Checkout holyfields dependency
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ github.repository_owner }}/holyfields
+        path: holyfields
 
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
-
-    - name: Set up uv
-      uses: astral-sh/setup-uv@v5
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
-        uv sync --extra test
-        uv pip install -r tests/requirements-test.txt
+        python -m pip install --upgrade pip
+        pip install -e ./holyfields
+        pip install -e .
+        pip install -r tests/requirements-test.txt
 
     - name: Run integration tests
       run: |
-        uv run pytest tests/ \
+        pytest tests/ \
           -m integration \
           --tb=short \
           -v
@@ -118,29 +116,28 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Checkout holyfields sibling dependency
-      run: |
-        git clone --depth 1 https://github.com/${{ github.repository_owner }}/33GOD.git /tmp/33GOD
-        git -C /tmp/33GOD config submodule.holyfields.url https://github.com/${{ github.repository_owner }}/holyfields.git
-        git -C /tmp/33GOD submodule update --init holyfields
-        cp -R /tmp/33GOD/holyfields ../holyfields
+    - name: Checkout holyfields dependency
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ github.repository_owner }}/holyfields
+        path: holyfields
 
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
-
-    - name: Set up uv
-      uses: astral-sh/setup-uv@v5
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
-        uv sync --extra test
-        uv pip install -r tests/requirements-test.txt
+        python -m pip install --upgrade pip
+        pip install -e ./holyfields
+        pip install -e .
+        pip install -r tests/requirements-test.txt
 
     - name: Generate coverage report
       run: |
-        uv run pytest tests/ \
+        pytest tests/ \
           --cov=. \
           --cov-report=html \
           --cov-report=term \
