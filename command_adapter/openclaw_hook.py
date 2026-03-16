@@ -12,27 +12,31 @@ Headers:
 Body:
   { "text": "...", "sessionKey": "agent:{agent_name}:main" }
 """
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import httpx
+
+from .dispatcher import Dispatcher, DispatchResult
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class HookResult:
-    """Result of an OpenClaw hook dispatch."""
+    """Result of an OpenClaw hook dispatch (legacy, use DispatchResult)."""
+
     success: bool
     status_code: int
-    response_body: Optional[dict[str, Any]] = None
-    error: Optional[str] = None
+    response_body: dict[str, Any] | None = None
+    error: str | None = None
 
 
-class OpenClawHookDispatcher:
+class OpenClawHookDispatcher(Dispatcher):
     """Dispatches commands to OpenClaw agents via the hooks API."""
 
     def __init__(
@@ -45,6 +49,10 @@ class OpenClawHookDispatcher:
         self.hook_token = hook_token
         self.timeout = timeout_seconds
 
+    @property
+    def name(self) -> str:
+        return f"openclaw:{self.hook_url[:50]}"
+
     async def dispatch(
         self,
         *,
@@ -54,7 +62,7 @@ class OpenClawHookDispatcher:
         issued_by: str,
         priority: str = "normal",
         command_payload: dict[str, Any] | None = None,
-    ) -> HookResult:
+    ) -> DispatchResult:
         """
         Send a command to an OpenClaw agent session via hooks API.
 
@@ -70,7 +78,10 @@ class OpenClawHookDispatcher:
         ]
         if command_payload:
             import orjson
-            lines.append(orjson.dumps(command_payload, option=orjson.OPT_INDENT_2).decode())
+
+            lines.append(
+                orjson.dumps(command_payload, option=orjson.OPT_INDENT_2).decode()
+            )
 
         text = "\n".join(lines)
 
@@ -103,10 +114,11 @@ class OpenClawHookDispatcher:
                     resp_body = resp.json()
                 except Exception:
                     resp_body = None
-                return HookResult(
+                return DispatchResult(
                     success=True,
                     status_code=resp.status_code,
                     response_body=resp_body,
+                    backend=self.name,
                 )
             else:
                 error_text = resp.text[:500]
@@ -114,30 +126,40 @@ class OpenClawHookDispatcher:
                     f"Hook failed: agent={target_agent} action={action} "
                     f"status={resp.status_code} body={error_text}"
                 )
-                return HookResult(
+                return DispatchResult(
                     success=False,
                     status_code=resp.status_code,
                     error=f"HTTP {resp.status_code}: {error_text}",
+                    backend=self.name,
                 )
 
         except httpx.TimeoutException:
-            logger.error(f"Hook timeout: agent={target_agent} action={action} timeout={self.timeout}s")
-            return HookResult(
+            logger.error(
+                f"Hook timeout: agent={target_agent} action={action} timeout={self.timeout}s"
+            )
+            return DispatchResult(
                 success=False,
                 status_code=0,
                 error=f"Timeout after {self.timeout}s",
+                backend=self.name,
             )
         except httpx.ConnectError as e:
-            logger.error(f"Hook connection failed: agent={target_agent} action={action} error={e}")
-            return HookResult(
+            logger.error(
+                f"Hook connection failed: agent={target_agent} action={action} error={e}"
+            )
+            return DispatchResult(
                 success=False,
                 status_code=0,
                 error=f"Connection failed: {e}",
+                backend=self.name,
             )
         except Exception as e:
-            logger.error(f"Hook dispatch error: agent={target_agent} action={action} error={e}")
-            return HookResult(
+            logger.error(
+                f"Hook dispatch error: agent={target_agent} action={action} error={e}"
+            )
+            return DispatchResult(
                 success=False,
                 status_code=0,
                 error=str(e),
+                backend=self.name,
             )

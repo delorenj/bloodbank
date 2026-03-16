@@ -2,7 +2,9 @@ import importlib.util
 import sys
 from pathlib import Path
 
-module_path = Path(__file__).resolve().parents[1] / "event_producers" / "infra_dispatcher.py"
+module_path = (
+    Path(__file__).resolve().parents[1] / "event_producers" / "infra_dispatcher.py"
+)
 spec = importlib.util.spec_from_file_location("infra_dispatcher", module_path)
 assert spec and spec.loader
 infra_dispatcher = importlib.util.module_from_spec(spec)
@@ -99,7 +101,8 @@ def test_build_dispatch_message_mentions_missing_component_route():
         "url": "",
     }
     message = build_dispatch_message(ticket)
-    assert "Component route: UNKNOWN" in message
+    assert "Component route: (not set)" in message
+    assert "Effective route: UNKNOWN" in message
     assert "comp:<component>" in message
 
 
@@ -132,3 +135,103 @@ def test_build_dispatch_message_includes_m2_gate_context():
     assert "M2 Test Gate:" in message
     assert "Status: failed" in message
     assert "stderr tail:" in message
+
+
+def _routing_key_for(ticket: dict, default_agent: str = "cack") -> str:
+    agent_label = ticket.get("agent_label")
+    component = ticket.get("component")
+    if agent_label:
+        return f"command.{agent_label}.assign_ticket"
+    elif component:
+        return f"command.{component}.assign_ticket"
+    else:
+        return f"command.{default_agent}.examine"
+
+
+def _ready_issue(labels: list[str], state: str = "Unstarted") -> dict:
+    return {
+        "event": "issue",
+        "action": "update",
+        "workspace_id": "ws-test",
+        "data": {
+            "id": "issue-abc",
+            "identifier": "TEST-1",
+            "name": "Test ticket",
+            "updated_at": "2026-03-15T10:00:00Z",
+            "state_detail": {"name": state},
+            "labels": [{"name": lbl} for lbl in labels],
+            "url": "https://plane.example/issues/TEST-1",
+        },
+    }
+
+
+_READY_STATES: tuple[str, ...] = ("unstarted",)
+_READY_LABELS: tuple[str, ...] = ("ready",)
+
+
+def test_routing_agent_label_grolf():
+    ticket = evaluate_ready_issue(
+        _ready_issue(["ready", "agent:grolf"]),
+        ready_states=_READY_STATES,
+        ready_labels=_READY_LABELS,
+        component_prefix="comp:",
+        agent_prefix="agent:",
+    )
+    assert ticket is not None
+    assert ticket["agent_label"] == "grolf"
+    assert _routing_key_for(ticket) == "command.grolf.assign_ticket"
+
+
+def test_routing_agent_label_lenoon():
+    ticket = evaluate_ready_issue(
+        _ready_issue(["ready", "agent:lenoon"]),
+        ready_states=_READY_STATES,
+        ready_labels=_READY_LABELS,
+        component_prefix="comp:",
+        agent_prefix="agent:",
+    )
+    assert ticket is not None
+    assert ticket["agent_label"] == "lenoon"
+    assert _routing_key_for(ticket) == "command.lenoon.assign_ticket"
+
+
+def test_routing_component_no_agent_label():
+    ticket = evaluate_ready_issue(
+        _ready_issue(["ready", "comp:bloodbank"]),
+        ready_states=_READY_STATES,
+        ready_labels=_READY_LABELS,
+        component_prefix="comp:",
+        agent_prefix="agent:",
+    )
+    assert ticket is not None
+    assert ticket["agent_label"] is None
+    assert ticket["component"] == "bloodbank"
+    assert _routing_key_for(ticket) == "command.bloodbank.assign_ticket"
+
+
+def test_routing_no_label_uses_default_agent():
+    ticket = evaluate_ready_issue(
+        _ready_issue(["ready"]),
+        ready_states=_READY_STATES,
+        ready_labels=_READY_LABELS,
+        component_prefix="comp:",
+        agent_prefix="agent:",
+    )
+    assert ticket is not None
+    assert ticket["agent_label"] is None
+    assert ticket["component"] is None
+    assert _routing_key_for(ticket, default_agent="cack") == "command.cack.examine"
+
+
+def test_routing_agent_label_overrides_component():
+    ticket = evaluate_ready_issue(
+        _ready_issue(["ready", "agent:grolf", "comp:bloodbank"]),
+        ready_states=_READY_STATES,
+        ready_labels=_READY_LABELS,
+        component_prefix="comp:",
+        agent_prefix="agent:",
+    )
+    assert ticket is not None
+    assert ticket["agent_label"] == "grolf"
+    assert ticket["component"] == "bloodbank"
+    assert _routing_key_for(ticket) == "command.grolf.assign_ticket"

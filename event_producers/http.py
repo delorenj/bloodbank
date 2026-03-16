@@ -145,6 +145,53 @@ def _normalize_event_key(value: str) -> str:
     return value.strip(".")
 
 
+def _extract_plane_intake_issue_created(body: dict, intake_project_id: str | None) -> dict | None:
+    """Return normalized intake issue payload when Plane webhook is issue/create for intake project."""
+    if not isinstance(body, dict):
+        return None
+
+    event = str(body.get("event") or "").strip().lower()
+    action = str(body.get("action") or body.get("type") or "").strip().lower()
+    if event != "issue" or action != "create":
+        return None
+
+    issue = body.get("data")
+    if not isinstance(issue, dict):
+        return None
+
+    project_id = issue.get("project")
+    if isinstance(project_id, dict):
+        project_id = project_id.get("id")
+    project_id = str(project_id or "").strip()
+
+    if intake_project_id and project_id != intake_project_id:
+        return None
+
+    issue_id = str(issue.get("id") or "").strip()
+    if not issue_id:
+        return None
+
+    identifier = issue.get("identifier")
+    seq = issue.get("sequence_id")
+    issue_ref = str(identifier) if identifier else (f"INTAKE-{seq}" if seq is not None else issue_id)
+
+    state = ""
+    state_detail = issue.get("state_detail")
+    if isinstance(state_detail, dict):
+        state = str(state_detail.get("name") or state_detail.get("slug") or "")
+
+    return {
+        "issue_id": issue_id,
+        "issue_ref": issue_ref,
+        "title": str(issue.get("name") or "(untitled)").strip(),
+        "url": str(issue.get("url") or issue.get("issue_url") or "").strip(),
+        "created_at": str(issue.get("created_at") or "").strip(),
+        "state": state,
+        "project_id": project_id,
+        "workspace_id": str(body.get("workspace_id") or "").strip(),
+    }
+
+
 @app.post("/event")
 async def ingest_generic_event(request: Request):
     """Generic webhook ingress.
@@ -222,7 +269,41 @@ async def ingest_generic_event(request: Request):
     # Broadcast to WebSocket clients
     await _broadcast_to_ws(routing_key, envelope_dict)
 
-    return {"ok": True, "event_type": routing_key, "event_id": str(envelope.event_id)}
+    # Emit canonical intake event for new intake issues (non-breaking side channel)
+    derived_event_id = None
+    intake = None
+    intake_project_id = str(settings.plane_intake_project_id or "").strip() or None
+    if isinstance(body, dict):
+        intake = _extract_plane_intake_issue_created(body, intake_project_id)
+
+    if intake:
+        derived_routing_key = "task.inbox.issue.created"
+        derived_envelope = create_envelope(
+            event_type=derived_routing_key,
+            payload={
+                "provider": "plane",
+                "source_event": routing_key,
+                "issue": intake,
+            },
+            source=source,
+            event_id=uuid4(),
+        )
+        derived_dict = derived_envelope.model_dump(mode="json")
+        await publisher.publish(
+            routing_key=derived_routing_key,
+            body=derived_dict,
+            event_id=derived_envelope.event_id,
+        )
+        await _broadcast_to_ws(derived_routing_key, derived_dict)
+        derived_event_id = str(derived_envelope.event_id)
+
+    return {
+        "ok": True,
+        "event_type": routing_key,
+        "event_id": str(envelope.event_id),
+        "derived_event_type": "task.inbox.issue.created" if intake else None,
+        "derived_event_id": derived_event_id,
+    }
 
 
 async def publish_event_object(event: BaseEvent, source: Source = None):

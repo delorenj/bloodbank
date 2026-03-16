@@ -12,6 +12,7 @@ Lifecycle per command message:
 
 See: docs/architecture/COMMAND-SYSTEM-RFC.md §5
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +28,9 @@ import orjson
 from command_fsm.manager import FSMManager, CommandGuardResult
 from command_fsm.states import FSMState
 from .config import AdapterConfig
-from .openclaw_hook import OpenClawHookDispatcher, HookResult
+from .dispatcher import DispatcherRegistry, DispatchResult, build_registry_from_env
+from .openclaw_hook import OpenClawHookDispatcher
+from .http_dispatcher import http_dispatcher_factory
 from .publisher import CommandEventPublisher
 
 logger = logging.getLogger(__name__)
@@ -46,14 +49,14 @@ def _parse_command_routing_key(routing_key: str) -> tuple[str, str] | None:
 
 class CommandAdapter:
     """
-    Consumes commands from Bloodbank, runs FSM lifecycle, dispatches via OpenClaw hooks.
+    Consumes commands from Bloodbank, runs FSM lifecycle, dispatches via pluggable registry.
     """
 
     def __init__(self, config: AdapterConfig | None = None):
         self.config = config or AdapterConfig()
         self.fsm: FSMManager | None = None
         self.publisher: CommandEventPublisher | None = None
-        self.hook: OpenClawHookDispatcher | None = None
+        self.registry: DispatcherRegistry | None = None
         self._conn: aio_pika.abc.AbstractRobustConnection | None = None
         self._channel: aio_pika.abc.AbstractChannel | None = None
 
@@ -64,11 +67,14 @@ class CommandAdapter:
         # FSM manager
         self.fsm = FSMManager(redis_url=self.config.redis_url)
 
-        # OpenClaw hook dispatcher
-        self.hook = OpenClawHookDispatcher(
+        openclaw_dispatcher = OpenClawHookDispatcher(
             hook_url=self.config.openclaw_hook_url,
             hook_token=self.config.openclaw_hook_token,
             timeout_seconds=self.config.hook_timeout_seconds,
+        )
+        self.registry = build_registry_from_env(
+            openclaw_dispatcher=openclaw_dispatcher,
+            http_dispatcher_factory=http_dispatcher_factory,
         )
 
         # RabbitMQ connection
@@ -278,8 +284,23 @@ class CommandAdapter:
         if not ok:
             logger.error(f"FSM transition to working failed for {agent_name}")
 
-        # ── Step 4: Dispatch to OpenClaw ──
-        hook_result: HookResult = await self.hook.dispatch(
+        dispatcher = self.registry.get_dispatcher(agent_name) if self.registry else None
+        if not dispatcher:
+            logger.error(f"No dispatcher found for agent {agent_name}")
+            await self.publisher.publish_error(
+                command_id=command_id,
+                target_agent=agent_name,
+                action=action,
+                error_code="not_configured",
+                error_message=f"No dispatcher configured for agent {agent_name}",
+                retryable=False,
+                fsm_version=state.version if state else 0,
+                correlation_id=correlation_id,
+                causation_id=causation_id,
+            )
+            return
+
+        dispatch_result: DispatchResult = await dispatcher.dispatch(
             target_agent=agent_name,
             action=action,
             command_id=command_id,
@@ -290,8 +311,7 @@ class CommandAdapter:
 
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
 
-        # ── Step 5: Publish result or error, transition FSM ──
-        if hook_result.success:
+        if dispatch_result.success:
             ok, state = self.fsm.mark_completed(agent_name)
             await self.publisher.publish_result(
                 command_id=command_id,
@@ -300,21 +320,22 @@ class CommandAdapter:
                 outcome="success",
                 fsm_version=state.version if state else 0,
                 duration_ms=elapsed_ms,
-                result_payload=hook_result.response_body,
+                result_payload=dispatch_result.response_body,
                 correlation_id=correlation_id,
                 causation_id=causation_id,
             )
         else:
             ok, state = self.fsm.mark_failed(agent_name)
 
-            # Map hook errors to error_codes
-            if hook_result.status_code == 0 and "Timeout" in (hook_result.error or ""):
+            if dispatch_result.status_code == 0 and "Timeout" in (
+                dispatch_result.error or ""
+            ):
                 error_code = "timeout"
-            elif hook_result.status_code == 0:
+            elif dispatch_result.status_code == 0:
                 error_code = "execution_failed"
-            elif hook_result.status_code == 404:
+            elif dispatch_result.status_code == 404:
                 error_code = "not_implemented"
-            elif hook_result.status_code == 429:
+            elif dispatch_result.status_code == 429:
                 error_code = "rate_limited"
             else:
                 error_code = "execution_failed"
@@ -324,7 +345,8 @@ class CommandAdapter:
                 target_agent=agent_name,
                 action=action,
                 error_code=error_code,
-                error_message=hook_result.error or f"HTTP {hook_result.status_code}",
+                error_message=dispatch_result.error
+                or f"HTTP {dispatch_result.status_code}",
                 retryable=error_code in ("timeout", "rate_limited", "execution_failed"),
                 retry_after_ms=5000 if error_code == "rate_limited" else None,
                 fsm_version=state.version if state else None,

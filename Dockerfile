@@ -39,6 +39,9 @@ WORKDIR /app
 # Copy installed packages from builder
 COPY --from=builder /app/.venv /app/.venv
 
+# Copy path dependencies
+COPY holyfields/ /holyfields/
+
 # Copy application code
 COPY bloodbank/event_producers/ ./event_producers/
 COPY bloodbank/heartbeat_tick/ ./heartbeat_tick/

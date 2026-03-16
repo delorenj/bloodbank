@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # (Set in .env / mise env block; do NOT commit real values)
     plane_webhook_secret: Optional[str] = None
 
+    # Plane Intake bridge configuration
+    plane_intake_project_id: Optional[str] = None
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
