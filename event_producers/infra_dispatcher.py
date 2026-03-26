@@ -39,6 +39,7 @@ from typing import Any
 
 from event_producers.events.base import EventEnvelope
 from event_producers.events.core.consumer import EventConsumer
+from event_producers.healthz import start_healthz_server
 from event_producers.rabbit import Publisher
 
 logger = logging.getLogger(__name__)
@@ -612,6 +613,11 @@ async def run_dispatcher(config: DispatcherConfig) -> None:
             )
 
     await consumer.start(handle_event, routing_keys=["webhook.plane.#"])
+
+    # Start /healthz endpoint
+    await start_healthz_server(
+        lambda: consumer._conn is not None and not consumer._conn.is_closed
+    )
 
     try:
         while True:

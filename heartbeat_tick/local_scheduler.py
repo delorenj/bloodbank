@@ -44,6 +44,7 @@ import aio_pika
 import httpx
 from aio_pika import ExchangeType
 
+from event_producers.healthz import start_healthz_server
 from .schema import HeartbeatConfig
 
 logging.basicConfig(
@@ -434,6 +435,11 @@ async def run() -> None:
             "RABBITMQ_URL not set — running without Bloodbank event publishing"
         )
 
+    # Start /healthz endpoint
+    healthz_task = await start_healthz_server(
+        lambda: connection is not None and not connection.is_closed
+    )
+
     tick = 0
     shutdown = asyncio.Event()
 
@@ -461,6 +467,11 @@ async def run() -> None:
             except asyncio.TimeoutError:
                 pass  # Normal — interval elapsed, continue
     finally:
+        healthz_task.cancel()
+        try:
+            await healthz_task
+        except asyncio.CancelledError:
+            pass
         if connection:
             try:
                 await connection.close()

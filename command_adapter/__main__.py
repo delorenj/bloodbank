@@ -8,6 +8,7 @@ import logging
 import signal
 import sys
 
+from event_producers.healthz import start_healthz_server
 from .config import AdapterConfig
 from .consumer import CommandAdapter
 
@@ -41,6 +42,12 @@ async def main() -> None:
         loop.add_signal_handler(sig, _signal_handler)
 
     await adapter.start()
+
+    # Start /healthz endpoint
+    await start_healthz_server(
+        lambda: adapter._conn is not None and not adapter._conn.is_closed
+    )
+
     logger.info("Command adapter running. Ctrl+C to stop.")
 
     await stop.wait()

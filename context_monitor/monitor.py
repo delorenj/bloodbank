@@ -19,6 +19,8 @@ from typing import Dict, Optional
 import aio_pika
 from watchfiles import awatch
 
+from event_producers.healthz import start_healthz_server
+
 # Configuration
 RABBITMQ_URL = os.environ.get("RABBITMQ_URL", "amqp://delorenj:YtTUffjIK3wDB7eB6IPCbSbu5r2XWiim@127.0.0.1:5673/")
 EXCHANGE_NAME = os.environ.get("BLOODBANK_EXCHANGE", "bloodbank.events.v1")
@@ -292,7 +294,12 @@ class ContextMonitor:
 
     async def run(self):
         await self.connect()
-        
+
+        # Start /healthz endpoint
+        await start_healthz_server(
+            lambda: self.connection is not None and not self.connection.is_closed
+        )
+
         # Run poller and watcher concurrently
         await asyncio.gather(
             self.poll_loop(),
