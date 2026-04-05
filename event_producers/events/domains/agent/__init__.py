@@ -4,6 +4,17 @@ from event_producers.events.domains.agent.feedback import (
     AgentFeedbackRequested,
     AgentFeedbackResponse,
 )
+from event_producers.events.domains.agent.learning import (
+    AgentLearningCandidateExtracted,
+    AgentLearningCandidateValidated,
+    AgentLearningEpisodeCreated,
+    AgentLearningEventType,
+    AgentLearningLessonPromoted,
+    AgentLearningLessonRejected,
+    AgentLearningLessonRolledBack,
+    AgentLearningObservationRecorded,
+    AgentLearningRetrievalApplied,
+)
 from event_producers.events.domains.agent.thread import (
     AgentThreadPrompt,
     AgentThreadResponse,
@@ -28,6 +39,15 @@ from event_producers.events.domains.agent.openclaw import (
 __all__ = [
     "AgentFeedbackRequested",
     "AgentFeedbackResponse",
+    "AgentLearningEventType",
+    "AgentLearningObservationRecorded",
+    "AgentLearningEpisodeCreated",
+    "AgentLearningCandidateExtracted",
+    "AgentLearningCandidateValidated",
+    "AgentLearningLessonPromoted",
+    "AgentLearningLessonRejected",
+    "AgentLearningLessonRolledBack",
+    "AgentLearningRetrievalApplied",
     "AgentThreadPrompt",
     "AgentThreadResponse",
     "AgentThreadErrorPayload",

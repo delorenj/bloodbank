@@ -354,19 +354,14 @@ class EventRegistry:
                     # Create domain
                     domain = EventDomain(domain_name, full_module_name)
 
-                    # Find all payload classes in the module
-                    # We look for classes that are referenced in ROUTING_KEYS
-                    # and inherit from BaseModel
+                    # Find all payload classes referenced in ROUTING_KEYS.
+                    # This supports both classes defined in the domain module
+                    # and schema-first re-exports from Holyfields.
                     payload_classes = {}
-                    for name, obj in inspect.getmembers(module, inspect.isclass):
-                        # Check if it's a class defined in this module that inherits from BaseModel
-                        # and is referenced in ROUTING_KEYS
-                        if (
-                            issubclass(obj, BaseModel)
-                            and obj.__module__ == full_module_name
-                            and name in routing_keys
-                        ):
-                            payload_classes[name] = obj
+                    for class_name in routing_keys:
+                        obj = getattr(module, class_name, None)
+                        if inspect.isclass(obj) and issubclass(obj, BaseModel):
+                            payload_classes[class_name] = obj
 
                     # Register each event type from ROUTING_KEYS
                     for class_name, routing_key in routing_keys.items():

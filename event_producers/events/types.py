@@ -46,6 +46,17 @@ AgentFeedbackEventType = Literal[
     "agent.feedback.response",
 ]
 
+AgentLearningEventType = Literal[
+    "agent.learning.observation.recorded",
+    "agent.learning.episode.created",
+    "agent.learning.candidate.extracted",
+    "agent.learning.candidate.validated",
+    "agent.learning.lesson.promoted",
+    "agent.learning.lesson.rejected",
+    "agent.learning.lesson.rolled_back",
+    "agent.learning.retrieval.applied",
+]
+
 AgentOpenClawEventType = Literal[
     "agent.message.received",
     "agent.message.sent",
@@ -120,6 +131,14 @@ BloodbankEventType = Literal[
     "agent.thread.error",
     "agent.feedback.requested",
     "agent.feedback.response",
+    "agent.learning.observation.recorded",
+    "agent.learning.episode.created",
+    "agent.learning.candidate.extracted",
+    "agent.learning.candidate.validated",
+    "agent.learning.lesson.promoted",
+    "agent.learning.lesson.rejected",
+    "agent.learning.lesson.rolled_back",
+    "agent.learning.retrieval.applied",
     # Agent OpenClaw
     "agent.message.received",
     "agent.message.sent",
@@ -167,6 +186,16 @@ from event_producers.events.domains.fireflies import (
 from event_producers.events.domains.agent.feedback import (
     AgentFeedbackRequested,
     AgentFeedbackResponse,
+)
+from event_producers.events.domains.agent.learning import (
+    AgentLearningCandidateExtracted,
+    AgentLearningCandidateValidated,
+    AgentLearningEpisodeCreated,
+    AgentLearningLessonPromoted,
+    AgentLearningLessonRejected,
+    AgentLearningLessonRolledBack,
+    AgentLearningObservationRecorded,
+    AgentLearningRetrievalApplied,
 )
 from event_producers.events.domains.agent.thread import (
     AgentThreadPrompt,
@@ -225,6 +254,14 @@ EVENT_TYPE_TO_PAYLOAD: Dict[str, Type[Any]] = {
     "agent.thread.error": AgentThreadErrorPayload,
     "agent.feedback.requested": AgentFeedbackRequested,
     "agent.feedback.response": AgentFeedbackResponse,
+    "agent.learning.observation.recorded": AgentLearningObservationRecorded,
+    "agent.learning.episode.created": AgentLearningEpisodeCreated,
+    "agent.learning.candidate.extracted": AgentLearningCandidateExtracted,
+    "agent.learning.candidate.validated": AgentLearningCandidateValidated,
+    "agent.learning.lesson.promoted": AgentLearningLessonPromoted,
+    "agent.learning.lesson.rejected": AgentLearningLessonRejected,
+    "agent.learning.lesson.rolled_back": AgentLearningLessonRolledBack,
+    "agent.learning.retrieval.applied": AgentLearningRetrievalApplied,
     # Agent OpenClaw
     "agent.message.received": AgentMessageReceived,
     "agent.message.sent": AgentMessageSent,

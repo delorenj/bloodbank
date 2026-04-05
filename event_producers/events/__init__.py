@@ -52,6 +52,16 @@ from event_producers.events.domains.agent.feedback import (
     AgentFeedbackRequested,
     AgentFeedbackResponse,
 )
+from event_producers.events.domains.agent.learning import (
+    AgentLearningCandidateExtracted,
+    AgentLearningCandidateValidated,
+    AgentLearningEpisodeCreated,
+    AgentLearningLessonPromoted,
+    AgentLearningLessonRejected,
+    AgentLearningLessonRolledBack,
+    AgentLearningObservationRecorded,
+    AgentLearningRetrievalApplied,
+)
 from event_producers.events.domains.agent.thread import (
     AgentThreadPrompt,
     AgentThreadResponse,
@@ -109,6 +119,7 @@ from event_producers.events.types import (
     FirefliesEventType,
     AgentThreadEventType,
     AgentFeedbackEventType,
+    AgentLearningEventType,
     AgentOpenClawEventType,
     GitHubEventType,
     TheBoardEventType,
@@ -150,6 +161,14 @@ __all__ = [
     # AgentThread types
     "AgentFeedbackRequested",
     "AgentFeedbackResponse",
+    "AgentLearningObservationRecorded",
+    "AgentLearningEpisodeCreated",
+    "AgentLearningCandidateExtracted",
+    "AgentLearningCandidateValidated",
+    "AgentLearningLessonPromoted",
+    "AgentLearningLessonRejected",
+    "AgentLearningLessonRolledBack",
+    "AgentLearningRetrievalApplied",
     "AgentThreadPrompt",
     "AgentThreadResponse",
     "AgentThreadErrorPayload",
@@ -186,6 +205,7 @@ __all__ = [
     "FirefliesEventType",
     "AgentThreadEventType",
     "AgentFeedbackEventType",
+    "AgentLearningEventType",
     "AgentOpenClawEventType",
     "GitHubEventType",
     "TheBoardEventType",
