@@ -1,6 +1,7 @@
 """Test suite for the agent learning event registry integration."""
 
 from event_producers.events.registry import get_registry
+from event_producers.events.core.abstraction import BaseEvent
 from event_producers.events.types import EVENT_TYPE_TO_PAYLOAD
 from event_producers.events.domains.agent.learning import (
     AgentLearningCandidateExtracted,
@@ -45,3 +46,8 @@ def test_registry_payload_types_match_learning_models():
 def test_event_type_mapping_contains_learning_models():
     for event_type, payload_class in EXPECTED_EVENT_TYPES.items():
         assert EVENT_TYPE_TO_PAYLOAD[event_type] == payload_class
+
+
+def test_learning_models_are_base_events():
+    for payload_class in EXPECTED_EVENT_TYPES.values():
+        assert issubclass(payload_class, BaseEvent)

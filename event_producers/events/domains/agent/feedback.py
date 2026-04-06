@@ -1,20 +1,27 @@
-"""
-Agent feedback event payload definitions.
+"""Agent feedback event payload definitions.
 
-GENERATED FROM HOLYFIELDS SCHEMAS — Do not edit manually.
-To update: modify JSON schemas in holyfields/schemas/agent/feedback/, regenerate, re-export here.
-
-All events are wrapped in EventEnvelope[T] where T is your payload type.
+These classes remain schema-first via Holyfields, but Bloodbank wraps them in
+``BaseEvent`` so legacy discovery and ADR-0002 tests continue to treat them as
+pure event payloads rather than plain Pydantic models.
 """
 
-# ============================================================================
-# Re-export from Holyfields generated models (schema-first)
-# ============================================================================
+from typing import Literal
 
+from event_producers.events.core.abstraction import BaseEvent
 from holyfields.compat import (
-    AgentFeedbackRequested,
-    AgentFeedbackResponse,
+    AgentFeedbackRequested as HolyfieldsAgentFeedbackRequested,
+    AgentFeedbackResponse as HolyfieldsAgentFeedbackResponse,
 )
+
+
+class AgentFeedbackRequested(HolyfieldsAgentFeedbackRequested, BaseEvent):
+    """Bloodbank-compatible wrapper for the Holyfields feedback request model."""
+
+
+class AgentFeedbackResponse(HolyfieldsAgentFeedbackResponse, BaseEvent):
+    """Bloodbank-compatible wrapper for the Holyfields feedback response model."""
+
+    status: Literal["ok", "error"] = "ok"
 
 
 ROUTING_KEYS = {

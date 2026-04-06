@@ -1,25 +1,55 @@
-"""
-Agent learning event payload definitions.
+"""Agent learning event payload definitions.
 
-GENERATED FROM HOLYFIELDS SCHEMAS — Do not edit manually.
-To update: modify JSON schemas in holyfields/schemas/agent/learning/, regenerate,
-and re-export here.
-
-All events are wrapped in EventEnvelope[T] where T is your payload type.
+Bloodbank keeps Holyfields as the schema source of truth, then wraps the
+generated models in ``BaseEvent`` so event discovery and legacy typing continue
+to behave like the rest of the event domain modules.
 """
 
 from typing import Literal
 
+from event_producers.events.core.abstraction import BaseEvent
 from holyfields.compat import (
-    AgentLearningCandidateExtracted,
-    AgentLearningCandidateValidated,
-    AgentLearningEpisodeCreated,
-    AgentLearningLessonPromoted,
-    AgentLearningLessonRejected,
-    AgentLearningLessonRolledBack,
-    AgentLearningObservationRecorded,
-    AgentLearningRetrievalApplied,
+    AgentLearningCandidateExtracted as HolyfieldsAgentLearningCandidateExtracted,
+    AgentLearningCandidateValidated as HolyfieldsAgentLearningCandidateValidated,
+    AgentLearningEpisodeCreated as HolyfieldsAgentLearningEpisodeCreated,
+    AgentLearningLessonPromoted as HolyfieldsAgentLearningLessonPromoted,
+    AgentLearningLessonRejected as HolyfieldsAgentLearningLessonRejected,
+    AgentLearningLessonRolledBack as HolyfieldsAgentLearningLessonRolledBack,
+    AgentLearningObservationRecorded as HolyfieldsAgentLearningObservationRecorded,
+    AgentLearningRetrievalApplied as HolyfieldsAgentLearningRetrievalApplied,
 )
+
+
+class AgentLearningObservationRecorded(HolyfieldsAgentLearningObservationRecorded, BaseEvent):
+    """Bloodbank-compatible wrapper for the Holyfields observation model."""
+
+
+class AgentLearningEpisodeCreated(HolyfieldsAgentLearningEpisodeCreated, BaseEvent):
+    """Bloodbank-compatible wrapper for the Holyfields episode model."""
+
+
+class AgentLearningCandidateExtracted(HolyfieldsAgentLearningCandidateExtracted, BaseEvent):
+    """Bloodbank-compatible wrapper for the Holyfields candidate model."""
+
+
+class AgentLearningCandidateValidated(HolyfieldsAgentLearningCandidateValidated, BaseEvent):
+    """Bloodbank-compatible wrapper for the Holyfields validation model."""
+
+
+class AgentLearningLessonPromoted(HolyfieldsAgentLearningLessonPromoted, BaseEvent):
+    """Bloodbank-compatible wrapper for the Holyfields promoted-lesson model."""
+
+
+class AgentLearningLessonRejected(HolyfieldsAgentLearningLessonRejected, BaseEvent):
+    """Bloodbank-compatible wrapper for the Holyfields rejected-lesson model."""
+
+
+class AgentLearningLessonRolledBack(HolyfieldsAgentLearningLessonRolledBack, BaseEvent):
+    """Bloodbank-compatible wrapper for the Holyfields rollback model."""
+
+
+class AgentLearningRetrievalApplied(HolyfieldsAgentLearningRetrievalApplied, BaseEvent):
+    """Bloodbank-compatible wrapper for the Holyfields retrieval model."""
 
 
 AgentLearningEventType = Literal[
