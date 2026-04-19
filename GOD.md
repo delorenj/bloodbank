@@ -1,8 +1,13 @@
+---
+pipeline-status:
+  - new
+modified: 2026-04-12T08:04:30-04:00
+---
 # Bloodbank — GOD Document
 
 > **Guaranteed Organizational Document** — Developer-facing reference for Bloodbank
 >
-> **Last Updated**: 2026-02-22
+> **Last Updated**: 2026-04-09
 > **Domain**: Infrastructure
 > **Status**: Production
 > **Owner**: Lenoon 🦎 (agent:infra)
@@ -12,6 +17,16 @@
 ## Product Overview
 
 **Bloodbank** is the **central event bus** of the 33GOD ecosystem. It is the **nervous system** that transports every state change, agent action, and system event as a typed, immutable event through RabbitMQ. Bloodbank events are the **absolute lifeblood** of 33GOD—what sets it apart as the most powerful agentic pipeline.
+
+## Status note
+
+This document describes the current deployed v2 implementation. The approved
+overhaul target lives in
+`docs/architecture/bloodbank-vnext.md`, and the runtime selection rationale
+lives in `docs/architecture/dapr-vs-faststream.md`.
+
+Use the vNext docs for new architecture and migration work. Use this GOD
+document when you need to understand, operate, or retire the legacy stack.
 
 **Bloodbank's Role in the Event Flow:**
 
@@ -64,7 +79,7 @@
 - **WebSocket Relay** (`websocket-relay/`) — Real-time event broadcaster at `:8683`
 - **Heartbeat System** (`heartbeat/`) — Cron-driven event scheduler (every 60s)
 - **Consumer Template** (`consumer_template/`) — FastStream drop-in for agents
-- **hookd** (separate repo, `~/code/33GOD/hookd/`) — Rust daemon bridging Claude Code hooks → Bloodbank
+- **hookd** (separate repo, `~/code/33GOD/hookd/`) — Rust daemon bridging Claude Code hooks → Bloodbank (DO WE NEED THIS?!)
 
 ---
 
@@ -113,11 +128,12 @@ Consumers:
 
 ## Running Services
 
-| Service | Container | Port | Purpose |
-|---------|-----------|------|---------|
-| Bloodbank API | `33god-bloodbank` | 8682 | Event publishing + health |
-| WS Relay | `33god-bloodbank-ws-relay` | 8683 | Real-time WebSocket broadcast |
-| RabbitMQ | `theboard-rabbitmq` | 5673 (AMQP) / 15673 (mgmt) | Message broker |
+| Service       | Container                  | Port                       | Purpose                                                                                   |     |
+| ------------- | -------------------------- | -------------------------- | ----------------------------------------------------------------------------------------- | --- |
+| Bloodbank API | `33god-bloodbank`          | 8682                       | Event publishing + health                                                                 |     |
+| WS Relay      | `33god-bloodbank-ws-relay` | 8683                       | Real-time WebSocket broadcast                                                             |     |
+| RabbitMQ      | `theboard-rabbitmq`        | 5673 (AMQP) / 15673 (mgmt) | Message broker (DEFUNCT)<br>Can we decide on a more useful first example to develop with? |     |
+|               |                            |                            |                                                                                           |     |
 
 ### Build & Deploy
 ```bash
@@ -137,20 +153,20 @@ See `~/code/33GOD/docs/OPS.md` for full ops reference.
 
 **Base URL**: `http://localhost:8682`
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/healthz` | GET | Health check → `{"ok": true, "service": "bloodbank"}` |
-| `/events/custom` | POST | Publish any event (generic) |
-| `/events/agent/thread/prompt` | POST | Agent thread prompt event |
-| `/events/claude/tool_use` | POST | Claude Code tool use event |
-| `/events/claude/error` | POST | Claude Code error event |
+| Endpoint                               | Method | Description                                           |
+| -------------------------------------- | ------ | ----------------------------------------------------- |
+| `/healthz`                             | GET    | Health check → `{"ok": true, "service": "bloodbank"}` |
+| `/events/custom`                       | POST   | Publish any event (generic)                           |
+| `/events/agent/thread/prompt_received` | POST   | Agent thread prompt event                             |
+| `/events/claude/tool_used`             | POST   | Claude Code tool use event                            |
+| `/events/claude/error_occured`         | POST   | Claude Code error event                               |
 
 ### Publish Event Example
 ```bash
 curl -X POST http://localhost:8682/events/custom \
   -H "Content-Type: application/json" \
   -d '{
-    "event_type": "agent.grolf.task.complete",
+    "event_type": "agent.grolf.task.completed",
     "event_id": "$(uuidgen)",
     "payload": {"agent": "grolf", "task": "GOD doc update"},
     "source": {"host": "big-chungus", "type": "manual", "app": "curl"},
@@ -247,12 +263,12 @@ The heartbeat system is the **pulse of 33GOD**—driving agent orchestration, he
 
 ### Files
 
-| File | Purpose |
-|------|---------|
-| `heartbeat.py` | Cron-driven schedule runner (HHMM → entries) |
-| `heartbeat-schedule.json` | Master schedule config |
-| `events.py` | Pydantic schemas |
-| `emit-agent-status.py` | Per-minute agent status + system heartbeat emitter |
+| File                      | Purpose                                            |
+| ------------------------- | -------------------------------------------------- |
+| `heartbeat.py`            | Cron-driven schedule runner (HHMM → entries)       |
+| `heartbeat-schedule.json` | Master schedule config                             |
+| `events.py`               | Pydantic schemas                                   |
+| `emit-agent-status.py`    | Per-minute agent status + system heartbeat emitter |
 
 ### Cron Configuration
 
@@ -323,6 +339,8 @@ def on_heartbeat(tick_payload: dict):
     # Agent can check for pending tasks, run health checks, etc.
 ```
 
+> Open Question ❓
+> Can we “inject” into non-openclaw, zellij sessions (like ones running claude code, codex, or gemini) ?
 ---
 
 ## Consumer Template
@@ -363,6 +381,8 @@ cd ~/code/33GOD && docker compose restart bloodbank bloodbank-ws-relay
 
 Start: `HOOKD_AMQP_URL="amqp://..." hookd/target/release/hookd`
 
+> Open Question ❓
+> Do we still need this??
 ---
 
 ## Known Issues

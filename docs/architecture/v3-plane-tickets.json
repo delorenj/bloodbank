@@ -1,0 +1,160 @@
+{
+  "workspace": "33god",
+  "project": "bloodbank",
+  "project_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+  "epic": {
+    "title": "v3-refactor",
+    "priority": "high",
+    "description": "Refactor Bloodbank into the v3 event platform: Dapr runtime, NATS JetStream broker, CloudEvents immutable event envelope, separate command envelope, AsyncAPI/Holyfields contract source of truth, EventCatalog discovery, Apicurio schema registry, Docker Compose self-hosted deployment, and operator-focused Bloodbank CLI.",
+    "acceptance_criteria": [
+      "v3 platform scaffold exists in Bloodbank.",
+      "Holyfields base contract work is tracked separately and linked.",
+      "One reference vertical slice can publish and consume through the v3 platform.",
+      "Old v2 publish paths have a documented retirement plan."
+    ],
+    "source": "v3-implementation-plan.md"
+  },
+  "tickets": [
+    {
+      "key": "V3-001",
+      "title": "Sync Bloodbank submodule baseline",
+      "priority": "high",
+      "labels": ["v3-refactor", "baseline"],
+      "description": "Create a clean branch and record the Bloodbank submodule baseline for v3 work.",
+      "acceptance_criteria": [
+        "Branch is v3-refactor.",
+        "The ticket links to v3-implementation-plan.md.",
+        "No legacy cleanup deletions were reverted."
+      ],
+      "depends_on": []
+    },
+    {
+      "key": "V3-002",
+      "title": "Create v3 Compose scaffold",
+      "priority": "high",
+      "labels": ["v3-refactor", "platform", "compose"],
+      "description": "Create compose/v3 with the Docker Compose platform scaffold for Dapr, NATS, Apicurio, and EventCatalog.",
+      "acceptance_criteria": [
+        "docker compose -f compose/v3/docker-compose.yml config parses.",
+        "The Compose file defines nats, dapr-placement, apicurio-registry, and eventcatalog services.",
+        "The scaffold does not depend on current v2 RabbitMQ services."
+      ],
+      "depends_on": ["V3-001"]
+    },
+    {
+      "key": "V3-003",
+      "title": "Add Dapr component manifests",
+      "priority": "high",
+      "labels": ["v3-refactor", "platform", "dapr"],
+      "description": "Create static Dapr component manifests for pub/sub, state, and secrets.",
+      "acceptance_criteria": [
+        "The pub/sub manifest targets NATS.",
+        "The manifests use placeholder-safe local values only.",
+        "The manifests are documented in compose/v3/README.md."
+      ],
+      "depends_on": ["V3-002"]
+    },
+    {
+      "key": "V3-004",
+      "title": "Define NATS JetStream topology",
+      "priority": "high",
+      "labels": ["v3-refactor", "platform", "nats"],
+      "description": "Define stream names, subjects, retention notes, and replay posture for Bloodbank v3.",
+      "acceptance_criteria": [
+        "The topology matches this plan's naming rules.",
+        "The README explains replay and dead-letter assumptions.",
+        "The topology is not coupled to RabbitMQ."
+      ],
+      "depends_on": ["V3-002"]
+    },
+    {
+      "key": "V3-005",
+      "title": "Add operator CLI v3 skeleton",
+      "priority": "medium",
+      "labels": ["v3-refactor", "cli"],
+      "description": "Create a safe cli/v3 skeleton with static doctor, trace, replay, and emit command stubs.",
+      "acceptance_criteria": [
+        "python -m compileall cli/v3 passes.",
+        "python cli/v3/bb_v3.py doctor exits successfully when scaffold files exist.",
+        "The CLI does not publish network traffic."
+      ],
+      "depends_on": ["V3-002", "V3-003", "V3-004"]
+    },
+    {
+      "key": "V3-006",
+      "title": "Add platform bootstrap check",
+      "priority": "medium",
+      "labels": ["v3-refactor", "ops"],
+      "description": "Create a static ops/v3/bootstrap check that validates the scaffold without Docker or network access.",
+      "acceptance_criteria": [
+        "bash ops/v3/bootstrap/check-platform.sh passes after scaffold files exist.",
+        "The script does not require Docker, Dapr, NATS, or network access.",
+        "Missing files produce actionable error messages."
+      ],
+      "depends_on": ["V3-002", "V3-003", "V3-004"]
+    },
+    {
+      "key": "V3-007",
+      "title": "Add replay and trace docs",
+      "priority": "medium",
+      "labels": ["v3-refactor", "ops", "docs"],
+      "description": "Document operator replay and trace workflows before implementing production replay.",
+      "acceptance_criteria": [
+        "The docs explain what data is safe to replay.",
+        "The docs explain that replays preserve original IDs and add replay metadata.",
+        "The docs do not claim production replay is implemented yet."
+      ],
+      "depends_on": ["V3-001"]
+    },
+    {
+      "key": "V3-008",
+      "title": "Add adapter migration scaffolds",
+      "priority": "medium",
+      "labels": ["v3-refactor", "adapters", "docs"],
+      "description": "Prepare adapter migration directories for hookd, OpenClaw, and infra_dispatcher.",
+      "acceptance_criteria": [
+        "Each adapter README names the current v2 component it will replace.",
+        "Each adapter README names the target v3 publish path.",
+        "No adapter contains executable migration code yet."
+      ],
+      "depends_on": ["V3-001"]
+    },
+    {
+      "key": "V3-009",
+      "title": "Link the implementation plan from architecture docs",
+      "priority": "medium",
+      "labels": ["v3-refactor", "docs"],
+      "description": "Make v3-implementation-plan.md discoverable from README and architecture docs.",
+      "acceptance_criteria": [
+        "All links resolve locally.",
+        "The v2 GOD.md remains clearly marked as legacy/current-state context."
+      ],
+      "depends_on": ["V3-001"]
+    },
+    {
+      "key": "V3-010",
+      "title": "Create Holyfields contract work tracker",
+      "priority": "medium",
+      "labels": ["v3-refactor", "holyfields", "docs"],
+      "description": "Document the sibling-repo Holyfields work required by the Bloodbank v3 migration.",
+      "acceptance_criteria": [
+        "No Holyfields code is edited in the Bloodbank submodule.",
+        "Bloodbank tickets clearly identify which work is blocked on Holyfields."
+      ],
+      "depends_on": ["V3-001"]
+    },
+    {
+      "key": "V3-011",
+      "title": "Verify first scaffold wave",
+      "priority": "high",
+      "labels": ["v3-refactor", "verification"],
+      "description": "Run the documented static checks and inspect results before marking the scaffold wave complete.",
+      "acceptance_criteria": [
+        "Static checks pass.",
+        "Any skipped Docker check is documented with the reason.",
+        "Ticket completion is blocked until spec review and code quality review pass."
+      ],
+      "depends_on": ["V3-002", "V3-003", "V3-004", "V3-005", "V3-006", "V3-007", "V3-008", "V3-009", "V3-010"]
+    }
+  ]
+}

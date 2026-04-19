@@ -1,0 +1,43 @@
+name: bloodbank-v3
+
+services:
+  nats:
+    image: nats:2.10.24-alpine
+    command:
+      - "-js"
+      - "-m"
+      - "8222"
+      - "-sd"
+      - "/data/jetstream"
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data/jetstream
+
+  dapr-placement:
+    image: daprio/dapr:1.16.9
+    command:
+      - "./placement"
+      - "--port"
+      - "50005"
+    ports:
+      - "50005:50005"
+
+  apicurio-registry:
+    image: quay.io/apicurio/apicurio-registry:3.1.0.Final
+    environment:
+      JAVA_OPTS_APPEND: "-Dquarkus.http.host=0.0.0.0"
+      QUARKUS_HTTP_PORT: "8080"
+    ports:
+      - "8080:8080"
+
+  eventcatalog:
+    image: ghcr.io/event-catalog/eventcatalog:latest
+    environment:
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+
+volumes:
+  nats-data:

@@ -1,0 +1,70 @@
+{
+  "created_at": "2026-04-12",
+  "workspace": "33god",
+  "project": "bloodbank",
+  "project_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+  "base_url": "https://plane.delo.sh",
+  "epic": {
+    "key": "BRD-5",
+    "title": "v3-refactor",
+    "id": "1c45b629-2a54-4c0e-a3da-f9fddc704212",
+    "sequence_id": 5
+  },
+  "tickets": [
+    {
+      "plan_key": "V3-001",
+      "plane_key": "BRD-6",
+      "id": "58595eb1-0165-49bc-b82a-d9af1857174b"
+    },
+    {
+      "plan_key": "V3-002",
+      "plane_key": "BRD-7",
+      "id": "1bca706f-0867-41e4-a027-fb6ad2229a9a"
+    },
+    {
+      "plan_key": "V3-003",
+      "plane_key": "BRD-8",
+      "id": "f152cec2-456e-4202-954b-e2217af80a18"
+    },
+    {
+      "plan_key": "V3-004",
+      "plane_key": "BRD-9",
+      "id": "43ecaabc-548a-4c4f-860d-d0903358d9f7"
+    },
+    {
+      "plan_key": "V3-005",
+      "plane_key": "BRD-10",
+      "id": "a493767d-55f4-4e97-9a07-92031e7ff93d"
+    },
+    {
+      "plan_key": "V3-006",
+      "plane_key": "BRD-11",
+      "id": "67ba458c-e54f-4639-9942-76886df0aef5"
+    },
+    {
+      "plan_key": "V3-007",
+      "plane_key": "BRD-12",
+      "id": "f1f818c9-1555-4044-9755-c197c499dba8"
+    },
+    {
+      "plan_key": "V3-008",
+      "plane_key": "BRD-13",
+      "id": "494a71b9-4a88-49b8-91f9-845e71938033"
+    },
+    {
+      "plan_key": "V3-009",
+      "plane_key": "BRD-14",
+      "id": "ebefd4f7-30f9-4c5e-bcc4-5d0797bf89aa"
+    },
+    {
+      "plan_key": "V3-010",
+      "plane_key": "BRD-15",
+      "id": "2bb0deba-ce4f-4017-922f-f192907ec738"
+    },
+    {
+      "plan_key": "V3-011",
+      "plane_key": "BRD-16",
+      "id": "04c6d7db-cede-4124-a1d1-1c1a7b2d1016"
+    }
+  ]
+}

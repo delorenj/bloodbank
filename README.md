@@ -1,14 +1,20 @@
-# Home Network Event Bus
+# Bloodbank
 
-This project provides a robust, asynchronous event bus for a home network, using RabbitMQ as the message broker and FastAPI for publishing events via a simple HTTP interface.
+This repository contains the current Bloodbank implementation and the active
+vNext redesign work for the 33GOD event platform.
 
-## Quick Start
+## Architecture docs
 
-For new deployments, see **[GREENFIELD_DEPLOYMENT.md](GREENFIELD_DEPLOYMENT.md)** for a simplified setup guide with correlation tracking enabled by default.
+Start with the current architecture docs before making overhaul changes:
 
-For migrations from v1, see **[MIGRATION_v1_to_v2.md](docs/MIGRATION_v1_to_v2.md)** for phased rollout instructions.
+- [Architecture index](docs/architecture/README.md)
+- [Bloodbank vNext blueprint](docs/architecture/bloodbank-vnext.md)
+- [Dapr vs FastStream decision](docs/architecture/dapr-vs-faststream.md)
+- [Overhaul backlog](docs/architecture/overhaul-backlog.md)
+- [v3 implementation plan](v3-implementation-plan.md)
+- [Current v2 component reference](GOD.md)
 
-## Architecture
+## Legacy v2 architecture
 
 The system is composed of three main parts:
 

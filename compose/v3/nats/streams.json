@@ -1,0 +1,59 @@
+{
+  "project": "bloodbank-v3",
+  "subject_conventions": {
+    "events": "event.>",
+    "commands": "command.>",
+    "replies": "reply.>"
+  },
+  "streams": [
+    {
+      "name": "BLOODBANK_V3_EVENTS",
+      "subjects": [
+        "event.>"
+      ],
+      "retention": "limits",
+      "storage": "file",
+      "discard": "old",
+      "max_age": "30d",
+      "replay_posture": {
+        "replayable": true,
+        "notes": [
+          "Immutable CloudEvents traffic belongs in this stream.",
+          "Operators can replay this stream when rebuilding projections or recovering a consumer."
+        ]
+      },
+      "notes": [
+        "This stream is the durable home for v3 event traffic.",
+        "Keep business facts in this stream and do not treat commands as replay input."
+      ]
+    },
+    {
+      "name": "BLOODBANK_V3_COMMANDS",
+      "subjects": [
+        "command.>"
+      ],
+      "retention": "workqueue",
+      "storage": "file",
+      "discard": "old",
+      "max_age": "7d",
+      "replay_posture": {
+        "replayable": false,
+        "notes": [
+          "Commands are mutable requests and should be handled once, not replayed as source-of-truth history.",
+          "Replies use reply.> subjects and are not part of the durable command stream."
+        ]
+      },
+      "notes": [
+        "Command traffic is operational, not archival.",
+        "Use a separate dead-letter policy in later operational tickets rather than coupling this scaffold to RabbitMQ patterns."
+      ]
+    }
+  ],
+  "dead_letter_assumptions": {
+    "policy": "future-operational-ticket",
+    "notes": [
+      "Dead-letter handling should be introduced explicitly for each consumer group when the runtime services are added.",
+      "This scaffold does not couple NATS to the legacy RabbitMQ dead-letter model."
+    ]
+  }
+}
