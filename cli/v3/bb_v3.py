@@ -1,163 +1,194 @@
-"""Bloodbank v3 operator CLI scaffold.
+#!/usr/bin/env python3
+"""Bloodbank v3 operator CLI (``bb_v3``) — stub skeleton.
 
-Holyfields owns schemas and generated contracts.
-Bloodbank owns runtime operations, tracing, replay, and operator tooling.
+This module is the first-wave scaffold for the 33GOD v3 operator CLI. It
+provides argparse-based subcommands (``doctor``, ``trace``, ``replay``,
+``emit``) that are intentionally side-effect-free in this wave:
 
-This module stays safe by design:
-- stdlib only
-- local static checks only for ``doctor``
-- no real publish path for ``emit`` yet
+* No network I/O (no HTTP, no NATS, no Dapr sidecar calls).
+* No third-party Python dependencies -- standard library only.
+* No publishing of events or commands.
+
+Architectural context:
+
+* ``docs/architecture/v3-implementation-plan.md`` in the 33GOD metarepo is
+  the source of truth for the v3 platform implementation plan.
+* ``docs/architecture/ADR-0001-v3-platform-pivot.md`` ratifies the
+  non-negotiable architecture decisions (Dapr + NATS JetStream +
+  CloudEvents + AsyncAPI + EventCatalog + Apicurio Registry).
+
+Per ADR-0001, this CLI is an **operator tool**, not the primary production
+publish path. Production traffic flows through Dapr publishers embedded in
+services using Holyfields-generated SDKs.
+
+Design notes:
+
+* ``doctor`` resolves the bloodbank root from this file's own location
+  (``__file__``), so it works regardless of the current working directory.
+* ``ops/v3/bootstrap/check-platform.sh`` may not yet exist when ``doctor``
+  is run during the scaffold bring-up (it is produced by BB-22 / V3-006
+  alongside this ticket). To keep ticket-by-ticket ordering within Group B
+  flexible, ``doctor`` treats that single file as a ``WARN`` when missing
+  rather than ``FAIL``. V3-011 (final verification) tightens this to a hard
+  failure once the full scaffold wave is required to be present at once.
 """
 
 from __future__ import annotations
 
 import argparse
-import ast
-from dataclasses import dataclass
+import os
+import sys
 from pathlib import Path
-from typing import Iterable
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-EXPECTED_FILES = (
-    "v3-implementation-plan.md",
-    "cli/v3/README.md",
-    "cli/v3/bb_v3.py",
-    "ops/v3/bootstrap/README.md",
-    "ops/v3/bootstrap/check-platform.sh",
-    "compose/v3/README.md",
-    "compose/v3/nats/README.md",
-    "compose/v3/apicurio/README.md",
-    "compose/v3/eventcatalog/README.md",
+# ---------------------------------------------------------------------------
+# Scaffold manifest
+# ---------------------------------------------------------------------------
+#
+# Each entry is (path-relative-to-bloodbank-root, severity-when-missing).
+# Severity is either "FAIL" (blocks exit 0) or "WARN" (reported but not
+# blocking). See the module docstring for why one file is a WARN during
+# this wave.
+SCAFFOLD_MANIFEST: tuple[tuple[str, str], ...] = (
+    ("compose/v3/docker-compose.yml", "FAIL"),
+    ("compose/v3/components/pubsub.yaml", "FAIL"),
+    ("compose/v3/components/statestore.yaml", "FAIL"),
+    ("compose/v3/components/secretstore.yaml", "FAIL"),
+    ("compose/v3/nats/streams.json", "FAIL"),
+    ("compose/v3/README.md", "FAIL"),
+    # BB-22 / V3-006 companion file. Treated as WARN here until V3-011
+    # tightens this to FAIL across the whole scaffold wave.
+    ("ops/v3/bootstrap/check-platform.sh", "WARN"),
+    # Self-check: this file.
+    ("cli/v3/bb_v3.py", "FAIL"),
 )
 
 
-@dataclass(frozen=True)
-class CheckResult:
-    label: str
-    ok: bool
-    detail: str
+def bloodbank_root() -> Path:
+    """Return the bloodbank repo root based on this file's location.
+
+    This file lives at ``<bloodbank>/cli/v3/bb_v3.py``, so the root is two
+    parents up. Resolving from ``__file__`` (rather than ``os.getcwd()``)
+    means ``doctor`` works from any current working directory.
+    """
+    return Path(__file__).resolve().parent.parent.parent
 
 
-def _relative_path(path: Path) -> str:
-    try:
-        return str(path.relative_to(REPO_ROOT))
-    except ValueError:
-        return str(path)
+# ---------------------------------------------------------------------------
+# Subcommand implementations
+# ---------------------------------------------------------------------------
 
 
-def _format_result(result: CheckResult) -> str:
-    status = "PASS" if result.ok else "FAIL"
-    return f"[{status}] {result.label}: {result.detail}"
+def cmd_doctor(_args: argparse.Namespace) -> int:
+    """Static, local-only check that the v3 scaffold files are present.
 
+    Prints one line per checked artifact:
 
-def _file_check(path: Path) -> CheckResult:
-    rel = _relative_path(path)
-    if path.exists():
-        return CheckResult("required file", True, f"{rel} exists")
-    return CheckResult("required file", False, f"{rel} is missing")
+    * ``PASS <path>``               -- file exists.
+    * ``WARN <path>``               -- file missing but non-blocking for this wave.
+    * ``FAIL <path>: <reason>``     -- file missing and blocking.
 
+    Exits 0 iff there are no ``FAIL`` lines.
+    """
+    root = bloodbank_root()
+    fail_count = 0
+    pass_count = 0
+    warn_count = 0
 
-def _source_check(path: Path) -> CheckResult:
-    rel = _relative_path(path)
-    try:
-        source = path.read_text(encoding="utf-8")
-        ast.parse(source, filename=str(path))
-    except FileNotFoundError:
-        return CheckResult("python syntax", False, f"{rel} is missing")
-    except SyntaxError as exc:
-        return CheckResult(
-            "python syntax",
-            False,
-            f"{rel} does not parse cleanly at line {exc.lineno}: {exc.msg}",
-        )
-    except UnicodeDecodeError as exc:
-        return CheckResult("python syntax", False, f"{rel} is not readable as UTF-8: {exc}")
-    return CheckResult("python syntax", True, f"{rel} parses with the local interpreter")
+    for rel_path, severity in SCAFFOLD_MANIFEST:
+        target = root / rel_path
+        if target.is_file():
+            print(f"PASS {rel_path}")
+            pass_count += 1
+            continue
 
+        # Missing. Decide severity.
+        reason = "missing or not a regular file"
+        if severity == "WARN":
+            print(f"WARN {rel_path}")
+            warn_count += 1
+        else:
+            print(f"FAIL {rel_path}: {reason}")
+            fail_count += 1
 
-def _doctor_checks() -> list[CheckResult]:
-    checks = [_file_check(REPO_ROOT / relative) for relative in EXPECTED_FILES]
-    checks.append(_source_check(Path(__file__).resolve()))
-    return checks
-
-
-def _print_results(results: Iterable[CheckResult]) -> int:
-    failures = 0
-    for result in results:
-        print(_format_result(result))
-        if not result.ok:
-            failures += 1
-    if failures:
-        print(
-            "[ACTION] Fix the missing local scaffold files before wiring any runtime publish path."
-        )
-        return 1
+    total = len(SCAFFOLD_MANIFEST)
     print(
-        "[PASS] Local v3 scaffold checks completed. No Docker, Dapr, NATS, or network activity was performed."
+        f"doctor: {pass_count}/{total} artifacts present "
+        f"({warn_count} warn, {fail_count} fail)"
+    )
+    return 0 if fail_count == 0 else 1
+
+
+def cmd_trace(_args: argparse.Namespace) -> int:
+    """Stub: event-chain trace walker.
+
+    Production-capable tracing will consult NATS JetStream and a schema
+    registry. That is deferred to a later ticket; see ``ops/v3/trace/README.md``.
+    """
+    print("trace: not yet implemented -- see ops/v3/trace/README.md")
+    return 0
+
+
+def cmd_replay(_args: argparse.Namespace) -> int:
+    """Stub: replay a historical event into the sandbox.
+
+    Production-capable replay preserves original IDs and adds replay
+    metadata; see ``ops/v3/replay/README.md`` (V3-007).
+    """
+    print("replay: not yet implemented -- see ops/v3/replay/README.md")
+    return 0
+
+
+def cmd_emit(_args: argparse.Namespace) -> int:
+    """Stub: emit a handcrafted event for smoke-testing.
+
+    Operator emission requires a Dapr sidecar (per ADR-0001), which is not
+    wired in this wave. Future tickets will add this behind a safety flag.
+    """
+    print(
+        "emit: not yet implemented -- operator emission requires Dapr "
+        "sidecar; will land in a later ticket"
     )
     return 0
 
 
-def run_doctor() -> int:
-    return _print_results(_doctor_checks())
-
-
-def _stub_command(name: str) -> int:
-    print(f"[PASS] {name} is a safe v3 scaffold stub.")
-    print(
-        "[ACTION] Bloodbank owns the runtime and operator workflow; Holyfields owns schemas and generated contracts."
-    )
-    print("[ACTION] This command does not publish real traffic yet.")
-    return 0
+# ---------------------------------------------------------------------------
+# Argparse wiring
+# ---------------------------------------------------------------------------
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="bb-v3",
+        prog="bb_v3",
         description=(
-            "Safe Bloodbank v3 operator CLI scaffold. "
-            "Holyfields owns schemas; Bloodbank owns runtime and ops."
+            "Bloodbank v3 operator CLI (stub). Safe for local use: no "
+            "network I/O, no third-party dependencies, no published traffic."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser(
+    p_doctor = subparsers.add_parser(
         "doctor",
-        help="Run local static checks only.",
-        description="Run local static checks only. No production side effects.",
+        help="static local scaffold check (no network, no Docker)",
     )
+    p_doctor.set_defaults(func=cmd_doctor)
 
-    trace = subparsers.add_parser(
+    p_trace = subparsers.add_parser(
         "trace",
-        help="Trace placeholder for future v3 runtime inspection.",
-        description="Safe placeholder for future tracing workflows.",
+        help="walk an event chain by correlation/causation IDs (stub)",
     )
-    trace.add_argument("--correlation-id", default="", help="Correlation identifier to inspect.")
-    trace.add_argument("--limit", type=int, default=20, help="Maximum number of records to show.")
+    p_trace.set_defaults(func=cmd_trace)
 
-    replay = subparsers.add_parser(
+    p_replay = subparsers.add_parser(
         "replay",
-        help="Replay placeholder for future stream tooling.",
-        description="Safe placeholder for future replay workflows.",
+        help="replay a historical event (stub)",
     )
-    replay.add_argument("--stream", default="", help="Stream name to replay from.")
-    replay.add_argument("--since", default="", help="Lower bound timestamp or cursor.")
-    replay.add_argument("--until", default="", help="Upper bound timestamp or cursor.")
+    p_replay.set_defaults(func=cmd_replay)
 
-    emit = subparsers.add_parser(
+    p_emit = subparsers.add_parser(
         "emit",
-        help="Emit placeholder that never publishes real traffic.",
-        description="Safe placeholder for future emit workflows. No real publish path yet.",
+        help="emit a handcrafted event (stub)",
     )
-    emit.add_argument("--subject", default="", help="Subject that would be targeted later.")
-    emit.add_argument("--payload", default="", help="Payload that would be sent later.")
-    emit.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Acknowledge that the scaffold does not publish anything yet.",
-    )
+    p_emit.set_defaults(func=cmd_emit)
 
     return parser
 
@@ -165,19 +196,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-
-    if args.command == "doctor":
-        return run_doctor()
-    if args.command == "trace":
-        return _stub_command("trace")
-    if args.command == "replay":
-        return _stub_command("replay")
-    if args.command == "emit":
-        return _stub_command("emit")
-
-    parser.error(f"unsupported command: {args.command}")
-    return 2
+    # argparse with required=True guarantees args.func is set.
+    return int(args.func(args))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Defensive: ensure we pass through to our own entrypoint, never
+    # anything external. ``os.environ`` is read-only here, used only so
+    # this line has some purpose and to document that we take no env-driven
+    # side effects in this wave.
+    _ = os.environ.get("BLOODBANK_V3_NOOP", "")
+    sys.exit(main(sys.argv[1:]))

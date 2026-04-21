@@ -1,74 +1,56 @@
 #!/usr/bin/env bash
+#
+# check-platform.sh -- Bloodbank v3 scaffold presence check.
+#
+# Static file-presence validator for the v3 scaffold. Pure bash + filesystem
+# stat; no Docker, no Dapr, no NATS, no Apicurio, no network access.
+#
+# Exit codes:
+#   0 -- every required file is present.
+#   1 -- at least one required file is missing.
+#
+# See ops/v3/bootstrap/README.md for the wider contract and the sibling
+# checker cli/v3/bb_v3.py (subcommand "doctor") which covers the same files
+# with a slightly richer severity model.
+
 set -euo pipefail
 
-ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# Resolve the bloodbank repo root from this script's location so the checker
+# works regardless of the current working directory.
+BLOODBANK_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 
-pass() {
-  printf '[PASS] %s\n' "$1"
-}
-
-fail() {
-  printf '[FAIL] %s\n' "$1" >&2
-}
-
-action() {
-  printf '[ACTION] %s\n' "$1"
-}
-
-required_files=(
-  "v3-implementation-plan.md"
-  "cli/v3/README.md"
-  "cli/v3/bb_v3.py"
-  "ops/v3/bootstrap/README.md"
-  "ops/v3/bootstrap/check-platform.sh"
+# List of required scaffold artifacts, as paths relative to BLOODBANK_ROOT.
+# Keep this aligned with SCAFFOLD_MANIFEST in cli/v3/bb_v3.py.
+REQUIRED_FILES=(
+  "compose/v3/docker-compose.yml"
+  "compose/v3/components/pubsub.yaml"
+  "compose/v3/components/statestore.yaml"
+  "compose/v3/components/secretstore.yaml"
+  "compose/v3/nats/streams.json"
   "compose/v3/README.md"
-  "compose/v3/nats/README.md"
-  "compose/v3/apicurio/README.md"
-  "compose/v3/eventcatalog/README.md"
+  "ops/v3/bootstrap/check-platform.sh"
+  "cli/v3/bb_v3.py"
 )
 
+total=${#REQUIRED_FILES[@]}
 missing=0
+present=0
 
-pass "checking Bloodbank v3 scaffold from ${ROOT_DIR}"
-
-for relative in "${required_files[@]}"; do
-  if [[ -e "${ROOT_DIR}/${relative}" ]]; then
-    pass "${relative} exists"
+for rel_path in "${REQUIRED_FILES[@]}"; do
+  abs_path="${BLOODBANK_ROOT}/${rel_path}"
+  if [[ -f "${abs_path}" ]]; then
+    printf 'PASS %s\n' "${rel_path}"
+    present=$((present + 1))
   else
-    fail "${relative} is missing"
-    action "Add ${relative} before wiring any runtime publish path."
-    missing=1
+    printf 'FAIL %s: missing or not a regular file\n' "${rel_path}"
+    missing=$((missing + 1))
   fi
 done
 
-if grep -Eq 'doctor|trace|replay|emit' "${ROOT_DIR}/cli/v3/bb_v3.py"; then
-  pass "cli/v3/bb_v3.py declares the doctor, trace, replay, and emit stubs"
-else
-  fail "cli/v3/bb_v3.py does not expose the expected v3 command stubs"
-  action "Add the doctor, trace, replay, and emit command skeletons to cli/v3/bb_v3.py."
-  missing=1
-fi
+printf 'Bootstrap check: %d/%d artifacts present\n' "${present}" "${total}"
 
-if grep -Eq 'Holyfields|Bloodbank owns runtime|does not publish real traffic' "${ROOT_DIR}/cli/v3/README.md"; then
-  pass "cli/v3/README.md explains the Holyfields/Bloodbank ownership split"
-else
-  fail "cli/v3/README.md does not explain the ownership boundary clearly enough"
-  action "Document that Holyfields owns schemas and Bloodbank owns runtime and ops."
-  missing=1
-fi
-
-if grep -Eq 'no production side effects|No Docker, Dapr, NATS, or network activity' "${ROOT_DIR}/ops/v3/bootstrap/README.md"; then
-  pass "ops/v3/bootstrap/README.md documents the local-only bootstrap posture"
-else
-  fail "ops/v3/bootstrap/README.md is missing the local-only bootstrap guidance"
-  action "Document that bootstrap checks are static and do not require platform services."
-  missing=1
-fi
-
-if [[ "${missing}" -ne 0 ]]; then
-  action "Fix the missing scaffold files and rerun this check."
+if (( missing > 0 )); then
   exit 1
 fi
 
-pass "Bloodbank v3 bootstrap scaffold is present and locally verifiable."
-action "Proceed to compileall and then wire runtime behavior in later tickets."
+exit 0
