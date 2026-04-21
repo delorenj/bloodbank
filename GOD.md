@@ -3,6 +3,8 @@ pipeline-status:
   - new
 modified: 2026-04-12T08:04:30-04:00
 ---
+> **Note (2026-04-19):** This document describes the current-state v2 Bloodbank. The v3 direction is tracked in the metarepo at [docs/architecture/v3-implementation-plan.md](../docs/architecture/v3-implementation-plan.md).
+
 # Bloodbank — GOD Document
 
 > **Guaranteed Organizational Document** — Developer-facing reference for Bloodbank

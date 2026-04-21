@@ -1,5 +1,13 @@
 # Bloodbank vNext overhaul backlog
 
+> **Superseded by the metarepo v3 implementation plan.** This file is
+> retained for historical context; see
+> [`../../../docs/architecture/v3-implementation-plan.md`](../../../docs/architecture/v3-implementation-plan.md)
+> (metarepo-relative) for the active plan, and
+> [`../../../docs/architecture/ADR-0001-v3-platform-pivot.md`](../../../docs/architecture/ADR-0001-v3-platform-pivot.md)
+> for ratified decisions. Do not open new tickets against the phases below
+> without first reconciling with the metarepo plan.
+
 This document turns the vNext blueprint into an execution-ready work plan. Use
 it to open tickets, assign owners, and run the first overhaul waves without
 reinterpreting the architecture on every thread.

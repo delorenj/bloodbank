@@ -3,6 +3,16 @@
 This repository contains the current Bloodbank implementation and the active
 vNext redesign work for the 33GOD event platform.
 
+## v3 Direction
+
+Bloodbank is pivoting to a v3 event platform (Dapr + NATS JetStream +
+CloudEvents). The plan lives in the metarepo at
+[`docs/architecture/v3-implementation-plan.md`](../docs/architecture/v3-implementation-plan.md);
+the decisions are ratified in
+[`docs/architecture/ADR-0001-v3-platform-pivot.md`](../docs/architecture/ADR-0001-v3-platform-pivot.md).
+Local v2 docs below describe the current-state stack until the pivot
+completes.
+
 ## Architecture docs
 
 Start with the current architecture docs before making overhaul changes:

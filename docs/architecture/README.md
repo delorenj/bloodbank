@@ -2,22 +2,32 @@
 
 This directory is the entrypoint for Bloodbank architecture work.
 
-Use these documents in this order:
+## v3 direction (metarepo-owned)
 
-1. Read [bloodbank-vnext.md](bloodbank-vnext.md) for the target platform,
-   contract model, rollout phases, and workstream breakdown.
-2. Read [dapr-vs-faststream.md](dapr-vs-faststream.md) for the runtime
-   selection rubric and the decision to use Dapr for Bloodbank vNext.
-3. Read [overhaul-backlog.md](overhaul-backlog.md) for the first-wave ticket
-   map and strict sequencing constraints.
-4. Read [v3-implementation-plan.md](../../v3-implementation-plan.md) for the
-   junior-safe execution plan, Plane ticket source, and subagent protocol.
-5. Read [v3-holyfields-contract-work.md](v3-holyfields-contract-work.md) for
-   the Bloodbank-side tracker of Holyfields-owned contract work.
-6. Use [v3-plane-tickets.json](v3-plane-tickets.json) as the import payload
-   for the `v3-refactor` Plane epic and child tickets.
-7. Use [GOD.md](../../GOD.md) only when you need to operate,
-   inspect, or retire the current v2 implementation.
+The active v3 platform plan lives in the **metarepo**, not in bloodbank:
 
-These docs define the active overhaul target. New platform work must align with
-them unless a later architecture decision record replaces them.
+- [v3 implementation plan](../../../docs/architecture/v3-implementation-plan.md) —
+  source of truth for the v3 pivot.
+- [ADR-0001: v3 platform pivot](../../../docs/architecture/ADR-0001-v3-platform-pivot.md) —
+  ratified decisions (Dapr, NATS JetStream, CloudEvents, AsyncAPI,
+  EventCatalog, Apicurio).
+
+Everything in this directory supports or historicizes that plan.
+
+## Bloodbank-local docs
+
+1. [bloodbank-vnext.md](bloodbank-vnext.md) — target platform, contract model,
+   rollout phases, and workstream breakdown. Pre-dates the metarepo plan.
+2. [dapr-vs-faststream.md](dapr-vs-faststream.md) — runtime selection
+   rubric. Ratified by ADR-0001.
+3. [overhaul-backlog.md](overhaul-backlog.md) — first-wave ticket map.
+   Superseded by the metarepo v3 implementation plan; retained for
+   historical context.
+4. [v3-holyfields-contract-work.md](v3-holyfields-contract-work.md) —
+   Bloodbank-side tracker of Holyfields-owned contract work (HOLYF-2 in the
+   Holyfields Plane project).
+5. [GOD.md](../../GOD.md) — current-state v2 component reference. Use only
+   when operating, inspecting, or retiring the legacy stack.
+
+New platform work must align with the metarepo v3 plan unless a later
+architecture decision record replaces it.
