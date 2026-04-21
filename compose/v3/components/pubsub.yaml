@@ -1,3 +1,16 @@
+# Bloodbank v3 Dapr pub/sub component
+#
+# Name is locked to `bloodbank-v3-pubsub` by ADR-0001. Do not rename.
+#
+# This component fronts NATS JetStream for immutable CloudEvents traffic.
+# Commands and replies are NOT routed through this component; they use a
+# future command bus abstraction (see ../nats/README.md for subject scope).
+#
+# Secret references use `secretKeyRef` rather than literal values. The
+# `bloodbank-v3-secretstore` (see ./secretstore.yaml) resolves these against
+# environment variables prefixed `BLOODBANK_V3_`. In the local sandbox the
+# NATS server does not require a token, so `nats-token` may be unset and
+# the metadata entry acts as a placeholder for the production wiring.
 apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
@@ -8,9 +21,31 @@ spec:
   metadata:
     - name: natsURL
       value: "nats://nats:4222"
+    - name: name
+      value: "bloodbank-v3-pubsub"
+    # Map Dapr topic -> JetStream subject prefix. All pub/sub topics are
+    # routed into the `event.>` subject scope so that BLOODBANK_V3_EVENTS
+    # is the single durable home for immutable facts.
+    - name: subjects
+      value: "event.>"
     - name: streamName
       value: "BLOODBANK_V3_EVENTS"
     - name: durableName
       value: "bloodbank-v3-pubsub"
     - name: queueGroupName
       value: "bloodbank-v3"
+    - name: deliverAll
+      value: "false"
+    - name: ackWait
+      value: "30s"
+    # Placeholder-safe secret references. Unset in the local sandbox.
+    - name: token
+      secretKeyRef:
+        name: nats-token
+        key: nats-token
+    - name: seed
+      secretKeyRef:
+        name: nats-seed
+        key: nats-seed
+auth:
+  secretStore: bloodbank-v3-secretstore

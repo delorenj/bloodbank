@@ -1,43 +1,125 @@
+# Bloodbank v3 platform sandbox
+#
+# Compose project name is locked to `bloodbank-v3` by ADR-0001.
+# All services attach to the `bloodbank-v3-network` bridge.
+# Environment variables are prefixed `BLOODBANK_V3_` so the Dapr
+# `secretstores.local.env` component (see components/secretstore.yaml) can
+# project them through a consistent prefix.
+#
+# This file is scaffold-only. It is not wired to production traffic yet.
+# Keep Dapr runtime sidecars out of this file until V3-005 / V3-006 land.
+
 name: bloodbank-v3
+
+networks:
+  bloodbank-v3-network:
+    name: bloodbank-v3-network
+    driver: bridge
+
+volumes:
+  bloodbank-v3-nats-data:
+  bloodbank-v3-apicurio-data:
 
 services:
   nats:
-    image: nats:2.10.24-alpine
+    # NATS JetStream broker for the v3 event backbone.
+    image: nats:2.10-alpine
+    container_name: bloodbank-v3-nats
     command:
       - "-js"
-      - "-m"
-      - "8222"
       - "-sd"
       - "/data/jetstream"
+      - "-m"
+      - "8222"
+      - "-DV"
+    environment:
+      BLOODBANK_V3_NATS_URL: "nats://nats:4222"
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "${BLOODBANK_V3_NATS_CLIENT_PORT:-4222}:4222"
+      - "${BLOODBANK_V3_NATS_MONITOR_PORT:-8222}:8222"
     volumes:
-      - nats-data:/data/jetstream
+      - bloodbank-v3-nats-data:/data/jetstream
+    healthcheck:
+      # JetStream monitoring endpoint; exits 0 only when the server is up.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
 
   dapr-placement:
-    image: daprio/dapr:1.16.9
+    # Dapr placement service; required once service sidecars land. It does
+    # not speak to NATS directly — sidecars resolve actors through it.
+    image: daprio/dapr:1.13.0
+    container_name: bloodbank-v3-dapr-placement
     command:
       - "./placement"
       - "--port"
       - "50005"
+    environment:
+      BLOODBANK_V3_DAPR_PLACEMENT_PORT: "50005"
     ports:
-      - "50005:50005"
+      - "${BLOODBANK_V3_DAPR_PLACEMENT_PORT:-50005}:50005"
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
+
+  # NOTE: Dapr sidecars are not defined here. When V3-005+ add app services,
+  # each sidecar will mount the components directory read-only:
+  #
+  #   volumes:
+  #     - ./components:/components:ro
+  #
+  # and pass `--components-path /components` so that the manifests in
+  # compose/v3/components/*.yaml are loaded. The `pubsub.yaml` file there
+  # references `nats://nats:4222` via the service name on this network.
 
   apicurio-registry:
-    image: quay.io/apicurio/apicurio-registry:3.1.0.Final
+    # Apicurio is the runtime-side schema registry. Holyfields is the write
+    # side; producers/consumers pull schemas from Apicurio at runtime.
+    image: apicurio/apicurio-registry:3.0.6
+    container_name: bloodbank-v3-apicurio-registry
     environment:
-      JAVA_OPTS_APPEND: "-Dquarkus.http.host=0.0.0.0"
+      BLOODBANK_V3_APICURIO_PORT: "8080"
+      QUARKUS_HTTP_HOST: "0.0.0.0"
       QUARKUS_HTTP_PORT: "8080"
+      APICURIO_STORAGE_KIND: "sql"
+      APICURIO_STORAGE_SQL_KIND: "h2"
     ports:
-      - "8080:8080"
+      - "${BLOODBANK_V3_APICURIO_PORT:-8080}:8080"
+    volumes:
+      - bloodbank-v3-apicurio-data:/var/apicurio/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/q/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
 
   eventcatalog:
-    image: ghcr.io/event-catalog/eventcatalog:latest
+    # EventCatalog consumes generated artifacts (AsyncAPI, schemas, SDKs)
+    # produced by Holyfields. The mount point convention for this sandbox
+    # is ./eventcatalog/site on the host, which later tickets will populate
+    # via Holyfields generation output. Empty until then.
+    image: quay.io/eventcatalog/eventcatalog:2.11.1
+    container_name: bloodbank-v3-eventcatalog
     environment:
+      BLOODBANK_V3_EVENTCATALOG_PORT: "3000"
       PORT: "3000"
+      NODE_ENV: "production"
     ports:
-      - "3000:3000"
-
-volumes:
-  nats-data:
+      - "${BLOODBANK_V3_EVENTCATALOG_PORT:-3000}:3000"
+    volumes:
+      - ./eventcatalog/site:/app/site:ro
+    networks:
+      - bloodbank-v3-network
+    depends_on:
+      apicurio-registry:
+        condition: service_started
+    restart: unless-stopped

@@ -1,3 +1,14 @@
+# Bloodbank v3 Dapr state store component
+#
+# Default: `state.in-memory`. This is a scaffold choice, not a production
+# choice. Per compose/v3/README.md "State store tradeoff": in-memory keeps
+# the sandbox image count low and avoids a Redis dependency before any
+# service actually needs state. State does NOT survive sidecar restart.
+#
+# Swap for `state.redis` (or another durable backend) the first time a
+# service needs durable state. The swap is component-manifest only; no
+# service code change is required, which is precisely why Dapr sits in
+# front of the broker and state plane per ADR-0001.
 apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:

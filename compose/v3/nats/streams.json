@@ -1,9 +1,25 @@
 {
+  "$comment": "Bloodbank v3 NATS JetStream topology. Stream names and subject prefixes are locked by ADR-0001; do not rename.",
   "project": "bloodbank-v3",
   "subject_conventions": {
-    "events": "event.>",
-    "commands": "command.>",
-    "replies": "reply.>"
+    "events": {
+      "prefix": "event.",
+      "wildcard": "event.>",
+      "pattern": "event.<domain>.<entity>.<action>",
+      "example": "event.artifact.version.created"
+    },
+    "commands": {
+      "prefix": "command.",
+      "wildcard": "command.>",
+      "pattern": "command.<target>.<verb>",
+      "example": "command.artifact-service.rebuild"
+    },
+    "replies": {
+      "prefix": "reply.",
+      "wildcard": "reply.>",
+      "pattern": "reply.<target>.<verb>",
+      "example": "reply.artifact-service.rebuild"
+    }
   },
   "streams": [
     {
@@ -14,46 +30,64 @@
       "retention": "limits",
       "storage": "file",
       "discard": "old",
-      "max_age": "30d",
+      "max_age": "7d",
+      "max_msgs": -1,
+      "max_bytes": -1,
+      "num_replicas": 1,
       "replay_posture": {
         "replayable": true,
+        "preserves_original_ids": true,
+        "metadata_headers": {
+          "replay_flag": "Bb-Replay",
+          "replay_batch_id": "Bb-Replay-Batch-Id",
+          "replay_reason": "Bb-Replay-Reason",
+          "original_publish_time": "Bb-Original-Publish-Time"
+        },
         "notes": [
-          "Immutable CloudEvents traffic belongs in this stream.",
-          "Operators can replay this stream when rebuilding projections or recovering a consumer."
+          "Replays preserve the original CloudEvents id and correlationid.",
+          "Replay metadata is added via NATS message headers, not by mutating the envelope.",
+          "See compose/v3/nats/README.md for the full header contract."
         ]
       },
       "notes": [
-        "This stream is the durable home for v3 event traffic.",
-        "Keep business facts in this stream and do not treat commands as replay input."
+        "Durable home for v3 immutable CloudEvents traffic.",
+        "Consumed by projections, EventCatalog sync jobs, and service consumers via Dapr `bloodbank-v3-pubsub`."
       ]
     },
     {
       "name": "BLOODBANK_V3_COMMANDS",
       "subjects": [
-        "command.>"
+        "command.>",
+        "reply.>"
       ],
       "retention": "workqueue",
       "storage": "file",
       "discard": "old",
-      "max_age": "7d",
+      "max_age": "1d",
+      "max_msgs": -1,
+      "max_bytes": -1,
+      "num_replicas": 1,
       "replay_posture": {
         "replayable": false,
+        "preserves_original_ids": false,
         "notes": [
-          "Commands are mutable requests and should be handled once, not replayed as source-of-truth history.",
-          "Replies use reply.> subjects and are not part of the durable command stream."
+          "Commands are intended to be handled once (workqueue retention).",
+          "Replies are short-lived correlation messages; they are not source-of-truth history.",
+          "Do not use this stream as a replay source for rebuilding projections."
         ]
       },
       "notes": [
-        "Command traffic is operational, not archival.",
-        "Use a separate dead-letter policy in later operational tickets rather than coupling this scaffold to RabbitMQ patterns."
+        "Operational traffic only; covers `command.<target>.<verb>` and `reply.<target>.<verb>`.",
+        "Dead-letter handling is documented in README.md and will be implemented in V3-007, not here."
       ]
     }
   ],
   "dead_letter_assumptions": {
-    "policy": "future-operational-ticket",
+    "implemented_in_scaffold": false,
+    "tracked_under": "V3-007",
     "notes": [
-      "Dead-letter handling should be introduced explicitly for each consumer group when the runtime services are added.",
-      "This scaffold does not couple NATS to the legacy RabbitMQ dead-letter model."
+      "DLQ policy is deliberately out of scope for the scaffold wave.",
+      "V3-007 will add per-consumer dead-letter streams and document poison-message handling."
     ]
   }
 }
