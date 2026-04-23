@@ -1,0 +1,20 @@
+{
+  "specversion": "1.0",
+  "id": "__ID__",
+  "source": "urn:33god:cli:smoketest",
+  "type": "smoketest.ping",
+  "subject": "smoketest/canonical",
+  "time": "__TIME__",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:33god:holyfields:schema:smoketest.ping.v1",
+  "correlationid": "__CORRELATION_ID__",
+  "causationid": null,
+  "producer": "smoketest-cli",
+  "service": "smoketest",
+  "domain": "smoketest",
+  "schemaref": "smoketest.ping.v1",
+  "traceparent": "00-00000000000000000000000000000000-0000000000000000-00",
+  "data": {
+    "ping": true
+  }
+}
