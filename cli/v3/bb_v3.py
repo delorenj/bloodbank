@@ -25,12 +25,12 @@ Design notes:
 
 * ``doctor`` resolves the bloodbank root from this file's own location
   (``__file__``), so it works regardless of the current working directory.
-* ``ops/v3/bootstrap/check-platform.sh`` may not yet exist when ``doctor``
-  is run during the scaffold bring-up (it is produced by BB-22 / V3-006
-  alongside this ticket). To keep ticket-by-ticket ordering within Group B
-  flexible, ``doctor`` treats that single file as a ``WARN`` when missing
-  rather than ``FAIL``. V3-011 (final verification) tightens this to a hard
-  failure once the full scaffold wave is required to be present at once.
+* Every entry in ``SCAFFOLD_MANIFEST`` is ``FAIL`` on missing. The WARN
+  severity remains supported as a general mechanism but no entry currently
+  uses it. An earlier iteration kept ``ops/v3/bootstrap/check-platform.sh``
+  as ``WARN`` during Group B bring-up; that file now exists and is
+  required, so the entry was upgraded to ``FAIL`` as part of the scaffold
+  hardening wave (2026-04-22).
 """
 
 from __future__ import annotations
@@ -54,10 +54,9 @@ SCAFFOLD_MANIFEST: tuple[tuple[str, str], ...] = (
     ("compose/v3/components/statestore.yaml", "FAIL"),
     ("compose/v3/components/secretstore.yaml", "FAIL"),
     ("compose/v3/nats/streams.json", "FAIL"),
+    ("compose/v3/nats/init.sh", "FAIL"),
     ("compose/v3/README.md", "FAIL"),
-    # BB-22 / V3-006 companion file. Treated as WARN here until V3-011
-    # tightens this to FAIL across the whole scaffold wave.
-    ("ops/v3/bootstrap/check-platform.sh", "WARN"),
+    ("ops/v3/bootstrap/check-platform.sh", "FAIL"),
     # Self-check: this file.
     ("cli/v3/bb_v3.py", "FAIL"),
 )
@@ -141,12 +140,27 @@ def cmd_replay(_args: argparse.Namespace) -> int:
 def cmd_emit(_args: argparse.Namespace) -> int:
     """Stub: emit a handcrafted event for smoke-testing.
 
-    Operator emission requires a Dapr sidecar (per ADR-0001), which is not
-    wired in this wave. Future tickets will add this behind a safety flag.
+    Operator emission is only valid through a Dapr sidecar per ADR-0001.
+    The real implementation will require ``DAPR_HTTP_PORT`` to be set in
+    the environment and will refuse to publish via any other transport.
+    The check below documents and enforces that contract at the CLI
+    boundary: even the stub refuses to pretend it published when no Dapr
+    sidecar is advertised.
     """
+    dapr_http_port = os.environ.get("DAPR_HTTP_PORT", "")
+    if not dapr_http_port:
+        print(
+            "emit: refusing -- DAPR_HTTP_PORT is unset. Operator emission "
+            "requires a Dapr sidecar; run this under `dapr run` or set "
+            "DAPR_HTTP_PORT explicitly. See ADR-0001 Role reassignments."
+        )
+        return 2
+
+    # Guardrail passed; implementation still pending.
     print(
-        "emit: not yet implemented -- operator emission requires Dapr "
-        "sidecar; will land in a later ticket"
+        "emit: not yet implemented -- DAPR_HTTP_PORT is set "
+        f"(={dapr_http_port}); awaiting Holyfields SDK for envelope "
+        "construction. See docs/architecture/v3-holyfields-contract-work.md."
     )
     return 0
 

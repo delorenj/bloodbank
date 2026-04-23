@@ -27,6 +27,7 @@ REQUIRED_FILES=(
   "compose/v3/components/statestore.yaml"
   "compose/v3/components/secretstore.yaml"
   "compose/v3/nats/streams.json"
+  "compose/v3/nats/init.sh"
   "compose/v3/README.md"
   "ops/v3/bootstrap/check-platform.sh"
   "cli/v3/bb_v3.py"

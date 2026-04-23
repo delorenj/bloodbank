@@ -54,9 +54,57 @@ copied verbatim from the original message onto the replay delivery:
 - `dataschema`
 - `data`
 
-Consumers therefore must be idempotent on `id`. If a consumer needs to
-distinguish a replay from the original delivery, it reads the NATS headers
-documented below — not the envelope.
+Replay distinguishability lives in the transport layer — NATS headers (see
+below), never in the envelope.
+
+## Two consumer stances (mandatory)
+
+Preserving `id` verbatim creates an apparent contradiction: a consumer that
+is strictly idempotent on `id` will silently drop every replay, which defeats
+the point of replay for projection rebuilds. Replay therefore defines two
+distinct consumer stances, and every consumer MUST pick one explicitly:
+
+### 1. Idempotent consumer (default)
+
+- Stance: "an event with `id` I've already processed is a duplicate; ignore."
+- Behavior on replay: drops the replay silently.
+- When to use: real-time effects, side-effectful actions, notifications,
+  anything whose outcome must happen at most once per event.
+- Implementation: consumer maintains a set of seen `id`s and short-circuits
+  before the handler runs. The `Bb-Replay` header is ignored.
+
+### 2. Rebuild consumer
+
+- Stance: "the `Bb-Replay` header authorizes me to re-process an `id` I've
+  already seen for the purpose of rebuilding derived state."
+- Behavior on replay: reads `Bb-Replay: true`; if present, the consumer
+  reconstructs its projection from the replayed stream and ignores the
+  usual seen-id short-circuit.
+- When to use: projection / materialized view / derived-state rebuilds,
+  cold start of a new read model, disaster recovery of a projection
+  database.
+- Implementation: consumer sees `Bb-Replay: true` header, routes the
+  delivery to a rebuild handler that writes to the projection but suppresses
+  side effects (no outbound calls, no notifications). The rebuild completes
+  when `Bb-Replay-Batch-Id` stops appearing.
+
+**A consumer must not be both stances for the same subscription.** Rebuild
+is a separate subscription with an isolated durable name; it runs on demand
+against an empty projection store, not alongside the real-time consumer.
+
+## Side-effect suppression during rebuild
+
+Rebuild consumers are contractually forbidden from triggering outbound
+side effects:
+
+- No HTTP calls to external services.
+- No outbound NATS publishes that would double-emit downstream effects.
+- No user-facing notifications, emails, Slack messages, etc.
+- Write only to the projection store the rebuild is populating.
+
+A service team that needs a rebuild consumer defines a dedicated consumer
+class that enforces this at the code level (a `RebuildConsumer` base class
+in the Holyfields SDK is the planned shape, tracked under HOLYF-2).
 
 ## Replay metadata (NATS headers)
 
@@ -74,6 +122,10 @@ and `../../../compose/v3/nats/README.md`:
 
 Any additional replay telemetry must use new `Bb-Replay-*` headers; do not
 redefine the four above.
+
+**Header namespace.** The `Nats-*` prefix is reserved by NATS for transport
+metadata; do not create 33GOD replay metadata under `Nats-*`. Use `Bb-*`
+exclusively so intermediaries cannot strip or rewrite our replay signal.
 
 ## Safety rules
 
