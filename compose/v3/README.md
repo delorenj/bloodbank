@@ -44,6 +44,7 @@ compose/v3/
 | Service             | Image                                      | Host port(s)                        | Purpose                                         |
 |---------------------|--------------------------------------------|-------------------------------------|-------------------------------------------------|
 | `nats`              | `nats:2.10-alpine`                         | `4222` (client), `8222` (monitor)   | JetStream broker (`BLOODBANK_V3_EVENTS` + `_COMMANDS`) |
+| `nats-init`         | `natsio/nats-box:0.14.5`                   | -                                   | Oneshot: applies `nats/streams.json` to NATS on each `up` |
 | `dapr-placement`    | `daprio/dapr:1.13.0`                       | `50005`                             | Dapr actor placement for future sidecars        |
 | `apicurio-registry` | `apicurio/apicurio-registry:3.0.6`         | `8080`                              | Runtime schema registry (read side)             |
 | `eventcatalog`      | `quay.io/eventcatalog/eventcatalog:2.11.1` | `3000`                              | Human/agent event discovery UI                  |
@@ -132,6 +133,24 @@ See `nats/README.md` for subject conventions (`event.<domain>.<entity>.<action>`
 `command.<target>.<verb>`, `reply.<target>.<verb>`), retention posture, and
 replay metadata header names. See `nats/streams.json` for the machine-readable
 stream definitions.
+
+### Stream initialization
+
+`nats/streams.json` is applied to the running NATS server by the `nats-init`
+oneshot service on every `docker compose up`. It runs after `nats` reports
+healthy, reads the streams manifest, and issues `nats stream add` for each
+entry. It is idempotent — streams that already exist are skipped.
+
+If you hand-edit `nats/streams.json`, bounce the sandbox (`down` then `up`)
+so `nats-init` re-runs. For live edits without a restart, you can exec into
+`nats-box`:
+
+```bash
+docker compose \
+  --project-name bloodbank-v3 \
+  -f compose/v3/docker-compose.yml \
+  run --rm nats-init
+```
 
 ## Apicurio + EventCatalog
 

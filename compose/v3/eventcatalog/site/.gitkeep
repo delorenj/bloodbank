@@ -1,0 +1,10 @@
+# EventCatalog site content lives here.
+#
+# This directory is bind-mounted read-only into the `eventcatalog` container at
+# `/app/site`. If this file did not exist, Docker would auto-create the
+# directory as root:root on first `docker compose up`, which then blocks
+# Holyfields generation from populating it from the host.
+#
+# Populated by Holyfields generation output (see
+# ../../../docs/architecture/v3-holyfields-contract-work.md). Until HOLYF-2
+# lands, EventCatalog serves an empty UI.

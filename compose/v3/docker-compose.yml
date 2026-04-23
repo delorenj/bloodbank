@@ -40,15 +40,39 @@ services:
     volumes:
       - bloodbank-v3-nats-data:/data/jetstream
     healthcheck:
-      # JetStream monitoring endpoint; exits 0 only when the server is up.
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      # JetStream monitoring endpoint. `nats:2.10-alpine` ships busybox wget.
+      # `--spider` avoids downloading the body; we just want the HTTP 200.
+      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:8222/healthz || exit 1"]
       interval: 10s
-      timeout: 3s
+      timeout: 5s
       retries: 5
       start_period: 5s
     networks:
       - bloodbank-v3-network
     restart: unless-stopped
+
+  nats-init:
+    # One-shot: apply `nats/streams.json` to the running NATS server so
+    # `BLOODBANK_V3_EVENTS` and `BLOODBANK_V3_COMMANDS` exist before any
+    # producer publishes. Without this, the first `event.*` publish returns
+    # "no stream matched subject" and silently drops the message.
+    #
+    # Idempotent: `nats stream add` that would collide with an existing stream
+    # logs and exits non-zero; the init script swallows that case and exits 0.
+    image: natsio/nats-box:0.14.5
+    container_name: bloodbank-v3-nats-init
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      NATS_URL: "nats://nats:4222"
+    volumes:
+      - ./nats/streams.json:/work/streams.json:ro
+      - ./nats/init.sh:/work/init.sh:ro
+    entrypoint: ["/bin/sh", "/work/init.sh"]
+    networks:
+      - bloodbank-v3-network
+    restart: "no"
 
   dapr-placement:
     # Dapr placement service; required once service sidecars land. It does
@@ -121,5 +145,9 @@ services:
       - bloodbank-v3-network
     depends_on:
       apicurio-registry:
-        condition: service_started
+        # Wait for Apicurio's healthcheck to report ready before starting
+        # EventCatalog. `service_started` races with Apicurio's boot time
+        # and produces flaky startup when EventCatalog eagerly queries the
+        # registry at launch.
+        condition: service_healthy
     restart: unless-stopped
