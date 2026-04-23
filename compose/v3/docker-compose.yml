@@ -91,6 +91,48 @@ services:
       - bloodbank-v3-network
     restart: unless-stopped
 
+  daprd-smoketest:
+    # Dapr sidecar in "no-app" mode for smoke-testing the publish path.
+    # Runs without an attached app (subscribers would need an app callback
+    # port, which we'll wire when real services land). Exposes the HTTP
+    # publish API so the dapr smoke test can POST CloudEvents envelopes.
+    #
+    # Profile: `dapr-smoketest`. Started only when that profile is active.
+    # This keeps default `docker compose up` scoped to the NATS-only sandbox
+    # (wave 4 smoke test) and makes the Dapr surface opt-in.
+    image: daprio/daprd:1.13.0
+    container_name: bloodbank-v3-daprd-smoketest
+    profiles:
+      - dapr-smoketest
+    command:
+      - "./daprd"
+      - "--app-id=bloodbank-v3-smoketest"
+      - "--dapr-http-port=3500"
+      - "--dapr-grpc-port=50001"
+      - "--resources-path=/components"
+      - "--placement-host-address=dapr-placement:50005"
+      - "--log-level=info"
+    depends_on:
+      nats-init:
+        condition: service_completed_successfully
+      dapr-placement:
+        condition: service_started
+    volumes:
+      - ./components:/components:ro
+    ports:
+      - "${BLOODBANK_V3_DAPR_HTTP_PORT:-3500}:3500"
+      - "${BLOODBANK_V3_DAPR_GRPC_PORT:-50001}:50001"
+    healthcheck:
+      # Dapr exposes its own healthz on the HTTP port once components load.
+      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3500/v1.0/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
+
   # NOTE: Dapr sidecars are not defined here. When V3-005+ add app services,
   # each sidecar will mount the components directory read-only:
   #

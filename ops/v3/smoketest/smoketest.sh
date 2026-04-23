@@ -56,12 +56,16 @@ done
 if [[ -z "${CORRELATION_ID}" ]]; then
   CORRELATION_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)"
   EVENT_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)"
-  CONSUMER_NAME="smoketest-$$-$(date +%s)"
 else
-  # Deterministic mode: id and consumer name derive from correlation id.
+  # Deterministic mode: correlation_id + event_id are stable so downstream
+  # systems can dedup. Consumer name stays fresh (see below).
   EVENT_ID="${CORRELATION_ID}"
-  CONSUMER_NAME="smoketest-${CORRELATION_ID//[^a-zA-Z0-9._-]/-}"
 fi
+# Consumer name is ALWAYS fresh per run. Idempotency lives in the
+# correlation_id / event_id; the test's consumer bookkeeping is an
+# implementation detail. Re-using a consumer name across runs caused
+# stale-delivery-state races; a fresh per-run name is boring and correct.
+CONSUMER_NAME="smoketest-$$-$(date +%s%N)"
 
 EVENT_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -173,10 +177,12 @@ echo "smoketest: published to ${SUBJECT}"
 
 # `consumer next` returns the next pending message and acks it with --ack.
 # --raw prints payload only (no headers/metadata framing) so we can parse JSON.
+# Capture stdout only so nats CLI diagnostics on stderr don't leak into
+# the validator's JSON parse attempt.
 RECEIVED_RAW="$(nats_run consumer next "${STREAM}" "${CONSUMER_NAME}" \
   --wait "${RECEIVE_TIMEOUT}" \
   --ack \
-  --raw 2>&1 || true)"
+  --raw 2>/dev/null || true)"
 
 if [[ -z "${RECEIVED_RAW}" ]]; then
   fail 1 "receive timeout after ${RECEIVE_TIMEOUT}"

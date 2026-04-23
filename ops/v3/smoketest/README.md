@@ -1,14 +1,16 @@
-# Bloodbank v3 — Canonical Smoke Test
+# Bloodbank v3 — Smoke Tests
 
-A minimal, **benign**, and **optionally idempotent** end-to-end check that
-the v3 event backbone is wired up correctly: stream exists, publisher can
-send, a durable consumer can receive, and the envelope round-trips its
-CloudEvents shape.
+Minimal, **benign**, and **optionally idempotent** end-to-end checks that
+the v3 event backbone is wired correctly. Two complementary tests:
 
-## Scope
+| Test | What it proves | Requires |
+|---|---|---|
+| `smoketest.sh` | NATS JetStream is reachable, streams exist, envelope round-trips unchanged | `nats` + `nats-init` |
+| `smoketest-dapr.sh` | Dapr `bloodbank-v3-pubsub` component loads, publish HTTP API works, Dapr→NATS routing hits the expected subject | `nats` + `nats-init` + `dapr-placement` + `daprd-smoketest` |
 
-This is the **pre-Dapr smoke test**. It talks to NATS JetStream directly
-via the `nats` CLI (in `nats-box`). It proves:
+## Scope — `smoketest.sh` (NATS-direct)
+
+Talks to NATS JetStream directly via the `nats` CLI in `nats-box`. It proves:
 
 - `BLOODBANK_V3_EVENTS` stream exists and accepts `event.smoketest.ping`.
 - A canonical CloudEvents envelope round-trips unchanged.
@@ -18,35 +20,91 @@ via the `nats` CLI (in `nats-box`). It proves:
 
 It does **not** prove:
 
-- Dapr pub/sub routing (no sidecar wired in the scaffold wave).
+- Dapr pub/sub routing.
 - Holyfields SDK construction (no SDK exists yet).
 - Apicurio schema validation (not wired into the publish path).
 
-Those are covered by separate tests that land with the Dapr sidecar and
-Holyfields SDK tickets.
+## Scope — `smoketest-dapr.sh` (Dapr sidecar)
+
+Publishes via the Dapr HTTP API (`POST /v1.0/publish/<pubsub>/<topic>`)
+through a no-app `daprd` sidecar, then reads the message back through a
+NATS JetStream pull consumer. It proves:
+
+- The `pubsub.jetstream` component manifest is metadata-correct (Dapr
+  loads it without error).
+- ADR-0001's topic-to-subject mapping holds: Dapr topic
+  `event.dapr.smoketest.ping` lands on NATS subject of the same name,
+  captured by the `BLOODBANK_V3_EVENTS` stream's `event.>` binding.
+- Dapr adds `topic` and `pubsubname` envelope fields (validated to
+  confirm the route was Dapr, not direct-NATS).
+- `correlationid`, `id`, and data payload round-trip unchanged.
+
+It does **not** prove:
+
+- Subscribe path through a Dapr-attached app (requires an app callback
+  port; wired when services land).
+- Holyfields SDK envelope construction.
+- Apicurio schema validation.
 
 ## Usage
 
-```bash
-# Default: fresh UUID per run, exercises publish + receive
-bash ops/v3/smoketest/smoketest.sh
+### NATS-direct smoke test
 
-# Idempotent: deterministic id (e.g. useful in CI); re-running is safe
-bash ops/v3/smoketest/smoketest.sh --correlation-id smoketest-ci-$(date +%Y-%m-%d)
+```bash
+# Preconditions: bring up nats + nats-init
+docker compose \
+  --project-name bloodbank-v3 \
+  -f bloodbank/compose/v3/docker-compose.yml \
+  up -d nats nats-init
+
+# Default: fresh UUID per run
+bash bloodbank/ops/v3/smoketest/smoketest.sh
+
+# Deterministic (CI-friendly): re-running with the same correlation id is safe
+bash bloodbank/ops/v3/smoketest/smoketest.sh --correlation-id ci-$(date +%Y-%m-%d)
 ```
 
-Exit codes:
+### Dapr smoke test
 
-- `0` — smoke test passed; published event was received with matching id.
-- `1` — sandbox not reachable, stream missing, or receive timeout.
+```bash
+# Preconditions: bring up full Dapr-enabled sandbox via profile
+docker compose \
+  --project-name bloodbank-v3 \
+  --profile dapr-smoketest \
+  -f bloodbank/compose/v3/docker-compose.yml \
+  up -d nats nats-init dapr-placement daprd-smoketest
+
+# Default: fresh UUID per run
+bash bloodbank/ops/v3/smoketest/smoketest-dapr.sh
+
+# Deterministic
+bash bloodbank/ops/v3/smoketest/smoketest-dapr.sh --correlation-id dapr-ci-$(date +%Y-%m-%d)
+```
+
+Exit codes (both tests):
+
+- `0` — PASS; published event was received with matching id.
+- `1` — sandbox/daprd not reachable, stream missing, or receive timeout.
 - `2` — event received but envelope validation failed.
+
+## Idempotency contract
+
+Both tests treat the `correlation_id` / `event_id` as the idempotency key:
+re-running with the same `--correlation-id` publishes an event with the
+same id, so a downstream deduplicating consumer sees it as one logical
+event. The **consumer name** used by the test is always fresh per run
+(built from `$$` + nanosecond timestamp), because reusing consumer names
+across runs caused stale-delivery-state races in JetStream. The consumer
+is an implementation detail of the test; it is not part of the contract.
 
 ## Preconditions
 
 - Docker running.
-- Compose sandbox reachable via `docker` (the script uses
+- Compose sandbox reachable via `docker` (the scripts use
   `docker compose ... run --rm` to execute nats-box commands; no host-side
   `nats` CLI required).
+- For the Dapr test: host port `3500` reachable (`curl` from host hits
+  the daprd HTTP API).
 
 ## What it does (in order)
 
@@ -84,9 +142,13 @@ headers and expects none.
 
 ## Future
 
-Once the Dapr sidecar + Holyfields SDK land:
+Outstanding smoke tests not yet written:
 
-- A second smoketest (`smoketest-dapr.sh` or equivalent) exercises the
-  publish path through Dapr pub/sub.
-- A third (`smoketest-command.sh`) exercises the command envelope and
-  `BLOODBANK_V3_COMMANDS` stream round-trip.
+- `smoketest-dapr-subscribe.sh` — exercises the Dapr subscribe path
+  (requires a no-op app with a callback port; out-of-scope for the
+  sidecar-only scaffold wave).
+- `smoketest-command.sh` — exercises the command envelope and
+  `BLOODBANK_V3_COMMANDS` stream round-trip including `reply.*`
+  correlation.
+- `smoketest-holyfields.sh` — exercises envelope construction via the
+  Holyfields-generated SDK once HOLYF-2 lands.
