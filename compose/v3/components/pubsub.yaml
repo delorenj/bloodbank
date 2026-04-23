@@ -6,11 +6,21 @@
 # Commands and replies are NOT routed through this component; they use a
 # future command bus abstraction (see ../nats/README.md for subject scope).
 #
-# Secret references use `secretKeyRef` rather than literal values. The
-# `bloodbank-v3-secretstore` (see ./secretstore.yaml) resolves these against
-# environment variables prefixed `BLOODBANK_V3_`. In the local sandbox the
-# NATS server does not require a token, so `nats-token` may be unset and
-# the metadata entry acts as a placeholder for the production wiring.
+# Topic-to-subject mapping:
+#   The Dapr pubsub.jetstream component publishes the Dapr topic name
+#   directly as the NATS subject. That is: a service that calls
+#   `dapr publish --topic event.artifact.created` lands the message on
+#   NATS subject `event.artifact.created`, which is captured by the
+#   BLOODBANK_V3_EVENTS stream's `event.>` subject binding.
+#
+#   Therefore the `event.` prefix is a SERVICE-LEVEL naming discipline:
+#   service teams must name their Dapr topics with the `event.` prefix
+#   so their publishes land in the correct stream. The Holyfields-generated
+#   SDK enforces this when it constructs topic names from CloudEvents
+#   `type` fields, so services never hand-write the topic.
+#
+# Metadata keys below are verified against the Dapr pubsub.jetstream
+# component reference (dapr/docs; 2026-04-22).
 apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
@@ -23,19 +33,26 @@ spec:
       value: "nats://nats:4222"
     - name: name
       value: "bloodbank-v3-pubsub"
-    # Map Dapr topic -> JetStream subject prefix. All pub/sub topics are
-    # routed into the `event.>` subject scope so that BLOODBANK_V3_EVENTS
-    # is the single durable home for immutable facts.
-    - name: subjects
-      value: "event.>"
-    - name: streamName
-      value: "BLOODBANK_V3_EVENTS"
+    # Durable consumer identifier. Keeps offsets per-component across
+    # sidecar restarts so replay-on-restart is explicit rather than silent.
     - name: durableName
       value: "bloodbank-v3-pubsub"
+    # Queue group scopes competing consumers; replicas of the same service
+    # share this group and each message goes to exactly one replica.
     - name: queueGroupName
       value: "bloodbank-v3"
-    - name: deliverAll
-      value: "false"
+    # Bind the pub/sub component to the events stream. The stream itself
+    # is configured to listen on `event.>` subjects (see ../nats/streams.json).
+    - name: streamName
+      value: "BLOODBANK_V3_EVENTS"
+    # Delivery policy: `all` = replay from the earliest available message
+    # when a new consumer starts. Correct for smoke-test and scaffold use
+    # where a subscriber started after a publish must still receive it.
+    # Production services that want "from now on" can override to `new`
+    # in their own component manifest.
+    - name: deliverPolicy
+      value: "all"
+    # Ack timeout; consumers must ack within this window or NATS redelivers.
     - name: ackWait
       value: "30s"
     # Placeholder-safe secret references. Unset in the local sandbox.
@@ -43,9 +60,9 @@ spec:
       secretKeyRef:
         name: nats-token
         key: nats-token
-    - name: seed
+    - name: seedKey
       secretKeyRef:
-        name: nats-seed
-        key: nats-seed
+        name: nats-seed-key
+        key: nats-seed-key
 auth:
   secretStore: bloodbank-v3-secretstore
