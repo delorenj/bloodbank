@@ -161,12 +161,11 @@ services:
       # compose network (no external caller needs it for the subscribe
       # smoke test).
       - "${BLOODBANK_V3_DAPR_SUBSCRIBE_HTTP_PORT:-3501}:3501"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3501/v1.0/healthz || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
+    # NOTE: no container-level healthcheck. daprio/daprd:1.13.0 is a
+    # distroless image with no /bin/sh, so CMD-SHELL checks never execute;
+    # the container stays "starting" then transitions to "unhealthy" even
+    # when Dapr is fully up. Readiness is verified externally via
+    # curl :3501/v1.0/healthz (both smoke tests and CI do this).
     networks:
       - bloodbank-v3-network
     restart: unless-stopped
@@ -202,13 +201,9 @@ services:
     ports:
       - "${BLOODBANK_V3_DAPR_HTTP_PORT:-3500}:3500"
       - "${BLOODBANK_V3_DAPR_GRPC_PORT:-50001}:50001"
-    healthcheck:
-      # Dapr exposes its own healthz on the HTTP port once components load.
-      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3500/v1.0/healthz || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
+    # NOTE: no container-level healthcheck. Same distroless constraint as
+    # daprd-subscribe above. Readiness is verified externally via
+    # curl :3500/v1.0/healthz.
     networks:
       - bloodbank-v3-network
     restart: unless-stopped
