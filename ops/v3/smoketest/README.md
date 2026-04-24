@@ -7,6 +7,7 @@ the v3 event backbone is wired correctly. Two complementary tests:
 |---|---|---|
 | `smoketest.sh` | NATS JetStream is reachable, streams exist, envelope round-trips unchanged | `nats` + `nats-init` |
 | `smoketest-dapr.sh` | Dapr `bloodbank-v3-pubsub` component loads, publish HTTP API works, Dapr→NATS routing hits the expected subject | `nats` + `nats-init` + `dapr-placement` + `daprd-smoketest` |
+| `smoketest-dapr-subscribe.sh` | Dapr delivers a published message back to an app callback — the full publish→subscribe loop | `nats` + `nats-init` + `dapr-placement` + `echo-sub` + `daprd-subscribe` |
 
 ## Scope — `smoketest.sh` (NATS-direct)
 
@@ -41,10 +42,42 @@ NATS JetStream pull consumer. It proves:
 
 It does **not** prove:
 
-- Subscribe path through a Dapr-attached app (requires an app callback
-  port; wired when services land).
+- Subscribe path delivery to an app. That is covered by
+  `smoketest-dapr-subscribe.sh`.
 - Holyfields SDK envelope construction.
 - Apicurio schema validation.
+
+## Scope — `smoketest-dapr-subscribe.sh` (Dapr publish → subscribe)
+
+The first test that proves **delivery**. Publishes via the Dapr HTTP API,
+then polls the `echo-sub` test app's `/inspect/received` endpoint until
+the matching event arrives (via Dapr → pubsub.jetstream consumer →
+`/events/smoketest` callback).
+
+Proves:
+
+- The `bloodbank-v3-pubsub` component's subscribe path works end-to-end
+  against `BLOODBANK_V3_EVENTS`. Dapr creates a durable consumer
+  (`bloodbank-v3-pubsub` on the stream) and delivers matching events.
+- The programmatic subscription contract (`GET /dapr/subscribe`,
+  `POST <route>`) is wired correctly.
+- Dapr-added envelope fields (`topic`, `pubsubname`) survive to the app
+  callback.
+
+### Test app: `echo-sub`
+
+A minimal Python-stdlib-only HTTP server at `ops/v3/smoketest/echo-sub/app.py`
+that implements:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /dapr/subscribe` | Returns the programmatic subscription list Dapr queries at startup |
+| `POST /events/smoketest` | Dapr delivers matching messages here; stored in an in-memory FIFO buffer (max 1024) |
+| `GET /inspect/received` | Test hook: returns everything in the buffer as JSON |
+| `POST /inspect/reset` | Test hook: clear buffer, returns count cleared |
+| `GET /healthz` | Liveness probe |
+
+It is bind-mounted into a `python:3.11-alpine` container (no build step).
 
 ## Usage
 
@@ -64,10 +97,10 @@ bash bloodbank/ops/v3/smoketest/smoketest.sh
 bash bloodbank/ops/v3/smoketest/smoketest.sh --correlation-id ci-$(date +%Y-%m-%d)
 ```
 
-### Dapr smoke test
+### Dapr publish-only smoke test
 
 ```bash
-# Preconditions: bring up full Dapr-enabled sandbox via profile
+# Preconditions: bring up Dapr-enabled sandbox via profile
 docker compose \
   --project-name bloodbank-v3 \
   --profile dapr-smoketest \
@@ -80,6 +113,34 @@ bash bloodbank/ops/v3/smoketest/smoketest-dapr.sh
 # Deterministic
 bash bloodbank/ops/v3/smoketest/smoketest-dapr.sh --correlation-id dapr-ci-$(date +%Y-%m-%d)
 ```
+
+### Dapr publish → subscribe smoke test
+
+```bash
+# Preconditions: different profile (brings echo-sub + daprd-subscribe)
+docker compose \
+  --project-name bloodbank-v3 \
+  --profile dapr-subscribe \
+  -f bloodbank/compose/v3/docker-compose.yml \
+  up -d nats nats-init dapr-placement echo-sub daprd-subscribe
+
+# Default: fresh UUID per run
+bash bloodbank/ops/v3/smoketest/smoketest-dapr-subscribe.sh
+
+# Deterministic first run
+bash bloodbank/ops/v3/smoketest/smoketest-dapr-subscribe.sh --correlation-id sub-ci-$(date +%Y-%m-%d)
+```
+
+### JetStream dedup and re-runs
+
+`BLOODBANK_V3_EVENTS` has a 2-minute `DuplicateWindow`, and Dapr sets
+`Nats-Msg-Id` to the CloudEvent `id` on publish. Re-running any of the
+Dapr tests with the **same `--correlation-id` within that window**
+correctly hits the dedup filter — the second publish returns 204 but no
+message lands on the stream, so `smoketest-dapr-subscribe.sh` will time
+out on the second attempt. That is the idempotency contract working as
+designed, not a flake. Use a fresh `--correlation-id` per run to prove
+delivery, or wait out the dedup window.
 
 Exit codes (both tests):
 
@@ -144,11 +205,10 @@ headers and expects none.
 
 Outstanding smoke tests not yet written:
 
-- `smoketest-dapr-subscribe.sh` — exercises the Dapr subscribe path
-  (requires a no-op app with a callback port; out-of-scope for the
-  sidecar-only scaffold wave).
 - `smoketest-command.sh` — exercises the command envelope and
   `BLOODBANK_V3_COMMANDS` stream round-trip including `reply.*`
   correlation.
 - `smoketest-holyfields.sh` — exercises envelope construction via the
   Holyfields-generated SDK once HOLYF-2 lands.
+- `smoketest-dlq.sh` — exercises dead-letter behavior when a consumer
+  returns non-2xx from the subscription callback enough times.

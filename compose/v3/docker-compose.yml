@@ -91,6 +91,86 @@ services:
       - bloodbank-v3-network
     restart: unless-stopped
 
+  echo-sub:
+    # Minimal Dapr subscriber app for the v3 subscribe smoke test. Python
+    # stdlib only (http.server); no third-party deps, no build step.
+    # Bind-mounts ops/v3/smoketest/echo-sub/app.py read-only.
+    #
+    # Profile: `dapr-subscribe`. Started only when that profile is active.
+    image: python:3.11-alpine
+    container_name: bloodbank-v3-echo-sub
+    profiles:
+      - dapr-subscribe
+    command: ["python", "-u", "/work/app.py"]
+    environment:
+      APP_PORT: "3001"
+      SUBSCRIBE_PUBSUB: "bloodbank-v3-pubsub"
+      SUBSCRIBE_TOPIC: "event.dapr.subscribe.ping"
+      SUBSCRIBE_ROUTE: "/events/smoketest"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ../../ops/v3/smoketest/echo-sub/app.py:/work/app.py:ro
+    ports:
+      # Test hook port for the smoke test's /inspect/* queries. Not used
+      # by daprd (daprd reaches the app via the compose network on the
+      # container-internal port, not the host-mapped port).
+      - "${BLOODBANK_V3_ECHO_SUB_PORT:-3301}:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3001/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
+
+  daprd-subscribe:
+    # Dapr sidecar wired to `echo-sub` via --app-port + --app-channel-address.
+    # On startup, Dapr hits GET http://echo-sub:3001/dapr/subscribe to learn
+    # which topics to deliver. Thereafter, POSTs matching events back to
+    # http://echo-sub:3001<route>.
+    #
+    # Profile: `dapr-subscribe`.
+    image: daprio/daprd:1.13.0
+    container_name: bloodbank-v3-daprd-subscribe
+    profiles:
+      - dapr-subscribe
+    command:
+      - "./daprd"
+      - "--app-id=bloodbank-v3-echo-sub"
+      - "--dapr-http-port=3501"
+      - "--dapr-grpc-port=50002"
+      - "--app-port=3001"
+      - "--app-channel-address=echo-sub"
+      - "--app-protocol=http"
+      - "--resources-path=/components"
+      - "--placement-host-address=dapr-placement:50005"
+      - "--log-level=info"
+    depends_on:
+      nats-init:
+        condition: service_completed_successfully
+      dapr-placement:
+        condition: service_started
+      echo-sub:
+        condition: service_healthy
+    volumes:
+      - ./components:/components:ro
+    ports:
+      # Only HTTP is exposed to the host; gRPC stays internal to the
+      # compose network (no external caller needs it for the subscribe
+      # smoke test).
+      - "${BLOODBANK_V3_DAPR_SUBSCRIBE_HTTP_PORT:-3501}:3501"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3501/v1.0/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
+
   daprd-smoketest:
     # Dapr sidecar in "no-app" mode for smoke-testing the publish path.
     # Runs without an attached app (subscribers would need an app callback
