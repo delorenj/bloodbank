@@ -185,17 +185,21 @@ jobs:
             up -d dapr-placement daprd-smoketest
 
       - name: Wait for daprd-smoketest healthy
+        # daprd is a distroless image with no /bin/sh, so container-level
+        # healthchecks can't execute. Verify readiness from the host by
+        # curling the exposed HTTP port (same probe smoke tests use).
         run: |
           for i in $(seq 1 60); do
-            state=$(docker inspect --format '{{.State.Health.Status}}' bloodbank-v3-daprd-smoketest 2>/dev/null || echo "missing")
-            if [ "$state" = "healthy" ]; then
-              echo "daprd-smoketest healthy"
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
+              http://127.0.0.1:3500/v1.0/healthz 2>/dev/null || echo "000")
+            if [ "$code" = "204" ]; then
+              echo "daprd-smoketest ready (HTTP 204 from /v1.0/healthz)"
               exit 0
             fi
             sleep 2
           done
-          echo "daprd-smoketest never became healthy"
-          docker logs bloodbank-v3-daprd-smoketest
+          echo "daprd-smoketest never responded 204 on /v1.0/healthz"
+          docker logs bloodbank-v3-daprd-smoketest | tail -80
           exit 1
 
       - name: Run smoketest-dapr.sh (Dapr publish)
@@ -212,17 +216,19 @@ jobs:
             up -d echo-sub daprd-subscribe
 
       - name: Wait for daprd-subscribe healthy
+        # Same distroless constraint — probe from host via HTTP.
         run: |
           for i in $(seq 1 60); do
-            state=$(docker inspect --format '{{.State.Health.Status}}' bloodbank-v3-daprd-subscribe 2>/dev/null || echo "missing")
-            if [ "$state" = "healthy" ]; then
-              echo "daprd-subscribe healthy"
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
+              http://127.0.0.1:3501/v1.0/healthz 2>/dev/null || echo "000")
+            if [ "$code" = "204" ]; then
+              echo "daprd-subscribe ready (HTTP 204 from /v1.0/healthz)"
               exit 0
             fi
             sleep 2
           done
-          echo "daprd-subscribe never became healthy"
-          docker logs bloodbank-v3-daprd-subscribe
+          echo "daprd-subscribe never responded 204 on /v1.0/healthz"
+          docker logs bloodbank-v3-daprd-subscribe | tail -80
           exit 1
 
       - name: Run smoketest-dapr-subscribe.sh (Dapr publish → subscribe)
