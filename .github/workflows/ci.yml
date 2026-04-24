@@ -1,0 +1,259 @@
+# Bloodbank CI — v3 scaffold quality gate
+#
+# Implements the CI gate contract defined in the metarepo test plan:
+#   docs/testing/test-plan.md (33GOD metarepo)
+#
+# Every PR to v3-refactor or main runs two jobs:
+#   1. static-checks — no Docker; runs in ~1 minute
+#   2. smoke-tests   — spins up the compose sandbox; runs the four smoke
+#                      tests end-to-end
+#
+# The smoke-tests job is the load-bearing signal: if a PR breaks any of
+# the four round-trips, we want to know before merge, not after.
+
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - v3-refactor
+  push:
+    branches:
+      - main
+      - v3-refactor
+
+concurrency:
+  # Cancel in-progress runs on the same branch when a new commit lands.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Static checks — no Docker, fast feedback
+  # ---------------------------------------------------------------------------
+  static-checks:
+    name: Static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps for validators
+        run: |
+          python -m pip install --upgrade pip
+          # Minimal deps for the static checks; avoids pulling the full
+          # project requirements until we actually need them.
+          pip install pyyaml
+
+      - name: Compile cli/v3
+        # Fails if the operator CLI has a syntax error.
+        run: python -m compileall cli/v3
+
+      - name: Platform bootstrap check
+        # Pure file-presence validator; no Docker, no network.
+        run: bash ops/v3/bootstrap/check-platform.sh
+
+      - name: bb_v3 doctor
+        # Manifest-driven scaffold check. Should match bootstrap exactly.
+        run: python3 cli/v3/bb_v3.py doctor
+
+      - name: Validate Dapr component YAML
+        run: |
+          python -c "import yaml, sys
+          for f in [
+            'compose/v3/components/pubsub.yaml',
+            'compose/v3/components/statestore.yaml',
+            'compose/v3/components/secretstore.yaml',
+          ]:
+            yaml.safe_load(open(f))
+            print(f'OK  {f}')"
+
+      - name: Validate NATS streams.json
+        run: |
+          python -c "import json
+          d = json.load(open('compose/v3/nats/streams.json'))
+          assert 'streams' in d
+          names = {s['name'] for s in d['streams']}
+          assert 'BLOODBANK_V3_EVENTS' in names
+          assert 'BLOODBANK_V3_COMMANDS' in names
+          print(f'OK  {sorted(names)}')"
+
+      - name: Validate docker compose config parses
+        # Uses the builtin docker compose; no services started.
+        run: docker compose --project-name bloodbank-v3 -f compose/v3/docker-compose.yml config > /dev/null
+
+      - name: Lint shell scripts
+        # shellcheck catches most of the classes of bug we've already hit live
+        # (stdin-pipe+heredoc is the common antipattern).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning \
+            ops/v3/bootstrap/check-platform.sh \
+            compose/v3/nats/init.sh \
+            ops/v3/smoketest/smoketest.sh \
+            ops/v3/smoketest/smoketest-dapr.sh \
+            ops/v3/smoketest/smoketest-dapr-subscribe.sh \
+            ops/v3/smoketest/smoketest-command.sh || true
+          # `|| true` for now — shellcheck findings surface but don't block
+          # until we decide which warnings to treat as blockers. Revisit
+          # after first real review pass.
+
+  # ---------------------------------------------------------------------------
+  # Smoke tests — boot the compose sandbox, run all four round-trips
+  # ---------------------------------------------------------------------------
+  smoke-tests:
+    name: Smoke tests (Dapr + NATS end-to-end)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: static-checks
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Docker version
+        # Surface the environment in the log for debugging.
+        run: |
+          docker version
+          docker compose version
+
+      - name: Pre-pull sandbox images
+        # Warm the local image cache so healthcheck windows aren't racing
+        # image pulls. Keeps logs readable and timings stable.
+        run: |
+          docker pull nats:2.10-alpine
+          docker pull natsio/nats-box:0.14.5
+          docker pull daprio/dapr:1.13.0
+          docker pull daprio/daprd:1.13.0
+          docker pull python:3.11-alpine
+
+      # -----------------------------------------------------------------------
+      # Layer 1: NATS-direct tests (no Dapr)
+      # -----------------------------------------------------------------------
+      - name: Boot NATS sandbox
+        run: |
+          docker compose --project-name bloodbank-v3 \
+            -f compose/v3/docker-compose.yml \
+            up -d nats nats-init
+
+      - name: Wait for nats-init to finish
+        run: |
+          # nats-init is oneshot; wait up to 60s for it to exit successfully.
+          for i in $(seq 1 30); do
+            state=$(docker inspect --format '{{.State.Status}}' bloodbank-v3-nats-init 2>/dev/null || echo "missing")
+            if [ "$state" = "exited" ]; then
+              code=$(docker inspect --format '{{.State.ExitCode}}' bloodbank-v3-nats-init)
+              if [ "$code" = "0" ]; then
+                echo "nats-init exited 0"
+                exit 0
+              else
+                echo "nats-init exited $code"
+                docker logs bloodbank-v3-nats-init
+                exit 1
+              fi
+            fi
+            sleep 2
+          done
+          echo "nats-init did not finish in time"
+          docker logs bloodbank-v3-nats-init
+          exit 1
+
+      - name: Run smoketest.sh (NATS direct event)
+        run: bash ops/v3/smoketest/smoketest.sh
+
+      - name: Run smoketest-command.sh (NATS direct command + reply)
+        run: bash ops/v3/smoketest/smoketest-command.sh
+
+      # -----------------------------------------------------------------------
+      # Layer 2: Dapr publish test
+      # -----------------------------------------------------------------------
+      - name: Boot daprd-smoketest
+        run: |
+          docker compose --project-name bloodbank-v3 \
+            --profile dapr-smoketest \
+            -f compose/v3/docker-compose.yml \
+            up -d dapr-placement daprd-smoketest
+
+      - name: Wait for daprd-smoketest healthy
+        run: |
+          for i in $(seq 1 60); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' bloodbank-v3-daprd-smoketest 2>/dev/null || echo "missing")
+            if [ "$state" = "healthy" ]; then
+              echo "daprd-smoketest healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "daprd-smoketest never became healthy"
+          docker logs bloodbank-v3-daprd-smoketest
+          exit 1
+
+      - name: Run smoketest-dapr.sh (Dapr publish)
+        run: bash ops/v3/smoketest/smoketest-dapr.sh
+
+      # -----------------------------------------------------------------------
+      # Layer 3: Dapr subscribe test
+      # -----------------------------------------------------------------------
+      - name: Boot echo-sub + daprd-subscribe
+        run: |
+          docker compose --project-name bloodbank-v3 \
+            --profile dapr-subscribe \
+            -f compose/v3/docker-compose.yml \
+            up -d echo-sub daprd-subscribe
+
+      - name: Wait for daprd-subscribe healthy
+        run: |
+          for i in $(seq 1 60); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' bloodbank-v3-daprd-subscribe 2>/dev/null || echo "missing")
+            if [ "$state" = "healthy" ]; then
+              echo "daprd-subscribe healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "daprd-subscribe never became healthy"
+          docker logs bloodbank-v3-daprd-subscribe
+          exit 1
+
+      - name: Run smoketest-dapr-subscribe.sh (Dapr publish → subscribe)
+        run: bash ops/v3/smoketest/smoketest-dapr-subscribe.sh
+
+      # -----------------------------------------------------------------------
+      # Diagnostics on failure; always collect
+      # -----------------------------------------------------------------------
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== docker compose ps ==="
+          docker compose --project-name bloodbank-v3 \
+            --profile dapr-smoketest --profile dapr-subscribe \
+            -f compose/v3/docker-compose.yml \
+            ps || true
+          echo "=== nats logs ==="
+          docker logs bloodbank-v3-nats 2>&1 | tail -80 || true
+          echo "=== nats-init logs ==="
+          docker logs bloodbank-v3-nats-init 2>&1 | tail -80 || true
+          echo "=== daprd-smoketest logs ==="
+          docker logs bloodbank-v3-daprd-smoketest 2>&1 | tail -80 || true
+          echo "=== daprd-subscribe logs ==="
+          docker logs bloodbank-v3-daprd-subscribe 2>&1 | tail -80 || true
+          echo "=== echo-sub logs ==="
+          docker logs bloodbank-v3-echo-sub 2>&1 | tail -80 || true
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose --project-name bloodbank-v3 \
+            --profile dapr-smoketest --profile dapr-subscribe \
+            -f compose/v3/docker-compose.yml \
+            down -v || true
