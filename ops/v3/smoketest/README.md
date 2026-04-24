@@ -1,13 +1,14 @@
 # Bloodbank v3 — Smoke Tests
 
 Minimal, **benign**, and **optionally idempotent** end-to-end checks that
-the v3 event backbone is wired correctly. Two complementary tests:
+the v3 event backbone is wired correctly. Four complementary tests:
 
 | Test | What it proves | Requires |
 |---|---|---|
 | `smoketest.sh` | NATS JetStream is reachable, streams exist, envelope round-trips unchanged | `nats` + `nats-init` |
 | `smoketest-dapr.sh` | Dapr `bloodbank-v3-pubsub` component loads, publish HTTP API works, Dapr→NATS routing hits the expected subject | `nats` + `nats-init` + `dapr-placement` + `daprd-smoketest` |
 | `smoketest-dapr-subscribe.sh` | Dapr delivers a published message back to an app callback — the full publish→subscribe loop | `nats` + `nats-init` + `dapr-placement` + `echo-sub` + `daprd-subscribe` |
+| `smoketest-command.sh` | `BLOODBANK_V3_COMMANDS` handles `command.*` → `reply.*` round-trip with correlation-ID preservation and workqueue drain-on-ack | `nats` + `nats-init` |
 
 ## Scope — `smoketest.sh` (NATS-direct)
 
