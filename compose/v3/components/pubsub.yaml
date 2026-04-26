@@ -33,10 +33,17 @@ spec:
       value: "nats://nats:4222"
     - name: name
       value: "bloodbank-v3-pubsub"
-    # Durable consumer identifier. Keeps offsets per-component across
-    # sidecar restarts so replay-on-restart is explicit rather than silent.
-    - name: durableName
-      value: "bloodbank-v3-pubsub"
+    # NOTE: durableName is intentionally UNSET. With multiple Dapr
+    # sidecars (daprd-subscribe, daprd-heartbeat, future services) all
+    # loading this same component manifest, a fixed durableName causes
+    # the second sidecar's subscribe binding to fail with
+    #   "nats: subject does not match consumer"
+    # because JetStream's durable consumer is tied to a single filter
+    # subject, and different sidecars subscribe to different topics.
+    # Leaving durableName empty makes each sidecar create its own
+    # ephemeral consumer. Production services that need durable
+    # cross-restart offsets should supply their own per-service
+    # component manifest with an app-id-suffixed durableName.
     # Queue group scopes competing consumers; replicas of the same service
     # share this group and each message goes to exactly one replica.
     - name: queueGroupName
