@@ -3,7 +3,7 @@
 # Implements the CI gate contract defined in the metarepo test plan:
 #   docs/testing/test-plan.md (33GOD metarepo)
 #
-# Every PR to v3-refactor or main runs two jobs:
+# Every PR to main runs two jobs:
 #   1. static-checks — no Docker; runs in ~1 minute
 #   2. smoke-tests   — spins up the compose sandbox; runs the four smoke
 #                      tests end-to-end
@@ -17,11 +17,9 @@ on:
   pull_request:
     branches:
       - main
-      - v3-refactor
   push:
     branches:
       - main
-      - v3-refactor
 
 concurrency:
   # Cancel in-progress runs on the same branch when a new commit lands.
