@@ -106,5 +106,34 @@ while [ "${i}" -lt "${streams_count}" ]; do
   i=$((i + 1))
 done
 
+# Verification gate: confirm every stream is reachable from a FRESH
+# connection before exiting. JetStream metadata can lag a few hundred ms
+# behind a successful `stream add`; if nats-init exits while the
+# metadata is still propagating, a downstream consumer (e.g. Dapr's
+# pubsub.jetstream) that connects in that window can hit
+# "nats: stream not found" on its initial subscribe binding. Verifying
+# from a separate `nats stream info` call (different connection) forces
+# the propagation to land.
+echo "nats-init: verifying streams are queryable from a fresh connection"
+verify_attempts=10
+i=0
+while [ "${i}" -lt "${streams_count}" ]; do
+  name=$(jq -r ".streams[${i}].name" "${STREAMS_JSON}")
+  attempt=0
+  while [ "${attempt}" -lt "${verify_attempts}" ]; do
+    if nats --server="${NATS_URL}" stream info "${name}" >/dev/null 2>&1; then
+      echo "nats-init: ${name} OK (attempt $((attempt + 1)))"
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.5
+  done
+  if [ "${attempt}" -ge "${verify_attempts}" ]; then
+    echo "nats-init: ${name} FAILED to verify after ${verify_attempts} attempts" >&2
+    exit 1
+  fi
+  i=$((i + 1))
+done
+
 echo "nats-init: done"
 exit 0
