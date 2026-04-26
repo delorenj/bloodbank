@@ -135,6 +135,15 @@ jobs:
           docker pull daprio/daprd:1.13.0
           docker pull python:3.11-alpine
 
+      - name: Pre-build heartbeat service images
+        # heartbeat-tick + heartbeat-recorder build from local Dockerfiles;
+        # build them eagerly so the smoke test isn't waiting on the build.
+        run: |
+          docker compose --project-name bloodbank-v3 \
+            --profile heartbeat \
+            -f compose/v3/docker-compose.yml \
+            build heartbeat-recorder heartbeat-tick
+
       # -----------------------------------------------------------------------
       # Layer 1: NATS-direct tests (no Dapr)
       # -----------------------------------------------------------------------
@@ -233,6 +242,35 @@ jobs:
         run: bash ops/v3/smoketest/smoketest-dapr-subscribe.sh
 
       # -----------------------------------------------------------------------
+      # Layer 4: heartbeat — first real-world v3 event end-to-end
+      # -----------------------------------------------------------------------
+      - name: Boot heartbeat profile (recorder + daprd-heartbeat + tick)
+        run: |
+          docker compose --project-name bloodbank-v3 \
+            --profile heartbeat \
+            -f compose/v3/docker-compose.yml \
+            up -d --build heartbeat-recorder daprd-heartbeat heartbeat-tick
+
+      - name: Wait for daprd-heartbeat ready
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
+              http://127.0.0.1:3502/v1.0/healthz 2>/dev/null || echo "000")
+            if [ "$code" = "204" ]; then
+              echo "daprd-heartbeat ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "daprd-heartbeat never responded 204"
+          docker logs bloodbank-v3-daprd-heartbeat | tail -50
+          exit 1
+
+      - name: Run smoketest-heartbeat.sh (real producer/consumer round-trip)
+        # Default 5s tick interval; smoketest waits 15s for >= 2 ticks.
+        run: bash ops/v3/smoketest/smoketest-heartbeat.sh
+
+      # -----------------------------------------------------------------------
       # Diagnostics on failure; always collect
       # -----------------------------------------------------------------------
       - name: Collect diagnostics on failure
@@ -240,24 +278,19 @@ jobs:
         run: |
           echo "=== docker compose ps ==="
           docker compose --project-name bloodbank-v3 \
-            --profile dapr-smoketest --profile dapr-subscribe \
+            --profile dapr-smoketest --profile dapr-subscribe --profile heartbeat \
             -f compose/v3/docker-compose.yml \
             ps || true
-          echo "=== nats logs ==="
-          docker logs bloodbank-v3-nats 2>&1 | tail -80 || true
-          echo "=== nats-init logs ==="
-          docker logs bloodbank-v3-nats-init 2>&1 | tail -80 || true
-          echo "=== daprd-smoketest logs ==="
-          docker logs bloodbank-v3-daprd-smoketest 2>&1 | tail -80 || true
-          echo "=== daprd-subscribe logs ==="
-          docker logs bloodbank-v3-daprd-subscribe 2>&1 | tail -80 || true
-          echo "=== echo-sub logs ==="
-          docker logs bloodbank-v3-echo-sub 2>&1 | tail -80 || true
+          for c in nats nats-init daprd-smoketest daprd-subscribe echo-sub \
+                   daprd-heartbeat heartbeat-recorder heartbeat-tick; do
+            echo "=== ${c} logs ==="
+            docker logs "bloodbank-v3-${c}" 2>&1 | tail -80 || true
+          done
 
       - name: Tear down
         if: always()
         run: |
           docker compose --project-name bloodbank-v3 \
-            --profile dapr-smoketest --profile dapr-subscribe \
+            --profile dapr-smoketest --profile dapr-subscribe --profile heartbeat \
             -f compose/v3/docker-compose.yml \
             down -v || true

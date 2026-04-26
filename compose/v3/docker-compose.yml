@@ -170,6 +170,98 @@ services:
       - bloodbank-v3-network
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Heartbeat — first real-world v3 event (system.heartbeat.tick)
+  # ---------------------------------------------------------------------------
+  # Three services behind the `heartbeat` compose profile:
+  #   - heartbeat-recorder: subscriber app on port 3001 (mirrors echo-sub
+  #     pattern; records ticks + exposes /inspect/recorded for tests)
+  #   - daprd-heartbeat: sidecar attached to recorder via --app-port; ALSO
+  #     services heartbeat-tick's publish requests via its HTTP API
+  #   - heartbeat-tick: long-running publisher emitting on a 5s interval
+  #     by default; configurable via HEARTBEAT_INTERVAL env var
+
+  heartbeat-recorder:
+    build:
+      context: ../../services/heartbeat-recorder
+    container_name: bloodbank-v3-heartbeat-recorder
+    profiles:
+      - heartbeat
+    environment:
+      APP_PORT: "3001"
+      SUBSCRIBE_PUBSUB: "bloodbank-v3-pubsub"
+      SUBSCRIBE_TOPIC: "event.system.heartbeat.tick"
+      SUBSCRIBE_ROUTE: "/events/heartbeat"
+    ports:
+      # Test-hook port for /inspect/recorded queries from the host.
+      - "${BLOODBANK_V3_HEARTBEAT_RECORDER_PORT:-3601}:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3001/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
+
+  daprd-heartbeat:
+    image: daprio/daprd:1.13.0
+    container_name: bloodbank-v3-daprd-heartbeat
+    profiles:
+      - heartbeat
+    command:
+      - "./daprd"
+      - "--app-id=bloodbank-v3-heartbeat"
+      - "--dapr-http-port=3500"
+      - "--dapr-grpc-port=50001"
+      - "--app-port=3001"
+      - "--app-channel-address=heartbeat-recorder"
+      - "--app-protocol=http"
+      - "--resources-path=/components"
+      - "--placement-host-address=dapr-placement:50005"
+      - "--log-level=info"
+    depends_on:
+      nats-init:
+        condition: service_completed_successfully
+      dapr-placement:
+        condition: service_started
+      heartbeat-recorder:
+        condition: service_healthy
+    volumes:
+      - ./components:/components:ro
+    ports:
+      # Optional: expose Dapr HTTP for ad-hoc curls from the host.
+      - "${BLOODBANK_V3_DAPR_HEARTBEAT_HTTP_PORT:-3502}:3500"
+    # No container-level healthcheck (distroless image). Liveness is
+    # verified externally via curl :3502/v1.0/healthz.
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
+
+  heartbeat-tick:
+    build:
+      context: ../../services/heartbeat-tick
+    container_name: bloodbank-v3-heartbeat-tick
+    profiles:
+      - heartbeat
+    environment:
+      DAPR_HTTP_HOST: "daprd-heartbeat"
+      DAPR_HTTP_PORT: "3500"
+      DAPR_PUBSUB: "bloodbank-v3-pubsub"
+      HEARTBEAT_TOPIC: "event.system.heartbeat.tick"
+      HEARTBEAT_INTERVAL: "${BLOODBANK_V3_HEARTBEAT_INTERVAL:-5}"
+      LOG_LEVEL: "INFO"
+    depends_on:
+      # daprd-heartbeat needs to be up before tick can publish.
+      # Container "started" is enough — heartbeat-tick has its own
+      # 60s health-wait loop on the daprd HTTP API before first publish.
+      daprd-heartbeat:
+        condition: service_started
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
+
   daprd-smoketest:
     # Dapr sidecar in "no-app" mode for smoke-testing the publish path.
     # Runs without an attached app (subscribers would need an app callback
