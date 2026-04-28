@@ -10,7 +10,28 @@ Companion docs:
 
 - Metarepo plan: [../../../docs/architecture/v3-implementation-plan.md](../../../docs/architecture/v3-implementation-plan.md).
 - ADR-0001: [../../../docs/architecture/ADR-0001-v3-platform-pivot.md](../../../docs/architecture/ADR-0001-v3-platform-pivot.md).
+- ADR-0002: [../../../docs/architecture/ADR-0002-holyfields-scope-refactor.md](../../../docs/architecture/ADR-0002-holyfields-scope-refactor.md).
 - Bloodbank architecture index: [README.md](README.md).
+
+## Status update — 2026-04-28 (post-ADR-0002)
+
+ADR-0002 narrowed Holyfields' scope to **JSON Schema source + Pydantic/Zod
+generation only**. Several work items below were authored before that
+decision and are now reassigned. The table reflects current ownership:
+
+| # | Work item | Ownership now | Status |
+|---|---|---|---|
+| 1 | CloudEvents 1.0 base schema | Holyfields | **DONE** (`_common/cloudevent_base.v1.json`, PR holyfields#21) |
+| 2 | Command envelope schema | Holyfields | Pending |
+| 3 | AsyncAPI template per service | **Each service** (not Holyfields) | Reassigned per ADR-0002 |
+| 4 | Python SDK generation | Holyfields | **DONE** (CI gen + drift, PR holyfields#25) |
+| 5 | TypeScript SDK generation | Holyfields | **DONE** (same PR) |
+| 6 | EventCatalog source | **Consumes** aggregated AsyncAPI + Apicurio (not authored) | Reassigned per ADR-0002 |
+| 7 | Apicurio sync | Holyfields CI (runtime registry populated by CI) | Pending — runs at deploy time |
+
+The narrative below remains historically accurate but should be read
+through the ADR-0002 lens: items 3 and 6 are no longer Holyfields work,
+and item 7 is a CI-driven publish step rather than a standalone script.
 
 ## Plane ticket
 
