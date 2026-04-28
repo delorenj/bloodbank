@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+#
+# Bloodbank v3 claude-events round-trip smoke test.
+#
+# Verifies that synthetic agent.* envelopes published through the
+# claude-events daprd sidecar land on the recorder for all three event
+# types. This is the smoke gate for V3-108 (dedicated profile + recorder)
+# and the on-host equivalent of what `.claude/hooks/bloodbank-publisher.sh`
+# does at runtime.
+#
+# Pipeline under test:
+#
+#   curl POST CloudEvents envelope
+#     → daprd-claude-events sidecar (host:3503)
+#       → BLOODBANK_V3_EVENTS stream on NATS JetStream
+#         → daprd-claude-events consumer (--app-port to recorder)
+#           → claude-events-recorder
+#               → /inspect/recorded
+#
+# Assertions:
+#   - All three event types appear in count_by_type
+#   - Per-session aggregate shows started=true, ended=true, tool_invocations>=1
+#   - Each envelope is shape-valid CloudEvents 1.0 with the expected `type`
+#
+# Preconditions (caller responsibility):
+#   docker compose --project-name bloodbank-v3 --profile claude-events \
+#     -f compose/v3/docker-compose.yml \
+#     up -d nats nats-init dapr-placement claude-events-recorder daprd-claude-events
+#
+# Usage:
+#   bash ops/v3/smoketest/smoketest-claude-events.sh
+#
+# Exit codes:
+#   0 — PASS
+#   1 — sandbox not reachable, recorder unhealthy, or events missing
+#   2 — envelope validation failed
+
+set -euo pipefail
+
+DAPR_HTTP="${DAPR_HTTP:-http://127.0.0.1:3503}"
+RECORDER_HTTP="${RECORDER_HTTP:-http://127.0.0.1:3602}"
+PUBSUB="${PUBSUB:-bloodbank-v3-pubsub}"
+WAIT_SECONDS=10
+
+fail() { local rc="$1"; shift; echo "smoketest-claude-events: FAIL -- $*" >&2; exit "${rc}"; }
+
+# -----------------------------------------------------------------------------
+# 1. Sidecar + recorder must be reachable
+# -----------------------------------------------------------------------------
+code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "${DAPR_HTTP}/v1.0/healthz" 2>/dev/null || echo "000")
+if [[ "${code}" != "204" ]]; then
+  fail 1 "daprd-claude-events not ready at ${DAPR_HTTP} (got ${code})"
+fi
+
+code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "${RECORDER_HTTP}/healthz" 2>/dev/null || echo "000")
+if [[ "${code}" != "204" ]]; then
+  fail 1 "claude-events-recorder not healthy at ${RECORDER_HTTP} (got ${code})"
+fi
+
+# -----------------------------------------------------------------------------
+# 2. Reset the buffer
+# -----------------------------------------------------------------------------
+curl -sS -X POST "${RECORDER_HTTP}/inspect/reset" >/dev/null \
+  || fail 1 "could not reset recorder buffer"
+
+# -----------------------------------------------------------------------------
+# 3. Publish synthetic envelopes (one of each agent.* type, same session_id)
+# -----------------------------------------------------------------------------
+# Use python3 for envelope construction (jq lacks uuid + iso-now). Stdlib
+# only; no runtime deps assumed beyond the CI base image.
+SESSION_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+publish_envelope() {
+  local ev_type="$1" topic="$2" data="$3"
+  local envelope
+  envelope=$(python3 -c '
+import json, sys, uuid
+ev_type, session_id, now, data_json = sys.argv[1:]
+print(json.dumps({
+    "specversion": "1.0",
+    "id": str(uuid.uuid4()),
+    "source": "urn:33god:smoketest:claude-events",
+    "type": ev_type,
+    "subject": f"agent/{session_id}",
+    "time": now,
+    "datacontenttype": "application/json",
+    "correlationid": session_id,
+    "causationid": None,
+    "producer": "claude-code",
+    "service": "claude-code",
+    "domain": "agent",
+    "schemaref": ev_type + ".v1",
+    "traceparent": "00-00000000000000000000000000000000-0000000000000000-00",
+    "data": json.loads(data_json),
+}))
+' "$ev_type" "$SESSION_ID" "$NOW" "$data")
+
+  local code
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+    -X POST \
+    -H "Content-Type: application/cloudevents+json" \
+    -d "$envelope" \
+    "${DAPR_HTTP}/v1.0/publish/${PUBSUB}/${topic}" 2>/dev/null || echo "000")
+
+  if [[ ! "$code" =~ ^2[0-9][0-9]$ ]]; then
+    fail 1 "publish failed type=${ev_type} http=${code}"
+  fi
+}
+
+publish_envelope "agent.session.started" "event.agent.session.started" \
+  "{\"session_id\":\"${SESSION_ID}\",\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\",\"git_remote\":\"\",\"started_at\":\"${NOW}\"}"
+
+publish_envelope "agent.tool.invoked" "event.agent.tool.invoked" \
+  "{\"session_id\":\"${SESSION_ID}\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo hi\"},\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\",\"git_status\":\"clean\",\"turn_number\":1,\"success\":true}"
+
+publish_envelope "agent.session.ended" "event.agent.session.ended" \
+  "{\"session_id\":\"${SESSION_ID}\",\"end_reason\":\"user_stop\",\"duration_seconds\":42,\"total_turns\":1,\"tools_used\":{\"Bash\":1},\"files_modified\":[],\"git_commits\":[],\"final_status\":\"success\",\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\"}"
+
+# -----------------------------------------------------------------------------
+# 4. Wait for delivery (Dapr → app callback)
+# -----------------------------------------------------------------------------
+deadline=$(( $(date +%s) + WAIT_SECONDS ))
+final_count=0
+while [[ $(date +%s) -lt ${deadline} ]]; do
+  count=$(curl -sS --max-time 3 "${RECORDER_HTTP}/inspect/recorded" 2>/dev/null \
+    | python3 -c "import json,sys; print(json.load(sys.stdin)['count'])" 2>/dev/null \
+    || echo 0)
+  if [[ "${count}" -ge 3 ]]; then
+    final_count="${count}"
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${final_count}" -lt 3 ]]; then
+  echo "Recorder dump:"
+  curl -sS "${RECORDER_HTTP}/inspect/recorded" | python3 -m json.tool >&2 || true
+  fail 1 "expected 3 envelopes, got ${final_count} after ${WAIT_SECONDS}s"
+fi
+
+# -----------------------------------------------------------------------------
+# 5. Validate shape + per-session aggregate
+# -----------------------------------------------------------------------------
+RECEIVED_JSON="$(curl -sS --max-time 3 "${RECORDER_HTTP}/inspect/recorded" 2>/dev/null)"
+
+python3 -c "
+import json, sys
+data = json.loads(sys.argv[1])
+session_id = sys.argv[2]
+
+problems = []
+envelopes = data.get('envelopes', [])
+count_by_type = data.get('count_by_type', {})
+sessions = data.get('sessions', [])
+
+# 1. count_by_type covers all three
+for t in ('agent.session.started', 'agent.session.ended', 'agent.tool.invoked'):
+    if count_by_type.get(t, 0) < 1:
+        problems.append(f'count_by_type missing or zero for {t}')
+
+# 2. Per-envelope shape (CloudEvents 1.0 + 33GOD extensions)
+for i, env in enumerate(envelopes):
+    for required in ('specversion', 'id', 'source', 'type', 'time', 'correlationid', 'producer', 'service', 'domain', 'data'):
+        if required not in env:
+            problems.append(f'envelope[{i}] missing {required!r}')
+    if env.get('specversion') != '1.0':
+        problems.append(f\"envelope[{i}] specversion = {env.get('specversion')!r}\")
+    if env.get('domain') != 'agent':
+        problems.append(f\"envelope[{i}] domain = {env.get('domain')!r}\")
+
+# 3. Per-session aggregate
+matching = [s for s in sessions if s.get('session_id') == session_id]
+if len(matching) != 1:
+    problems.append(f'expected exactly one session entry for {session_id}, got {len(matching)}')
+elif not (matching[0].get('started') and matching[0].get('ended') and matching[0].get('tool_invocations', 0) >= 1):
+    problems.append(f'session aggregate incomplete: {matching[0]}')
+
+if problems:
+    print('claude-events smoke validation failed:', file=sys.stderr)
+    for p in problems:
+        print(f'  - {p}', file=sys.stderr)
+    sys.exit(2)
+
+print(f'OK: {len(envelopes)} envelopes across {len(count_by_type)} types, session aggregate complete')
+sys.exit(0)
+" "${RECEIVED_JSON}" "${SESSION_ID}" \
+  || fail 2 "envelope validation failed"
+
+echo "smoketest-claude-events: PASS"
+exit 0

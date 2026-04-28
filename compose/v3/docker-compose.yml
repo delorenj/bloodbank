@@ -262,6 +262,76 @@ services:
       - bloodbank-v3-network
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Claude-events — agent.* events emitted by Claude Code on the host
+  # ---------------------------------------------------------------------------
+  # The producer (Claude Code via .claude/hooks/bloodbank-publisher.sh) runs
+  # on the host, not in compose. This profile only ships the consumer side:
+  #   - claude-events-recorder: subscriber app on port 3001 (mirrors
+  #     heartbeat-recorder; records all three agent.* event types and
+  #     exposes /inspect/recorded for tests)
+  #   - daprd-claude-events: sidecar wired to the recorder via --app-port;
+  #     ALSO services the host publisher's POST /v1.0/publish/... requests
+  #     via its HTTP API exposed on host:3503
+
+  claude-events-recorder:
+    build:
+      context: ../../services/claude-events-recorder
+    container_name: bloodbank-v3-claude-events-recorder
+    profiles:
+      - claude-events
+    environment:
+      APP_PORT: "3001"
+      SUBSCRIBE_PUBSUB: "bloodbank-v3-pubsub"
+    ports:
+      # Test-hook port for /inspect/recorded queries from the host.
+      - "${BLOODBANK_V3_CLAUDE_EVENTS_RECORDER_PORT:-3602}:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3001/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
+
+  daprd-claude-events:
+    image: daprio/daprd:1.13.0
+    container_name: bloodbank-v3-daprd-claude-events
+    profiles:
+      - claude-events
+    command:
+      - "./daprd"
+      - "--app-id=bloodbank-v3-claude-events"
+      - "--dapr-http-port=3500"
+      - "--dapr-grpc-port=50001"
+      - "--app-port=3001"
+      - "--app-channel-address=claude-events-recorder"
+      - "--app-protocol=http"
+      - "--resources-path=/components"
+      - "--placement-host-address=dapr-placement:50005"
+      - "--log-level=info"
+    depends_on:
+      nats-init:
+        condition: service_completed_successfully
+      dapr-placement:
+        condition: service_started
+      claude-events-recorder:
+        condition: service_healthy
+    volumes:
+      - ./components:/components:ro
+    ports:
+      # Host port the .claude/hooks publisher targets by default.
+      # Distinct from daprd-heartbeat (3502) so both profiles can run
+      # side by side.
+      - "${BLOODBANK_V3_DAPR_CLAUDE_EVENTS_HTTP_PORT:-3503}:3500"
+    # No container-level healthcheck (distroless image). Liveness is
+    # verified externally via curl :3503/v1.0/healthz.
+    networks:
+      - bloodbank-v3-network
+    restart: unless-stopped
+
   daprd-smoketest:
     # Dapr sidecar in "no-app" mode for smoke-testing the publish path.
     # Runs without an attached app (subscribers would need an app callback
