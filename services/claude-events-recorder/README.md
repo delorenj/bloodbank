@@ -24,15 +24,18 @@ in-memory buffer + per-session aggregate
 
 ## Subscriptions
 
-The recorder declares three programmatic subscriptions (no wildcard);
-each agent.* event type gets its own route. This keeps the contract
-explicit and matches the publisher's topic choices 1:1.
+The recorder declares one programmatic subscription per agent.* event
+type. Explicit routes (no wildcard) keep the contract debuggable and
+match the publisher's topic choices 1:1.
 
 | CloudEvents `type` | NATS subject | Route |
 |---|---|---|
-| `agent.session.started` | `event.agent.session.started` | `/events/session_started` |
-| `agent.session.ended`   | `event.agent.session.ended`   | `/events/session_ended`   |
-| `agent.tool.invoked`    | `event.agent.tool.invoked`    | `/events/tool_invoked`    |
+| `agent.session.started`  | `event.agent.session.started`  | `/events/session_started`  |
+| `agent.session.ended`    | `event.agent.session.ended`    | `/events/session_ended`    |
+| `agent.prompt.submitted` | `event.agent.prompt.submitted` | `/events/prompt_submitted` |
+| `agent.tool.requested`   | `event.agent.tool.requested`   | `/events/tool_requested`   |
+| `agent.tool.invoked`     | `event.agent.tool.invoked`     | `/events/tool_invoked`     |
+| `agent.subagent.completed` | `event.agent.subagent.completed` | `/events/subagent_completed` |
 
 ## Inspection endpoints
 
@@ -45,8 +48,24 @@ explicit and matches the publisher's topic choices 1:1.
 | POST | `/events/...`        | Dapr delivery — internal, not for direct callers |
 
 The `sessions` array contains a per-session aggregate so tests can
-assert lifecycle (`started`, `ended`, `tool_invocations`) without
-walking the envelope buffer.
+assert lifecycle without walking the envelope buffer:
+
+```json
+{
+  "session_id": "...",
+  "started": true,
+  "ended": true,
+  "tool_invocations": 4,
+  "tool_requests": 4,
+  "prompts_submitted": 2,
+  "subagents_completed": 1,
+  "last_seen": "2026-04-29T08:01:23Z",
+  "first_seen_type": "agent.session.started",
+  "working_directory": "...",
+  "git_branch": "...",
+  "end_reason": "user_stop"
+}
+```
 
 ## Configuration (env vars)
 
