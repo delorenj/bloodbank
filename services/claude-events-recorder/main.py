@@ -59,11 +59,29 @@ SUBSCRIPTIONS: list[dict] = [
         "topic": "event.agent.tool.invoked",
         "route": "/events/tool_invoked",
     },
+    {
+        "pubsubname": SUBSCRIBE_PUBSUB,
+        "topic": "event.agent.prompt.submitted",
+        "route": "/events/prompt_submitted",
+    },
+    {
+        "pubsubname": SUBSCRIBE_PUBSUB,
+        "topic": "event.agent.tool.requested",
+        "route": "/events/tool_requested",
+    },
+    {
+        "pubsubname": SUBSCRIBE_PUBSUB,
+        "topic": "event.agent.subagent.completed",
+        "route": "/events/subagent_completed",
+    },
 ]
 ROUTE_TO_TYPE: dict[str, str] = {
     "/events/session_started": "agent.session.started",
     "/events/session_ended": "agent.session.ended",
     "/events/tool_invoked": "agent.tool.invoked",
+    "/events/prompt_submitted": "agent.prompt.submitted",
+    "/events/tool_requested": "agent.tool.requested",
+    "/events/subagent_completed": "agent.subagent.completed",
 }
 
 _lock = threading.Lock()
@@ -90,8 +108,16 @@ def _record(envelope: dict) -> None:
             "started": False,
             "ended": False,
             "tool_invocations": 0,
+            "tool_requests": 0,
+            "prompts_submitted": 0,
+            "subagents_completed": 0,
             "first_seen_type": ev_type,
         }
+        # Track event time so test runlists can sort by recency.
+        env_time = envelope.get("time")
+        if isinstance(env_time, str):
+            entry["last_seen"] = env_time
+
         if ev_type == "agent.session.started":
             entry["started"] = True
             entry["working_directory"] = data.get("working_directory")
@@ -103,6 +129,12 @@ def _record(envelope: dict) -> None:
             entry["total_turns"] = data.get("total_turns")
         elif ev_type == "agent.tool.invoked":
             entry["tool_invocations"] += 1
+        elif ev_type == "agent.tool.requested":
+            entry["tool_requests"] += 1
+        elif ev_type == "agent.prompt.submitted":
+            entry["prompts_submitted"] += 1
+        elif ev_type == "agent.subagent.completed":
+            entry["subagents_completed"] += 1
         _sessions[sid] = entry
 
 
