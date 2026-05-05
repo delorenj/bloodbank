@@ -81,7 +81,7 @@ document when you need to understand, operate, or retire the legacy stack.
 - **WebSocket Relay** (`websocket-relay/`) — Real-time event broadcaster at `:8683`
 - **Heartbeat System** (`heartbeat/`) — Cron-driven event scheduler (every 60s)
 - **Consumer Template** (`consumer_template/`) — FastStream drop-in for agents
-- **hookd** (separate repo, `~/code/33GOD/hookd/`) — Rust daemon bridging Claude Code hooks → Bloodbank (DO WE NEED THIS?!)
+- **hookd** (separate module, `~/code/33GOD/hookd/`) — Rust daemon bridging Claude Code hooks → Bloodbank. Producer/transport boundary settled in [ADR-0003](../docs/architecture/ADR-0003-hookd-boundary.md): hookd is a peer producer; Bloodbank does not absorb it.
 
 ---
 
@@ -383,8 +383,10 @@ cd ~/code/33GOD && docker compose restart bloodbank bloodbank-ws-relay
 
 Start: `HOOKD_AMQP_URL="amqp://..." hookd/target/release/hookd`
 
-> Open Question ❓
-> Do we still need this??
+**Boundary:** Settled in [ADR-0003](../docs/architecture/ADR-0003-hookd-boundary.md). hookd is a first-class producer on the bus; Bloodbank does not own or absorb it. The seam is the AMQP exchange contract (`bloodbank.events.v1` + `tool.mutation.*`), not a directory inside Bloodbank.
+
+> **Note on naming:** the Python package `bloodbank/hookd_bridge/` is **unrelated** to this Rust daemon despite the name-prefix overlap. `hookd_bridge/` is the OpenClaw HTTP-to-command shim; it publishes `command.*` envelopes for legacy callers. See `bloodbank/hookd_bridge/__init__.py`.
+
 ---
 
 ## Known Issues
