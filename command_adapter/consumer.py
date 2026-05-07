@@ -9,8 +9,6 @@ Lifecycle per command message:
   5. Dispatch to OpenClaw hooks
   6. On success: publish result, FSM: working → idle
   7. On failure: publish error, FSM: working → error
-
-See: docs/architecture/COMMAND-SYSTEM-RFC.md §5
 """
 
 from __future__ import annotations

@@ -6,6 +6,4 @@ FastStream consumer that:
 2. Runs FSM guards (TTL, idempotency, state)
 3. Dispatches to OpenClaw via hooks API
 4. Publishes ack/result/error lifecycle events
-
-See: docs/architecture/COMMAND-SYSTEM-RFC.md §5
 """

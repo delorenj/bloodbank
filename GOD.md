@@ -22,13 +22,16 @@ modified: 2026-04-12T08:04:30-04:00
 
 ## Status note
 
-This document describes the current deployed v2 implementation. The approved
-overhaul target lives in
-`docs/architecture/bloodbank-vnext.md`, and the runtime selection rationale
-lives in `docs/architecture/dapr-vs-faststream.md`.
+This document describes the current deployed v2 implementation. v3 direction
+and decisions live in the metarepo:
 
-Use the vNext docs for new architecture and migration work. Use this GOD
-document when you need to understand, operate, or retire the legacy stack.
+- [v3 implementation plan](../docs/architecture/v3-implementation-plan.md)
+- [ADR-0001: v3 platform pivot](../docs/architecture/ADR-0001-v3-platform-pivot.md)
+- [ADR-0002: Holyfields scope refactor](../docs/architecture/ADR-0002-holyfields-scope-refactor.md)
+- [ADR-0003: hookd boundary](../docs/architecture/ADR-0003-hookd-boundary.md)
+
+Use this GOD document when you need to understand, operate, or evolve the
+current stack.
 
 **Bloodbank's Role in the Event Flow:**
 

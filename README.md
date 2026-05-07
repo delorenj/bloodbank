@@ -15,13 +15,10 @@ completes.
 
 ## Architecture docs
 
-Start with the current architecture docs before making overhaul changes:
+Architecture and decision docs live in the metarepo:
 
-- [Architecture index](docs/architecture/README.md)
-- [Bloodbank vNext blueprint](docs/architecture/bloodbank-vnext.md)
-- [Dapr vs FastStream decision](docs/architecture/dapr-vs-faststream.md)
-- [Overhaul backlog](docs/architecture/overhaul-backlog.md)
-- [v3 implementation plan](v3-implementation-plan.md)
+- [v3 implementation plan](../docs/architecture/v3-implementation-plan.md) (local copy: [v3-implementation-plan.md](v3-implementation-plan.md))
+- [ADRs](../docs/architecture/) (ADR-0001 through ADR-0003)
 - [Current v2 component reference](GOD.md)
 
 ## Legacy v2 architecture

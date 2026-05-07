@@ -19,7 +19,5 @@ despite the name-prefix overlap. `hookd/` produces `tool.mutation.*` events
 from Claude Code hook captures; this bridge produces `command.*` envelopes
 from OpenClaw HTTP calls. The two components share no code, no events, and
 no dependency. Boundary recorded in
-docs/architecture/ADR-0003-hookd-boundary.md.
-
-See: docs/architecture/COMMAND-SYSTEM-RFC.md §6
+../docs/architecture/ADR-0003-hookd-boundary.md (relative to bloodbank/).
 """
