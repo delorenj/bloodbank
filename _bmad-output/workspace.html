@@ -50,7 +50,7 @@
   <script id="bmad-state" type="application/json">{
   "project": {
     "name": "Bloodbank",
-    "phase": "Clean architecture reset",
+    "phase": "Story slicing / autopilot ready",
     "health": "amber"
   },
   "summary": {
@@ -58,7 +58,7 @@
     "lastUpdated": "2026-05-09",
     "repo": "/home/delorenj/code/33GOD/bloodbank",
     "branch": "feat/bloodbank-html-workspace",
-    "sha": "c4c344d"
+    "sha": "8c4689d"
   },
   "metrics": [
     {
@@ -67,19 +67,19 @@
       "tone": "good"
     },
     {
-      "label": "Current repo posture",
-      "value": "cleanup in progress",
+      "label": "Story map",
+      "value": "15 stories",
+      "tone": "good"
+    },
+    {
+      "label": "Autopilot",
+      "value": "ready",
+      "tone": "good"
+    },
+    {
+      "label": "Next chunk",
+      "value": "clean reset",
       "tone": "warn"
-    },
-    {
-      "label": "Service directories",
-      "value": "3",
-      "tone": "good"
-    },
-    {
-      "label": "Dashboard mode",
-      "value": "single-file HTML",
-      "tone": "good"
     }
   ],
   "timeline": [
@@ -111,40 +111,28 @@
   ],
   "todos": [
     {
-      "title": "Replace the bad cleanup pass with a clean reset pass",
-      "owner": "Cack",
+      "title": "Run autopilot chunk BB-STORY-001 + BB-STORY-003",
+      "owner": "Otto/Cack",
       "priority": "critical",
-      "status": "in_progress"
+      "status": "next"
     },
     {
-      "title": "Flatten versioned paths/names into plain Bloodbank names",
-      "owner": "Cack",
-      "priority": "critical",
-      "status": "todo"
-    },
-    {
-      "title": "Remove obsolete transport dependencies and scripts",
-      "owner": "Cack",
-      "priority": "critical",
-      "status": "todo"
-    },
-    {
-      "title": "Normalize compose into parent orchestrator + component Dockerfiles",
+      "title": "Normalize compose and component Dockerfiles",
       "owner": "Cack",
       "priority": "high",
-      "status": "todo"
+      "status": "queued"
     },
     {
-      "title": "Generate BMAD story map from the cleaned architecture",
+      "title": "Add static cleanup gates",
       "owner": "Cack",
-      "priority": "high",
-      "status": "todo"
+      "priority": "critical",
+      "status": "queued"
     },
     {
-      "title": "Add smoke checks proving publish, subscribe, replay, and command flow",
+      "title": "Refresh cockpit from story status",
       "owner": "Cack",
-      "priority": "high",
-      "status": "todo"
+      "priority": "medium",
+      "status": "queued"
     }
   ],
   "sections": [
@@ -190,6 +178,16 @@
       "title": "BMAD HTML workspace",
       "path": "_bmad-output/workspace.html",
       "type": "cockpit"
+    },
+    {
+      "title": "Bloodbank story map",
+      "path": "_bmad-output/stories/bloodbank-story-map.md",
+      "type": "stories"
+    },
+    {
+      "title": "Autopilot story slicing ledger",
+      "path": "_bmad-output/autopilot/logs/20260509-bloodbank-story-slicing.md",
+      "type": "autopilot"
     }
   ],
   "decisions": [
@@ -245,7 +243,114 @@
       "priority",
       "notes"
     ]
-  }
+  },
+  "stories": [
+    {
+      "id": "BB-STORY-001",
+      "title": "Source tree identity reset",
+      "epic": "Clean Bloodbank Surface",
+      "status": "next",
+      "priority": "critical"
+    },
+    {
+      "id": "BB-STORY-002",
+      "title": "Documentation rewrite around the current platform",
+      "epic": "Clean Bloodbank Surface",
+      "status": "queued",
+      "priority": "high"
+    },
+    {
+      "id": "BB-STORY-003",
+      "title": "Remove obsolete transport surface",
+      "epic": "Clean Bloodbank Surface",
+      "status": "next",
+      "priority": "critical"
+    },
+    {
+      "id": "BB-STORY-004",
+      "title": "Parent compose orchestration",
+      "epic": "Componentized Runtime",
+      "status": "queued",
+      "priority": "high"
+    },
+    {
+      "id": "BB-STORY-005",
+      "title": "Component Dockerfile standard",
+      "epic": "Componentized Runtime",
+      "status": "queued",
+      "priority": "high"
+    },
+    {
+      "id": "BB-STORY-006",
+      "title": "Local platform bootstrap",
+      "epic": "Componentized Runtime",
+      "status": "queued",
+      "priority": "high"
+    },
+    {
+      "id": "BB-STORY-007",
+      "title": "Event contract publishing path",
+      "epic": "Contracts, Commands, and Replay",
+      "status": "queued",
+      "priority": "high"
+    },
+    {
+      "id": "BB-STORY-008",
+      "title": "Command/reply path",
+      "epic": "Contracts, Commands, and Replay",
+      "status": "queued",
+      "priority": "high"
+    },
+    {
+      "id": "BB-STORY-009",
+      "title": "Replay and trace surface",
+      "epic": "Contracts, Commands, and Replay",
+      "status": "queued",
+      "priority": "medium"
+    },
+    {
+      "id": "BB-STORY-010",
+      "title": "OpenClaw ingress adapter",
+      "epic": "Integrations and Observability",
+      "status": "queued",
+      "priority": "high"
+    },
+    {
+      "id": "BB-STORY-011",
+      "title": "Cadence/heartbeat components",
+      "epic": "Integrations and Observability",
+      "status": "queued",
+      "priority": "high"
+    },
+    {
+      "id": "BB-STORY-012",
+      "title": "Holocene/Candystore read path",
+      "epic": "Integrations and Observability",
+      "status": "queued",
+      "priority": "high"
+    },
+    {
+      "id": "BB-STORY-013",
+      "title": "Static cleanup gates",
+      "epic": "Verification and Cockpit Loop",
+      "status": "queued",
+      "priority": "critical"
+    },
+    {
+      "id": "BB-STORY-014",
+      "title": "End-to-end smoke suite",
+      "epic": "Verification and Cockpit Loop",
+      "status": "queued",
+      "priority": "high"
+    },
+    {
+      "id": "BB-STORY-015",
+      "title": "HTML cockpit refresh loop",
+      "epic": "Verification and Cockpit Loop",
+      "status": "queued",
+      "priority": "medium"
+    }
+  ]
 }</script>
   <main class="wrap">
     <header>
@@ -275,6 +380,7 @@
       <section class="card span-8"><h2>Plan timeline</h2><ul class="timeline" id="timeline"></ul></section>
       <section class="card span-4"><h2>Active TODO board</h2><ul class="todo" id="todos"></ul></section>
       <section class="card span-12"><h2>Current state</h2><div class="grid" id="sections"></div></section>
+      <section class="card span-12"><h2>Story backlog</h2><ul class="todo" id="stories"></ul></section>
       <section class="card span-6"><h2>Decision log</h2><ul id="decisions"></ul></section>
       <section class="card span-6"><h2>Risks + guardrails</h2><ul id="risks"></ul></section>
       <section class="card span-6"><h2>Docs/artifacts index</h2><ul id="docs"></ul></section>
@@ -289,6 +395,7 @@
     el('timeline').innerHTML = state.timeline.map(t => `<li><div class="status">${t.status}</div><div><h3>${t.label}</h3><p>${t.detail}</p></div></li>`).join('');
     el('todos').innerHTML = state.todos.map(t => `<li><div><h3>${t.title}</h3><p>${t.owner} · ${t.status}</p></div><strong class="priority-${t.priority}">${t.priority}</strong></li>`).join('');
     el('sections').innerHTML = state.sections.map(s => `<article class="card span-3"><h3>${s.title}</h3><p>${s.body}</p></article>`).join('');
+    if (state.stories) el('stories').innerHTML = state.stories.map(st => `<li><div><h3>${st.id} — ${st.title}</h3><p>${st.epic} · ${st.status}</p></div><strong class="priority-${st.priority}">${st.priority}</strong></li>`).join('');
     el('decisions').innerHTML = state.decisions.map(d => `<li><h3>${d.date} — ${d.title}</h3><p>${d.rationale}</p></li>`).join('');
     el('risks').innerHTML = state.risks.map(r => `<li><h3>${r.title}</h3><p>${r.mitigation}</p></li>`).join('');
     el('docs').innerHTML = state.docs.map(d => `<li><span class="pill">${d.type}</span> <strong>${d.title}</strong><p><code>${d.path}</code></p></li>`).join('');
