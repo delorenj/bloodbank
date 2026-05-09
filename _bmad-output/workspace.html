@@ -50,30 +50,31 @@
   <script id="bmad-state" type="application/json">{
   "project": {
     "name": "Bloodbank",
-    "phase": "Story slicing / autopilot ready",
+    "phase": "Story slicing / rendered cockpit",
     "health": "amber"
   },
   "summary": {
-    "northStar": "A clean, schema-first event and command platform for 33GOD: contracts in Holyfields, transport through the new bus, history in Candystore, observability in Holocene.",
+    "northStar": "Rendered human cockpit for Bloodbank BMAD artifacts. Source of truth remains Markdown workflows, story maps, ledgers, source docs, and code.",
     "lastUpdated": "2026-05-09",
     "repo": "/home/delorenj/code/33GOD/bloodbank",
     "branch": "feat/bloodbank-html-workspace",
-    "sha": "8c4689d"
+    "sha": "8c4689d",
+    "sourceOfTruth": "BMAD Markdown/workflow/log artifacts; this HTML is generated for reading only."
   },
   "metrics": [
     {
-      "label": "Core package",
-      "value": "bloodbank 0.2.0",
+      "label": "Source of truth",
+      "value": "BMAD artifacts",
+      "tone": "good"
+    },
+    {
+      "label": "Cockpit role",
+      "value": "rendered view",
       "tone": "good"
     },
     {
       "label": "Story map",
       "value": "15 stories",
-      "tone": "good"
-    },
-    {
-      "label": "Autopilot",
-      "value": "ready",
       "tone": "good"
     },
     {
@@ -137,6 +138,10 @@
   ],
   "sections": [
     {
+      "title": "Source-of-truth rule",
+      "body": "Edit BMAD Markdown/workflow artifacts first. Regenerate this HTML cockpit second. The embedded JSON is render payload, not planning authority."
+    },
+    {
       "title": "What Bloodbank is now",
       "body": "The event spine of 33GOD: a contract-first bus for facts, commands, replies, replay, and agent/service coordination."
     },
@@ -154,6 +159,11 @@
     }
   ],
   "docs": [
+    {
+      "title": "BMAD output policy",
+      "path": "_bmad-output/README.md",
+      "type": "policy"
+    },
     {
       "title": "Top-level repo README",
       "path": "README.md",
@@ -191,6 +201,11 @@
     }
   ],
   "decisions": [
+    {
+      "date": "2026-05-09",
+      "title": "Cockpit is rendered view, not source of truth",
+      "rationale": "Preserve BMAD\u2019s workflow ecosystem while giving humans a single readable page."
+    },
     {
       "date": "2026-05-09",
       "title": "HTML cockpit for repo state",
@@ -357,12 +372,12 @@
       <section class="hero">
         <div class="pill warn">health: <strong>amber</strong></div>
         <h1>Bloodbank Cockpit</h1>
-        <p class="note">A clean, schema-first event and command platform for 33GOD: contracts in Holyfields, transport through the new bus, history in Candystore, observability in Holocene.</p>
+        <p class="note">Rendered human cockpit for Bloodbank BMAD artifacts. Source of truth remains Markdown workflows, story maps, ledgers, source docs, and code.</p>
         <div class="tagrow">
           <span class="pill good">BMAD HTML workspace</span>
           <span class="pill">clean reset</span>
           <span class="pill">componentized runtime</span>
-          <span class="pill">single-file artifact</span>
+          <span class="pill">rendered view</span>
         </div>
       </section>
       <aside class="card meta">
