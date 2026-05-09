@@ -1,44 +1,46 @@
 # Bloodbank — Agent Guide
 
-Central event bus and infrastructure for the 33GOD ecosystem.
+Bloodbank is the event and command backbone for the 33GOD ecosystem.
 
 ## Tech Stack
 
 - **Language:** Python 3.12
-- **Framework:** FastAPI + Uvicorn
-- **Messaging:** RabbitMQ via aio-pika
-- **Config:** Pydantic Settings (BaseSettings)
+- **API:** FastAPI + Uvicorn
+- **Event/command bus:** Dapr pub/sub over NATS JetStream
+- **Config:** Pydantic Settings
 - **Package Manager:** uv
-- **Deployment:** Docker (multi-stage), docker-compose
+- **Runtime orchestration:** Docker Compose
 
 ## Commands (mise)
 
 | Task | Command |
 |------|---------|
-| Build | `mise run build` (uv sync + Docker image) |
+| Build | `mise run build` |
 | Build WS Relay | `mise run build:relay` |
-| Deploy | `mise run deploy` (build + restart containers) |
-| Test | `mise run test` (pytest) |
-| Lint | `mise run lint` (ruff) |
+| Deploy | `mise run deploy` |
+| Test | `mise run test` |
+| Lint | `mise run lint` |
 | Logs | `mise run logs` |
-| Health Check | `mise run health` (API + RabbitMQ queues) |
+| Health Check | `mise run health` |
 
 ## Key Files
 
-- `event_producers/` — Event publishing logic
-- `heartbeat/` — Health monitoring
-- `rabbit.py` — Core publisher/subscriber abstractions
-- `Dockerfile` — Multi-stage production build
+- `event_producers/` — publishing and command/reply flows
+- `services/` — service components
+- `compose/` — local topology
+- `ops/` — bootstrap/smoke/runtime helpers
+- `_bmad-output/stories/` — canonical story map and planning artifacts
+- `_bmad-output/autopilot/logs/` — canonical execution logs
 
 ## Conventions
 
-- Async-first for all I/O operations
-- Events follow `{domain}.{entity}.{action}` naming pattern
-- All services connect via `BLOODBANK_URL` environment variable
-- Durable queues with dead-letter handling
+- Async-first I/O
+- Contract-first payloads and envelopes
+- Explicit correlation/causation metadata
+- Replay safety over convenience
 
-## Anti-Patterns
+## Guardrails
 
-- Never bypass the event bus for direct service-to-service calls
-- Never hold database sessions during async operations
-- Never use synchronous I/O in event handlers
+- Do not treat `_bmad-output/workspace.html` as source of truth
+- Update markdown/workflow artifacts first, then regenerate dashboard
+- Keep docs/code aligned with one current Bloodbank identity

@@ -107,7 +107,7 @@
     {
       "label": "BMAD flow continuation",
       "status": "next",
-      "detail": "Turn this cockpit into the planning surface for stories, acceptance checks, and verification."
+      "detail": "Advance canonical markdown/workflow artifacts; refresh this cockpit as a rendered read-only view."
     }
   ],
   "todos": [
@@ -115,7 +115,7 @@
       "title": "Run autopilot chunk BB-STORY-001 + BB-STORY-003",
       "owner": "Otto/Cack",
       "priority": "critical",
-      "status": "next"
+      "status": "active"
     },
     {
       "title": "Normalize compose and component Dockerfiles",
@@ -198,6 +198,11 @@
       "title": "Autopilot story slicing ledger",
       "path": "_bmad-output/autopilot/logs/20260509-bloodbank-story-slicing.md",
       "type": "autopilot"
+    },
+    {
+      "title": "Autopilot clean reset pass 1",
+      "path": "_bmad-output/autopilot/logs/20260509-bloodbank-clean-reset-pass1.md",
+      "type": "autopilot"
     }
   ],
   "decisions": [
@@ -264,7 +269,7 @@
       "id": "BB-STORY-001",
       "title": "Source tree identity reset",
       "epic": "Clean Bloodbank Surface",
-      "status": "next",
+      "status": "active",
       "priority": "critical"
     },
     {
@@ -278,7 +283,7 @@
       "id": "BB-STORY-003",
       "title": "Remove obsolete transport surface",
       "epic": "Clean Bloodbank Surface",
-      "status": "next",
+      "status": "active",
       "priority": "critical"
     },
     {
@@ -375,6 +380,7 @@
         <p class="note">Rendered human cockpit for Bloodbank BMAD artifacts. Source of truth remains Markdown workflows, story maps, ledgers, source docs, and code.</p>
         <div class="tagrow">
           <span class="pill good">BMAD HTML workspace</span>
+          <span class="pill warn">generated / read-only</span>
           <span class="pill">clean reset</span>
           <span class="pill">componentized runtime</span>
           <span class="pill">rendered view</span>
@@ -387,7 +393,7 @@
           <code>/home/delorenj/code/33GOD/bloodbank</code>
           <code>feat/bloodbank-html-workspace @ c4c344d</code>
         </div>
-        <p>Purpose: one place to see what Bloodbank is, what is active, what is next, and where BMAD should drive the work.</p>
+        <p>Purpose: human-facing snapshot only. Canonical planning lives in markdown/workflow artifacts and source code.</p>
       </aside>
     </header>
     <section class="card span-12" style="margin-bottom:16px"><h2>Fast read</h2><div class="metrics" id="metrics"></div></section>

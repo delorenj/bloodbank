@@ -174,3 +174,10 @@ Make Bloodbank read and behave as one current platform: clean source tree, clean
 ## Next autopilot chunk
 
 Start with **BB-STORY-001 + BB-STORY-003** as one clean reset chunk. Stop only if deletion would remove a file whose current replacement is unclear.
+
+## Execution notes
+
+- 2026-05-09: Clean reset pass 1 executed on branch `feat/bloodbank-clean-reset-pass1`.
+- Completed: identity-language reset in `README.md` and `AGENTS.md`; cockpit policy/labels aligned to rendered-view-only rule.
+- Deferred (replacement unclear): `consumer_template/`, `event_producers/rabbit.py` lineage, `adapters/v3/`, `cli/v3/`, and `compose/v3/` naming sweep.
+- Ledger: `_bmad-output/autopilot/logs/20260509-bloodbank-clean-reset-pass1.md`.
