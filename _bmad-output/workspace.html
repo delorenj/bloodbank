@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bloodbank Cockpit</title>
+  <style>
+    :root {
+      --bg:#080b12; --panel:#111827; --panel2:#162033; --text:#eef3ff; --muted:#9fb0cc;
+      --line:#2a3754; --accent:#e11d48; --accent2:#38bdf8; --good:#34d399; --warn:#fbbf24; --bad:#fb7185;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; background: radial-gradient(circle at 15% 0%, #3a0d1f 0, transparent 34rem), radial-gradient(circle at 85% 10%, #0f3b55 0, transparent 30rem), var(--bg); color:var(--text); }
+    .wrap { max-width: 1240px; margin: 0 auto; padding: 28px; }
+    header { display:grid; grid-template-columns: 1.4fr .6fr; gap:18px; align-items:stretch; margin-bottom:18px; }
+    .hero, .card { background: linear-gradient(180deg, rgba(17,24,39,.94), rgba(11,16,28,.94)); border:1px solid var(--line); border-radius:22px; box-shadow: 0 24px 80px rgba(0,0,0,.3); }
+    .hero { padding:28px; position:relative; overflow:hidden; }
+    .hero:after { content:""; position:absolute; inset:auto -80px -120px auto; width:300px; height:300px; background: radial-gradient(circle, rgba(225,29,72,.26), transparent 65%); }
+    h1 { font-size: clamp(38px, 7vw, 86px); line-height:.88; letter-spacing:-.07em; margin:0 0 18px; }
+    h2 { margin:0 0 12px; font-size: 18px; letter-spacing:-.02em; }
+    h3 { margin:0 0 6px; font-size: 15px; }
+    p { color:var(--muted); line-height:1.55; margin:0 0 10px; }
+    .tagrow { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:7px 10px; background:rgba(255,255,255,.045); color:#dbe7ff; font-size:13px; }
+    .pill.good { border-color: rgba(52,211,153,.45); color:#b7f7dc; } .pill.warn { border-color: rgba(251,191,36,.5); color:#fde7a0; } .pill.bad { border-color: rgba(251,113,133,.5); color:#fecdd3; }
+    .meta { padding:22px; display:flex; flex-direction:column; justify-content:space-between; gap:14px; }
+    .meta code { display:block; color:#d9e4ff; background:#0a1020; border:1px solid var(--line); border-radius:12px; padding:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .grid { display:grid; gap:16px; grid-template-columns: repeat(12, 1fr); }
+    .card { padding:20px; } .span-12{grid-column:span 12} .span-8{grid-column:span 8} .span-6{grid-column:span 6} .span-4{grid-column:span 4} .span-3{grid-column:span 3}
+    .metrics { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; }
+    .metric { background:var(--panel2); border:1px solid var(--line); border-radius:16px; padding:14px; }
+    .metric .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; } .metric .value { font-size:20px; font-weight:800; margin-top:5px; }
+    ul { list-style:none; padding:0; margin:0; display:grid; gap:10px; }
+    li { border:1px solid var(--line); background:rgba(255,255,255,.035); border-radius:14px; padding:12px; }
+    .timeline li { display:grid; grid-template-columns: 110px 1fr; gap:12px; }
+    .status { font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.08em; color:var(--accent2); }
+    .todo li { display:grid; grid-template-columns: 1fr auto; gap:12px; align-items:start; }
+    .priority-critical { color:#fecdd3; } .priority-high { color:#fde68a; }
+    a { color:#7dd3fc; text-decoration:none; }
+    pre { margin:0 0 12px; white-space:pre-wrap; color:#c7d2fe; background:#080d19; border:1px solid var(--line); border-radius:14px; padding:14px; }
+    .note { border-left:4px solid var(--accent); padding-left:14px; color:#f3d7df; }
+    textarea, select, button { width:100%; border-radius:12px; border:1px solid var(--line); background:#0a1020; color:var(--text); padding:10px; margin-top:8px; }
+    button { background:linear-gradient(90deg, var(--accent), #7c3aed); border:none; font-weight:800; cursor:not-allowed; opacity:.8; }
+    @media (max-width: 860px) { header { grid-template-columns:1fr; } .span-8,.span-6,.span-4,.span-3 { grid-column:span 12; } .metrics { grid-template-columns:1fr 1fr; } .timeline li,.todo li { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <script id="bmad-state" type="application/json">{
+  "project": {
+    "name": "Bloodbank",
+    "phase": "Clean architecture reset",
+    "health": "amber"
+  },
+  "summary": {
+    "northStar": "A clean, schema-first event and command platform for 33GOD: contracts in Holyfields, transport through the new bus, history in Candystore, observability in Holocene.",
+    "lastUpdated": "2026-05-09",
+    "repo": "/home/delorenj/code/33GOD/bloodbank",
+    "branch": "feat/bloodbank-html-workspace",
+    "sha": "c4c344d"
+  },
+  "metrics": [
+    {
+      "label": "Core package",
+      "value": "bloodbank 0.2.0",
+      "tone": "good"
+    },
+    {
+      "label": "Current repo posture",
+      "value": "cleanup in progress",
+      "tone": "warn"
+    },
+    {
+      "label": "Service directories",
+      "value": "3",
+      "tone": "good"
+    },
+    {
+      "label": "Dashboard mode",
+      "value": "single-file HTML",
+      "tone": "good"
+    }
+  ],
+  "timeline": [
+    {
+      "label": "Prune bulky repo surface",
+      "status": "done",
+      "detail": "33GOD has been trimmed; Bloodbank can now be made crisp instead of dragged through old artifacts."
+    },
+    {
+      "label": "Clean Bloodbank identity",
+      "status": "active",
+      "detail": "Make the repo read as one current Bloodbank implementation, not a pile of eras."
+    },
+    {
+      "label": "Remove obsolete broker surfaces",
+      "status": "active",
+      "detail": "Delete or replace old transport code, docs, scripts, helper workflows, and dependency hooks."
+    },
+    {
+      "label": "Component Dockerfiles + parent compose",
+      "status": "next",
+      "detail": "Each component owns its Dockerfile; parent compose orchestrates builds and shared infrastructure."
+    },
+    {
+      "label": "BMAD flow continuation",
+      "status": "next",
+      "detail": "Turn this cockpit into the planning surface for stories, acceptance checks, and verification."
+    }
+  ],
+  "todos": [
+    {
+      "title": "Replace the bad cleanup pass with a clean reset pass",
+      "owner": "Cack",
+      "priority": "critical",
+      "status": "in_progress"
+    },
+    {
+      "title": "Flatten versioned paths/names into plain Bloodbank names",
+      "owner": "Cack",
+      "priority": "critical",
+      "status": "todo"
+    },
+    {
+      "title": "Remove obsolete transport dependencies and scripts",
+      "owner": "Cack",
+      "priority": "critical",
+      "status": "todo"
+    },
+    {
+      "title": "Normalize compose into parent orchestrator + component Dockerfiles",
+      "owner": "Cack",
+      "priority": "high",
+      "status": "todo"
+    },
+    {
+      "title": "Generate BMAD story map from the cleaned architecture",
+      "owner": "Cack",
+      "priority": "high",
+      "status": "todo"
+    },
+    {
+      "title": "Add smoke checks proving publish, subscribe, replay, and command flow",
+      "owner": "Cack",
+      "priority": "high",
+      "status": "todo"
+    }
+  ],
+  "sections": [
+    {
+      "title": "What Bloodbank is now",
+      "body": "The event spine of 33GOD: a contract-first bus for facts, commands, replies, replay, and agent/service coordination."
+    },
+    {
+      "title": "What we are fixing now",
+      "body": "The repository still carries old shapes. The current work is to make the source tree, docs, compose files, scripts, and dependencies all present one clean Bloodbank."
+    },
+    {
+      "title": "What comes next",
+      "body": "Once the repo is clean, the BMAD flow should produce a component map, story slices, acceptance criteria, and verification gates for each part of the platform."
+    },
+    {
+      "title": "What this unlocks",
+      "body": "Reliable agent workflows, replayable event history, schema-governed integrations, easier local dev, and a platform surface that new agents can understand without archaeology."
+    }
+  ],
+  "docs": [
+    {
+      "title": "Top-level repo README",
+      "path": "README.md",
+      "type": "source"
+    },
+    {
+      "title": "Compose scaffold",
+      "path": "compose/*/docker-compose.yml",
+      "type": "runtime"
+    },
+    {
+      "title": "Dapr/NATS component manifests",
+      "path": "compose/*/components/*.yaml",
+      "type": "runtime"
+    },
+    {
+      "title": "Service Dockerfiles",
+      "path": "services/*/Dockerfile",
+      "type": "build"
+    },
+    {
+      "title": "BMAD HTML workspace",
+      "path": "_bmad-output/workspace.html",
+      "type": "cockpit"
+    }
+  ],
+  "decisions": [
+    {
+      "date": "2026-05-09",
+      "title": "HTML cockpit for repo state",
+      "rationale": "Jarad wants one visual surface instead of scattered Markdown fragments."
+    },
+    {
+      "date": "2026-05-09",
+      "title": "Clean reset language",
+      "rationale": "The repo should read as current Bloodbank. No museum labels, no apology banners, no fossil exhibit."
+    },
+    {
+      "date": "2026-05-09",
+      "title": "Component-owned build files",
+      "rationale": "A parent compose should orchestrate components; components should own their Dockerfiles and build context."
+    }
+  ],
+  "risks": [
+    {
+      "title": "Source tree drift",
+      "mitigation": "Run repeated search gates after cleanup and fail the pass if old terms remain in user-facing files."
+    },
+    {
+      "title": "Dependency drag",
+      "mitigation": "Remove unused packages only after import/test scan confirms no current component needs them."
+    },
+    {
+      "title": "Half-clean docs",
+      "mitigation": "Prefer deletion/rewrite over cleanup notes; docs must describe the desired system only."
+    },
+    {
+      "title": "Compose naming mismatch",
+      "mitigation": "Rename coherently with scripts, components, env vars, and smoke tests in the same pass."
+    }
+  ],
+  "diffs": [
+    {
+      "title": "Current working direction",
+      "before": "Scattered markdown + old-era terminology + mixed runtime assumptions",
+      "after": "Single Bloodbank cockpit + clean component topology + BMAD story flow"
+    },
+    {
+      "title": "Build topology direction",
+      "before": "Repo-level ambiguity about which service owns which build",
+      "after": "services/<component>/Dockerfile + parent compose orchestrator"
+    }
+  ],
+  "feedback": {
+    "prompt": "Use this page to pick the next BMAD move: clean reset, component map, story slicing, or verification gates.",
+    "fields": [
+      "priority",
+      "notes"
+    ]
+  }
+}</script>
+  <main class="wrap">
+    <header>
+      <section class="hero">
+        <div class="pill warn">health: <strong>amber</strong></div>
+        <h1>Bloodbank Cockpit</h1>
+        <p class="note">A clean, schema-first event and command platform for 33GOD: contracts in Holyfields, transport through the new bus, history in Candystore, observability in Holocene.</p>
+        <div class="tagrow">
+          <span class="pill good">BMAD HTML workspace</span>
+          <span class="pill">clean reset</span>
+          <span class="pill">componentized runtime</span>
+          <span class="pill">single-file artifact</span>
+        </div>
+      </section>
+      <aside class="card meta">
+        <div>
+          <h2>Repo snapshot</h2>
+          <p>Updated 2026-05-09</p>
+          <code>/home/delorenj/code/33GOD/bloodbank</code>
+          <code>feat/bloodbank-html-workspace @ c4c344d</code>
+        </div>
+        <p>Purpose: one place to see what Bloodbank is, what is active, what is next, and where BMAD should drive the work.</p>
+      </aside>
+    </header>
+    <section class="card span-12" style="margin-bottom:16px"><h2>Fast read</h2><div class="metrics" id="metrics"></div></section>
+    <div class="grid">
+      <section class="card span-8"><h2>Plan timeline</h2><ul class="timeline" id="timeline"></ul></section>
+      <section class="card span-4"><h2>Active TODO board</h2><ul class="todo" id="todos"></ul></section>
+      <section class="card span-12"><h2>Current state</h2><div class="grid" id="sections"></div></section>
+      <section class="card span-6"><h2>Decision log</h2><ul id="decisions"></ul></section>
+      <section class="card span-6"><h2>Risks + guardrails</h2><ul id="risks"></ul></section>
+      <section class="card span-6"><h2>Docs/artifacts index</h2><ul id="docs"></ul></section>
+      <section class="card span-6"><h2>Direction snapshot</h2><div id="diffs"></div></section>
+      <section class="card span-12"><h2>Feedback / next BMAD move</h2><p id="feedbackPrompt"></p><select><option>Clean reset pass</option><option>Component map</option><option>Story slicing</option><option>Verification gates</option></select><textarea rows="4" placeholder="Notes for the next pass..."></textarea><button>Static placeholder — wire later</button></section>
+    </div>
+  </main>
+  <script>
+    const state = JSON.parse(document.getElementById('bmad-state').textContent);
+    const el = id => document.getElementById(id);
+    el('metrics').innerHTML = state.metrics.map(m => `<div class="metric"><div class="label">${m.label}</div><div class="value">${m.value}</div></div>`).join('');
+    el('timeline').innerHTML = state.timeline.map(t => `<li><div class="status">${t.status}</div><div><h3>${t.label}</h3><p>${t.detail}</p></div></li>`).join('');
+    el('todos').innerHTML = state.todos.map(t => `<li><div><h3>${t.title}</h3><p>${t.owner} · ${t.status}</p></div><strong class="priority-${t.priority}">${t.priority}</strong></li>`).join('');
+    el('sections').innerHTML = state.sections.map(s => `<article class="card span-3"><h3>${s.title}</h3><p>${s.body}</p></article>`).join('');
+    el('decisions').innerHTML = state.decisions.map(d => `<li><h3>${d.date} — ${d.title}</h3><p>${d.rationale}</p></li>`).join('');
+    el('risks').innerHTML = state.risks.map(r => `<li><h3>${r.title}</h3><p>${r.mitigation}</p></li>`).join('');
+    el('docs').innerHTML = state.docs.map(d => `<li><span class="pill">${d.type}</span> <strong>${d.title}</strong><p><code>${d.path}</code></p></li>`).join('');
+    el('diffs').innerHTML = state.diffs.map(d => `<h3>${d.title}</h3><pre>- ${d.before}
++ ${d.after}</pre>`).join('');
+    el('feedbackPrompt').textContent = state.feedback.prompt;
+  </script>
+</body>
+</html>
