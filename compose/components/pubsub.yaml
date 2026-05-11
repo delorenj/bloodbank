@@ -1,0 +1,75 @@
+# Bloodbank Dapr pub/sub component
+#
+# Name is locked to `bloodbank-pubsub` by ADR-0001. Do not rename.
+#
+# This component fronts NATS JetStream for immutable CloudEvents traffic.
+# Commands and replies are NOT routed through this component; they use a
+# future command bus abstraction (see ../nats/README.md for subject scope).
+#
+# Topic-to-subject mapping:
+#   The Dapr pubsub.jetstream component publishes the Dapr topic name
+#   directly as the NATS subject. That is: a service that calls
+#   `dapr publish --topic event.artifact.created` lands the message on
+#   NATS subject `event.artifact.created`, which is captured by the
+#   BLOODBANK_EVENTS stream's `event.>` subject binding.
+#
+#   Therefore the `event.` prefix is a SERVICE-LEVEL naming discipline:
+#   service teams must name their Dapr topics with the `event.` prefix
+#   so their publishes land in the correct stream. The Holyfields-generated
+#   SDK enforces this when it constructs topic names from CloudEvents
+#   `type` fields, so services never hand-write the topic.
+#
+# Metadata keys below are verified against the Dapr pubsub.jetstream
+# component reference (dapr/docs; 2026-04-22).
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: bloodbank-pubsub
+spec:
+  type: pubsub.jetstream
+  version: v1
+  metadata:
+    - name: natsURL
+      value: "nats://nats:4222"
+    - name: name
+      value: "bloodbank-pubsub"
+    # NOTE: durableName is intentionally UNSET. With multiple Dapr
+    # sidecars (daprd-subscribe, daprd-heartbeat, future services) all
+    # loading this same component manifest, a fixed durableName causes
+    # the second sidecar's subscribe binding to fail with
+    #   "nats: subject does not match consumer"
+    # because JetStream's durable consumer is tied to a single filter
+    # subject, and different sidecars subscribe to different topics.
+    # Leaving durableName empty makes each sidecar create its own
+    # ephemeral consumer. Production services that need durable
+    # cross-restart offsets should supply their own per-service
+    # component manifest with an app-id-suffixed durableName.
+    # Queue group scopes competing consumers; replicas of the same service
+    # share this group and each message goes to exactly one replica.
+    - name: queueGroupName
+      value: "bloodbank"
+    # Bind the pub/sub component to the events stream. The stream itself
+    # is configured to listen on `event.>` subjects (see ../nats/streams.json).
+    - name: streamName
+      value: "BLOODBANK_EVENTS"
+    # Delivery policy: `all` = replay from the earliest available message
+    # when a new consumer starts. Correct for smoke-test and scaffold use
+    # where a subscriber started after a publish must still receive it.
+    # Production services that want "from now on" can override to `new`
+    # in their own component manifest.
+    - name: deliverPolicy
+      value: "all"
+    # Ack timeout; consumers must ack within this window or NATS redelivers.
+    - name: ackWait
+      value: "30s"
+    # Placeholder-safe secret references. Unset in the local sandbox.
+    - name: token
+      secretKeyRef:
+        name: nats-token
+        key: nats-token
+    - name: seedKey
+      secretKeyRef:
+        name: nats-seed-key
+        key: nats-seed-key
+auth:
+  secretStore: bloodbank-secretstore

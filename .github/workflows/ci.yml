@@ -1,4 +1,4 @@
-# Bloodbank CI — v3 scaffold quality gate
+# Bloodbank CI — scaffold quality gate
 #
 # Implements the CI gate contract defined in the metarepo test plan:
 #   docs/testing/test-plan.md (33GOD metarepo)
@@ -49,25 +49,25 @@ jobs:
           # project requirements until we actually need them.
           pip install pyyaml
 
-      - name: Compile cli/v3
+      - name: Compile cli
         # Fails if the operator CLI has a syntax error.
-        run: python -m compileall cli/v3
+        run: python -m compileall cli
 
       - name: Platform bootstrap check
         # Pure file-presence validator; no Docker, no network.
-        run: bash ops/v3/bootstrap/check-platform.sh
+        run: bash ops/bootstrap/check-platform.sh
 
-      - name: bb_v3 doctor
+      - name: bb doctor
         # Manifest-driven scaffold check. Should match bootstrap exactly.
-        run: python3 cli/v3/bb_v3.py doctor
+        run: python3 cli/bb.py doctor
 
       - name: Validate Dapr component YAML
         run: |
           python -c "import yaml, sys
           for f in [
-            'compose/v3/components/pubsub.yaml',
-            'compose/v3/components/statestore.yaml',
-            'compose/v3/components/secretstore.yaml',
+            'compose/components/pubsub.yaml',
+            'compose/components/statestore.yaml',
+            'compose/components/secretstore.yaml',
           ]:
             yaml.safe_load(open(f))
             print(f'OK  {f}')"
@@ -75,16 +75,16 @@ jobs:
       - name: Validate NATS streams.json
         run: |
           python -c "import json
-          d = json.load(open('compose/v3/nats/streams.json'))
+          d = json.load(open('compose/nats/streams.json'))
           assert 'streams' in d
           names = {s['name'] for s in d['streams']}
-          assert 'BLOODBANK_V3_EVENTS' in names
-          assert 'BLOODBANK_V3_COMMANDS' in names
+          assert 'BLOODBANK_EVENTS' in names
+          assert 'BLOODBANK_COMMANDS' in names
           print(f'OK  {sorted(names)}')"
 
       - name: Validate docker compose config parses
         # Uses the builtin docker compose; no services started.
-        run: docker compose --project-name bloodbank-v3 -f compose/v3/docker-compose.yml config > /dev/null
+        run: docker compose --project-name bloodbank -f compose/docker-compose.yml config > /dev/null
 
       - name: Lint shell scripts
         # shellcheck catches most of the classes of bug we've already hit live
@@ -93,12 +93,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
           shellcheck -S warning \
-            ops/v3/bootstrap/check-platform.sh \
-            compose/v3/nats/init.sh \
-            ops/v3/smoketest/smoketest.sh \
-            ops/v3/smoketest/smoketest-dapr.sh \
-            ops/v3/smoketest/smoketest-dapr-subscribe.sh \
-            ops/v3/smoketest/smoketest-command.sh || true
+            ops/bootstrap/check-platform.sh \
+            compose/nats/init.sh \
+            ops/smoketest/smoketest.sh \
+            ops/smoketest/smoketest-dapr.sh \
+            ops/smoketest/smoketest-dapr-subscribe.sh \
+            ops/smoketest/smoketest-command.sh || true
           # `|| true` for now — shellcheck findings surface but don't block
           # until we decide which warnings to treat as blockers. Revisit
           # after first real review pass.
@@ -140,9 +140,9 @@ jobs:
         # from local Dockerfiles; build them eagerly so the smoke tests
         # aren't waiting on the build.
         run: |
-          docker compose --project-name bloodbank-v3 \
+          docker compose --project-name bloodbank \
             --profile heartbeat --profile claude-events \
-            -f compose/v3/docker-compose.yml \
+            -f compose/docker-compose.yml \
             build heartbeat-recorder heartbeat-tick claude-events-recorder
 
       # -----------------------------------------------------------------------
@@ -150,46 +150,46 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Boot NATS sandbox
         run: |
-          docker compose --project-name bloodbank-v3 \
-            -f compose/v3/docker-compose.yml \
+          docker compose --project-name bloodbank \
+            -f compose/docker-compose.yml \
             up -d nats nats-init
 
       - name: Wait for nats-init to finish
         run: |
           # nats-init is oneshot; wait up to 60s for it to exit successfully.
           for i in $(seq 1 30); do
-            state=$(docker inspect --format '{{.State.Status}}' bloodbank-v3-nats-init 2>/dev/null || echo "missing")
+            state=$(docker inspect --format '{{.State.Status}}' bloodbank-nats-init 2>/dev/null || echo "missing")
             if [ "$state" = "exited" ]; then
-              code=$(docker inspect --format '{{.State.ExitCode}}' bloodbank-v3-nats-init)
+              code=$(docker inspect --format '{{.State.ExitCode}}' bloodbank-nats-init)
               if [ "$code" = "0" ]; then
                 echo "nats-init exited 0"
                 exit 0
               else
                 echo "nats-init exited $code"
-                docker logs bloodbank-v3-nats-init
+                docker logs bloodbank-nats-init
                 exit 1
               fi
             fi
             sleep 2
           done
           echo "nats-init did not finish in time"
-          docker logs bloodbank-v3-nats-init
+          docker logs bloodbank-nats-init
           exit 1
 
       - name: Run smoketest.sh (NATS direct event)
-        run: bash ops/v3/smoketest/smoketest.sh
+        run: bash ops/smoketest/smoketest.sh
 
       - name: Run smoketest-command.sh (NATS direct command + reply)
-        run: bash ops/v3/smoketest/smoketest-command.sh
+        run: bash ops/smoketest/smoketest-command.sh
 
       # -----------------------------------------------------------------------
       # Layer 2: Dapr publish test
       # -----------------------------------------------------------------------
       - name: Boot daprd-smoketest
         run: |
-          docker compose --project-name bloodbank-v3 \
+          docker compose --project-name bloodbank \
             --profile dapr-smoketest \
-            -f compose/v3/docker-compose.yml \
+            -f compose/docker-compose.yml \
             up -d dapr-placement daprd-smoketest
 
       - name: Wait for daprd-smoketest healthy
@@ -207,20 +207,20 @@ jobs:
             sleep 2
           done
           echo "daprd-smoketest never responded 204 on /v1.0/healthz"
-          docker logs bloodbank-v3-daprd-smoketest | tail -80
+          docker logs bloodbank-daprd-smoketest | tail -80
           exit 1
 
       - name: Run smoketest-dapr.sh (Dapr publish)
-        run: bash ops/v3/smoketest/smoketest-dapr.sh
+        run: bash ops/smoketest/smoketest-dapr.sh
 
       # -----------------------------------------------------------------------
       # Layer 3: Dapr subscribe test
       # -----------------------------------------------------------------------
       - name: Boot echo-sub + daprd-subscribe
         run: |
-          docker compose --project-name bloodbank-v3 \
+          docker compose --project-name bloodbank \
             --profile dapr-subscribe \
-            -f compose/v3/docker-compose.yml \
+            -f compose/docker-compose.yml \
             up -d echo-sub daprd-subscribe
 
       - name: Wait for daprd-subscribe healthy
@@ -236,20 +236,20 @@ jobs:
             sleep 2
           done
           echo "daprd-subscribe never responded 204 on /v1.0/healthz"
-          docker logs bloodbank-v3-daprd-subscribe | tail -80
+          docker logs bloodbank-daprd-subscribe | tail -80
           exit 1
 
       - name: Run smoketest-dapr-subscribe.sh (Dapr publish → subscribe)
-        run: bash ops/v3/smoketest/smoketest-dapr-subscribe.sh
+        run: bash ops/smoketest/smoketest-dapr-subscribe.sh
 
       # -----------------------------------------------------------------------
-      # Layer 4: heartbeat — first real-world v3 event end-to-end
+      # Layer 4: heartbeat — first real-world event end-to-end
       # -----------------------------------------------------------------------
       - name: Boot heartbeat profile (recorder + daprd-heartbeat + tick)
         run: |
-          docker compose --project-name bloodbank-v3 \
+          docker compose --project-name bloodbank \
             --profile heartbeat \
-            -f compose/v3/docker-compose.yml \
+            -f compose/docker-compose.yml \
             up -d --build heartbeat-recorder daprd-heartbeat heartbeat-tick
 
       - name: Wait for daprd-heartbeat ready
@@ -264,21 +264,21 @@ jobs:
             sleep 2
           done
           echo "daprd-heartbeat never responded 204"
-          docker logs bloodbank-v3-daprd-heartbeat | tail -50
+          docker logs bloodbank-daprd-heartbeat | tail -50
           exit 1
 
       - name: Run smoketest-heartbeat.sh (real producer/consumer round-trip)
         # Default 5s tick interval; smoketest waits 15s for >= 2 ticks.
-        run: bash ops/v3/smoketest/smoketest-heartbeat.sh
+        run: bash ops/smoketest/smoketest-heartbeat.sh
 
       # -----------------------------------------------------------------------
       # Layer 5: claude-events — agent.* round-trip via dedicated profile
       # -----------------------------------------------------------------------
       - name: Boot claude-events profile (recorder + daprd-claude-events)
         run: |
-          docker compose --project-name bloodbank-v3 \
+          docker compose --project-name bloodbank \
             --profile claude-events \
-            -f compose/v3/docker-compose.yml \
+            -f compose/docker-compose.yml \
             up -d --build claude-events-recorder daprd-claude-events
 
       - name: Wait for daprd-claude-events ready
@@ -293,11 +293,11 @@ jobs:
             sleep 2
           done
           echo "daprd-claude-events never responded 204"
-          docker logs bloodbank-v3-daprd-claude-events | tail -50
+          docker logs bloodbank-daprd-claude-events | tail -50
           exit 1
 
       - name: Run smoketest-claude-events.sh (synthetic agent.* round-trip)
-        run: bash ops/v3/smoketest/smoketest-claude-events.sh
+        run: bash ops/smoketest/smoketest-claude-events.sh
 
       # -----------------------------------------------------------------------
       # Diagnostics on failure; always collect
@@ -306,21 +306,21 @@ jobs:
         if: failure()
         run: |
           echo "=== docker compose ps ==="
-          docker compose --project-name bloodbank-v3 \
+          docker compose --project-name bloodbank \
             --profile dapr-smoketest --profile dapr-subscribe --profile heartbeat --profile claude-events \
-            -f compose/v3/docker-compose.yml \
+            -f compose/docker-compose.yml \
             ps || true
           for c in nats nats-init daprd-smoketest daprd-subscribe echo-sub \
                    daprd-heartbeat heartbeat-recorder heartbeat-tick \
                    daprd-claude-events claude-events-recorder; do
             echo "=== ${c} logs ==="
-            docker logs "bloodbank-v3-${c}" 2>&1 | tail -80 || true
+            docker logs "bloodbank-${c}" 2>&1 | tail -80 || true
           done
 
       - name: Tear down
         if: always()
         run: |
-          docker compose --project-name bloodbank-v3 \
+          docker compose --project-name bloodbank \
             --profile dapr-smoketest --profile dapr-subscribe --profile heartbeat --profile claude-events \
-            -f compose/v3/docker-compose.yml \
+            -f compose/docker-compose.yml \
             down -v || true

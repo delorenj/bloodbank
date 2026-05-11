@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Heartbeat tick producer — first real-world v3 event publisher.
+"""Heartbeat tick producer — first real-world event publisher.
 
 Long-running service that emits `system.heartbeat.tick` events through
 Dapr pub/sub on a configurable interval. Each tick carries a monotonic
@@ -15,7 +15,7 @@ stable inside containers.
 Configuration via env vars:
   DAPR_HTTP_HOST       Hostname of the daprd sidecar (default: daprd-heartbeat)
   DAPR_HTTP_PORT       Port of the daprd HTTP API (default: 3500)
-  DAPR_PUBSUB          Dapr pubsub component name (default: bloodbank-v3-pubsub)
+  DAPR_PUBSUB          Dapr pubsub component name (default: bloodbank-pubsub)
   HEARTBEAT_INTERVAL   Tick interval in seconds (default: 5)
   HEARTBEAT_TOPIC      Dapr topic / NATS subject (default: event.system.heartbeat.tick)
   PRODUCER_ID          Stable per-instance id (default: heartbeat-tick:<random>)
@@ -110,7 +110,7 @@ def main() -> int:
     dapr_host = os.environ.get("DAPR_HTTP_HOST", "daprd-heartbeat")
     dapr_port = os.environ.get("DAPR_HTTP_PORT", "3500")
     dapr_url = f"http://{dapr_host}:{dapr_port}"
-    pubsub = os.environ.get("DAPR_PUBSUB", "bloodbank-v3-pubsub")
+    pubsub = os.environ.get("DAPR_PUBSUB", "bloodbank-pubsub")
     topic = os.environ.get("HEARTBEAT_TOPIC", "event.system.heartbeat.tick")
     interval_s = float(os.environ.get("HEARTBEAT_INTERVAL", "5"))
     interval_ms = int(interval_s * 1000)

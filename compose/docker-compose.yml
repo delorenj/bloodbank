@@ -1,0 +1,432 @@
+# Bloodbank platform sandbox
+#
+# Compose project name is locked to `bloodbank` by ADR-0001.
+# All services attach to the `bloodbank-network` bridge.
+# Environment variables are prefixed `BLOODBANK_` so the Dapr
+# `secretstores.local.env` component (see components/secretstore.yaml) can
+# project them through a consistent prefix.
+#
+# This file is scaffold-only. It is not wired to production traffic yet.
+# Keep Dapr runtime sidecars out of this file until V3-005 / V3-006 land.
+
+name: bloodbank
+
+networks:
+  bloodbank-network:
+    name: bloodbank-network
+    driver: bridge
+
+volumes:
+  bloodbank-nats-data:
+  bloodbank-apicurio-data:
+
+services:
+  nats:
+    # NATS JetStream broker for the event backbone.
+    image: nats:2.10-alpine
+    container_name: bloodbank-nats
+    command:
+      - "-js"
+      - "-sd"
+      - "/data/jetstream"
+      - "-m"
+      - "8222"
+      - "-DV"
+    environment:
+      BLOODBANK_NATS_URL: "nats://nats:4222"
+    ports:
+      - "${BLOODBANK_NATS_CLIENT_PORT:-4222}:4222"
+      - "${BLOODBANK_NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - bloodbank-nats-data:/data/jetstream
+    healthcheck:
+      # JetStream monitoring endpoint. `nats:2.10-alpine` ships busybox wget.
+      # `--spider` avoids downloading the body; we just want the HTTP 200.
+      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:8222/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  nats-init:
+    # One-shot: apply `nats/streams.json` to the running NATS server so
+    # `BLOODBANK_EVENTS` and `BLOODBANK_COMMANDS` exist before any
+    # producer publishes. Without this, the first `event.*` publish returns
+    # "no stream matched subject" and silently drops the message.
+    #
+    # Idempotent: `nats stream add` that would collide with an existing stream
+    # logs and exits non-zero; the init script swallows that case and exits 0.
+    image: natsio/nats-box:0.14.5
+    container_name: bloodbank-nats-init
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      NATS_URL: "nats://nats:4222"
+    volumes:
+      - ./nats/streams.json:/work/streams.json:ro
+      - ./nats/init.sh:/work/init.sh:ro
+    entrypoint: ["/bin/sh", "/work/init.sh"]
+    networks:
+      - bloodbank-network
+    restart: "no"
+
+  dapr-placement:
+    # Dapr placement service; required once service sidecars land. It does
+    # not speak to NATS directly — sidecars resolve actors through it.
+    image: daprio/dapr:1.13.0
+    container_name: bloodbank-dapr-placement
+    command:
+      - "./placement"
+      - "--port"
+      - "50005"
+    environment:
+      BLOODBANK_DAPR_PLACEMENT_PORT: "50005"
+    ports:
+      - "${BLOODBANK_DAPR_PLACEMENT_PORT:-50005}:50005"
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  echo-sub:
+    # Minimal Dapr subscriber app for the subscribe smoke test. Python
+    # stdlib only (http.server); no third-party deps, no build step.
+    # Bind-mounts ops/smoketest/echo-sub/app.py read-only.
+    #
+    # Profile: `dapr-subscribe`. Started only when that profile is active.
+    image: python:3.11-alpine
+    container_name: bloodbank-echo-sub
+    profiles:
+      - dapr-subscribe
+    command: ["python", "-u", "/work/app.py"]
+    environment:
+      APP_PORT: "3001"
+      SUBSCRIBE_PUBSUB: "bloodbank-pubsub"
+      SUBSCRIBE_TOPIC: "event.dapr.subscribe.ping"
+      SUBSCRIBE_ROUTE: "/events/smoketest"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ../ops/smoketest/echo-sub/app.py:/work/app.py:ro
+    ports:
+      # Test hook port for the smoke test's /inspect/* queries. Not used
+      # by daprd (daprd reaches the app via the compose network on the
+      # container-internal port, not the host-mapped port).
+      - "${BLOODBANK_ECHO_SUB_PORT:-3301}:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3001/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  daprd-subscribe:
+    # Dapr sidecar wired to `echo-sub` via --app-port + --app-channel-address.
+    # On startup, Dapr hits GET http://echo-sub:3001/dapr/subscribe to learn
+    # which topics to deliver. Thereafter, POSTs matching events back to
+    # http://echo-sub:3001<route>.
+    #
+    # Profile: `dapr-subscribe`.
+    image: daprio/daprd:1.13.0
+    container_name: bloodbank-daprd-subscribe
+    profiles:
+      - dapr-subscribe
+    command:
+      - "./daprd"
+      - "--app-id=bloodbank-echo-sub"
+      - "--dapr-http-port=3501"
+      - "--dapr-grpc-port=50002"
+      - "--app-port=3001"
+      - "--app-channel-address=echo-sub"
+      - "--app-protocol=http"
+      - "--resources-path=/components"
+      - "--placement-host-address=dapr-placement:50005"
+      - "--log-level=info"
+    depends_on:
+      nats-init:
+        condition: service_completed_successfully
+      dapr-placement:
+        condition: service_started
+      echo-sub:
+        condition: service_healthy
+    volumes:
+      - ./components:/components:ro
+    ports:
+      # Only HTTP is exposed to the host; gRPC stays internal to the
+      # compose network (no external caller needs it for the subscribe
+      # smoke test).
+      - "${BLOODBANK_DAPR_SUBSCRIBE_HTTP_PORT:-3501}:3501"
+    # NOTE: no container-level healthcheck. daprio/daprd:1.13.0 is a
+    # distroless image with no /bin/sh, so CMD-SHELL checks never execute;
+    # the container stays "starting" then transitions to "unhealthy" even
+    # when Dapr is fully up. Readiness is verified externally via
+    # curl :3501/v1.0/healthz (both smoke tests and CI do this).
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Heartbeat — first real-world event (system.heartbeat.tick)
+  # ---------------------------------------------------------------------------
+  # Three services behind the `heartbeat` compose profile:
+  #   - heartbeat-recorder: subscriber app on port 3001 (mirrors echo-sub
+  #     pattern; records ticks + exposes /inspect/recorded for tests)
+  #   - daprd-heartbeat: sidecar attached to recorder via --app-port; ALSO
+  #     services heartbeat-tick's publish requests via its HTTP API
+  #   - heartbeat-tick: long-running publisher emitting on a 5s interval
+  #     by default; configurable via HEARTBEAT_INTERVAL env var
+
+  heartbeat-recorder:
+    build:
+      context: ../services/heartbeat-recorder
+    container_name: bloodbank-heartbeat-recorder
+    profiles:
+      - heartbeat
+    environment:
+      APP_PORT: "3001"
+      SUBSCRIBE_PUBSUB: "bloodbank-pubsub"
+      SUBSCRIBE_TOPIC: "event.system.heartbeat.tick"
+      SUBSCRIBE_ROUTE: "/events/heartbeat"
+    ports:
+      # Test-hook port for /inspect/recorded queries from the host.
+      - "${BLOODBANK_HEARTBEAT_RECORDER_PORT:-3601}:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3001/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  daprd-heartbeat:
+    image: daprio/daprd:1.13.0
+    container_name: bloodbank-daprd-heartbeat
+    profiles:
+      - heartbeat
+    command:
+      - "./daprd"
+      - "--app-id=bloodbank-heartbeat"
+      - "--dapr-http-port=3500"
+      - "--dapr-grpc-port=50001"
+      - "--app-port=3001"
+      - "--app-channel-address=heartbeat-recorder"
+      - "--app-protocol=http"
+      - "--resources-path=/components"
+      - "--placement-host-address=dapr-placement:50005"
+      - "--log-level=info"
+    depends_on:
+      nats-init:
+        condition: service_completed_successfully
+      dapr-placement:
+        condition: service_started
+      heartbeat-recorder:
+        condition: service_healthy
+    volumes:
+      - ./components:/components:ro
+    ports:
+      # Optional: expose Dapr HTTP for ad-hoc curls from the host.
+      - "${BLOODBANK_DAPR_HEARTBEAT_HTTP_PORT:-3502}:3500"
+    # No container-level healthcheck (distroless image). Liveness is
+    # verified externally via curl :3502/v1.0/healthz.
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  heartbeat-tick:
+    build:
+      context: ../services/heartbeat-tick
+    container_name: bloodbank-heartbeat-tick
+    profiles:
+      - heartbeat
+    environment:
+      DAPR_HTTP_HOST: "daprd-heartbeat"
+      DAPR_HTTP_PORT: "3500"
+      DAPR_PUBSUB: "bloodbank-pubsub"
+      HEARTBEAT_TOPIC: "event.system.heartbeat.tick"
+      HEARTBEAT_INTERVAL: "${BLOODBANK_HEARTBEAT_INTERVAL:-5}"
+      LOG_LEVEL: "INFO"
+    depends_on:
+      # daprd-heartbeat needs to be up before tick can publish.
+      # Container "started" is enough — heartbeat-tick has its own
+      # 60s health-wait loop on the daprd HTTP API before first publish.
+      daprd-heartbeat:
+        condition: service_started
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Claude-events — agent.* events emitted by Claude Code on the host
+  # ---------------------------------------------------------------------------
+  # The producer (Claude Code via .claude/hooks/bloodbank-publisher.sh) runs
+  # on the host, not in compose. This profile only ships the consumer side:
+  #   - claude-events-recorder: subscriber app on port 3001 (mirrors
+  #     heartbeat-recorder; records all three agent.* event types and
+  #     exposes /inspect/recorded for tests)
+  #   - daprd-claude-events: sidecar wired to the recorder via --app-port;
+  #     ALSO services the host publisher's POST /v1.0/publish/... requests
+  #     via its HTTP API exposed on host:3503
+
+  claude-events-recorder:
+    build:
+      context: ../services/claude-events-recorder
+    container_name: bloodbank-claude-events-recorder
+    profiles:
+      - claude-events
+    environment:
+      APP_PORT: "3001"
+      SUBSCRIBE_PUBSUB: "bloodbank-pubsub"
+    ports:
+      # Test-hook port for /inspect/recorded queries from the host.
+      - "${BLOODBANK_CLAUDE_EVENTS_RECORDER_PORT:-3602}:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3001/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  daprd-claude-events:
+    image: daprio/daprd:1.13.0
+    container_name: bloodbank-daprd-claude-events
+    profiles:
+      - claude-events
+    command:
+      - "./daprd"
+      - "--app-id=bloodbank-claude-events"
+      - "--dapr-http-port=3500"
+      - "--dapr-grpc-port=50001"
+      - "--app-port=3001"
+      - "--app-channel-address=claude-events-recorder"
+      - "--app-protocol=http"
+      - "--resources-path=/components"
+      - "--placement-host-address=dapr-placement:50005"
+      - "--log-level=info"
+    depends_on:
+      nats-init:
+        condition: service_completed_successfully
+      dapr-placement:
+        condition: service_started
+      claude-events-recorder:
+        condition: service_healthy
+    volumes:
+      - ./components:/components:ro
+    ports:
+      # Host port the .claude/hooks publisher targets by default.
+      # Distinct from daprd-heartbeat (3502) so both profiles can run
+      # side by side.
+      - "${BLOODBANK_DAPR_CLAUDE_EVENTS_HTTP_PORT:-3503}:3500"
+    # No container-level healthcheck (distroless image). Liveness is
+    # verified externally via curl :3503/v1.0/healthz.
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  daprd-smoketest:
+    # Dapr sidecar in "no-app" mode for smoke-testing the publish path.
+    # Runs without an attached app (subscribers would need an app callback
+    # port, which we'll wire when real services land). Exposes the HTTP
+    # publish API so the dapr smoke test can POST CloudEvents envelopes.
+    #
+    # Profile: `dapr-smoketest`. Started only when that profile is active.
+    # This keeps default `docker compose up` scoped to the NATS-only sandbox
+    # (wave 4 smoke test) and makes the Dapr surface opt-in.
+    image: daprio/daprd:1.13.0
+    container_name: bloodbank-daprd-smoketest
+    profiles:
+      - dapr-smoketest
+    command:
+      - "./daprd"
+      - "--app-id=bloodbank-smoketest"
+      - "--dapr-http-port=3500"
+      - "--dapr-grpc-port=50001"
+      - "--resources-path=/components"
+      - "--placement-host-address=dapr-placement:50005"
+      - "--log-level=info"
+    depends_on:
+      nats-init:
+        condition: service_completed_successfully
+      dapr-placement:
+        condition: service_started
+    volumes:
+      - ./components:/components:ro
+    ports:
+      - "${BLOODBANK_DAPR_HTTP_PORT:-3500}:3500"
+      - "${BLOODBANK_DAPR_GRPC_PORT:-50001}:50001"
+    # NOTE: no container-level healthcheck. Same distroless constraint as
+    # daprd-subscribe above. Readiness is verified externally via
+    # curl :3500/v1.0/healthz.
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  # NOTE: Dapr sidecars are not defined here. When V3-005+ add app services,
+  # each sidecar will mount the components directory read-only:
+  #
+  #   volumes:
+  #     - ./components:/components:ro
+  #
+  # and pass `--components-path /components` so that the manifests in
+  # compose/components/*.yaml are loaded. The `pubsub.yaml` file there
+  # references `nats://nats:4222` via the service name on this network.
+
+  apicurio-registry:
+    # Apicurio is the runtime-side schema registry. Holyfields is the write
+    # side; producers/consumers pull schemas from Apicurio at runtime.
+    image: apicurio/apicurio-registry:3.0.6
+    container_name: bloodbank-apicurio-registry
+    environment:
+      BLOODBANK_APICURIO_PORT: "8080"
+      QUARKUS_HTTP_HOST: "0.0.0.0"
+      QUARKUS_HTTP_PORT: "8080"
+      APICURIO_STORAGE_KIND: "sql"
+      APICURIO_STORAGE_SQL_KIND: "h2"
+    ports:
+      - "${BLOODBANK_APICURIO_PORT:-8080}:8080"
+    volumes:
+      - bloodbank-apicurio-data:/var/apicurio/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/q/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  eventcatalog:
+    # EventCatalog consumes generated artifacts (AsyncAPI, schemas, SDKs)
+    # produced by Holyfields. The mount point convention for this sandbox
+    # is ./eventcatalog/site on the host, which later tickets will populate
+    # via Holyfields generation output. Empty until then.
+    image: quay.io/eventcatalog/eventcatalog:2.11.1
+    container_name: bloodbank-eventcatalog
+    environment:
+      BLOODBANK_EVENTCATALOG_PORT: "3000"
+      PORT: "3000"
+      NODE_ENV: "production"
+    ports:
+      - "${BLOODBANK_EVENTCATALOG_PORT:-3000}:3000"
+    volumes:
+      - ./eventcatalog/site:/app/site:ro
+    networks:
+      - bloodbank-network
+    depends_on:
+      apicurio-registry:
+        # Wait for Apicurio's healthcheck to report ready before starting
+        # EventCatalog. `service_started` races with Apicurio's boot time
+        # and produces flaky startup when EventCatalog eagerly queries the
+        # registry at launch.
+        condition: service_healthy
+    restart: unless-stopped
