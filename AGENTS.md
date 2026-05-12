@@ -1,44 +1,67 @@
 # Bloodbank — Agent Guide
 
-Central event bus and infrastructure for the 33GOD ecosystem.
+The event backbone of the 33GOD ecosystem. Dapr runtime over NATS JetStream,
+CloudEvents envelopes, AsyncAPI contracts, Apicurio for runtime schema lookup,
+EventCatalog for human discovery.
 
-## Tech Stack
+## Stack
 
-- **Language:** Python 3.12
-- **Framework:** FastAPI + Uvicorn
-- **Messaging:** RabbitMQ via aio-pika
-- **Config:** Pydantic Settings (BaseSettings)
-- **Package Manager:** uv
-- **Deployment:** Docker (multi-stage), docker-compose
+- **Broker:** NATS JetStream (durable streams: `BLOODBANK_EVENTS`, `BLOODBANK_COMMANDS`)
+- **Runtime:** Dapr (pub/sub + state + secret stores defined under `compose/components/`)
+- **Wire format:** CloudEvents 1.0 (JSON)
+- **Schema registry:** Apicurio (read side); Holyfields generates the SDKs (write side)
+- **Discovery:** EventCatalog
+- **Producers/consumers:** language-agnostic. Services in this repo are
+  Python stdlib-only by design.
 
-## Commands (mise)
+There is no in-process broker, no RabbitMQ, and no FastAPI publisher service in
+Bloodbank itself. Production traffic flows through Dapr sidecars embedded
+alongside each service, using Holyfields-generated publishers.
 
-| Task | Command |
-|------|---------|
-| Build | `mise run build` (uv sync + Docker image) |
-| Build WS Relay | `mise run build:relay` |
-| Deploy | `mise run deploy` (build + restart containers) |
-| Test | `mise run test` (pytest) |
-| Lint | `mise run lint` (ruff) |
-| Logs | `mise run logs` |
-| Health Check | `mise run health` (API + RabbitMQ queues) |
+## Layout
 
-## Key Files
+| Path                | Role                                                              |
+|---------------------|-------------------------------------------------------------------|
+| `compose/`          | Self-hosted sandbox: NATS, Dapr placement, Apicurio, EventCatalog |
+| `compose/components/` | Dapr component manifests (pub/sub, state, secret store)         |
+| `compose/nats/`     | JetStream topology (`streams.json`) + init script                 |
+| `cli/bb.py`         | Operator CLI (`doctor`, `trace`, `replay`, `emit`)                |
+| `ops/bootstrap/`    | Pre-boot platform validation                                      |
+| `ops/smoketest/`    | End-to-end smoke tests (NATS-direct, Dapr publish, subscribe, heartbeat, claude-events) |
+| `ops/replay/`       | Operator-facing replay workflow                                   |
+| `ops/trace/`        | Correlation/causation walkthrough                                 |
+| `services/`         | Reference services that participate in the sandbox                |
+| `adapters/`         | Migration scaffolds for legacy producers (blocked on Holyfields)  |
 
-- `event_producers/` — Event publishing logic
-- `heartbeat/` — Health monitoring
-- `rabbit.py` — Core publisher/subscriber abstractions
-- `Dockerfile` — Multi-stage production build
+## mise tasks
+
+| Task            | Purpose                                                  |
+|-----------------|----------------------------------------------------------|
+| `mise run up`           | Boot the core sandbox (NATS + nats-init)         |
+| `mise run up:all`       | Boot every profile (heartbeat + claude-events + Dapr smoke) |
+| `mise run down`         | Tear the sandbox down (`-v` removes volumes)     |
+| `mise run doctor`       | `cli/bb.py doctor` — manifest-driven scaffold check |
+| `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
+| `mise run smoketest`    | NATS-direct event round-trip                     |
+| `mise run smoketest:command` | NATS-direct command + reply round-trip      |
+| `mise run smoketest:dapr`    | Dapr publish path                           |
+| `mise run smoketest:dapr-subscribe` | Dapr publish → subscribe              |
+| `mise run smoketest:heartbeat`      | Heartbeat producer/consumer end-to-end |
+| `mise run smoketest:claude-events`  | Claude `agent.*` event round-trip      |
+| `mise run logs`         | Tail every Bloodbank container                   |
 
 ## Conventions
 
-- Async-first for all I/O operations
-- Events follow `{domain}.{entity}.{action}` naming pattern
-- All services connect via `BLOODBANK_URL` environment variable
-- Durable queues with dead-letter handling
+- Subjects: `event.{domain}.{entity}.{action}` and `command.{agent}.{action}`.
+- Envelopes are CloudEvents 1.0 with `correlationid` and `causationid` headers
+  on every message. Producers MUST set both.
+- Schemas are owned by Holyfields; Bloodbank never invents an envelope shape.
+- Sandbox compose project name is `bloodbank`; network is `bloodbank-network`;
+  container names are `bloodbank-*`.
 
-## Anti-Patterns
+## Anti-patterns
 
-- Never bypass the event bus for direct service-to-service calls
-- Never hold database sessions during async operations
-- Never use synchronous I/O in event handlers
+- No service-to-service calls that bypass the broker.
+- No locally-defined envelopes; everything goes through Holyfields.
+- No synchronous I/O in event handlers.
+- No assumptions of a centrally-running publisher service — there isn't one.

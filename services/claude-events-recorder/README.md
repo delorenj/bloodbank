@@ -15,7 +15,7 @@ host: .claude/hooks/bloodbank-publisher.sh
    ↓ (POST CloudEvents 1.0 envelope, application/cloudevents+json)
 host:3503 → daprd-claude-events sidecar
    ↓ (pubsub.jetstream)
-NATS BLOODBANK_V3_EVENTS stream, subjects event.agent.*
+NATS BLOODBANK_EVENTS stream, subjects event.agent.*
    ↓ (Dapr delivers to --app-port)
 container: claude-events-recorder
    ↓ (POST /events/{session_started,session_ended,tool_invoked})
@@ -72,7 +72,7 @@ assert lifecycle without walking the envelope buffer:
 | var               | default                | purpose |
 |-------------------|------------------------|---------|
 | `APP_PORT`        | `3001`                 | Container HTTP port |
-| `SUBSCRIBE_PUBSUB`| `bloodbank-v3-pubsub`  | Dapr pubsub component |
+| `SUBSCRIBE_PUBSUB`| `bloodbank-pubsub`  | Dapr pubsub component |
 | `MAX_BUFFER`      | `1024`                 | FIFO buffer cap |
 
 ## Running
@@ -81,9 +81,9 @@ The compose `claude-events` profile brings up the recorder + sidecar
 (no producer container; Claude Code on the host is the producer):
 
 ```bash
-docker compose --project-name bloodbank-v3 \
+docker compose --project-name bloodbank \
   --profile claude-events \
-  -f compose/v3/docker-compose.yml \
+  -f compose/docker-compose.yml \
   up -d nats nats-init dapr-placement claude-events-recorder daprd-claude-events
 ```
 
@@ -98,7 +98,7 @@ Then trigger a Claude Code hook (or run any tool through Claude Code)
 and observe the count climb. Or fire a synthetic envelope:
 
 ```bash
-bash ops/v3/smoketest/smoketest-claude-events.sh
+bash ops/smoketest/smoketest-claude-events.sh
 ```
 
 ## Why a separate profile from heartbeat

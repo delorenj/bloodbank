@@ -2,7 +2,7 @@
 """Heartbeat tick recorder — subscribes via Dapr and records each tick.
 
 Bookend to heartbeat-tick. Implements the Dapr programmatic subscription
-contract (mirrors ops/v3/smoketest/echo-sub/app.py) but with stronger
+contract (mirrors ops/smoketest/echo-sub/app.py) but with stronger
 typing intent: it counts ticks, captures the latest envelope per
 producer_id, and exposes test hooks.
 
@@ -17,7 +17,7 @@ Schema source of truth: holyfields/schemas/system/heartbeat.tick.v1.json
 
 Configuration:
   APP_PORT             HTTP port (default: 3001)
-  SUBSCRIBE_PUBSUB     Dapr pubsub component (default: bloodbank-v3-pubsub)
+  SUBSCRIBE_PUBSUB     Dapr pubsub component (default: bloodbank-pubsub)
   SUBSCRIBE_TOPIC      Subscription topic (default: event.system.heartbeat.tick)
   SUBSCRIBE_ROUTE      Delivery route (default: /events/heartbeat)
   MAX_BUFFER           Max recorded envelopes (default: 1024; FIFO eviction)
@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Deque
 
 APP_PORT = int(os.environ.get("APP_PORT", "3001"))
-SUBSCRIBE_PUBSUB = os.environ.get("SUBSCRIBE_PUBSUB", "bloodbank-v3-pubsub")
+SUBSCRIBE_PUBSUB = os.environ.get("SUBSCRIBE_PUBSUB", "bloodbank-pubsub")
 SUBSCRIBE_TOPIC = os.environ.get("SUBSCRIBE_TOPIC", "event.system.heartbeat.tick")
 SUBSCRIBE_ROUTE = os.environ.get("SUBSCRIBE_ROUTE", "/events/heartbeat")
 MAX_BUFFER = int(os.environ.get("MAX_BUFFER", "1024"))

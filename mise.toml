@@ -1,67 +1,77 @@
 # Bloodbank — mise.toml
-# Agents: run `mise build` here. Everything else is handled.
+#
+# Operator tasks for the self-hosted sandbox. All tasks operate on
+# `compose/docker-compose.yml` with the `bloodbank` compose project name.
 
 [env]
 _.file = [".env"]
+COMPOSE_PROJECT = "bloodbank"
+COMPOSE_FILE = "compose/docker-compose.yml"
 
-[tasks.build]
-description = "Build Bloodbank: Python deps + Docker image"
+[tasks.up]
+description = "Boot core sandbox (NATS + nats-init only)"
+run = "docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE up -d nats nats-init"
+
+[tasks."up:all"]
+description = "Boot every compose profile (heartbeat + claude-events + dapr)"
 run = """
-#!/usr/bin/env bash
-set -euo pipefail
-echo "▸ bloodbank: syncing Python deps..."
-uv sync --quiet 2>/dev/null || true
-echo "▸ bloodbank: building Docker image..."
-cd {{ config_root }}/..
-docker compose build bloodbank
-echo "✅ bloodbank: built"
+docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
+  --profile heartbeat --profile claude-events \
+  --profile dapr-smoketest --profile dapr-subscribe \
+  up -d
 """
 
-[tasks."build:relay"]
-description = "Build websocket-relay Docker image"
+[tasks.down]
+description = "Tear the sandbox down (volumes included)"
 run = """
-#!/usr/bin/env bash
-set -euo pipefail
-echo "▸ bloodbank-ws-relay: building Docker image..."
-cd {{ config_root }}/..
-docker compose build bloodbank-ws-relay
-echo "✅ bloodbank-ws-relay: built"
+docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
+  --profile heartbeat --profile claude-events \
+  --profile dapr-smoketest --profile dapr-subscribe \
+  down -v
 """
 
-[tasks.deploy]
-description = "Deploy Bloodbank: rebuild + restart containers"
-depends = ["build", "build:relay"]
-run = """
-#!/usr/bin/env bash
-set -euo pipefail
-cd {{ config_root }}/..
-echo "▸ bloodbank: deploying..."
-docker compose up -d bloodbank bloodbank-ws-relay
-echo "✅ bloodbank + ws-relay: deployed"
-"""
+[tasks.doctor]
+description = "Manifest-driven scaffold check (no Docker, no network)"
+run = "python3 cli/bb.py doctor"
 
-[tasks.test]
-description = "Run Bloodbank tests"
-run = "uv run pytest -q tests/"
+[tasks.bootstrap]
+description = "Pre-boot file-presence validator"
+run = "bash ops/bootstrap/check-platform.sh"
 
-[tasks.lint]
-description = "Lint Bloodbank Python code"
-run = "uv run ruff check event_producers/ heartbeat/"
+[tasks.smoketest]
+description = "NATS-direct event round-trip"
+run = "bash ops/smoketest/smoketest.sh"
+
+[tasks."smoketest:command"]
+description = "NATS-direct command + reply round-trip"
+run = "bash ops/smoketest/smoketest-command.sh"
+
+[tasks."smoketest:dapr"]
+description = "Dapr publish smoke test"
+run = "bash ops/smoketest/smoketest-dapr.sh"
+
+[tasks."smoketest:dapr-subscribe"]
+description = "Dapr publish -> subscribe round-trip"
+run = "bash ops/smoketest/smoketest-dapr-subscribe.sh"
+
+[tasks."smoketest:heartbeat"]
+description = "Heartbeat producer/consumer end-to-end"
+run = "bash ops/smoketest/smoketest-heartbeat.sh"
+
+[tasks."smoketest:claude-events"]
+description = "Claude agent.* event round-trip"
+run = "bash ops/smoketest/smoketest-claude-events.sh"
 
 [tasks.logs]
-description = "Tail Bloodbank container logs"
-run = "docker logs -f 33god-bloodbank"
+description = "Tail every Bloodbank container"
+run = "docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE logs -f"
 raw = true
 
-[tasks.health]
-description = "Check Bloodbank API + RabbitMQ health"
+[tasks.ps]
+description = "List sandbox containers"
 run = """
-#!/usr/bin/env bash
-set -euo pipefail
-echo "▸ API health:"
-curl -sS http://127.0.0.1:8682/healthz
-echo
-echo "▸ RabbitMQ queues:"
-RABBIT=$(docker ps --format '{{.Names}}' | grep -E '^(33god-rabbitmq|theboard-rabbitmq)$' | head -1 || true)
-[[ -n "${RABBIT:-}" ]] && docker exec "$RABBIT" rabbitmqctl list_queues name consumers messages -q 2>/dev/null || echo "  (rabbitmq unreachable)"
+docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
+  --profile heartbeat --profile claude-events \
+  --profile dapr-smoketest --profile dapr-subscribe \
+  ps
 """

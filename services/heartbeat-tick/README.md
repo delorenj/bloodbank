@@ -6,7 +6,7 @@ Dapr pub/sub on a configurable interval. Bookended by
 records, and exposes inspection hooks for tests.
 
 Together these two services are the **first real-world domain event**
-in the v3 platform.
+in the platform.
 
 ## Architecture
 
@@ -20,7 +20,7 @@ in the v3 platform.
                                                          ▼
                             ┌────────────────────────────────────┐
                             │ NATS subject event.system.heartbeat │
-                            │ stream BLOODBANK_V3_EVENTS          │
+                            │ stream BLOODBANK_EVENTS          │
                             └────────────────────────────────────┘
                                                          │
                                                  Dapr delivers
@@ -57,7 +57,7 @@ Holyfields installable-package story is stable inside containers.
 |---|---|---|
 | `DAPR_HTTP_HOST` | `daprd-heartbeat` | Sidecar host on compose network |
 | `DAPR_HTTP_PORT` | `3500` | Sidecar HTTP port |
-| `DAPR_PUBSUB` | `bloodbank-v3-pubsub` | Dapr pubsub component |
+| `DAPR_PUBSUB` | `bloodbank-pubsub` | Dapr pubsub component |
 | `HEARTBEAT_TOPIC` | `event.system.heartbeat.tick` | Topic = NATS subject |
 | `HEARTBEAT_INTERVAL` | `5` | Tick interval (seconds) |
 | `PRODUCER_ID` | `heartbeat-tick:<random>` | Stable per-instance id |
@@ -68,9 +68,9 @@ Holyfields installable-package story is stable inside containers.
 The compose `heartbeat` profile brings up everything:
 
 ```bash
-docker compose --project-name bloodbank-v3 \
+docker compose --project-name bloodbank \
   --profile heartbeat \
-  -f compose/v3/docker-compose.yml \
+  -f compose/docker-compose.yml \
   up -d nats nats-init dapr-placement \
         heartbeat-recorder daprd-heartbeat heartbeat-tick
 ```
@@ -84,7 +84,7 @@ curl http://127.0.0.1:3601/inspect/recorded | jq '.count, .producers'
 Run the integration smoke test:
 
 ```bash
-bash ops/v3/smoketest/smoketest-heartbeat.sh
+bash ops/smoketest/smoketest-heartbeat.sh
 ```
 
 ## Observability hooks
@@ -95,7 +95,7 @@ detect the gap via `tick_seq` stalling.
 
 ## Why this is "real"
 
-Unlike the smoketest scripts under `ops/v3/smoketest/` which run
+Unlike the smoketest scripts under `ops/smoketest/` which run
 ephemerally and prove transport, this is a production-shape service:
 
 - Long-running container (not a CI-spawned ephemeral)
@@ -105,4 +105,4 @@ ephemerally and prove transport, this is a production-shape service:
 - Tolerates daprd boot races
 - Real consumer side (heartbeat-recorder) with persistent buffer + summary
 
-It is the pattern reference for every future v3 service.
+It is the pattern reference for every future service.

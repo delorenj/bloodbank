@@ -21,7 +21,7 @@ Schema source of truth (post-V3-110):
 
 Configuration:
   APP_PORT             HTTP port (default: 3001)
-  SUBSCRIBE_PUBSUB     Dapr pubsub component (default: bloodbank-v3-pubsub)
+  SUBSCRIBE_PUBSUB     Dapr pubsub component (default: bloodbank-pubsub)
   MAX_BUFFER           Max recorded envelopes (default: 1024; FIFO eviction)
 
 Stdlib only.
@@ -38,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Deque
 
 APP_PORT = int(os.environ.get("APP_PORT", "3001"))
-SUBSCRIBE_PUBSUB = os.environ.get("SUBSCRIBE_PUBSUB", "bloodbank-v3-pubsub")
+SUBSCRIBE_PUBSUB = os.environ.get("SUBSCRIBE_PUBSUB", "bloodbank-pubsub")
 MAX_BUFFER = int(os.environ.get("MAX_BUFFER", "1024"))
 
 # Topic + route mapping. Mirrors the publisher's topic choices in
