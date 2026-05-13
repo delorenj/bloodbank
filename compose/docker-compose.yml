@@ -265,14 +265,16 @@ services:
   # ---------------------------------------------------------------------------
   # Claude-events — agent.* events emitted by Claude Code on the host
   # ---------------------------------------------------------------------------
-  # The producer (Claude Code via .claude/hooks/bloodbank-publisher.sh) runs
-  # on the host, not in compose. This profile only ships the consumer side:
+  # The producer (Claude Code via bloodbank/services/agent-hooks/claude/publish.py)
+  # runs on the host and PUBs directly to NATS — no Dapr sidecar on the
+  # publish path. This profile only ships the consumer side:
   #   - claude-events-recorder: subscriber app on port 3001 (mirrors
   #     heartbeat-recorder; records all three agent.* event types and
   #     exposes /inspect/recorded for tests)
-  #   - daprd-claude-events: sidecar wired to the recorder via --app-port;
-  #     ALSO services the host publisher's POST /v1.0/publish/... requests
-  #     via its HTTP API exposed on host:3503
+  #   - daprd-claude-events: sidecar wired to the recorder via --app-port,
+  #     hosting the Dapr subscribe contract that delivers NATS messages
+  #     into the recorder. HTTP port 3503 is exposed for ad-hoc Dapr
+  #     publish via /v1.0/publish/..., but is no longer the default path.
 
   claude-events-recorder:
     build:
@@ -322,7 +324,8 @@ services:
     volumes:
       - ./components:/components:ro
     ports:
-      # Host port the .claude/hooks publisher targets by default.
+      # Ad-hoc Dapr publish/control endpoint. The Claude hook publisher
+      # no longer targets this port (it goes NATS-direct on 4222).
       # Distinct from daprd-heartbeat (3502) so both profiles can run
       # side by side.
       - "${BLOODBANK_DAPR_CLAUDE_EVENTS_HTTP_PORT:-3503}:3500"

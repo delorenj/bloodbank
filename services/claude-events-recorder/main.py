@@ -2,10 +2,10 @@
 """Claude Code events recorder — subscribes to agent.* events via Dapr.
 
 Bookend service for the `claude-events` compose profile. The publisher
-runs on the host (`.claude/hooks/bloodbank-publisher.sh` in the
-metarepo) and POSTs through a sibling daprd sidecar. This service
-subscribes via Dapr to all three agent.* events and records them
-in-memory for inspection.
+runs on the host (`bloodbank/services/agent-hooks/claude/publish.py`,
+invoked from the metarepo's `.claude/settings.json`) and PUBs directly
+to NATS. This service subscribes via Dapr to all three agent.* events
+and records them in-memory for inspection.
 
 Endpoints:
   GET  /dapr/subscribe        Dapr subscription list (3 routes)
@@ -42,7 +42,7 @@ SUBSCRIBE_PUBSUB = os.environ.get("SUBSCRIBE_PUBSUB", "bloodbank-pubsub")
 MAX_BUFFER = int(os.environ.get("MAX_BUFFER", "1024"))
 
 # Topic + route mapping. Mirrors the publisher's topic choices in
-# .claude/hooks/bloodbank-publisher.sh. Keep in sync if either side moves.
+# bloodbank/services/agent-hooks/claude/publish.py. Keep in sync.
 SUBSCRIPTIONS: list[dict] = [
     {
         "pubsubname": SUBSCRIBE_PUBSUB,

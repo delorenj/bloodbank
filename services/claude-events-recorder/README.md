@@ -1,7 +1,7 @@
 # claude-events-recorder
 
-Subscribes to all three `agent.*` events emitted by Claude Code via the
-metarepo's `.claude/hooks/bloodbank-publisher.sh` and records them in
+Subscribes to all three `agent.*` events emitted by Claude Code via
+`bloodbank/services/agent-hooks/claude/publish.py` and records them in
 memory for inspection. The producer side runs on the host (Claude
 Code itself); this is the consumer-side bookend, mirroring the
 heartbeat-tick / heartbeat-recorder pattern.
@@ -11,16 +11,19 @@ heartbeat-tick / heartbeat-recorder pattern.
 ```
 Host: Claude Code
    ↓ (PostToolUse / Stop / SessionStart hook fires)
-host: .claude/hooks/bloodbank-publisher.sh
-   ↓ (POST CloudEvents 1.0 envelope, application/cloudevents+json)
-host:3503 → daprd-claude-events sidecar
-   ↓ (pubsub.jetstream)
+host: agent-hooks/claude/publish.py (stdlib NATS-direct publisher)
+   ↓ (PUB CloudEvents 1.0 envelope on event.agent.*)
 NATS BLOODBANK_EVENTS stream, subjects event.agent.*
    ↓ (Dapr delivers to --app-port)
 container: claude-events-recorder
    ↓ (POST /events/{session_started,session_ended,tool_invoked})
 in-memory buffer + per-session aggregate
 ```
+
+The publisher no longer goes through a Dapr sidecar — it PUBs to NATS
+directly using the stdlib socket-only client in `agent-hooks/core/`.
+The `daprd-claude-events` sidecar in compose now exists solely to host
+this recorder's Dapr subscribe contract.
 
 ## Subscriptions
 
