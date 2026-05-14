@@ -42,3 +42,5 @@ Use the dedicated mise task to generate standardized evidence files:
 
 Expected output pattern:
 - `_bmad_output/evidence/repo-health-<utc-timestamp>.json`
+
+Generated evidence files are runtime artifacts and should not be committed.
