@@ -42,6 +42,10 @@ run = "python3 cli/bb.py repo-health"
 description = "Read-only structured JSON snapshot for BMAD/scripted evidence"
 run = "python3 cli/bb.py repo-health --json"
 
+[tasks."repo-health:strict"]
+description = "Read-only strict gate: fail when worktree is not clean"
+run = "python3 cli/bb.py repo-health --require-clean-worktree"
+
 [tasks."repo-health:artifact"]
 description = "Write timestamped JSON BMAD evidence artifact under _bmad_output/evidence"
 run = """

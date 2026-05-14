@@ -43,6 +43,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run doctor`       | `cli/bb.py doctor` — manifest-driven scaffold check |
 | `mise run repo-health`  | `cli/bb.py repo-health` — read-only git/issue/PR/check snapshot |
 | `mise run repo-health:json` | `cli/bb.py repo-health --json` — structured snapshot for scripts/tools |
+| `mise run repo-health:strict` | `cli/bb.py repo-health --require-clean-worktree` — fail gate on dirty trees |
 | `mise run repo-health:artifact` | timestamped JSON evidence file under `_bmad_output/evidence/` |
 | `mise run repo-health:cleanup` | remove generated artifacts; optional `KEEP=N`, `REPORT=1`, and `DRY_RUN=1` preview |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
