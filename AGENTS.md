@@ -59,6 +59,10 @@ alongside each service, using Holyfields-generated publishers.
   - issue URL
   - merged PR URL
   - `_bmad_output/issue-<id>-execution.md` artifact path
+- CI-failure triage (when a PR check goes red): capture a minimal evidence loop before next action:
+  - failing check run URL
+  - `gh run view <run-id> --log-failed` excerpt (error signature)
+  - follow-up ticket URL when the fix is out of current PR scope
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
 
 ## Conventions
