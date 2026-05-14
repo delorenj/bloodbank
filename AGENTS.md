@@ -50,6 +50,12 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:claude-events`  | Claude `agent.*` event round-trip      |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
+## BMAD baseline
+
+- This repo is BMAD-initialized with a lightweight scaffold under `_bmad/` and `_bmad_output/`.
+- For ticket-first work, use `_bmad/templates/ticket-execution.md` to track scope/steps/verification per issue.
+- Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
+
 ## Conventions
 
 - Subjects: `event.{domain}.{entity}.{action}` and `command.{agent}.{action}`.
