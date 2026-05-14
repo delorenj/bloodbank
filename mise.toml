@@ -49,10 +49,8 @@ bash -lc 'ts=$(date -u +%Y%m%dT%H%M%SZ); out="_bmad_output/evidence/repo-health-
 """
 
 [tasks."repo-health:cleanup"]
-description = "Remove generated repo-health artifacts (optional KEEP=N retains newest N)"
-run = """
-bash -lc 'dir="_bmad_output/evidence"; if [ ! -d "$dir" ]; then echo "removed 0 repo-health artifacts"; exit 0; fi; mapfile -t files < <(find "$dir" -maxdepth 1 -type f -name "repo-health-*.json" | sort); total=$(printf "%s\n" "${files[@]}" | sed "/^$/d" | wc -l | tr -d " "); keep="${KEEP:-}"; if [ -z "$keep" ]; then for f in "${files[@]}"; do rm -f "$f"; done; echo "removed ${total} repo-health artifacts"; exit 0; fi; if ! [[ "$keep" =~ ^[0-9]+$ ]]; then echo "KEEP must be a non-negative integer"; exit 2; fi; if [ "$keep" -ge "$total" ]; then echo "removed 0 repo-health artifacts (kept ${total})"; exit 0; fi; remove_count=$((total - keep)); for ((i=0; i<remove_count; i++)); do rm -f "${files[$i]}"; done; echo "removed ${remove_count} repo-health artifacts (kept ${keep})"'
-"""
+description = "Remove generated artifacts (KEEP=N retains newest N, REPORT=1 emits JSON report)"
+run = "python3 ops/repo-health/cleanup.py"
 
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
