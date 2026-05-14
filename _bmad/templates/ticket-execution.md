@@ -17,3 +17,8 @@
 - PR:
 - Commit(s):
 - Follow-ups:
+
+## Done checklist (closure hygiene)
+- [ ] Issue URL captured
+- [ ] Merged PR URL captured
+- [ ] Closeout artifact path captured (`_bmad_output/issue-<id>-execution.md`)
