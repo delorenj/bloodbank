@@ -41,6 +41,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run up:all`       | Boot every profile (heartbeat + claude-events + Dapr smoke) |
 | `mise run down`         | Tear the sandbox down (`-v` removes volumes)     |
 | `mise run doctor`       | `cli/bb.py doctor` — manifest-driven scaffold check |
+| `mise run repo-health`  | `cli/bb.py repo-health` — read-only git/issue/PR/check snapshot |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
 | `mise run smoketest`    | NATS-direct event round-trip                     |
 | `mise run smoketest:command` | NATS-direct command + reply round-trip      |

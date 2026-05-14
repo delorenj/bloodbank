@@ -34,6 +34,10 @@ docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
 description = "Manifest-driven scaffold check (no Docker, no network)"
 run = "python3 cli/bb.py doctor"
 
+[tasks."repo-health"]
+description = "Read-only git/issue/PR/check snapshot for BMAD evidence"
+run = "python3 cli/bb.py repo-health"
+
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
 run = "bash ops/bootstrap/check-platform.sh"
