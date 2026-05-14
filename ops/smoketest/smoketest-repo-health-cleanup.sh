@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Smoke test for ops/repo-health/cleanup.py
-# Covers default cleanup, KEEP retention, REPORT+DRY_RUN JSON, and invalid KEEP handling.
+# Smoke test for ops/repo-health/cleanup.py + strict repo-health worktree checks.
+# Covers default cleanup, KEEP retention, REPORT+DRY_RUN JSON,
+# invalid KEEP handling, and --require-clean-worktree pass/fail paths.
 
 set -euo pipefail
 
@@ -12,8 +13,10 @@ mkdir -p "${EVIDENCE_DIR}"
 
 BACKUP_DIR="$(mktemp -d)"
 restore_original=0
+DIRTY_TMP_FILE="${BLOODBANK_ROOT}/.tmp-repo-health-strict-smoke"
 
 cleanup_restore() {
+  rm -f "${DIRTY_TMP_FILE}" || true
   if [[ "${restore_original}" -eq 1 ]]; then
     find "${EVIDENCE_DIR}" -maxdepth 1 -type f -name 'repo-health-*.json' -delete || true
     if compgen -G "${BACKUP_DIR}/repo-health-*.json" > /dev/null; then
@@ -84,6 +87,33 @@ KEEP=abc python3 ops/repo-health/cleanup.py >/dev/null 2>&1
 rc=$?
 set -e
 [[ "$rc" -ne 0 ]] || { echo "invalid KEEP did not fail" >&2; exit 1; }
+
+# 6) strict clean-worktree mode should pass on clean tree
+strict_clean_json="$(python3 cli/bb.py repo-health --json --require-clean-worktree)"
+python3 - <<'PY' "${strict_clean_json}"
+import json
+import sys
+payload = json.loads(sys.argv[1])
+assert payload["worktree_dirty"] is False, payload
+assert payload["errors"] == [], payload
+PY
+
+# 7) strict clean-worktree mode should fail on dirty tree
+printf 'smoke-dirty\n' > "${DIRTY_TMP_FILE}"
+set +e
+strict_dirty_json="$(python3 cli/bb.py repo-health --json --require-clean-worktree 2>/dev/null)"
+strict_dirty_rc=$?
+set -e
+[[ "${strict_dirty_rc}" -ne 0 ]] || { echo "strict mode did not fail on dirty worktree" >&2; exit 1; }
+python3 - <<'PY' "${strict_dirty_json}"
+import json
+import sys
+payload = json.loads(sys.argv[1])
+assert payload["worktree_dirty"] is True, payload
+errors = payload.get("errors", [])
+assert any("require-clean-worktree" in e for e in errors), payload
+PY
+rm -f "${DIRTY_TMP_FILE}"
 
 # cleanup after test artifacts
 python3 ops/repo-health/cleanup.py >/dev/null
