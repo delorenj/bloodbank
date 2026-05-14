@@ -80,6 +80,10 @@ run = "bash ops/smoketest/smoketest-heartbeat.sh"
 description = "Claude agent.* event round-trip"
 run = "bash ops/smoketest/smoketest-claude-events.sh"
 
+[tasks."smoketest:repo-health-cleanup"]
+description = "Local smoke test for repo-health cleanup helper (KEEP/REPORT/error paths)"
+run = "bash ops/smoketest/smoketest-repo-health-cleanup.sh"
+
 [tasks.logs]
 description = "Tail every Bloodbank container"
 run = "docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE logs -f"

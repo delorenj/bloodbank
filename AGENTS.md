@@ -52,6 +52,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:dapr-subscribe` | Dapr publish → subscribe              |
 | `mise run smoketest:heartbeat`      | Heartbeat producer/consumer end-to-end |
 | `mise run smoketest:claude-events`  | Claude `agent.*` event round-trip      |
+| `mise run smoketest:repo-health-cleanup` | local cleanup helper checks (default/KEEP/REPORT/error paths) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline
