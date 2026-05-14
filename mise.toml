@@ -81,7 +81,7 @@ description = "Claude agent.* event round-trip"
 run = "bash ops/smoketest/smoketest-claude-events.sh"
 
 [tasks."smoketest:repo-health-cleanup"]
-description = "Local smoke test for repo-health cleanup helper (KEEP/REPORT/error paths)"
+description = "Local smoke test for cleanup helper + strict worktree mode"
 run = "bash ops/smoketest/smoketest-repo-health-cleanup.sh"
 
 [tasks.logs]
