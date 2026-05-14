@@ -69,6 +69,7 @@ alongside each service, using Holyfields-generated publishers.
   - `gh run view <run-id> --log-failed` excerpt (error signature)
   - follow-up ticket URL when the fix is out of current PR scope
 - For scriptable evidence capture, use: `python3 cli/bb.py repo-health --json`.
+- Local OpenClaw hook scratch path (`services/agent-hooks/openclaw/`) is intentionally treated as operator-local and excluded from repo tracking.
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
 
 ## Conventions
