@@ -4,6 +4,7 @@
 Env vars:
 - KEEP: optional non-negative integer; keep newest N artifacts.
 - REPORT: if truthy (1/true/yes/on), emit JSON report.
+- DRY_RUN: if truthy, compute and report actions but do not delete files.
 """
 
 from __future__ import annotations
@@ -50,8 +51,10 @@ def main() -> int:
         removed = files[:split]
         kept = files[split:]
 
-    for path in removed:
-        path.unlink(missing_ok=True)
+    dry_run = _truthy(os.getenv("DRY_RUN"))
+    if not dry_run:
+        for path in removed:
+            path.unlink(missing_ok=True)
 
     report = {
         "pattern": "_bmad_output/evidence/repo-health-*.json",
@@ -61,15 +64,17 @@ def main() -> int:
         "removed_paths": [str(p) for p in removed],
         "kept_paths": [str(p) for p in kept],
         "keep_requested": keep,
+        "dry_run": dry_run,
     }
 
     if _truthy(os.getenv("REPORT")):
         print(json.dumps(report, indent=2))
     else:
+        verb = "would remove" if dry_run else "removed"
         if keep is None:
-            print(f"removed {len(removed)} repo-health artifacts")
+            print(f"{verb} {len(removed)} repo-health artifacts")
         else:
-            print(f"removed {len(removed)} repo-health artifacts (kept {len(kept)})")
+            print(f"{verb} {len(removed)} repo-health artifacts (kept {len(kept)})")
 
     return 0
 

@@ -49,7 +49,7 @@ bash -lc 'ts=$(date -u +%Y%m%dT%H%M%SZ); out="_bmad_output/evidence/repo-health-
 """
 
 [tasks."repo-health:cleanup"]
-description = "Remove generated artifacts (KEEP=N retains newest N, REPORT=1 emits JSON report)"
+description = "Remove generated artifacts (KEEP=N retention, REPORT=1 JSON, DRY_RUN=1 preview)"
 run = "python3 ops/repo-health/cleanup.py"
 
 [tasks.bootstrap]
