@@ -203,6 +203,7 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
 
     snapshot: dict[str, object] = {
         "git_status": None,
+        "worktree_dirty": None,
         "issues_open": [],
         "prs_open": [],
         "latest_pr_checks": None,
@@ -229,8 +230,10 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
         print(rendered_error)
         return 2
 
-    git_line = git_out.splitlines()[0] if git_out else "<no status output>"
+    git_lines = git_out.splitlines()
+    git_line = git_lines[0] if git_lines else "<no status output>"
     snapshot["git_status"] = git_line
+    snapshot["worktree_dirty"] = len(git_lines) > 1
 
     rc_issue, issue_out, issue_err = _run(
         root,
@@ -312,6 +315,7 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
     else:
         lines_out: list[str] = []
         lines_out.append(f"git_status: {snapshot['git_status']}")
+        lines_out.append(f"worktree_dirty: {str(snapshot['worktree_dirty']).lower()}")
 
         issues_out = snapshot["issues_open"]
         assert isinstance(issues_out, list)
