@@ -44,6 +44,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run repo-health`  | `cli/bb.py repo-health` — read-only git/issue/PR/check snapshot |
 | `mise run repo-health:json` | `cli/bb.py repo-health --json` — structured snapshot for scripts/tools |
 | `mise run repo-health:artifact` | timestamped JSON evidence file under `_bmad_output/evidence/` |
+| `mise run repo-health:cleanup` | remove generated `repo-health-*.json` artifacts from `_bmad_output/evidence/` |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
 | `mise run smoketest`    | NATS-direct event round-trip                     |
 | `mise run smoketest:command` | NATS-direct command + reply round-trip      |

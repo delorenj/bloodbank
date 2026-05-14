@@ -48,6 +48,12 @@ run = """
 bash -lc 'ts=$(date -u +%Y%m%dT%H%M%SZ); out="_bmad_output/evidence/repo-health-${ts}.json"; python3 cli/bb.py repo-health --json --out "$out"; echo "$out"'
 """
 
+[tasks."repo-health:cleanup"]
+description = "Remove generated repo-health JSON artifacts under _bmad_output/evidence"
+run = """
+bash -lc 'dir="_bmad_output/evidence"; if [ ! -d "$dir" ]; then echo "removed 0 repo-health artifacts"; exit 0; fi; count=$(find "$dir" -maxdepth 1 -type f -name "repo-health-*.json" | wc -l | tr -d " "); find "$dir" -maxdepth 1 -type f -name "repo-health-*.json" -delete; echo "removed ${count} repo-health artifacts"'
+"""
+
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
 run = "bash ops/bootstrap/check-platform.sh"
