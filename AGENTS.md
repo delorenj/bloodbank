@@ -53,6 +53,7 @@ alongside each service, using Holyfields-generated publishers.
 ## BMAD baseline
 
 - This repo is BMAD-initialized with a lightweight scaffold under `_bmad/` and `_bmad_output/`.
+- Quickstart: read `_bmad/README.md` for ticket execution flow, then `_bmad_output/README.md` for closeout index + verification checklist expectations.
 - For ticket-first work, use `_bmad/templates/ticket-execution.md` to track scope/steps/verification per issue.
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
 
