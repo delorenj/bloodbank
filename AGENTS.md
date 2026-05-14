@@ -55,6 +55,10 @@ alongside each service, using Holyfields-generated publishers.
 - This repo is BMAD-initialized with a lightweight scaffold under `_bmad/` and `_bmad_output/`.
 - Quickstart: read `_bmad/README.md` for ticket execution flow, then `_bmad_output/README.md` for closeout index + verification checklist expectations.
 - For ticket-first work, use `_bmad/templates/ticket-execution.md` to track scope/steps/verification per issue.
+- Ticket closure hygiene (ops/process tickets): include all three references before closing:
+  - issue URL
+  - merged PR URL
+  - `_bmad_output/issue-<id>-execution.md` artifact path
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
 
 ## Conventions
