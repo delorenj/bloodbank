@@ -29,3 +29,8 @@ Before marking a ticket closed, confirm the closeout artifact includes:
 - Links to the exact issue and PR URLs (not just numbers).
 - Any out-of-scope/deferred work called out explicitly (`none` when empty).
 - Notes section completed with risks/caveats or `none`.
+
+## Structured snapshot option (automation-friendly)
+
+Use JSON mode when evidence needs to be consumed by scripts/tools (artifact generators, dashboards, checks):
+- `python3 cli/bb.py repo-health --json`

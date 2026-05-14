@@ -64,6 +64,7 @@ alongside each service, using Holyfields-generated publishers.
   - failing check run URL
   - `gh run view <run-id> --log-failed` excerpt (error signature)
   - follow-up ticket URL when the fix is out of current PR scope
+- For scriptable evidence capture, use: `python3 cli/bb.py repo-health --json`.
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
 
 ## Conventions
