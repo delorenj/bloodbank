@@ -235,6 +235,13 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
     snapshot["git_status"] = git_line
     snapshot["worktree_dirty"] = len(git_lines) > 1
 
+    if args.require_clean_worktree and snapshot["worktree_dirty"] is True:
+        cast_errors = snapshot["errors"]
+        assert isinstance(cast_errors, list)
+        cast_errors.append(
+            "worktree_dirty: ERROR (working tree is dirty but --require-clean-worktree was set)"
+        )
+
     rc_issue, issue_out, issue_err = _run(
         root,
         "gh",
@@ -425,6 +432,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--out",
         dest="out_path",
         help="optional output file path for snapshot content",
+    )
+    p_repo_health.add_argument(
+        "--require-clean-worktree",
+        action="store_true",
+        dest="require_clean_worktree",
+        help="exit non-zero if the local git working tree is dirty",
     )
     p_repo_health.set_defaults(func=cmd_repo_health)
 
