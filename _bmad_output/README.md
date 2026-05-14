@@ -34,3 +34,11 @@ Before marking a ticket closed, confirm the closeout artifact includes:
 
 Use JSON mode when evidence needs to be consumed by scripts/tools (artifact generators, dashboards, checks):
 - `python3 cli/bb.py repo-health --json`
+
+## Timestamped artifact task (preferred for closeout evidence)
+
+Use the dedicated mise task to generate standardized evidence files:
+- `mise run repo-health:artifact`
+
+Expected output pattern:
+- `_bmad_output/evidence/repo-health-<utc-timestamp>.json`
