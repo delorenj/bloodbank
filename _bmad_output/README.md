@@ -13,3 +13,10 @@ Required fields:
 - Scope completed (what changed / what did not)
 - Verification evidence (commands/checks and outcomes)
 - Links to issue + PR (and follow-ups if any)
+
+## Closeout artifact index
+
+- `issue-38-execution.md` — closes out #38 via PR #39 (BMAD closeout standard)
+
+Index append convention (for each new closeout file):
+- `issue-<id>-execution.md` — closes out #<id> via PR #<pr> (<short scope note>)
