@@ -186,15 +186,26 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
     """Print a concise repo/ticket/PR/check snapshot for BMAD evidence."""
     root = bloodbank_root()
 
+    snapshot: dict[str, object] = {
+        "git_status": None,
+        "issues_open": [],
+        "prs_open": [],
+        "latest_pr_checks": None,
+        "errors": [],
+    }
+
     rc_git, git_out, git_err = _run(root, "git", "status", "--short", "--branch")
     if rc_git != 0:
-        print(f"git_status: ERROR ({git_err or 'unknown git error'})")
+        err = f"git_status: ERROR ({git_err or 'unknown git error'})"
+        if args.json_output:
+            snapshot["errors"] = [err]
+            print(json.dumps(snapshot, indent=2))
+        else:
+            print(err)
         return 2
 
     git_line = git_out.splitlines()[0] if git_out else "<no status output>"
-    print(f"git_status: {git_line}")
-
-    fail_count = 0
+    snapshot["git_status"] = git_line
 
     rc_issue, issue_out, issue_err = _run(
         root,
@@ -213,16 +224,14 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
         try:
             issues = json.loads(issue_out)
         except json.JSONDecodeError:
-            fail_count += 1
-            print("issues_open: ERROR (invalid JSON from gh issue list)")
+            cast_errors = snapshot["errors"]
+            assert isinstance(cast_errors, list)
+            cast_errors.append("issues_open: ERROR (invalid JSON from gh issue list)")
     elif rc_issue != 0:
-        fail_count += 1
-        print(f"issues_open: ERROR ({issue_err or 'gh issue list failed'})")
-
-    if rc_issue == 0:
-        print(f"issues_open: {len(issues)}")
-        for it in issues:
-            print(f"- issue #{it['number']}: {it['title']} ({it['url']})")
+        cast_errors = snapshot["errors"]
+        assert isinstance(cast_errors, list)
+        cast_errors.append(f"issues_open: ERROR ({issue_err or 'gh issue list failed'})")
+    snapshot["issues_open"] = issues
 
     rc_pr, pr_out, pr_err = _run(
         root,
@@ -241,32 +250,73 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
         try:
             prs = json.loads(pr_out)
         except json.JSONDecodeError:
-            fail_count += 1
-            print("prs_open: ERROR (invalid JSON from gh pr list)")
+            cast_errors = snapshot["errors"]
+            assert isinstance(cast_errors, list)
+            cast_errors.append("prs_open: ERROR (invalid JSON from gh pr list)")
     elif rc_pr != 0:
-        fail_count += 1
-        print(f"prs_open: ERROR ({pr_err or 'gh pr list failed'})")
-
-    if rc_pr == 0:
-        print(f"prs_open: {len(prs)}")
-        for pr in prs:
-            print(f"- pr #{pr['number']}: {pr['title']} ({pr['url']})")
+        cast_errors = snapshot["errors"]
+        assert isinstance(cast_errors, list)
+        cast_errors.append(f"prs_open: ERROR ({pr_err or 'gh pr list failed'})")
+    snapshot["prs_open"] = prs
 
     if prs:
         newest = sorted(prs, key=lambda x: str(x.get("updatedAt", "")), reverse=True)[0]
         pr_number = int(newest["number"])
-        print(f"latest_pr_checks: #{pr_number}")
         rc_checks, checks_out, checks_err = _run(root, "gh", "pr", "checks", str(pr_number))
         if rc_checks in (0, 8) and checks_out:
-            for line in checks_out.splitlines():
-                print(f"  {line}")
+            snapshot["latest_pr_checks"] = {
+                "pr_number": pr_number,
+                "lines": checks_out.splitlines(),
+            }
+        elif rc_checks in (0, 8):
+            snapshot["latest_pr_checks"] = {
+                "pr_number": pr_number,
+                "lines": [],
+            }
         else:
-            fail_count += 1
-            print(f"  ERROR ({checks_err or 'gh pr checks failed'})")
+            cast_errors = snapshot["errors"]
+            assert isinstance(cast_errors, list)
+            cast_errors.append(f"latest_pr_checks: ERROR ({checks_err or 'gh pr checks failed'})")
+            snapshot["latest_pr_checks"] = {"pr_number": pr_number, "lines": []}
     else:
-        print("latest_pr_checks: none (no open PRs)")
+        snapshot["latest_pr_checks"] = None
 
-    return 0 if fail_count == 0 else 1
+    if args.json_output:
+        print(json.dumps(snapshot, indent=2))
+    else:
+        print(f"git_status: {snapshot['git_status']}")
+
+        issues_out = snapshot["issues_open"]
+        assert isinstance(issues_out, list)
+        print(f"issues_open: {len(issues_out)}")
+        for it in issues_out:
+            print(f"- issue #{it['number']}: {it['title']} ({it['url']})")
+
+        prs_out = snapshot["prs_open"]
+        assert isinstance(prs_out, list)
+        print(f"prs_open: {len(prs_out)}")
+        for pr in prs_out:
+            print(f"- pr #{pr['number']}: {pr['title']} ({pr['url']})")
+
+        latest_checks = snapshot["latest_pr_checks"]
+        if latest_checks is None:
+            print("latest_pr_checks: none (no open PRs)")
+        else:
+            assert isinstance(latest_checks, dict)
+            print(f"latest_pr_checks: #{latest_checks['pr_number']}")
+            lines = latest_checks.get("lines", [])
+            assert isinstance(lines, list)
+            for line in lines:
+                print(f"  {line}")
+
+        errors = snapshot["errors"]
+        assert isinstance(errors, list)
+        for err in errors:
+            print(err)
+
+    errors = snapshot["errors"]
+    assert isinstance(errors, list)
+    return 0 if len(errors) == 0 else 1
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +367,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
         help="max open issues/PRs to list (default: 5)",
+    )
+    p_repo_health.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="emit structured JSON instead of text",
     )
     p_repo_health.set_defaults(func=cmd_repo_health)
 
