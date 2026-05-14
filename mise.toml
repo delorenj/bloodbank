@@ -38,6 +38,10 @@ run = "python3 cli/bb.py doctor"
 description = "Read-only git/issue/PR/check snapshot for BMAD evidence"
 run = "python3 cli/bb.py repo-health"
 
+[tasks."repo-health:json"]
+description = "Read-only structured JSON snapshot for BMAD/scripted evidence"
+run = "python3 cli/bb.py repo-health --json"
+
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
 run = "bash ops/bootstrap/check-platform.sh"
