@@ -20,3 +20,12 @@ Required fields:
 
 Index append convention (for each new closeout file):
 - `issue-<id>-execution.md` — closes out #<id> via PR #<pr> (<short scope note>)
+
+## Verification checklist (closeout quality gate)
+
+Before marking a ticket closed, confirm the closeout artifact includes:
+- At least one concrete command/check with an explicit outcome (pass/fail or observed state).
+- A direct state assertion for the ticket/PR pair (for example: issue closed, PR merged).
+- Links to the exact issue and PR URLs (not just numbers).
+- Any out-of-scope/deferred work called out explicitly (`none` when empty).
+- Notes section completed with risks/caveats or `none`.
