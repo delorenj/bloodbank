@@ -182,6 +182,21 @@ def _run(root: Path, *argv: str) -> tuple[int, str, str]:
     return int(proc.returncode), proc.stdout.strip(), proc.stderr.strip()
 
 
+def _write_output(path_str: str, content: str) -> str | None:
+    """Write command output to ``path_str``. Returns error text on failure."""
+    try:
+        out_path = Path(path_str)
+        if out_path.parent != Path(""):
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        if content.endswith("\n"):
+            out_path.write_text(content)
+        else:
+            out_path.write_text(content + "\n")
+        return None
+    except OSError as exc:
+        return f"output_write: ERROR ({exc})"
+
+
 def cmd_repo_health(args: argparse.Namespace) -> int:
     """Print a concise repo/ticket/PR/check snapshot for BMAD evidence."""
     root = bloodbank_root()
@@ -199,9 +214,19 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
         err = f"git_status: ERROR ({git_err or 'unknown git error'})"
         if args.json_output:
             snapshot["errors"] = [err]
-            print(json.dumps(snapshot, indent=2))
+            rendered_error = json.dumps(snapshot, indent=2)
         else:
-            print(err)
+            rendered_error = err
+
+        if args.out_path:
+            write_err = _write_output(args.out_path, rendered_error)
+            if write_err:
+                print(rendered_error)
+                print(write_err)
+                return 2
+            return 2
+
+        print(rendered_error)
         return 2
 
     git_line = git_out.splitlines()[0] if git_out else "<no status output>"
@@ -281,38 +306,56 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
     else:
         snapshot["latest_pr_checks"] = None
 
+    rendered = ""
     if args.json_output:
-        print(json.dumps(snapshot, indent=2))
+        rendered = json.dumps(snapshot, indent=2)
     else:
-        print(f"git_status: {snapshot['git_status']}")
+        lines_out: list[str] = []
+        lines_out.append(f"git_status: {snapshot['git_status']}")
 
         issues_out = snapshot["issues_open"]
         assert isinstance(issues_out, list)
-        print(f"issues_open: {len(issues_out)}")
+        lines_out.append(f"issues_open: {len(issues_out)}")
         for it in issues_out:
-            print(f"- issue #{it['number']}: {it['title']} ({it['url']})")
+            lines_out.append(f"- issue #{it['number']}: {it['title']} ({it['url']})")
 
         prs_out = snapshot["prs_open"]
         assert isinstance(prs_out, list)
-        print(f"prs_open: {len(prs_out)}")
+        lines_out.append(f"prs_open: {len(prs_out)}")
         for pr in prs_out:
-            print(f"- pr #{pr['number']}: {pr['title']} ({pr['url']})")
+            lines_out.append(f"- pr #{pr['number']}: {pr['title']} ({pr['url']})")
 
         latest_checks = snapshot["latest_pr_checks"]
         if latest_checks is None:
-            print("latest_pr_checks: none (no open PRs)")
+            lines_out.append("latest_pr_checks: none (no open PRs)")
         else:
             assert isinstance(latest_checks, dict)
-            print(f"latest_pr_checks: #{latest_checks['pr_number']}")
-            lines = latest_checks.get("lines", [])
-            assert isinstance(lines, list)
-            for line in lines:
-                print(f"  {line}")
+            lines_out.append(f"latest_pr_checks: #{latest_checks['pr_number']}")
+            check_lines = latest_checks.get("lines", [])
+            assert isinstance(check_lines, list)
+            for line in check_lines:
+                lines_out.append(f"  {line}")
 
-        errors = snapshot["errors"]
-        assert isinstance(errors, list)
-        for err in errors:
-            print(err)
+        errors_out = snapshot["errors"]
+        assert isinstance(errors_out, list)
+        for err in errors_out:
+            lines_out.append(err)
+
+        rendered = "\n".join(lines_out)
+
+    if args.out_path:
+        write_err = _write_output(args.out_path, rendered)
+        if write_err:
+            cast_errors = snapshot["errors"]
+            assert isinstance(cast_errors, list)
+            cast_errors.append(write_err)
+            print(rendered)
+            print(write_err)
+        else:
+            # Keep stdout quiet when explicit output path is requested.
+            pass
+    else:
+        print(rendered)
 
     errors = snapshot["errors"]
     assert isinstance(errors, list)
@@ -373,6 +416,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="json_output",
         help="emit structured JSON instead of text",
+    )
+    p_repo_health.add_argument(
+        "--out",
+        dest="out_path",
+        help="optional output file path for snapshot content",
     )
     p_repo_health.set_defaults(func=cmd_repo_health)
 
