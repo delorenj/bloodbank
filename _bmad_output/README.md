@@ -44,3 +44,6 @@ Expected output pattern:
 - `_bmad_output/evidence/repo-health-<utc-timestamp>.json`
 
 Generated evidence files are runtime artifacts and should not be committed.
+Use cleanup as needed:
+- `mise run repo-health:cleanup` (remove all generated snapshots)
+- `KEEP=5 mise run repo-health:cleanup` (keep newest 5)
