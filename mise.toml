@@ -56,6 +56,10 @@ bash -lc 'ts=$(date -u +%Y%m%dT%H%M%SZ); out="_bmad_output/evidence/repo-health-
 description = "Remove generated artifacts (KEEP=N retention, REPORT=1 JSON, DRY_RUN=1 preview)"
 run = "python3 ops/repo-health/cleanup.py"
 
+[tasks."bmad:closeout-scaffold"]
+description = "Scaffold _bmad_output/issue-<id>-execution.md from template (requires ISSUE_ID=...)"
+run = "python3 ops/bmad/scaffold_closeout.py"
+
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
 run = "bash ops/bootstrap/check-platform.sh"
