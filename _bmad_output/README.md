@@ -35,6 +35,7 @@ Before marking a ticket closed, confirm the closeout artifact includes:
 Use JSON mode when evidence needs to be consumed by scripts/tools (artifact generators, dashboards, checks):
 - `python3 cli/bb.py repo-health --json`
 - JSON includes `worktree_dirty` for explicit clean/dirty worktree checks.
+- Add `--require-clean-worktree` when the command should fail on dirty trees.
 
 ## Timestamped artifact task (preferred for closeout evidence)
 
