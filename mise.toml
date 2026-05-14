@@ -42,6 +42,12 @@ run = "python3 cli/bb.py repo-health"
 description = "Read-only structured JSON snapshot for BMAD/scripted evidence"
 run = "python3 cli/bb.py repo-health --json"
 
+[tasks."repo-health:artifact"]
+description = "Write timestamped JSON BMAD evidence artifact under _bmad_output/evidence"
+run = """
+bash -lc 'ts=$(date -u +%Y%m%dT%H%M%SZ); out="_bmad_output/evidence/repo-health-${ts}.json"; python3 cli/bb.py repo-health --json --out "$out"; echo "$out"'
+"""
+
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
 run = "bash ops/bootstrap/check-platform.sh"
