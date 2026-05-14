@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke test for ops/repo-health/cleanup.py
-# Covers default cleanup, KEEP retention, REPORT JSON, and invalid KEEP handling.
+# Covers default cleanup, KEEP retention, REPORT+DRY_RUN JSON, and invalid KEEP handling.
 
 set -euo pipefail
 
@@ -63,7 +63,22 @@ assert len(payload["removed_paths"]) == 1, payload
 assert len(payload["kept_paths"]) == 1, payload
 PY
 
-# 4) invalid KEEP should fail non-zero
+# 4) DRY_RUN=1 should not delete files
+make_artifact "20260101T000006Z"
+before_dry="$(count_artifacts)"
+dry_report="$(DRY_RUN=1 REPORT=1 KEEP=1 python3 ops/repo-health/cleanup.py)"
+after_dry="$(count_artifacts)"
+[[ "${before_dry}" == "${after_dry}" ]] || { echo "DRY_RUN mutated artifacts" >&2; exit 1; }
+python3 - <<'PY' "${dry_report}"
+import json
+import sys
+payload = json.loads(sys.argv[1])
+assert payload["dry_run"] is True, payload
+assert payload["removed_count"] >= 1, payload
+assert payload["kept_count"] >= 1, payload
+PY
+
+# 5) invalid KEEP should fail non-zero
 set +e
 KEEP=abc python3 ops/repo-health/cleanup.py >/dev/null 2>&1
 rc=$?
