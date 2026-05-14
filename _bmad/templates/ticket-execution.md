@@ -13,6 +13,11 @@
 - Command/check:
 - Result/evidence:
 
+## CI failure triage (optional — only if checks fail)
+- Failing run URL:
+- Error signature excerpt (`gh run view <run-id> --log-failed`):
+- Follow-up ticket URL (if out of scope):
+
 ## Outcome
 - PR:
 - Commit(s):
