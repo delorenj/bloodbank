@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Bloodbank operator CLI (``bb``) — stub skeleton.
+"""Bloodbank operator CLI (``bb``) — scaffold + operator snapshots.
 
 This module is the first-wave scaffold for the 33GOD operator CLI. It
 provides argparse-based subcommands (``doctor``, ``trace``, ``replay``,
-``emit``) that are intentionally side-effect-free in this wave:
+``emit``, ``repo-health``) that are intentionally low-risk in this wave:
 
-* No network I/O (no HTTP, no NATS, no Dapr sidecar calls).
 * No third-party Python dependencies -- standard library only.
 * No publishing of events or commands.
+
+Notes:
+
+* ``repo-health`` is read-only and may call ``gh``/``git`` to gather
+  evidence snapshots (issues/PRs/checks + working-tree status).
+* ``emit`` remains guarded and does not publish in this wave.
 
 Architectural context:
 
@@ -34,7 +39,9 @@ Design notes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -163,6 +170,105 @@ def cmd_emit(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _run(root: Path, *argv: str) -> tuple[int, str, str]:
+    """Run a command from ``root`` and return ``(rc, stdout, stderr)``."""
+    proc = subprocess.run(
+        argv,
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return int(proc.returncode), proc.stdout.strip(), proc.stderr.strip()
+
+
+def cmd_repo_health(args: argparse.Namespace) -> int:
+    """Print a concise repo/ticket/PR/check snapshot for BMAD evidence."""
+    root = bloodbank_root()
+
+    rc_git, git_out, git_err = _run(root, "git", "status", "--short", "--branch")
+    if rc_git != 0:
+        print(f"git_status: ERROR ({git_err or 'unknown git error'})")
+        return 2
+
+    git_line = git_out.splitlines()[0] if git_out else "<no status output>"
+    print(f"git_status: {git_line}")
+
+    fail_count = 0
+
+    rc_issue, issue_out, issue_err = _run(
+        root,
+        "gh",
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        str(args.limit),
+        "--json",
+        "number,title,url",
+    )
+    issues: list[dict[str, object]] = []
+    if rc_issue == 0 and issue_out:
+        try:
+            issues = json.loads(issue_out)
+        except json.JSONDecodeError:
+            fail_count += 1
+            print("issues_open: ERROR (invalid JSON from gh issue list)")
+    elif rc_issue != 0:
+        fail_count += 1
+        print(f"issues_open: ERROR ({issue_err or 'gh issue list failed'})")
+
+    if rc_issue == 0:
+        print(f"issues_open: {len(issues)}")
+        for it in issues:
+            print(f"- issue #{it['number']}: {it['title']} ({it['url']})")
+
+    rc_pr, pr_out, pr_err = _run(
+        root,
+        "gh",
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        str(args.limit),
+        "--json",
+        "number,title,url,updatedAt",
+    )
+    prs: list[dict[str, object]] = []
+    if rc_pr == 0 and pr_out:
+        try:
+            prs = json.loads(pr_out)
+        except json.JSONDecodeError:
+            fail_count += 1
+            print("prs_open: ERROR (invalid JSON from gh pr list)")
+    elif rc_pr != 0:
+        fail_count += 1
+        print(f"prs_open: ERROR ({pr_err or 'gh pr list failed'})")
+
+    if rc_pr == 0:
+        print(f"prs_open: {len(prs)}")
+        for pr in prs:
+            print(f"- pr #{pr['number']}: {pr['title']} ({pr['url']})")
+
+    if prs:
+        newest = sorted(prs, key=lambda x: str(x.get("updatedAt", "")), reverse=True)[0]
+        pr_number = int(newest["number"])
+        print(f"latest_pr_checks: #{pr_number}")
+        rc_checks, checks_out, checks_err = _run(root, "gh", "pr", "checks", str(pr_number))
+        if rc_checks in (0, 8) and checks_out:
+            for line in checks_out.splitlines():
+                print(f"  {line}")
+        else:
+            fail_count += 1
+            print(f"  ERROR ({checks_err or 'gh pr checks failed'})")
+    else:
+        print("latest_pr_checks: none (no open PRs)")
+
+    return 0 if fail_count == 0 else 1
+
+
 # ---------------------------------------------------------------------------
 # Argparse wiring
 # ---------------------------------------------------------------------------
@@ -172,8 +278,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bb",
         description=(
-            "Bloodbank operator CLI (stub). Safe for local use: no "
-            "network I/O, no third-party dependencies, no published traffic."
+            "Bloodbank operator CLI (scaffold). Default commands are "
+            "side-effect free; repo-health is read-only evidence capture."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -201,6 +307,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="emit a handcrafted event (stub)",
     )
     p_emit.set_defaults(func=cmd_emit)
+
+    p_repo_health = subparsers.add_parser(
+        "repo-health",
+        help="print git/issue/PR/check snapshot for BMAD evidence",
+    )
+    p_repo_health.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="max open issues/PRs to list (default: 5)",
+    )
+    p_repo_health.set_defaults(func=cmd_repo_health)
 
     return parser
 
