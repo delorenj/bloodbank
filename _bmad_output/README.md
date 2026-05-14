@@ -48,3 +48,4 @@ Use cleanup as needed:
 - `mise run repo-health:cleanup` (remove all generated snapshots)
 - `KEEP=5 mise run repo-health:cleanup` (keep newest 5)
 - `KEEP=5 REPORT=1 mise run repo-health:cleanup` (JSON report with removed/kept counts and paths)
+- `DRY_RUN=1 KEEP=5 REPORT=1 mise run repo-health:cleanup` (preview only; no file deletions)
