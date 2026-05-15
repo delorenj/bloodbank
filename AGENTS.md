@@ -81,6 +81,7 @@ alongside each service, using Holyfields-generated publishers.
   - failing check run URL
   - `gh run view <run-id> --log-failed` excerpt (error signature)
   - follow-up ticket URL when the fix is out of current PR scope
+- For GitHub CLI reliability fallbacks (`projectCards` deprecation class), use `ops/bmad/github-cli-reliability.md` and prefer `gh ... --json` or `gh api` REST paths in automation loops.
 - For scriptable evidence capture, use: `python3 cli/bb.py repo-health --json` (includes explicit `worktree_dirty` signal).
 - For gate-style checks, add `--require-clean-worktree` to force non-zero exit on dirty trees.
 - For non-mutating loop evidence on local drift state, use `mise run repo-health:drift`.
