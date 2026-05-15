@@ -2,6 +2,14 @@
 
 Use this read-only helper to quickly inspect cleanup quality across recent closeout artifacts.
 
+First, generate closeout artifacts while running merges:
+
+```bash
+mise run bmad:closeout-loop:artifact -- <pr-number-or-url>
+```
+
+Then summarize (defaults to `_bmad_output/evidence/closeout`):
+
 ```bash
 mise run bmad:closeout-cleanup-summary -- --limit 10
 ```

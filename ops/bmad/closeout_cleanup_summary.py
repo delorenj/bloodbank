@@ -88,7 +88,11 @@ def summarize(evidence_dir: Path, limit: int) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Summarize closeout artifact cleanup status")
-    parser.add_argument("--evidence-dir", default="_bmad_output/evidence", help="Directory containing closeout JSON artifacts")
+    parser.add_argument(
+        "--evidence-dir",
+        default="_bmad_output/evidence/closeout",
+        help="Directory containing closeout JSON artifacts",
+    )
     parser.add_argument("--limit", type=int, default=10, help="Maximum artifact rows to emit")
     args = parser.parse_args()
 
