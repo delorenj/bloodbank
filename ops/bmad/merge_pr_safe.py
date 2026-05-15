@@ -37,6 +37,15 @@ def gh_pr_view(pr: str) -> dict[str, object]:
     return json.loads(cp.stdout)
 
 
+def branch_exists_local(branch: str) -> bool:
+    cp = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        text=True,
+        capture_output=True,
+    )
+    return cp.returncode == 0
+
+
 def worktree_paths_for_branch(branch: str) -> list[str]:
     cp = subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
@@ -93,6 +102,7 @@ def main() -> int:
         "merge_command_stderr": merge.err,
         "head_branch": head_branch,
         "cleanup": {
+            "local_branch_status": "not_applicable",
             "local_branch_deleted": None,
             "linked_worktrees": [],
             "followup_commands": [],
@@ -105,18 +115,24 @@ def main() -> int:
 
     cleanup = report["cleanup"]
     if head_branch:
-        del_res = run("git", "branch", "-d", head_branch)
-        if del_res.code == 0:
+        if not branch_exists_local(head_branch):
+            cleanup["local_branch_status"] = "already_absent"
             cleanup["local_branch_deleted"] = True
         else:
-            cleanup["local_branch_deleted"] = False
-            paths = worktree_paths_for_branch(head_branch)
-            cleanup["linked_worktrees"] = paths
-            followups: list[str] = []
-            for path in paths:
-                followups.append(f"git worktree remove {path}")
-            followups.append(f"git branch -d {head_branch}")
-            cleanup["followup_commands"] = followups
+            del_res = run("git", "branch", "-d", head_branch)
+            if del_res.code == 0:
+                cleanup["local_branch_status"] = "deleted"
+                cleanup["local_branch_deleted"] = True
+            else:
+                cleanup["local_branch_status"] = "failed"
+                cleanup["local_branch_deleted"] = False
+                paths = worktree_paths_for_branch(head_branch)
+                cleanup["linked_worktrees"] = paths
+                followups: list[str] = []
+                for path in paths:
+                    followups.append(f"git worktree remove {path}")
+                followups.append(f"git branch -d {head_branch}")
+                cleanup["followup_commands"] = followups
 
     # Success even if merge command failed, as long as PR is confirmed merged.
     # This covers linked-worktree local deletion failures from gh merge.
