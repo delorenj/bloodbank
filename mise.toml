@@ -85,7 +85,7 @@ description = "Read-only summary of closeout artifact cleanup status fields"
 run = "python3 ops/bmad/closeout_cleanup_summary.py"
 
 [tasks."bmad:gh-readonly-status"]
-description = "Read-only issue/pr status helper with bounded retry for transient gh connectivity failures"
+description = "Read-only issue/pr/repo status helper with bounded retry for transient gh connectivity failures"
 run = "python3 ops/bmad/gh_readonly_status.py"
 
 [tasks."bmad:retrigger-pr-checks"]
