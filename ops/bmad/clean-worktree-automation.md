@@ -52,6 +52,12 @@ Optional safe merge helper (handles linked-worktree delete edge case):
 mise run bmad:pr-merge-safe -- <pr-number-or-url>
 ```
 
+Unified closeout helper (merge verification + cleanup follow-ups + primary drift evidence):
+
+```bash
+mise run bmad:closeout-loop -- <pr-number-or-url> --primary-repo /path/to/primary/checkout
+```
+
 ## Notes
 
 - If `/tmp/bloodbank-issue-<id>` already exists, remove it first or choose a different path.

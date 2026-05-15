@@ -72,6 +72,10 @@ run = "python3 ops/bmad/bootstrap_clean_worktree.py"
 description = "Safely merge PR with merged-state verification; linked-worktree cleanup handled as follow-up"
 run = "python3 ops/bmad/merge_pr_safe.py"
 
+[tasks."bmad:closeout-loop"]
+description = "Unified closeout helper: safe merge + cleanup follow-ups + primary drift snapshot"
+run = "python3 ops/bmad/closeout_loop.py"
+
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
 run = "bash ops/bootstrap/check-platform.sh"
