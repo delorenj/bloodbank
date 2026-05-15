@@ -13,6 +13,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -28,13 +29,32 @@ def run(*args: str) -> CmdResult:
 
 
 def gh_pr_view(pr: str) -> dict[str, object]:
+    helper = Path(__file__).with_name("gh_readonly_status.py")
     cp = subprocess.run(
-        ["gh", "pr", "view", pr, "--json", "number,state,mergedAt,url,headRefName"],
-        check=True,
+        [sys.executable, str(helper), "pr-view", pr],
         text=True,
         capture_output=True,
+        check=False,
     )
-    return json.loads(cp.stdout)
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or cp.stdout.strip() or "gh pr view failed")
+
+    try:
+        payload = json.loads(cp.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("invalid JSON from gh_readonly_status pr-view") from exc
+
+    data = payload.get("data")
+    if not payload.get("ok") or not isinstance(data, dict):
+        raise RuntimeError(str(payload.get("stderr") or "gh_readonly_status returned no data"))
+
+    return {
+        "number": data.get("number"),
+        "state": data.get("state"),
+        "mergedAt": data.get("mergedAt"),
+        "url": data.get("url"),
+        "headRefName": data.get("headRefName"),
+    }
 
 
 def branch_exists_local(branch: str) -> bool:
@@ -78,8 +98,8 @@ def main() -> int:
 
     try:
         view = gh_pr_view(args.pr)
-    except subprocess.CalledProcessError as exc:
-        print(f"pr_view_error: {exc.stderr.strip() or exc}", file=sys.stderr)
+    except RuntimeError as exc:
+        print(f"pr_view_error: {exc}", file=sys.stderr)
         if merge.out:
             print(merge.out)
         if merge.err:

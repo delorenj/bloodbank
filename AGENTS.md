@@ -93,6 +93,7 @@ alongside each service, using Holyfields-generated publishers.
 - For shell-safe issue/PR markdown composition, use `ops/bmad/github-body-authoring.md` and prefer `--body-file`/file-backed REST payloads over inline `--body "..."`.
 - For scriptable evidence capture, use: `python3 cli/bb.py repo-health --json` (includes explicit `worktree_dirty` signal).
 - `repo-health` applies bounded retries for transient GitHub API connectivity errors on read-only `gh` status calls (`issue list`, `pr list`, `pr checks`).
+- For direct automation reads of issue/PR state, prefer `mise run bmad:gh-readonly-status -- issue-view <id>|pr-view <id>` over raw `gh ... view`.
 - For gate-style checks, add `--require-clean-worktree` to force non-zero exit on dirty trees.
 - For non-mutating loop evidence on local drift state, use `mise run repo-health:drift`.
 - For quick cleanup-status review across closeout artifacts, use `mise run bmad:closeout-cleanup-summary`.
