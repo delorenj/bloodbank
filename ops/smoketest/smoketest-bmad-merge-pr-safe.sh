@@ -37,10 +37,20 @@ if payload["head_branch"] is not None:
 
 cleanup = payload["cleanup"]
 assert isinstance(cleanup, dict), payload
-for key in ["local_branch_deleted", "linked_worktrees", "followup_commands"]:
+for key in [
+    "local_branch_status",
+    "local_branch_deleted",
+    "linked_worktrees",
+    "followup_commands",
+]:
     assert key in cleanup, payload
+assert cleanup["local_branch_status"] in {"not_applicable", "already_absent", "deleted", "failed"}, payload
 assert isinstance(cleanup["linked_worktrees"], list), payload
 assert isinstance(cleanup["followup_commands"], list), payload
+if cleanup["local_branch_status"] in {"already_absent", "deleted"}:
+    assert cleanup["local_branch_deleted"] is True, payload
+if cleanup["local_branch_status"] == "failed":
+    assert cleanup["local_branch_deleted"] is False, payload
 PY
 
 echo "smoketest-bmad-merge-pr-safe: PASS"
