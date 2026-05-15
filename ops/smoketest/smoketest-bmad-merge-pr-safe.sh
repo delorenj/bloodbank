@@ -10,7 +10,7 @@ cd "${BLOODBANK_ROOT}"
 
 MERGED_PR="${MERGED_PR:-117}"
 
-merge_json="$(python3 ops/bmad/merge_pr_safe.py "${MERGED_PR}")"
+merge_json="$(python3 ops/bmad/merge_pr_safe.py "${MERGED_PR}" --bypass-preflight)"
 
 python3 - <<'PY' "${merge_json}"
 import json
@@ -24,6 +24,7 @@ for key in [
     "merge_command_stderr",
     "head_branch",
     "cleanup",
+    "preflight",
 ]:
     assert key in payload, payload
 
@@ -34,6 +35,10 @@ assert isinstance(payload["merge_command_stderr"], str), payload
 
 if payload["head_branch"] is not None:
     assert isinstance(payload["head_branch"], str), payload
+
+preflight = payload["preflight"]
+assert isinstance(preflight, dict), payload
+assert preflight.get("bypassed") is True, payload
 
 cleanup = payload["cleanup"]
 assert isinstance(cleanup, dict), payload
