@@ -5,6 +5,7 @@ Use this when your primary checkout is dirty and/or behind origin, and you need 
 ## Guardrails
 
 - Never stash, discard, or rewrite unknown local changes in the primary checkout.
+- Run `mise run bmad:preflight-strict-clean` before mutating actions; non-zero means stop and route hygiene first.
 - Run automation work in a dedicated clean worktree created from `origin/main`.
 - Verify the automation worktree is clean and synced before creating ticket branches.
 - Keep primary checkout untouched; remove the temporary worktree when done.

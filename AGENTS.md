@@ -55,6 +55,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run bmad:closeout-cleanup-summary -- [--evidence-dir <dir>] [--limit <n>]` | read-only summary of closeout artifact cleanup status fields for quick operator review (defaults to `_bmad_output/evidence/closeout`) |
 | `mise run bmad:gh-readonly-status -- issue-view <id> \| pr-view <id> \| repo-view` | read-only JSON status helper with bounded retry for transient `gh` API connectivity errors |
 | `mise run bmad:retrigger-pr-checks -- <pr> [--workflow ci.yml] [--dry-run]` | dispatch CI workflow for PR head branch without no-op commit retriggers |
+| `mise run bmad:preflight-strict-clean -- [--repo <path>]` | strict-clean preflight gate; emits actionable JSON and fails fast when worktree is dirty |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
 | `mise run smoketest`    | NATS-direct event round-trip                     |
 | `mise run smoketest:command` | NATS-direct command + reply round-trip      |
@@ -73,8 +74,9 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:bmad-closeout-artifact-summary` | local validation for closeout artifact write path + summary visibility contract |
 | `mise run smoketest:bmad-repo-health-retry` | local validation for bounded transient retry behavior in `cli/bb.py repo-health` gh read paths |
 | `mise run smoketest:bmad-gh-readonly-status` | local validation for bounded transient retry behavior in read-only issue/pr status helper |
+| `mise run smoketest:bmad-preflight-strict-clean` | local validation for strict-clean preflight helper JSON/exit contract (clean pass + dirty fail) |
 | `mise run smoketest:hermes-runtime-hygiene` | local validation for Hermes runtime ignore contract (runtime state ignored, skeleton trackable) |
-| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry/gh-readonly-status/hermes-runtime-hygiene, fail-fast) |
+| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry/gh-readonly-status/preflight-strict-clean/hermes-runtime-hygiene, fail-fast) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline
@@ -96,6 +98,7 @@ alongside each service, using Holyfields-generated publishers.
 - `repo-health` applies bounded retries for transient GitHub API connectivity errors on read-only `gh` status calls (`issue list`, `pr list`, `pr checks`).
 - For direct automation reads of issue/PR/repo state, prefer `mise run bmad:gh-readonly-status -- issue-view <id>|pr-view <id>|repo-view` over raw `gh ... view`.
 - For gate-style checks, add `--require-clean-worktree` to force non-zero exit on dirty trees.
+- Before mutating loop actions (branch/commit/merge), run `mise run bmad:preflight-strict-clean` and treat non-zero as a hard blocker requiring hygiene routing.
 - For non-mutating loop evidence on local drift state, use `mise run repo-health:drift`.
 - For quick cleanup-status review across closeout artifacts, use `mise run bmad:closeout-cleanup-summary`.
 - Runtime closeout evidence JSONs under `_bmad_output/evidence/closeout/` are operator-generated artifacts and intentionally git-ignored.
