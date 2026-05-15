@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke test for ops/bmad/merge_pr_safe.py
-# Covers machine-readable JSON output and key merge/cleanup fields
+# Covers machine-readable JSON output and merge/cleanup contract fields
 # using an already merged PR reference (non-destructive path).
 
 set -euo pipefail
@@ -17,17 +17,29 @@ import json
 import sys
 
 payload = json.loads(sys.argv[1])
-for key in ["state", "mergedAt", "merge_command_exit", "cleanup"]:
+for key in [
+    "state",
+    "mergedAt",
+    "merge_command_exit",
+    "merge_command_stderr",
+    "head_branch",
+    "cleanup",
+]:
     assert key in payload, payload
 
 assert payload["state"] == "MERGED", payload
 assert payload["mergedAt"], payload
 assert isinstance(payload["merge_command_exit"], int), payload
+assert isinstance(payload["merge_command_stderr"], str), payload
+
+if payload["head_branch"] is not None:
+    assert isinstance(payload["head_branch"], str), payload
 
 cleanup = payload["cleanup"]
 assert isinstance(cleanup, dict), payload
-for key in ["local_branch_deleted", "followup_commands"]:
+for key in ["local_branch_deleted", "linked_worktrees", "followup_commands"]:
     assert key in cleanup, payload
+assert isinstance(cleanup["linked_worktrees"], list), payload
 assert isinstance(cleanup["followup_commands"], list), payload
 PY
 
