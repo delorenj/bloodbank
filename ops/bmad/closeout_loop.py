@@ -101,10 +101,17 @@ def main() -> int:
 
     warnings: list[str] = []
     cleanup_followups: list[str] = []
+    cleanup_local_branch_status = "unknown"
+    cleanup_local_branch_deleted: bool | None = None
     if merge_payload:
         cleanup = merge_payload.get("cleanup")
         if isinstance(cleanup, dict):
+            status = cleanup.get("local_branch_status")
+            if isinstance(status, str) and status:
+                cleanup_local_branch_status = status
             local_deleted = cleanup.get("local_branch_deleted")
+            if isinstance(local_deleted, bool) or local_deleted is None:
+                cleanup_local_branch_deleted = local_deleted
             if local_deleted is False:
                 warnings.append("local branch cleanup requires follow-up")
             cmds = cleanup.get("followup_commands")
@@ -125,6 +132,8 @@ def main() -> int:
         "drift_snapshot_ok": drift_ok,
         "merge": merge_payload,
         "drift": drift_payload,
+        "cleanup_local_branch_status": cleanup_local_branch_status,
+        "cleanup_local_branch_deleted": cleanup_local_branch_deleted,
         "cleanup_followup_commands": cleanup_followups,
         "warnings": warnings,
         "overall_status": "ok" if (merged and drift_ok) else "error",

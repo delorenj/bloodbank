@@ -21,6 +21,7 @@ assert payload["overall_status"] == "ok", payload
 assert payload["merged"] is True, payload
 assert payload["drift_snapshot_ok"] is True, payload
 assert payload["primary_repo_source"] == "cli", payload
+assert payload["cleanup_local_branch_status"] in {"unknown", "not_applicable", "already_absent", "deleted", "failed"}, payload
 assert isinstance(payload["cleanup_followup_commands"], list), payload
 assert isinstance(payload["merge"], dict), payload
 assert isinstance(payload["drift"], dict), payload
