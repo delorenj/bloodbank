@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 
 def _run_json(command: list[str]) -> tuple[int, dict[str, object] | None, str, str]:
@@ -50,6 +51,15 @@ def _resolve_primary_repo(cli_value: str | None) -> tuple[Path, str]:
     return Path.cwd(), "cwd"
 
 
+def _emit(report: dict[str, Any], out: str | None) -> None:
+    rendered = json.dumps(report, indent=2)
+    print(rendered)
+    if out:
+        out_path = Path(out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(rendered + "\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Unified BMAD closeout helper")
     parser.add_argument("pr", help="PR number or URL")
@@ -57,31 +67,28 @@ def main() -> int:
         "--primary-repo",
         help="Path to primary checkout for read-only drift evidence snapshot (optional: defaults PRIMARY_REPO env, then cwd)",
     )
+    parser.add_argument("--out", help="Optional path to also write JSON report")
     args = parser.parse_args()
 
     primary_repo, primary_repo_source = _resolve_primary_repo(args.primary_repo)
 
     if not _is_git_repo(primary_repo):
-        print(
-            json.dumps(
-                {
-                    "pr": args.pr,
-                    "primary_repo": str(primary_repo.resolve()),
-                    "primary_repo_source": primary_repo_source,
-                    "overall_status": "error",
-                    "warnings": ["resolved primary repo is not a git worktree"],
-                    "diagnostics": {
-                        "merge_rc": None,
-                        "drift_rc": None,
-                        "merge_stderr": "",
-                        "drift_stderr": "",
-                        "merge_stdout_raw": None,
-                        "drift_stdout_raw": None,
-                    },
-                },
-                indent=2,
-            )
-        )
+        report = {
+            "pr": args.pr,
+            "primary_repo": str(primary_repo.resolve()),
+            "primary_repo_source": primary_repo_source,
+            "overall_status": "error",
+            "warnings": ["resolved primary repo is not a git worktree"],
+            "diagnostics": {
+                "merge_rc": None,
+                "drift_rc": None,
+                "merge_stderr": "",
+                "drift_stderr": "",
+                "merge_stdout_raw": None,
+                "drift_stdout_raw": None,
+            },
+        }
+        _emit(report, args.out)
         return 1
 
     merge_cmd = ["python3", "ops/bmad/merge_pr_safe.py", args.pr]
@@ -147,7 +154,7 @@ def main() -> int:
         },
     }
 
-    print(json.dumps(report, indent=2))
+    _emit(report, args.out)
     return 0 if (merged and drift_ok) else 1
 
 
