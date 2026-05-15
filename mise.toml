@@ -84,6 +84,10 @@ run = "bash ops/bmad/closeout_loop_artifact.sh"
 description = "Read-only summary of closeout artifact cleanup status fields"
 run = "python3 ops/bmad/closeout_cleanup_summary.py"
 
+[tasks."bmad:gh-readonly-status"]
+description = "Read-only issue/pr status helper with bounded retry for transient gh connectivity failures"
+run = "python3 ops/bmad/gh_readonly_status.py"
+
 [tasks."bmad:retrigger-pr-checks"]
 description = "Dispatch CI workflow for a PR head branch (no empty commit retrigger)"
 run = "python3 ops/bmad/retrigger_pr_checks.py"
@@ -156,9 +160,13 @@ run = "bash ops/smoketest/smoketest-bmad-closeout-artifact-summary.sh"
 description = "Local smoke test for repo-health transient gh retry behavior"
 run = "bash ops/smoketest/smoketest-bmad-repo-health-retry.sh"
 
+[tasks."smoketest:bmad-gh-readonly-status"]
+description = "Local smoke test for read-only gh status helper retry behavior"
+run = "bash ops/smoketest/smoketest-bmad-gh-readonly-status.sh"
+
 [tasks."smoketest:ops"]
 description = "Run consolidated local operator reliability smoke checks (fail-fast)"
-run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety && mise run smoketest:bmad-closeout-cleanup-summary && mise run smoketest:bmad-closeout-artifact-summary && mise run smoketest:bmad-repo-health-retry"
+run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety && mise run smoketest:bmad-closeout-cleanup-summary && mise run smoketest:bmad-closeout-artifact-summary && mise run smoketest:bmad-repo-health-retry && mise run smoketest:bmad-gh-readonly-status"
 
 [tasks.logs]
 description = "Tail every Bloodbank container"

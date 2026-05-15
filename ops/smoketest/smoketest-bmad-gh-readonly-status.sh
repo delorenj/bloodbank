@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Smoke test for ops/bmad/gh_readonly_status.py retry semantics.
+
+set -euo pipefail
+
+BLOODBANK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${BLOODBANK_ROOT}"
+
+python3 - <<'PY'
+import ops.bmad.gh_readonly_status as s
+
+orig_run_once = s._run_once
+orig_sleep = s.time.sleep
+
+try:
+    # transient -> success on retry
+    attempts = []
+    sleeps = []
+    responses = [
+        (1, "", "error connecting to api.github.com"),
+        (1, "", "timed out"),
+        (0, '{"state":"OPEN"}', ""),
+    ]
+
+    def fake_once(_argv):
+        attempts.append(1)
+        return responses.pop(0)
+
+    s._run_once = fake_once
+    s.time.sleep = lambda sec: sleeps.append(sec)
+    rc, out, err, tries = s.run_with_retry(["gh", "issue", "view", "1"])
+    assert rc == 0 and tries == 3 and 'OPEN' in out and err == "", (rc, out, err, tries)
+    assert sleeps == [0.5, 1.0], sleeps
+
+    # non-transient should not retry
+    attempts = []
+    sleeps = []
+
+    def fake_non(_argv):
+        attempts.append(1)
+        return (1, "", "GraphQL: Projects (classic) is being deprecated")
+
+    s._run_once = fake_non
+    s.time.sleep = lambda sec: sleeps.append(sec)
+    rc, out, err, tries = s.run_with_retry(["gh", "pr", "view", "2"])
+    assert rc == 1 and tries == 1 and "deprecated" in err.lower(), (rc, out, err, tries)
+    assert sleeps == [], sleeps
+
+finally:
+    s._run_once = orig_run_once
+    s.time.sleep = orig_sleep
+PY
+
+echo "smoketest-bmad-gh-readonly-status: PASS"
