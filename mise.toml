@@ -60,6 +60,10 @@ run = "python3 ops/repo-health/cleanup.py"
 description = "Scaffold _bmad_output/issue-<id>-execution.md from template (requires ISSUE_ID=...)"
 run = "python3 ops/bmad/scaffold_closeout.py"
 
+[tasks."bmad:worktree-bootstrap"]
+description = "Bootstrap isolated clean automation worktree (requires ISSUE_ID + SLUG; REUSE=1 to reuse)"
+run = "python3 ops/bmad/bootstrap_clean_worktree.py"
+
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
 run = "bash ops/bootstrap/check-platform.sh"
