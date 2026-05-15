@@ -15,7 +15,21 @@ This emits:
 - `helper_on_origin_main`
 - `recommended_path`
 
-## 1) Safety anchor before any destructive action
+## 1) Preferred backup-first helper (recommended)
+
+Run helper in read-only mode first:
+
+```bash
+mise run bmad:align-main-with-backup -- --repo /path/to/primary/checkout
+```
+
+If output looks correct, run apply mode (creates backup branch + bundle + reset):
+
+```bash
+mise run bmad:align-main-with-backup -- --repo /path/to/primary/checkout --apply
+```
+
+## 1b) Manual safety anchor (fallback)
 
 ```bash
 cd /path/to/primary/checkout
@@ -56,9 +70,13 @@ python3 ops/bmad/reconcile_main_divergence.py --repo /path/to/primary/checkout -
 
 Use one of:
 - rebase/local-history repair path, or
-- backup then reset to canonical `origin/main`.
+- helper-driven backup + reset to canonical `origin/main`:
 
-This is a **manual decision point** and should be ticketed/evidenced.
+```bash
+mise run bmad:align-main-with-backup -- --repo /path/to/primary/checkout --apply
+```
+
+This remains a **manual decision point** and should be ticketed/evidenced.
 
 ## 3) Post-recovery verification
 
