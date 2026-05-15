@@ -47,19 +47,23 @@ def main() -> int:
     p_pr = sub.add_parser("pr-view", help="Fetch PR status JSON with retry")
     p_pr.add_argument("pr")
 
+    sub.add_parser("repo-view", help="Fetch repo metadata JSON with retry")
+
     args = parser.parse_args()
 
     if args.command == "issue-view":
         cmd = ["gh", "issue", "view", str(args.issue), "--json", "number,title,state,url,updatedAt"]
-    else:
+    elif args.command == "pr-view":
         cmd = [
             "gh",
             "pr",
             "view",
             str(args.pr),
             "--json",
-            "number,title,state,url,headRefName,mergeStateStatus,statusCheckRollup,updatedAt",
+            "number,title,state,url,headRefName,mergeStateStatus,statusCheckRollup,mergedAt,updatedAt",
         ]
+    else:
+        cmd = ["gh", "repo", "view", "--json", "nameWithOwner"]
 
     rc, out, err, attempts = run_with_retry(cmd)
     payload: dict[str, Any] = {

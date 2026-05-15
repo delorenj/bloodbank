@@ -11,6 +11,7 @@ import argparse
 import json
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -26,6 +27,28 @@ def run_json(cmd: list[str]) -> Any:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"invalid JSON output from command: {' '.join(cmd)}") from exc
+
+
+def run_json_readonly_with_retry(kind: str, value: str | None = None) -> Any:
+    helper = Path(__file__).with_name("gh_readonly_status.py")
+    cmd = [sys.executable, str(helper), kind]
+    if value is not None:
+        cmd.append(value)
+    result = run(cmd)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "command failed")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"invalid JSON output from command: {' '.join(cmd)}") from exc
+
+    if not payload.get("ok"):
+        raise RuntimeError(str(payload.get("stderr") or "helper command failed"))
+
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise RuntimeError("helper returned no data")
+    return data
 
 
 def main() -> int:
@@ -45,17 +68,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    repo = run_json(["gh", "repo", "view", "--json", "nameWithOwner"])["nameWithOwner"]
-    pr = run_json(
-        [
-            "gh",
-            "pr",
-            "view",
-            str(args.pr),
-            "--json",
-            "number,state,headRefName,url",
-        ]
-    )
+    repo = run_json_readonly_with_retry("repo-view")["nameWithOwner"]
+    pr = run_json_readonly_with_retry("pr-view", str(args.pr))
 
     payload: dict[str, Any] = {
         "repository": repo,

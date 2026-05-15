@@ -59,6 +59,17 @@ mise run smoketest:bmad-repo-health-retry
 mise run smoketest:bmad-gh-readonly-status
 ```
 
+## Intentional raw-`gh` exceptions (currently)
+
+The retry helper is intentionally **not** used for mutating operations:
+
+- `gh pr merge ...`
+- `gh issue create ...`
+- `gh pr create ...`
+- `gh api -X POST ...` dispatch/mutation calls
+
+Those paths should surface failures immediately to avoid accidental duplicate writes.
+
 ## Operational checklist
 
 1. Capture failing `gh` command + stderr in the ticket evidence.
