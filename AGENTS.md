@@ -53,6 +53,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run bmad:closeout-loop -- <pr> [--primary-repo <path>]` | unified closeout summary (merge+cleanup+drift evidence, JSON; defaults `PRIMARY_REPO` env then cwd) |
 | `mise run bmad:closeout-loop:artifact -- <pr> [--primary-repo <path>]` | same as closeout-loop, plus timestamped artifact write to `_bmad_output/evidence/closeout/` |
 | `mise run bmad:closeout-cleanup-summary -- [--evidence-dir <dir>] [--limit <n>]` | read-only summary of closeout artifact cleanup status fields for quick operator review (defaults to `_bmad_output/evidence/closeout`) |
+| `mise run bmad:gh-readonly-status -- issue-view <id> \| pr-view <id>` | read-only JSON status helper with bounded retry for transient `gh` API connectivity errors |
 | `mise run bmad:retrigger-pr-checks -- <pr> [--workflow ci.yml] [--dry-run]` | dispatch CI workflow for PR head branch without no-op commit retriggers |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
 | `mise run smoketest`    | NATS-direct event round-trip                     |
@@ -71,7 +72,8 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:bmad-closeout-cleanup-summary` | local validation for closeout cleanup summary helper JSON output contract |
 | `mise run smoketest:bmad-closeout-artifact-summary` | local validation for closeout artifact write path + summary visibility contract |
 | `mise run smoketest:bmad-repo-health-retry` | local validation for bounded transient retry behavior in `cli/bb.py repo-health` gh read paths |
-| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry, fail-fast) |
+| `mise run smoketest:bmad-gh-readonly-status` | local validation for bounded transient retry behavior in read-only issue/pr status helper |
+| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry/gh-readonly-status, fail-fast) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline

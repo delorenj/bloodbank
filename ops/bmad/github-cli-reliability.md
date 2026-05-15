@@ -45,10 +45,18 @@ For read-only repo snapshots, `cli/bb.py repo-health` now applies bounded retry 
 
 Use `mise run repo-health` / `mise run repo-health:artifact` as the preferred status path in automation loops.
 
-Local regression check:
+For direct issue/PR status reads in automation loops, use the retry-aware helper:
+
+```bash
+mise run bmad:gh-readonly-status -- issue-view <id>
+mise run bmad:gh-readonly-status -- pr-view <id>
+```
+
+Local regression checks:
 
 ```bash
 mise run smoketest:bmad-repo-health-retry
+mise run smoketest:bmad-gh-readonly-status
 ```
 
 ## Operational checklist
