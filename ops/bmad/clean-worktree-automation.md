@@ -46,6 +46,12 @@ cd -
 git worktree remove /tmp/bloodbank-issue-<id>
 ```
 
+Optional safe merge helper (handles linked-worktree delete edge case):
+
+```bash
+mise run bmad:pr-merge-safe -- <pr-number-or-url>
+```
+
 ## Notes
 
 - If `/tmp/bloodbank-issue-<id>` already exists, remove it first or choose a different path.

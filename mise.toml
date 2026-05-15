@@ -68,6 +68,10 @@ run = "python3 ops/bmad/scaffold_closeout.py"
 description = "Bootstrap isolated clean automation worktree (requires ISSUE_ID + SLUG; REUSE=1 to reuse)"
 run = "python3 ops/bmad/bootstrap_clean_worktree.py"
 
+[tasks."bmad:pr-merge-safe"]
+description = "Safely merge PR with merged-state verification; linked-worktree cleanup handled as follow-up"
+run = "python3 ops/bmad/merge_pr_safe.py"
+
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
 run = "bash ops/bootstrap/check-platform.sh"

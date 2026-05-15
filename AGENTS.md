@@ -49,6 +49,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run repo-health:cleanup` | remove generated artifacts; optional `KEEP=N`, `REPORT=1`, and `DRY_RUN=1` preview |
 | `ISSUE_ID=<id> mise run bmad:closeout-scaffold` | scaffold `_bmad_output/issue-<id>-execution.md` from template |
 | `ISSUE_ID=<id> SLUG=<slug> mise run bmad:worktree-bootstrap` | bootstrap isolated clean worktree from `origin/main` for ticket loops |
+| `mise run bmad:pr-merge-safe -- <pr>` | safe squash merge + merged-state verification + cleanup follow-ups |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
 | `mise run smoketest`    | NATS-direct event round-trip                     |
 | `mise run smoketest:command` | NATS-direct command + reply round-trip      |
