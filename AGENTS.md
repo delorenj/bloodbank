@@ -92,6 +92,7 @@ alongside each service, using Holyfields-generated publishers.
 - For gate-style checks, add `--require-clean-worktree` to force non-zero exit on dirty trees.
 - For non-mutating loop evidence on local drift state, use `mise run repo-health:drift`.
 - For quick cleanup-status review across closeout artifacts, use `mise run bmad:closeout-cleanup-summary`.
+- Runtime closeout evidence JSONs under `_bmad_output/evidence/closeout/` are operator-generated artifacts and intentionally git-ignored.
 - If primary checkout is dirty/behind, use the dedicated clean-worktree automation path in `ops/bmad/clean-worktree-automation.md` (do not stash/discard unknown local changes).
 - Local OpenClaw hook scratch path (`services/agent-hooks/openclaw/`) is intentionally treated as operator-local and excluded from repo tracking.
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
