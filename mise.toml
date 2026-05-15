@@ -46,6 +46,10 @@ run = "python3 cli/bb.py repo-health --json"
 description = "Read-only strict gate: fail when worktree is not clean"
 run = "python3 cli/bb.py repo-health --require-clean-worktree"
 
+[tasks."repo-health:drift"]
+description = "Read-only drift snapshot (branch divergence + modified/untracked + top-level buckets)"
+run = "python3 ops/repo-health/drift_snapshot.py --repo ."
+
 [tasks."repo-health:artifact"]
 description = "Write timestamped JSON BMAD evidence artifact under _bmad_output/evidence"
 run = """

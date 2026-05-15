@@ -44,6 +44,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run repo-health`  | `cli/bb.py repo-health` — read-only git/issue/PR/check snapshot |
 | `mise run repo-health:json` | `cli/bb.py repo-health --json` — structured snapshot for scripts/tools |
 | `mise run repo-health:strict` | `cli/bb.py repo-health --require-clean-worktree` — fail gate on dirty trees |
+| `mise run repo-health:drift` | read-only drift snapshot (ahead/behind + modified/untracked + top-level buckets) |
 | `mise run repo-health:artifact` | timestamped JSON evidence file under `_bmad_output/evidence/` |
 | `mise run repo-health:cleanup` | remove generated artifacts; optional `KEEP=N`, `REPORT=1`, and `DRY_RUN=1` preview |
 | `ISSUE_ID=<id> mise run bmad:closeout-scaffold` | scaffold `_bmad_output/issue-<id>-execution.md` from template |
@@ -75,6 +76,7 @@ alongside each service, using Holyfields-generated publishers.
   - follow-up ticket URL when the fix is out of current PR scope
 - For scriptable evidence capture, use: `python3 cli/bb.py repo-health --json` (includes explicit `worktree_dirty` signal).
 - For gate-style checks, add `--require-clean-worktree` to force non-zero exit on dirty trees.
+- For non-mutating loop evidence on local drift state, use `mise run repo-health:drift`.
 - If primary checkout is dirty/behind, use the dedicated clean-worktree automation path in `ops/bmad/clean-worktree-automation.md` (do not stash/discard unknown local changes).
 - Local OpenClaw hook scratch path (`services/agent-hooks/openclaw/`) is intentionally treated as operator-local and excluded from repo tracking.
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
