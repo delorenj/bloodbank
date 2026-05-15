@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -29,15 +30,59 @@ def _run_json(command: list[str]) -> tuple[int, dict[str, object] | None, str, s
     return cp.returncode, payload, out, err
 
 
+def _is_git_repo(path: Path) -> bool:
+    cp = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+        text=True,
+        capture_output=True,
+    )
+    return cp.returncode == 0 and cp.stdout.strip() == "true"
+
+
+def _resolve_primary_repo(cli_value: str | None) -> tuple[Path, str]:
+    if cli_value:
+        return Path(cli_value), "cli"
+
+    env_value = os.getenv("PRIMARY_REPO")
+    if env_value:
+        return Path(env_value), "env:PRIMARY_REPO"
+
+    return Path.cwd(), "cwd"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Unified BMAD closeout helper")
     parser.add_argument("pr", help="PR number or URL")
     parser.add_argument(
         "--primary-repo",
-        required=True,
-        help="Path to primary checkout for read-only drift evidence snapshot",
+        help="Path to primary checkout for read-only drift evidence snapshot (optional: defaults PRIMARY_REPO env, then cwd)",
     )
     args = parser.parse_args()
+
+    primary_repo, primary_repo_source = _resolve_primary_repo(args.primary_repo)
+
+    if not _is_git_repo(primary_repo):
+        print(
+            json.dumps(
+                {
+                    "pr": args.pr,
+                    "primary_repo": str(primary_repo.resolve()),
+                    "primary_repo_source": primary_repo_source,
+                    "overall_status": "error",
+                    "warnings": ["resolved primary repo is not a git worktree"],
+                    "diagnostics": {
+                        "merge_rc": None,
+                        "drift_rc": None,
+                        "merge_stderr": "",
+                        "drift_stderr": "",
+                        "merge_stdout_raw": None,
+                        "drift_stdout_raw": None,
+                    },
+                },
+                indent=2,
+            )
+        )
+        return 1
 
     merge_cmd = ["python3", "ops/bmad/merge_pr_safe.py", args.pr]
     merge_rc, merge_payload, merge_out, merge_err = _run_json(merge_cmd)
@@ -46,7 +91,7 @@ def main() -> int:
         "python3",
         "ops/repo-health/drift_snapshot.py",
         "--repo",
-        str(Path(args.primary_repo)),
+        str(primary_repo),
         "--json",
     ]
     drift_rc, drift_payload, drift_out, drift_err = _run_json(drift_cmd)
@@ -74,7 +119,8 @@ def main() -> int:
 
     report: dict[str, object] = {
         "pr": args.pr,
-        "primary_repo": str(Path(args.primary_repo).resolve()),
+        "primary_repo": str(primary_repo.resolve()),
+        "primary_repo_source": primary_repo_source,
         "merged": merged,
         "drift_snapshot_ok": drift_ok,
         "merge": merge_payload,
