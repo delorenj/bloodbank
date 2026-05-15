@@ -74,6 +74,7 @@ alongside each service, using Holyfields-generated publishers.
   - follow-up ticket URL when the fix is out of current PR scope
 - For scriptable evidence capture, use: `python3 cli/bb.py repo-health --json` (includes explicit `worktree_dirty` signal).
 - For gate-style checks, add `--require-clean-worktree` to force non-zero exit on dirty trees.
+- If primary checkout is dirty/behind, use the dedicated clean-worktree automation path in `ops/bmad/clean-worktree-automation.md` (do not stash/discard unknown local changes).
 - Local OpenClaw hook scratch path (`services/agent-hooks/openclaw/`) is intentionally treated as operator-local and excluded from repo tracking.
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
 
