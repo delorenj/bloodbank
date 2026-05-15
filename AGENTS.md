@@ -56,7 +56,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run bmad:gh-readonly-status -- issue-view <id> \| pr-view <id> \| repo-view` | read-only JSON status helper with bounded retry for transient `gh` API connectivity errors |
 | `mise run bmad:retrigger-pr-checks -- <pr> [--workflow ci.yml] [--dry-run]` | dispatch CI workflow for PR head branch without no-op commit retriggers |
 | `mise run bmad:preflight-strict-clean -- [--repo <path>]` | strict-clean preflight gate; emits actionable JSON and fails fast when worktree is dirty |
-| `mise run bmad:reconcile-main-divergence -- [--repo <path>] [--apply]` | detect/optionally reconcile patch-equivalent `main...origin/main` divergence |
+| `mise run bmad:reconcile-main-divergence -- [--repo <path>] [--apply] [--limit <n>]` | detect/optionally reconcile patch-equivalent `main...origin/main` divergence with commit-side summaries |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
 | `mise run smoketest`    | NATS-direct event round-trip                     |
 | `mise run smoketest:command` | NATS-direct command + reply round-trip      |
