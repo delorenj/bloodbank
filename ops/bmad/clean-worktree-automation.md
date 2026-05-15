@@ -11,6 +11,16 @@ Use this when your primary checkout is dirty and/or behind origin, and you need 
 
 ## Command recipe (copy/paste)
 
+Preferred helper path:
+
+```bash
+# from primary checkout (may be dirty)
+ISSUE_ID=<id> SLUG=<slug> mise run bmad:worktree-bootstrap
+# optional: REUSE=1 ISSUE_ID=<id> SLUG=<slug> mise run bmad:worktree-bootstrap
+```
+
+Manual equivalent:
+
 ```bash
 # from primary checkout (may be dirty)
 git fetch origin main
