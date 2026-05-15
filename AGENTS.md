@@ -55,6 +55,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:heartbeat`      | Heartbeat producer/consumer end-to-end |
 | `mise run smoketest:claude-events`  | Claude `agent.*` event round-trip      |
 | `mise run smoketest:repo-health-cleanup` | local cleanup + strict worktree checks (default/KEEP/REPORT/DRY_RUN/error) |
+| `mise run smoketest:bmad-closeout-scaffold` | local validation for closeout scaffold helper (required id/create/no-overwrite) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline
