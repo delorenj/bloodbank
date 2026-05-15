@@ -132,9 +132,13 @@ run = "bash ops/smoketest/smoketest-bmad-merge-pr-safe.sh"
 description = "Local smoke test for PR check retrigger helper JSON contract (dry-run)"
 run = "bash ops/smoketest/smoketest-bmad-retrigger-pr-checks.sh"
 
+[tasks."smoketest:bmad-github-body-safety"]
+description = "Guard against risky inline gh --body usage in BMAD operator docs/scripts"
+run = "bash ops/smoketest/smoketest-bmad-github-body-safety.sh"
+
 [tasks."smoketest:ops"]
 description = "Run consolidated local operator reliability smoke checks (fail-fast)"
-run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-retrigger-pr-checks"
+run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety"
 
 [tasks.logs]
 description = "Tail every Bloodbank container"

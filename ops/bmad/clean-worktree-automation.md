@@ -39,7 +39,14 @@ git add <files>
 git commit -m "<type>: <summary>"
 git push -u origin fix/issue-<id>-<slug>
 
-gh pr create --base main --head fix/issue-<id>-<slug> --title "<title>" --body "Closes #<id>"
+cat > /tmp/pr-body.md <<'EOF'
+## Summary
+- <what changed>
+
+Closes #<id>
+EOF
+
+gh pr create --base main --head fix/issue-<id>-<slug> --title "<title>" --body-file /tmp/pr-body.md
 
 # optional cleanup after merge
 cd -
