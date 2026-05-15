@@ -44,6 +44,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -232,6 +233,32 @@ def _run(root: Path, *argv: str) -> tuple[int, str, str]:
     return int(proc.returncode), proc.stdout.strip(), proc.stderr.strip()
 
 
+def _run_gh_readonly_with_retry(root: Path, *argv: str) -> tuple[int, str, str]:
+    """Run read-only gh commands with bounded retry on transient connectivity errors."""
+    attempts = 3
+    rc = 1
+    out = ""
+    err = ""
+
+    for attempt in range(1, attempts + 1):
+        rc, out, err = _run(root, *argv)
+        if rc == 0:
+            return rc, out, err
+
+        err_lower = err.lower()
+        transient = (
+            "error connecting to api.github.com" in err_lower
+            or "connection reset" in err_lower
+            or "timed out" in err_lower
+        )
+        if not transient or attempt == attempts:
+            return rc, out, err
+
+        time.sleep(0.5 * attempt)
+
+    return rc, out, err
+
+
 def _write_output(path_str: str, content: str) -> str | None:
     """Write command output to ``path_str``. Returns error text on failure."""
     try:
@@ -292,7 +319,7 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
             "worktree_dirty: ERROR (working tree is dirty but --require-clean-worktree was set)"
         )
 
-    rc_issue, issue_out, issue_err = _run(
+    rc_issue, issue_out, issue_err = _run_gh_readonly_with_retry(
         root,
         "gh",
         "issue",
@@ -318,7 +345,7 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
         cast_errors.append(f"issues_open: ERROR ({issue_err or 'gh issue list failed'})")
     snapshot["issues_open"] = issues
 
-    rc_pr, pr_out, pr_err = _run(
+    rc_pr, pr_out, pr_err = _run_gh_readonly_with_retry(
         root,
         "gh",
         "pr",
@@ -347,7 +374,9 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
     if prs:
         newest = sorted(prs, key=lambda x: str(x.get("updatedAt", "")), reverse=True)[0]
         pr_number = int(newest["number"])
-        rc_checks, checks_out, checks_err = _run(root, "gh", "pr", "checks", str(pr_number))
+        rc_checks, checks_out, checks_err = _run_gh_readonly_with_retry(
+            root, "gh", "pr", "checks", str(pr_number)
+        )
         if rc_checks in (0, 8) and checks_out:
             snapshot["latest_pr_checks"] = {
                 "pr_number": pr_number,

@@ -35,6 +35,16 @@ gh api repos/<owner>/<repo>/issues/<id> -X PATCH -f title='...' -f body="$body"
 gh api repos/<owner>/<repo>/pulls/<id> -X PATCH -f title='...' -f body="$body"
 ```
 
+## Transient connectivity guard
+
+For read-only repo snapshots, `cli/bb.py repo-health` now applies bounded retry (3 attempts, short backoff) for transient `gh` connectivity failures (e.g. `error connecting to api.github.com`) on:
+
+- `gh issue list`
+- `gh pr list`
+- `gh pr checks`
+
+Use `mise run repo-health` / `mise run repo-health:artifact` as the preferred status path in automation loops.
+
 ## Operational checklist
 
 1. Capture failing `gh` command + stderr in the ticket evidence.
