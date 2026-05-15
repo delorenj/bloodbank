@@ -108,6 +108,10 @@ run = "python3 ops/bmad/primary_recovery_check.py"
 description = "Backup-first helper to align diverged local main to origin/main (read-only by default)"
 run = "python3 ops/bmad/align_main_with_backup.py"
 
+[tasks."bmad:recovery-artifact-cleanup"]
+description = "Cleanup helper for backup branches + recovery bundles (dry-run by default)"
+run = "python3 ops/bmad/recovery_artifact_cleanup.py"
+
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
 run = "bash ops/bootstrap/check-platform.sh"
@@ -204,13 +208,17 @@ run = "bash ops/smoketest/smoketest-bmad-primary-recovery-check.sh"
 description = "Local smoke test for backup-first diverged-main alignment helper"
 run = "bash ops/smoketest/smoketest-bmad-align-main-with-backup.sh"
 
+[tasks."smoketest:bmad-recovery-artifact-cleanup"]
+description = "Local smoke test for backup-branch and bundle cleanup helper"
+run = "bash ops/smoketest/smoketest-bmad-recovery-artifact-cleanup.sh"
+
 [tasks."smoketest:hermes-runtime-hygiene"]
 description = "Local smoke test for Hermes runtime ignore/track contract"
 run = "bash ops/smoketest/smoketest-hermes-runtime-hygiene.sh"
 
 [tasks."smoketest:ops"]
 description = "Run consolidated local operator reliability smoke checks (fail-fast)"
-run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-merge-pr-preflight-guard && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety && mise run smoketest:bmad-closeout-cleanup-summary && mise run smoketest:bmad-closeout-artifact-summary && mise run smoketest:bmad-repo-health-retry && mise run smoketest:bmad-repo-health-helper-availability && mise run smoketest:bmad-gh-readonly-status && mise run smoketest:bmad-preflight-strict-clean && mise run smoketest:bmad-reconcile-main-divergence && mise run smoketest:bmad-primary-recovery-check && mise run smoketest:bmad-align-main-with-backup && mise run smoketest:hermes-runtime-hygiene"
+run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-merge-pr-preflight-guard && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety && mise run smoketest:bmad-closeout-cleanup-summary && mise run smoketest:bmad-closeout-artifact-summary && mise run smoketest:bmad-repo-health-retry && mise run smoketest:bmad-repo-health-helper-availability && mise run smoketest:bmad-gh-readonly-status && mise run smoketest:bmad-preflight-strict-clean && mise run smoketest:bmad-reconcile-main-divergence && mise run smoketest:bmad-primary-recovery-check && mise run smoketest:bmad-align-main-with-backup && mise run smoketest:bmad-recovery-artifact-cleanup && mise run smoketest:hermes-runtime-hygiene"
 
 [tasks.logs]
 description = "Tail every Bloodbank container"

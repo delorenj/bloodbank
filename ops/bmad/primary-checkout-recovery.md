@@ -89,3 +89,17 @@ Target state:
 - `main...origin/main` (no ahead/behind)
 - `worktree_dirty=false`
 - helper files available locally.
+
+## 4) Post-recovery artifact hygiene
+
+Preview cleanup plan first:
+
+```bash
+mise run bmad:recovery-artifact-cleanup -- --repo /path/to/primary/checkout
+```
+
+Apply cleanup when ready (example keeps latest 1 branch + 1 bundle):
+
+```bash
+mise run bmad:recovery-artifact-cleanup -- --repo /path/to/primary/checkout --keep-branches 1 --keep-bundles 1 --apply
+```
