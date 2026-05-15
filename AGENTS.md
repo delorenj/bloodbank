@@ -51,6 +51,7 @@ alongside each service, using Holyfields-generated publishers.
 | `ISSUE_ID=<id> SLUG=<slug> mise run bmad:worktree-bootstrap` | bootstrap isolated clean worktree from `origin/main` for ticket loops |
 | `mise run bmad:pr-merge-safe -- <pr>` | safe squash merge + merged-state verification + cleanup follow-ups |
 | `mise run bmad:closeout-loop -- <pr> [--primary-repo <path>]` | unified closeout summary (merge+cleanup+drift evidence, JSON; defaults `PRIMARY_REPO` env then cwd) |
+| `mise run bmad:closeout-cleanup-summary -- [--evidence-dir <dir>] [--limit <n>]` | read-only summary of closeout artifact cleanup status fields for quick operator review |
 | `mise run bmad:retrigger-pr-checks -- <pr> [--workflow ci.yml] [--dry-run]` | dispatch CI workflow for PR head branch without no-op commit retriggers |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
 | `mise run smoketest`    | NATS-direct event round-trip                     |
@@ -66,7 +67,8 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:bmad-merge-pr-safe` | local validation for safe merge helper JSON/cleanup follow-up fields |
 | `mise run smoketest:bmad-retrigger-pr-checks` | local validation for PR check retrigger helper JSON contract (dry-run path) |
 | `mise run smoketest:bmad-github-body-safety` | guardrail grep for risky inline `gh ... --body "..."` patterns in BMAD operator docs/scripts |
-| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety, fail-fast) |
+| `mise run smoketest:bmad-closeout-cleanup-summary` | local validation for closeout cleanup summary helper JSON output contract |
+| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety/cleanup-summary, fail-fast) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline
@@ -87,6 +89,7 @@ alongside each service, using Holyfields-generated publishers.
 - For scriptable evidence capture, use: `python3 cli/bb.py repo-health --json` (includes explicit `worktree_dirty` signal).
 - For gate-style checks, add `--require-clean-worktree` to force non-zero exit on dirty trees.
 - For non-mutating loop evidence on local drift state, use `mise run repo-health:drift`.
+- For quick cleanup-status review across closeout artifacts, use `mise run bmad:closeout-cleanup-summary`.
 - If primary checkout is dirty/behind, use the dedicated clean-worktree automation path in `ops/bmad/clean-worktree-automation.md` (do not stash/discard unknown local changes).
 - Local OpenClaw hook scratch path (`services/agent-hooks/openclaw/`) is intentionally treated as operator-local and excluded from repo tracking.
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.

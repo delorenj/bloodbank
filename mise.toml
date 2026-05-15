@@ -76,6 +76,10 @@ run = "python3 ops/bmad/merge_pr_safe.py"
 description = "Unified closeout helper: safe merge + cleanup follow-ups + primary drift snapshot"
 run = "python3 ops/bmad/closeout_loop.py"
 
+[tasks."bmad:closeout-cleanup-summary"]
+description = "Read-only summary of closeout artifact cleanup status fields"
+run = "python3 ops/bmad/closeout_cleanup_summary.py"
+
 [tasks."bmad:retrigger-pr-checks"]
 description = "Dispatch CI workflow for a PR head branch (no empty commit retrigger)"
 run = "python3 ops/bmad/retrigger_pr_checks.py"
@@ -136,9 +140,13 @@ run = "bash ops/smoketest/smoketest-bmad-retrigger-pr-checks.sh"
 description = "Guard against risky inline gh --body usage in BMAD operator docs/scripts"
 run = "bash ops/smoketest/smoketest-bmad-github-body-safety.sh"
 
+[tasks."smoketest:bmad-closeout-cleanup-summary"]
+description = "Local smoke test for closeout cleanup summary helper JSON output"
+run = "bash ops/smoketest/smoketest-bmad-closeout-cleanup-summary.sh"
+
 [tasks."smoketest:ops"]
 description = "Run consolidated local operator reliability smoke checks (fail-fast)"
-run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety"
+run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety && mise run smoketest:bmad-closeout-cleanup-summary"
 
 [tasks.logs]
 description = "Tail every Bloodbank container"
