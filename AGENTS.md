@@ -62,6 +62,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:repo-health-cleanup` | local cleanup + strict worktree checks (default/KEEP/REPORT/DRY_RUN/error) |
 | `mise run smoketest:bmad-closeout-scaffold` | local validation for closeout scaffold helper (required id/create/no-overwrite) |
 | `mise run smoketest:bmad-closeout-loop` | local validation for unified closeout helper JSON/evidence fields |
+| `mise run smoketest:bmad-merge-pr-safe` | local validation for safe merge helper JSON/cleanup follow-up fields |
 | `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop, fail-fast) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
