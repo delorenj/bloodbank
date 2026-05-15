@@ -7,10 +7,16 @@ BLOODBANK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${BLOODBANK_ROOT}"
 
 python3 - <<'PY'
+import contextlib
+import io
+import json
+import sys
+
 import ops.bmad.gh_readonly_status as s
 
 orig_run_once = s._run_once
 orig_sleep = s.time.sleep
+orig_argv = sys.argv[:]
 
 try:
     # transient -> success on retry
@@ -46,9 +52,31 @@ try:
     assert rc == 1 and tries == 1 and "deprecated" in err.lower(), (rc, out, err, tries)
     assert sleeps == [], sleeps
 
+    # repo-view command contract (no network; mocked gh response)
+    observed = []
+
+    def fake_repo(argv):
+        observed.append(argv)
+        return (0, '{"nameWithOwner":"delorenj/bloodbank"}', "")
+
+    s._run_once = fake_repo
+    s.time.sleep = lambda _sec: None
+    sys.argv = ["gh_readonly_status.py", "repo-view"]
+    stream = io.StringIO()
+    with contextlib.redirect_stdout(stream):
+        exit_code = s.main()
+    payload = json.loads(stream.getvalue())
+
+    assert exit_code == 0, exit_code
+    assert observed == [["gh", "repo", "view", "--json", "nameWithOwner"]], observed
+    assert payload["ok"] is True, payload
+    assert payload["command"] == "repo-view", payload
+    assert payload["data"]["nameWithOwner"] == "delorenj/bloodbank", payload
+
 finally:
     s._run_once = orig_run_once
     s.time.sleep = orig_sleep
+    sys.argv = orig_argv
 PY
 
 echo "smoketest-bmad-gh-readonly-status: PASS"
