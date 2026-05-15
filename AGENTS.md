@@ -76,6 +76,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:bmad-closeout-cleanup-summary` | local validation for closeout cleanup summary helper JSON output contract |
 | `mise run smoketest:bmad-closeout-artifact-summary` | local validation for closeout artifact write path + summary visibility contract |
 | `mise run smoketest:bmad-repo-health-retry` | local validation for bounded transient retry behavior in `cli/bb.py repo-health` gh read paths |
+| `mise run smoketest:bmad-repo-health-helper-availability` | local validation for `repo-health` helper availability snapshot fields (`helper_local_exists`, `helper_on_origin_main`) |
 | `mise run smoketest:bmad-gh-readonly-status` | local validation for bounded transient retry behavior in read-only issue/pr status helper |
 | `mise run smoketest:bmad-preflight-strict-clean` | local validation for strict-clean preflight helper JSON/exit contract (clean pass + dirty fail) |
 | `mise run smoketest:bmad-reconcile-main-divergence` | local validation for patch-equivalent `main` divergence detection/reconcile contract |
@@ -99,7 +100,7 @@ alongside each service, using Holyfields-generated publishers.
   - follow-up ticket URL when the fix is out of current PR scope
 - For GitHub CLI reliability fallbacks (`projectCards` deprecation class), use `ops/bmad/github-cli-reliability.md` and prefer `gh ... --json` or `gh api` REST paths in automation loops.
 - For shell-safe issue/PR markdown composition, use `ops/bmad/github-body-authoring.md` and prefer `--body-file`/file-backed REST payloads over inline `--body "..."`.
-- For scriptable evidence capture, use: `python3 cli/bb.py repo-health --json` (includes explicit `worktree_dirty` signal).
+- For scriptable evidence capture, use: `python3 cli/bb.py repo-health --json` (includes explicit `worktree_dirty` signal plus helper availability fields).
 - `repo-health` applies bounded retries for transient GitHub API connectivity errors on read-only `gh` status calls (`issue list`, `pr list`, `pr checks`).
 - For direct automation reads of issue/PR/repo state, prefer `mise run bmad:gh-readonly-status -- issue-view <id>|pr-view <id>|repo-view` over raw `gh ... view`.
 - For gate-style checks, add `--require-clean-worktree` to force non-zero exit on dirty trees.

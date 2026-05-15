@@ -274,6 +274,12 @@ def _write_output(path_str: str, content: str) -> str | None:
         return f"output_write: ERROR ({exc})"
 
 
+def _git_ref_path_exists(root: Path, ref: str, rel_path: str) -> bool:
+    """Return True when ``ref:rel_path`` exists in git object database."""
+    rc, _, _ = _run(root, "git", "cat-file", "-e", f"{ref}:{rel_path}")
+    return rc == 0
+
+
 def cmd_repo_health(args: argparse.Namespace) -> int:
     """Print a concise repo/ticket/PR/check snapshot for BMAD evidence."""
     root = bloodbank_root()
@@ -281,6 +287,8 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
     snapshot: dict[str, object] = {
         "git_status": None,
         "worktree_dirty": None,
+        "helper_local_exists": None,
+        "helper_on_origin_main": None,
         "issues_open": [],
         "prs_open": [],
         "latest_pr_checks": None,
@@ -311,6 +319,9 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
     git_line = git_lines[0] if git_lines else "<no status output>"
     snapshot["git_status"] = git_line
     snapshot["worktree_dirty"] = len(git_lines) > 1
+    helper_rel = "ops/bmad/reconcile_main_divergence.py"
+    snapshot["helper_local_exists"] = (root / helper_rel).is_file()
+    snapshot["helper_on_origin_main"] = _git_ref_path_exists(root, "origin/main", helper_rel)
 
     if args.require_clean_worktree and snapshot["worktree_dirty"] is True:
         cast_errors = snapshot["errors"]
@@ -402,6 +413,14 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
         lines_out: list[str] = []
         lines_out.append(f"git_status: {snapshot['git_status']}")
         lines_out.append(f"worktree_dirty: {str(snapshot['worktree_dirty']).lower()}")
+        lines_out.append(
+            "helper_local_exists: "
+            f"{str(snapshot['helper_local_exists']).lower()}"
+        )
+        lines_out.append(
+            "helper_on_origin_main: "
+            f"{str(snapshot['helper_on_origin_main']).lower()}"
+        )
 
         issues_out = snapshot["issues_open"]
         assert isinstance(issues_out, list)
