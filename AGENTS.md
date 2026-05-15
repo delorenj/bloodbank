@@ -51,6 +51,7 @@ alongside each service, using Holyfields-generated publishers.
 | `ISSUE_ID=<id> SLUG=<slug> mise run bmad:worktree-bootstrap` | bootstrap isolated clean worktree from `origin/main` for ticket loops |
 | `mise run bmad:pr-merge-safe -- <pr>` | safe squash merge + merged-state verification + cleanup follow-ups |
 | `mise run bmad:closeout-loop -- <pr> [--primary-repo <path>]` | unified closeout summary (merge+cleanup+drift evidence, JSON; defaults `PRIMARY_REPO` env then cwd) |
+| `mise run bmad:retrigger-pr-checks -- <pr> [--workflow ci.yml] [--dry-run]` | dispatch CI workflow for PR head branch without no-op commit retriggers |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
 | `mise run smoketest`    | NATS-direct event round-trip                     |
 | `mise run smoketest:command` | NATS-direct command + reply round-trip      |
@@ -63,7 +64,8 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:bmad-closeout-scaffold` | local validation for closeout scaffold helper (required id/create/no-overwrite) |
 | `mise run smoketest:bmad-closeout-loop` | local validation for unified closeout helper JSON/evidence fields |
 | `mise run smoketest:bmad-merge-pr-safe` | local validation for safe merge helper JSON/cleanup follow-up fields |
-| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe, fail-fast) |
+| `mise run smoketest:bmad-retrigger-pr-checks` | local validation for PR check retrigger helper JSON contract (dry-run path) |
+| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks, fail-fast) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline

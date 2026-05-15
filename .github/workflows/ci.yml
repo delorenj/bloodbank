@@ -20,6 +20,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 concurrency:
   # Cancel in-progress runs on the same branch when a new commit lands.
