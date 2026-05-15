@@ -116,6 +116,10 @@ run = "bash ops/smoketest/smoketest-repo-health-cleanup.sh"
 description = "Local smoke test for BMAD closeout scaffold helper"
 run = "bash ops/smoketest/smoketest-bmad-closeout-scaffold.sh"
 
+[tasks."smoketest:bmad-closeout-loop"]
+description = "Local smoke test for unified BMAD closeout helper JSON/evidence path"
+run = "bash ops/smoketest/smoketest-bmad-closeout-loop.sh"
+
 [tasks."smoketest:ops"]
 description = "Run consolidated local operator reliability smoke checks (fail-fast)"
 run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold"
