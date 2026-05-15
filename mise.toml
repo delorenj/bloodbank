@@ -152,9 +152,13 @@ run = "bash ops/smoketest/smoketest-bmad-closeout-cleanup-summary.sh"
 description = "Local smoke test for closeout artifact write + summary visibility"
 run = "bash ops/smoketest/smoketest-bmad-closeout-artifact-summary.sh"
 
+[tasks."smoketest:bmad-repo-health-retry"]
+description = "Local smoke test for repo-health transient gh retry behavior"
+run = "bash ops/smoketest/smoketest-bmad-repo-health-retry.sh"
+
 [tasks."smoketest:ops"]
 description = "Run consolidated local operator reliability smoke checks (fail-fast)"
-run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety && mise run smoketest:bmad-closeout-cleanup-summary && mise run smoketest:bmad-closeout-artifact-summary"
+run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety && mise run smoketest:bmad-closeout-cleanup-summary && mise run smoketest:bmad-closeout-artifact-summary && mise run smoketest:bmad-repo-health-retry"
 
 [tasks.logs]
 description = "Tail every Bloodbank container"

@@ -70,7 +70,8 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:bmad-github-body-safety` | guardrail grep for risky inline `gh ... --body "..."` patterns in BMAD operator docs/scripts |
 | `mise run smoketest:bmad-closeout-cleanup-summary` | local validation for closeout cleanup summary helper JSON output contract |
 | `mise run smoketest:bmad-closeout-artifact-summary` | local validation for closeout artifact write path + summary visibility contract |
-| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary, fail-fast) |
+| `mise run smoketest:bmad-repo-health-retry` | local validation for bounded transient retry behavior in `cli/bb.py repo-health` gh read paths |
+| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry, fail-fast) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline
