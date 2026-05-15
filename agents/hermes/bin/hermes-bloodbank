@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AGENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HERMES_HOME="${AGENT_DIR}/runtime"
+HERMES_BIN="${HERMES_BIN:-/home/delorenj/code/hermes-agent/.venv/bin/hermes}"
+
+if [[ ! -x "$HERMES_BIN" ]]; then
+  echo "Hermes binary not found/executable at: $HERMES_BIN" >&2
+  echo "Set HERMES_BIN to your hermes executable path and retry." >&2
+  exit 1
+fi
+
+exec env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" "$@"

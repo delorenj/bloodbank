@@ -73,7 +73,8 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:bmad-closeout-artifact-summary` | local validation for closeout artifact write path + summary visibility contract |
 | `mise run smoketest:bmad-repo-health-retry` | local validation for bounded transient retry behavior in `cli/bb.py repo-health` gh read paths |
 | `mise run smoketest:bmad-gh-readonly-status` | local validation for bounded transient retry behavior in read-only issue/pr status helper |
-| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry/gh-readonly-status, fail-fast) |
+| `mise run smoketest:hermes-runtime-hygiene` | local validation for Hermes runtime ignore contract (runtime state ignored, skeleton trackable) |
+| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry/gh-readonly-status/hermes-runtime-hygiene, fail-fast) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline
@@ -100,6 +101,7 @@ alongside each service, using Holyfields-generated publishers.
 - Runtime closeout evidence JSONs under `_bmad_output/evidence/closeout/` are operator-generated artifacts and intentionally git-ignored.
 - If primary checkout is dirty/behind, use the dedicated clean-worktree automation path in `ops/bmad/clean-worktree-automation.md` (do not stash/discard unknown local changes).
 - Local OpenClaw hook scratch path (`services/agent-hooks/openclaw/`) is intentionally treated as operator-local and excluded from repo tracking.
+- Hermes runtime state under `agents/hermes/runtime/` is operator-local; only skeleton docs/launch scripts + `runtime/.gitignore` should be tracked.
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
 
 ## Conventions
