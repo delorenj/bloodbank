@@ -23,7 +23,14 @@ def _branch(repo: Path) -> str:
     return cp.stdout.strip() if cp.returncode == 0 else ""
 
 
-def evaluate(repo: Path) -> dict[str, object]:
+def _collect_commits(repo: Path, expr: str, limit: int) -> list[str]:
+    cp = _run(repo, "git", "log", "--oneline", f"--max-count={limit}", expr)
+    if cp.returncode != 0 or not cp.stdout.strip():
+        return []
+    return [line.strip() for line in cp.stdout.splitlines() if line.strip()]
+
+
+def evaluate(repo: Path, limit: int = 10) -> dict[str, object]:
     payload: dict[str, object] = {
         "ok": False,
         "repo": str(repo),
@@ -33,6 +40,8 @@ def evaluate(repo: Path) -> dict[str, object]:
         "patch_equivalent_divergence": False,
         "recommended_action": None,
         "applied": False,
+        "ahead_commits": [],
+        "behind_commits": [],
         "errors": [],
     }
 
@@ -56,6 +65,9 @@ def evaluate(repo: Path) -> dict[str, object]:
 
     patch_equiv = ahead > 0 and behind > 0 and cherry.stdout.strip() == ""
     payload["patch_equivalent_divergence"] = patch_equiv
+
+    payload["ahead_commits"] = _collect_commits(repo, "origin/main..main", limit)
+    payload["behind_commits"] = _collect_commits(repo, "main..origin/main", limit)
 
     if ahead == 0 and behind == 0:
         payload["ok"] = True
@@ -89,10 +101,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Detect/reconcile patch-equivalent main divergence")
     parser.add_argument("--repo", default=".", help="Repo root (default: .)")
     parser.add_argument("--apply", action="store_true", help="Apply safe reconciliation when eligible")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Max commit summaries per divergence side in output (default: 10)",
+    )
     args = parser.parse_args()
 
     repo = Path(args.repo).resolve()
-    payload = evaluate(repo)
+    payload = evaluate(repo, limit=max(1, args.limit))
 
     if args.apply:
         ok, msg = apply_if_safe(repo, payload)
@@ -106,7 +124,7 @@ def main() -> int:
             print(json.dumps(payload, indent=2))
             return 1
 
-        payload = evaluate(repo)
+        payload = evaluate(repo, limit=max(1, args.limit))
         payload["applied"] = True
 
     print(json.dumps(payload, indent=2))

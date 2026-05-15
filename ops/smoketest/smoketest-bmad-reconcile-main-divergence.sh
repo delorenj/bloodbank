@@ -24,6 +24,10 @@ try:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="1 1\n", stderr="")
         if cmd[:4] == ("git", "log", "--left-right", "--cherry-pick"):
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        if cmd[:3] == ("git", "log", "--oneline") and cmd[-1] == "origin/main..main":
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="a1 local commit\n", stderr="")
+        if cmd[:3] == ("git", "log", "--oneline") and cmd[-1] == "main..origin/main":
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="b1 remote commit\n", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     h._run = fake_run
@@ -33,6 +37,8 @@ try:
     assert payload["ok"] is True, payload
     assert payload["ahead"] == 1 and payload["behind"] == 1, payload
     assert payload["patch_equivalent_divergence"] is True, payload
+    assert payload["ahead_commits"] == ["a1 local commit"], payload
+    assert payload["behind_commits"] == ["b1 remote commit"], payload
     assert "reset --hard origin/main" in str(payload["recommended_action"]), payload
 
     # Simulate safe apply success
@@ -40,6 +46,8 @@ try:
         if cmd[:3] == ("git", "rev-list", "--left-right"):
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="1 1\n", stderr="")
         if cmd[:4] == ("git", "log", "--left-right", "--cherry-pick"):
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        if cmd[:3] == ("git", "log", "--oneline") and cmd[-1] in {"origin/main..main", "main..origin/main"}:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
         if cmd[:3] == ("git", "reset", "--hard"):
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
