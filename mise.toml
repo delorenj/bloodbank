@@ -97,8 +97,12 @@ description = "Heartbeat producer/consumer end-to-end"
 run = "bash ops/smoketest/smoketest-heartbeat.sh"
 
 [tasks."smoketest:claude-events"]
-description = "Claude agent.* event round-trip"
+description = "Claude bloodbank.v1.* event round-trip"
 run = "bash ops/smoketest/smoketest-claude-events.sh"
+
+[tasks."smoketest:bloodbank-naming"]
+description = "Stdlib-only contract verifier (§14 sequence × claude/copilot + negative probes)"
+run = "bash ops/smoketest/smoketest-bloodbank-naming.sh"
 
 [tasks."smoketest:repo-health-cleanup"]
 description = "Local smoke test for cleanup helper + strict worktree mode"

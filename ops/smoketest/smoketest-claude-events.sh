@@ -1,37 +1,39 @@
 #!/usr/bin/env bash
 #
-# Bloodbank claude-events round-trip smoke test.
+# Bloodbank claude-events round-trip smoke test (v1 contract).
 #
-# Verifies that synthetic agent.* envelopes published through the
-# claude-events daprd sidecar land on the recorder for all six event
-# types we currently emit. Smoke gate for V3-108 (profile + recorder)
-# and V3-109 (additional hook events).
+# Verifies that synthetic Claude-CLI events published through the
+# claude-events daprd sidecar land on the recorder for the six v1 event
+# types the hook now emits.
 #
 # Pipeline under test:
 #
-#   curl POST CloudEvents envelope
+#   curl POST CloudEvents envelope (v1 contract)
 #     → daprd-claude-events sidecar (host:3503)
 #       → BLOODBANK_EVENTS stream on NATS JetStream
 #         → daprd-claude-events consumer (--app-port to recorder)
 #           → claude-events-recorder
 #               → /inspect/recorded
 #
+# Event types under test (per bloodbank/docs/event-naming.md §15):
+#   bloodbank.v1.cli.session.started
+#   bloodbank.v1.cli.session.ended
+#   bloodbank.v1.conversation.turn.started
+#   bloodbank.v1.tool.tool_call.requested
+#   bloodbank.v1.tool.tool_call.invoked
+#   bloodbank.v1.agent.invocation.completed
+#
 # Assertions:
 #   - All six event types appear in count_by_type with count >= 1
-#   - Per-session aggregate shows full lifecycle for the synthetic
-#     session (started, ended, prompts_submitted >= 1, tool_requests >= 1,
-#     tool_invocations >= 1, subagents_completed >= 1)
-#   - Each envelope is shape-valid CloudEvents 1.0 with the expected `type`
+#   - Per-session aggregate covers the lifecycle (session_started, session_ended,
+#     prompts_submitted >= 1, tool_requests >= 1, tool_invocations >= 1,
+#     subagents_completed >= 1)
+#   - Each envelope is a valid v1 contract envelope (kind, actor, ordering_key)
 #
-# Preconditions (caller responsibility):
+# Preconditions:
 #   docker compose --project-name bloodbank --profile claude-events \
 #     -f compose/docker-compose.yml \
 #     up -d nats nats-init dapr-placement claude-events-recorder daprd-claude-events
-#
-# Optional env:
-#   SESSION_ID  override the synthetic session_id (default: random uuid).
-#               useful for the human verification runlist where the
-#               operator wants a pre-known id to filter on.
 #
 # Usage:
 #   bash ops/smoketest/smoketest-claude-events.sh
@@ -51,9 +53,7 @@ WAIT_SECONDS=15
 
 fail() { local rc="$1"; shift; echo "smoketest-claude-events: FAIL -- $*" >&2; exit "${rc}"; }
 
-# -----------------------------------------------------------------------------
-# 1. Sidecar + recorder must be reachable
-# -----------------------------------------------------------------------------
+# Preconditions
 code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "${DAPR_HTTP}/v1.0/healthz" 2>/dev/null || echo "000")
 if [[ "${code}" != "204" ]]; then
   fail 1 "daprd-claude-events not ready at ${DAPR_HTTP} (got ${code})"
@@ -64,45 +64,49 @@ if [[ "${code}" != "204" ]]; then
   fail 1 "claude-events-recorder not healthy at ${RECORDER_HTTP} (got ${code})"
 fi
 
-# -----------------------------------------------------------------------------
-# 2. Reset the buffer
-# -----------------------------------------------------------------------------
 curl -sS -X POST "${RECORDER_HTTP}/inspect/reset" >/dev/null \
   || fail 1 "could not reset recorder buffer"
 
-# -----------------------------------------------------------------------------
-# 3. Publish synthetic envelopes (one of each agent.* type, same session_id)
-# -----------------------------------------------------------------------------
-# SESSION_ID is the synthetic session's id and the correlationid for every
-# envelope in this run. Allows the runlist to filter by `data.session_id`.
 SESSION_ID="${SESSION_ID:-$(python3 -c 'import uuid; print(uuid.uuid4())')}"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo "smoketest-claude-events: session_id=${SESSION_ID}"
 
+# publish_envelope ce_type subject ordering_key data_json
+# Builds a v1 envelope (kind, actor, ordering_key) and POSTs to Dapr.
 publish_envelope() {
-  local ev_type="$1" topic="$2" data="$3"
+  local ev_type="$1" topic="$2" ordering_key="$3" data="$4"
   local envelope
   envelope=$(python3 -c '
 import json, sys, uuid
-ev_type, session_id, now, data_json = sys.argv[1:]
+ce_type, subject, session_id, now, ordering_key, data_json = sys.argv[1:]
 print(json.dumps({
     "specversion": "1.0",
     "id": str(uuid.uuid4()),
     "source": "urn:33god:smoketest:claude-events",
-    "type": ev_type,
-    "subject": f"agent/{session_id}",
+    "type": ce_type,
+    "subject": subject,
     "time": now,
     "datacontenttype": "application/json",
+    "dataschema": f"apicurio://holyfields/{ce_type}/versions/1",
     "correlationid": session_id,
-    "causationid": None,
+    "causationid": session_id,
     "producer": "claude-code",
     "service": "claude-code",
-    "domain": "agent",
-    "schemaref": ev_type + ".v1",
+    "domain": ce_type.split(".")[2],
+    "schemaref": ce_type + ".v1",
     "traceparent": "00-00000000000000000000000000000000-0000000000000000-00",
+    "kind": "event",
+    "actor": {
+        "type": "agent_cli",
+        "agent_id": "bloodbank.agent.claude",
+        "cli": "claude",
+        "provider": "anthropic",
+        "model": None,
+    },
+    "ordering_key": ordering_key,
     "data": json.loads(data_json),
 }))
-' "$ev_type" "$SESSION_ID" "$NOW" "$data")
+' "$ev_type" "$topic" "$SESSION_ID" "$NOW" "$ordering_key" "$data")
 
   local code
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
@@ -116,30 +120,46 @@ print(json.dumps({
   fi
 }
 
-# Order matches a real session lifecycle: start, prompt, request, invoke,
-# subagent finishes, end. Recorder doesn't rely on order; ordering here is
-# for human readability of the test trace.
-publish_envelope "agent.session.started" "event.agent.session.started" \
+# Order matches the §14 sequence: session starts, turn starts, tool requested,
+# tool invoked, subagent (agent invocation) completes, session ends.
+
+publish_envelope \
+  "bloodbank.v1.cli.session.started" \
+  "bloodbank.evt.v1.cli.session.started" \
+  "cli_session:${SESSION_ID}" \
   "{\"session_id\":\"${SESSION_ID}\",\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\",\"git_remote\":\"\",\"started_at\":\"${NOW}\"}"
 
-publish_envelope "agent.prompt.submitted" "event.agent.prompt.submitted" \
-  "{\"session_id\":\"${SESSION_ID}\",\"prompt_text\":\"list .claude/hooks\",\"prompt_length\":18,\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\"}"
+publish_envelope \
+  "bloodbank.v1.conversation.turn.started" \
+  "bloodbank.evt.v1.conversation.turn.started" \
+  "thread:${SESSION_ID}" \
+  "{\"thread_id\":\"${SESSION_ID}\",\"turn_id\":\"${SESSION_ID}:1\",\"prompt_text\":\"list .claude/hooks\",\"prompt_length\":18,\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\"}"
 
-publish_envelope "agent.tool.requested" "event.agent.tool.requested" \
-  "{\"session_id\":\"${SESSION_ID}\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls .claude/hooks\"},\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\",\"turn_number\":1}"
+publish_envelope \
+  "bloodbank.v1.tool.tool_call.requested" \
+  "bloodbank.evt.v1.tool.tool_call.requested" \
+  "invocation:${SESSION_ID}" \
+  "{\"invocation_id\":\"${SESSION_ID}\",\"tool_call_id\":\"tc-1\",\"tool_name\":\"Bash\",\"arguments\":{\"command\":\"ls .claude/hooks\"},\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\",\"turn_number\":1}"
 
-publish_envelope "agent.tool.invoked" "event.agent.tool.invoked" \
-  "{\"session_id\":\"${SESSION_ID}\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls .claude/hooks\"},\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\",\"git_status\":\"clean\",\"turn_number\":1,\"success\":true}"
+publish_envelope \
+  "bloodbank.v1.tool.tool_call.invoked" \
+  "bloodbank.evt.v1.tool.tool_call.invoked" \
+  "invocation:${SESSION_ID}" \
+  "{\"invocation_id\":\"${SESSION_ID}\",\"tool_call_id\":\"tc-1\",\"tool_name\":\"Bash\",\"arguments\":{\"command\":\"ls .claude/hooks\"},\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\",\"git_status\":\"clean\",\"turn_number\":1,\"success\":true}"
 
-publish_envelope "agent.subagent.completed" "event.agent.subagent.completed" \
-  "{\"session_id\":\"${SESSION_ID}\",\"agent_type\":\"general-purpose\",\"stop_reason\":\"completed\",\"working_directory\":\"/tmp/smoketest\"}"
+publish_envelope \
+  "bloodbank.v1.agent.invocation.completed" \
+  "bloodbank.evt.v1.agent.invocation.completed" \
+  "invocation:${SESSION_ID}" \
+  "{\"invocation_id\":\"${SESSION_ID}\",\"agent_type\":\"general-purpose\",\"stop_reason\":\"completed\",\"working_directory\":\"/tmp/smoketest\"}"
 
-publish_envelope "agent.session.ended" "event.agent.session.ended" \
+publish_envelope \
+  "bloodbank.v1.cli.session.ended" \
+  "bloodbank.evt.v1.cli.session.ended" \
+  "cli_session:${SESSION_ID}" \
   "{\"session_id\":\"${SESSION_ID}\",\"end_reason\":\"user_stop\",\"duration_seconds\":42,\"total_turns\":1,\"tools_used\":{\"Bash\":1},\"files_modified\":[],\"git_commits\":[],\"final_status\":\"success\",\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\"}"
 
-# -----------------------------------------------------------------------------
-# 4. Wait for delivery
-# -----------------------------------------------------------------------------
+# Wait for delivery
 deadline=$(( $(date +%s) + WAIT_SECONDS ))
 final_count=0
 while [[ $(date +%s) -lt ${deadline} ]]; do
@@ -159,13 +179,11 @@ if [[ "${final_count}" -lt 6 ]]; then
   fail 1 "expected 6 envelopes, got ${final_count} after ${WAIT_SECONDS}s"
 fi
 
-# -----------------------------------------------------------------------------
-# 5. Validate shape + per-session aggregate
-# -----------------------------------------------------------------------------
+# Validate
 RECEIVED_JSON="$(curl -sS --max-time 3 "${RECORDER_HTTP}/inspect/recorded" 2>/dev/null)"
 
 python3 -c "
-import json, sys
+import json, re, sys
 data = json.loads(sys.argv[1])
 session_id = sys.argv[2]
 
@@ -174,30 +192,34 @@ envelopes = data.get('envelopes', [])
 count_by_type = data.get('count_by_type', {})
 sessions = data.get('sessions', [])
 
-# 1. count_by_type covers all six
 expected_types = (
-    'agent.session.started',
-    'agent.session.ended',
-    'agent.tool.invoked',
-    'agent.prompt.submitted',
-    'agent.tool.requested',
-    'agent.subagent.completed',
+    'bloodbank.v1.cli.session.started',
+    'bloodbank.v1.cli.session.ended',
+    'bloodbank.v1.conversation.turn.started',
+    'bloodbank.v1.tool.tool_call.requested',
+    'bloodbank.v1.tool.tool_call.invoked',
+    'bloodbank.v1.agent.invocation.completed',
 )
 for t in expected_types:
     if count_by_type.get(t, 0) < 1:
         problems.append(f'count_by_type missing or zero for {t}')
 
-# 2. Per-envelope shape (CloudEvents 1.0 + 33GOD extensions)
+TYPE_RE = re.compile(r'^bloodbank\.v[0-9]+\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$')
 for i, env in enumerate(envelopes):
-    for required in ('specversion', 'id', 'source', 'type', 'time', 'correlationid', 'producer', 'service', 'domain', 'data'):
+    for required in ('specversion', 'id', 'source', 'type', 'time', 'correlationid', 'producer', 'service', 'domain', 'kind', 'actor', 'data'):
         if required not in env:
             problems.append(f'envelope[{i}] missing {required!r}')
     if env.get('specversion') != '1.0':
         problems.append(f\"envelope[{i}] specversion = {env.get('specversion')!r}\")
-    if env.get('domain') != 'agent':
-        problems.append(f\"envelope[{i}] domain = {env.get('domain')!r}\")
+    if not isinstance(env.get('type'), str) or not TYPE_RE.match(env['type']):
+        problems.append(f\"envelope[{i}] type {env.get('type')!r} fails v1 regex\")
+    if env.get('kind') != 'event':
+        problems.append(f\"envelope[{i}] kind = {env.get('kind')!r}, want 'event'\")
+    if not isinstance(env.get('actor'), dict) or not env['actor'].get('agent_id'):
+        problems.append(f\"envelope[{i}] actor missing or no agent_id\")
+    if env.get('ordering_key') in (None, ''):
+        problems.append(f\"envelope[{i}] missing ordering_key\")
 
-# 3. Per-session aggregate covers full new shape
 matching = [s for s in sessions if s.get('session_id') == session_id]
 if len(matching) != 1:
     problems.append(f'expected exactly one session entry for {session_id}, got {len(matching)}')

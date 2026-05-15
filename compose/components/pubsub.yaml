@@ -9,15 +9,15 @@
 # Topic-to-subject mapping:
 #   The Dapr pubsub.jetstream component publishes the Dapr topic name
 #   directly as the NATS subject. That is: a service that calls
-#   `dapr publish --topic event.artifact.created` lands the message on
-#   NATS subject `event.artifact.created`, which is captured by the
-#   BLOODBANK_EVENTS stream's `event.>` subject binding.
+#   `dapr publish --topic bloodbank.evt.v1.conversation.message.appended`
+#   lands the message on NATS subject
+#   `bloodbank.evt.v1.conversation.message.appended`, which is captured by
+#   the BLOODBANK_EVENTS stream's `bloodbank.evt.v1.>` subject binding.
 #
-#   Therefore the `event.` prefix is a SERVICE-LEVEL naming discipline:
-#   service teams must name their Dapr topics with the `event.` prefix
-#   so their publishes land in the correct stream. The Holyfields-generated
-#   SDK enforces this when it constructs topic names from CloudEvents
-#   `type` fields, so services never hand-write the topic.
+#   The Bloodbank Event Naming Contract v1 (see bloodbank/docs/event-naming.md)
+#   prescribes both the CloudEvents `type` and the matching NATS subject.
+#   The Holyfields-generated SDK derives the subject from the type so
+#   services never hand-write subjects.
 #
 # Metadata keys below are verified against the Dapr pubsub.jetstream
 # component reference (dapr/docs; 2026-04-22).
@@ -49,7 +49,8 @@ spec:
     - name: queueGroupName
       value: "bloodbank"
     # Bind the pub/sub component to the events stream. The stream itself
-    # is configured to listen on `event.>` subjects (see ../nats/streams.json).
+    # is configured to listen on `bloodbank.evt.v1.>` subjects (see
+    # ../nats/streams.json).
     - name: streamName
       value: "BLOODBANK_EVENTS"
     # Delivery policy: `all` = replay from the earliest available message

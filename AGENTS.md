@@ -56,7 +56,8 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:dapr`    | Dapr publish path                           |
 | `mise run smoketest:dapr-subscribe` | Dapr publish → subscribe              |
 | `mise run smoketest:heartbeat`      | Heartbeat producer/consumer end-to-end |
-| `mise run smoketest:claude-events`  | Claude `agent.*` event round-trip      |
+| `mise run smoketest:claude-events`  | Claude `bloodbank.v1.*` event round-trip |
+| `mise run smoketest:bloodbank-naming` | Stdlib contract verifier (no Docker) for §14 sequence × {claude, copilot} + negative probes |
 | `mise run smoketest:repo-health-cleanup` | local cleanup + strict worktree checks (default/KEEP/REPORT/DRY_RUN/error) |
 | `mise run smoketest:bmad-closeout-scaffold` | local validation for closeout scaffold helper (required id/create/no-overwrite) |
 | `mise run smoketest:ops` | consolidated local operator reliability smoke checks (fail-fast) |
@@ -84,9 +85,23 @@ alongside each service, using Holyfields-generated publishers.
 
 ## Conventions
 
-- Subjects: `event.{domain}.{entity}.{action}` and `command.{agent}.{action}`.
-- Envelopes are CloudEvents 1.0 with `correlationid` and `causationid` headers
-  on every message. Producers MUST set both.
+- **Event naming contract is `docs/event-naming.md`.** It is the single source
+  of truth for `type`, subject, `kind`, allowlists, banned tokens, and where
+  provider identity lives. Any conflict between that doc and code/config is
+  a defect in the code/config.
+- CloudEvents `type`: `bloodbank.v1.<domain>.<entity>.<action>` (5 tokens).
+  Regex: `^bloodbank\.v[0-9]+\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`.
+- NATS subject: `bloodbank.<kind>.v1.<domain>.<entity>.<action>` (6 tokens),
+  where `<kind>` ∈ `{evt, cmd, rpy}`. Stream filters: `bloodbank.evt.v1.>`,
+  `bloodbank.cmd.v1.>`, `bloodbank.rpy.v1.>`.
+- Legacy `event.>` / `command.>` / `reply.>` subject prefixes and 3-token
+  types (`agent.session.started`, `copilot.tool.pre`, etc.) are **deprecated**;
+  removal is tracked by the §16 migration tickets in `docs/event-naming.md`.
+- Provider, CLI, and model identity live in the envelope `actor` field
+  (`actor.cli`, `actor.provider`, `actor.model`) and never in `type`.
+- Envelopes are CloudEvents 1.0 with `correlationid` and `causationid` on
+  every message. Producers MUST set both. Events additionally carry
+  `ordering_key`; commands carry `command_id`, `idempotency_key`, `delivery`.
 - Schemas are owned by Holyfields; Bloodbank never invents an envelope shape.
 - Sandbox compose project name is `bloodbank`; network is `bloodbank-network`;
   container names are `bloodbank-*`.
@@ -97,3 +112,8 @@ alongside each service, using Holyfields-generated publishers.
 - No locally-defined envelopes; everything goes through Holyfields.
 - No synchronous I/O in event handlers.
 - No assumptions of a centrally-running publisher service — there isn't one.
+- No provider/CLI/model names anywhere in `type` (claude, anthropic, copilot,
+  github, openai, gemini, cursor, opencode, amazonq, codex, ollama, …).
+- No `response` or `request` as the `action` segment — use the verb pair
+  `received` / `sent` (e.g. `llm.response.received`, `llm.request.sent`).
+- No imperative actions on `kind=event`; no past-tense actions on `kind=command`.

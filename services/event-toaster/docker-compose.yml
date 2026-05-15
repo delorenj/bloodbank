@@ -1,7 +1,8 @@
 # event-toaster — standalone compose
 #
-# Joins the existing bloodbank-network and shouts every `event.>` envelope
-# at ntfy.delo.sh. Independent of the broader bloodbank compose lifecycle.
+# Joins the existing bloodbank-network and shouts every
+# `bloodbank.evt.v1.>` envelope at ntfy.delo.sh. Independent of the broader
+# bloodbank compose lifecycle.
 #
 # Bring up:
 #   docker compose --project-name bloodbank-toaster \
@@ -26,7 +27,7 @@ services:
     container_name: bloodbank-event-toaster
     environment:
       NATS_URL: "nats://nats:4222"
-      SUBJECT_FILTER: "${BLOODBANK_TOASTER_SUBJECT:-event.>}"
+      SUBJECT_FILTER: "${BLOODBANK_TOASTER_SUBJECT:-bloodbank.evt.v1.>}"
       NTFY_URL: "${BLOODBANK_TOASTER_NTFY_URL:-https://ntfy.delo.sh}"
       NTFY_TOPIC: "${BLOODBANK_TOASTER_NTFY_TOPIC:-bloodbank}"
       NTFY_PRIORITY: "${BLOODBANK_TOASTER_NTFY_PRIORITY:-5}"

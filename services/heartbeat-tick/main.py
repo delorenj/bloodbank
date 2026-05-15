@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-"""Heartbeat tick producer — first real-world event publisher.
+"""Heartbeat tick producer (v1 contract).
 
-Long-running service that emits `system.heartbeat.tick` events through
-Dapr pub/sub on a configurable interval. Each tick carries a monotonic
-sequence number, an instance-stable producer_id, and the producer's
-start time so consumers can detect restarts.
+Long-running service that emits `bloodbank.v1.system.heartbeat.received`
+events through Dapr pub/sub on a configurable interval. Each tick carries
+a monotonic sequence number, an instance-stable producer_id, and the
+producer's start time so consumers can detect restarts.
 
-Schema: holyfields/schemas/system/heartbeat.tick.v1.json (extends
-cloudevent_base.v1.json). This service constructs the envelope as a
-JSON dict directly; switching to the Holyfields-generated Pydantic
-model is a follow-up once the holyfields installable-package story is
-stable inside containers.
+Schema: holyfields/schemas/bloodbank/v1/system/heartbeat.received.v1.json
+(extends cloudevent_base.v1.json). Envelope shape follows
+bloodbank/docs/event-naming.md.
 
 Configuration via env vars:
   DAPR_HTTP_HOST       Hostname of the daprd sidecar (default: daprd-heartbeat)
   DAPR_HTTP_PORT       Port of the daprd HTTP API (default: 3500)
   DAPR_PUBSUB          Dapr pubsub component name (default: bloodbank-pubsub)
   HEARTBEAT_INTERVAL   Tick interval in seconds (default: 5)
-  HEARTBEAT_TOPIC      Dapr topic / NATS subject (default: event.system.heartbeat.tick)
+  HEARTBEAT_TOPIC      Dapr topic / NATS subject (default: bloodbank.evt.v1.system.heartbeat.received)
   PRODUCER_ID          Stable per-instance id (default: heartbeat-tick:<random>)
   LOG_LEVEL            INFO / DEBUG (default: INFO)
 
@@ -45,25 +43,42 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+CE_TYPE = "bloodbank.v1.system.heartbeat.received"
+SUBJECT = "bloodbank.evt.v1.system.heartbeat.received"
+
+
 def build_envelope(*, tick_seq: int, producer_id: str, started_at: str, interval_ms: int) -> dict:
-    """Construct a CloudEvents 1.0 envelope matching system.heartbeat.tick.v1."""
+    """Construct a v1 Bloodbank CloudEvents envelope per docs/event-naming.md."""
+    event_id = str(uuid.uuid4())
+    correlation_id = str(uuid.uuid4())
     return {
         "specversion": "1.0",
-        "id": str(uuid.uuid4()),
+        "id": event_id,
         "source": "urn:33god:service:heartbeat-tick",
-        "type": "system.heartbeat.tick",
-        "subject": f"system/{producer_id}",
+        "type": CE_TYPE,
+        "subject": SUBJECT,
         "time": _now_iso(),
         "datacontenttype": "application/json",
-        "dataschema": "apicurio://holyfields/system.heartbeat.tick/versions/1",
-        "correlationid": str(uuid.uuid4()),
-        "causationid": None,
+        "dataschema": f"apicurio://holyfields/{CE_TYPE}/versions/1",
+        "correlationid": correlation_id,
+        "causationid": correlation_id,
         "producer": "heartbeat-tick",
         "service": "heartbeat-tick",
         "domain": "system",
-        "schemaref": "system.heartbeat.tick.v1",
+        "schemaref": f"{CE_TYPE}.v1",
         "traceparent": "00-00000000000000000000000000000000-0000000000000000-00",
+        "kind": "event",
+        "actor": {
+            "type": "service",
+            "agent_id": f"service:heartbeat-tick:{producer_id}",
+            "cli": None,
+            "provider": None,
+            "model": None,
+        },
+        "ordering_key": f"system:{producer_id}",
         "data": {
+            "source_id": producer_id,
+            "sequence": tick_seq,
             "tick_seq": tick_seq,
             "interval_ms": interval_ms,
             "producer_id": producer_id,
@@ -111,7 +126,7 @@ def main() -> int:
     dapr_port = os.environ.get("DAPR_HTTP_PORT", "3500")
     dapr_url = f"http://{dapr_host}:{dapr_port}"
     pubsub = os.environ.get("DAPR_PUBSUB", "bloodbank-pubsub")
-    topic = os.environ.get("HEARTBEAT_TOPIC", "event.system.heartbeat.tick")
+    topic = os.environ.get("HEARTBEAT_TOPIC", SUBJECT)
     interval_s = float(os.environ.get("HEARTBEAT_INTERVAL", "5"))
     interval_ms = int(interval_s * 1000)
 

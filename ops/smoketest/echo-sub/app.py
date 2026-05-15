@@ -22,7 +22,7 @@ Configuration via environment:
   SUBSCRIBE_PUBSUB     -- Dapr pubsub component name (default:
                           bloodbank-pubsub)
   SUBSCRIBE_TOPIC      -- Topic (and NATS subject) to subscribe to
-                          (default: event.dapr.subscribe.ping)
+                          (default: bloodbank.evt.v1.system.heartbeat.received)
   SUBSCRIBE_ROUTE      -- HTTP path Dapr POSTs messages to (default:
                           /events/smoketest)
 
@@ -50,7 +50,7 @@ from typing import Deque
 
 APP_PORT = int(os.environ.get("APP_PORT", "3001"))
 SUBSCRIBE_PUBSUB = os.environ.get("SUBSCRIBE_PUBSUB", "bloodbank-pubsub")
-SUBSCRIBE_TOPIC = os.environ.get("SUBSCRIBE_TOPIC", "event.dapr.subscribe.ping")
+SUBSCRIBE_TOPIC = os.environ.get("SUBSCRIBE_TOPIC", "bloodbank.evt.v1.system.heartbeat.received")
 SUBSCRIBE_ROUTE = os.environ.get("SUBSCRIBE_ROUTE", "/events/smoketest")
 
 MAX_BUFFER = 1024

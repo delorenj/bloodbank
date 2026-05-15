@@ -29,7 +29,8 @@ STREAM="BLOODBANK_EVENTS"
 # Dapr HTTP API is exposed on the host port (default 3500).
 DAPR_HTTP="${DAPR_HTTP:-http://127.0.0.1:3500}"
 PUBSUB_NAME="bloodbank-pubsub"
-TOPIC="event.dapr.smoketest.ping"
+TOPIC="bloodbank.evt.v1.system.heartbeat.received"
+CE_TYPE="bloodbank.v1.system.heartbeat.received"
 RECEIVE_TIMEOUT="10s"
 
 CORRELATION_ID=""
@@ -108,27 +109,31 @@ nats_run consumer add "${STREAM}" "${CONSUMER_NAME}" \
 # -----------------------------------------------------------------------------
 #
 # Per ADR-0001 topic-to-subject mapping, the Dapr topic name IS the NATS
-# subject. Publishing to topic "event.dapr.smoketest.ping" lands on NATS
-# subject "event.dapr.smoketest.ping" which matches the BLOODBANK_EVENTS
-# stream's `event.>` binding.
+# subject. Publishing to topic "bloodbank.evt.v1.system.heartbeat.received"
+# lands on NATS subject "bloodbank.evt.v1.system.heartbeat.received" which
+# matches the BLOODBANK_EVENTS stream's `bloodbank.evt.v1.>` binding.
 
 ENVELOPE=$(cat <<JSON
 {
   "specversion": "1.0",
   "id": "${EVENT_ID}",
   "source": "urn:33god:cli:dapr-smoketest",
-  "type": "dapr.smoketest.ping",
-  "subject": "dapr-smoketest/canonical",
+  "type": "${CE_TYPE}",
+  "subject": "${TOPIC}",
   "time": "${EVENT_TIME}",
   "datacontenttype": "application/json",
-  "dataschema": "urn:33god:holyfields:schema:dapr.smoketest.ping.v1",
+  "dataschema": "apicurio://holyfields/${CE_TYPE}/versions/1",
   "correlationid": "${CORRELATION_ID}",
-  "causationid": null,
+  "causationid": "${CORRELATION_ID}",
   "producer": "dapr-smoketest-cli",
   "service": "smoketest",
-  "domain": "smoketest",
-  "schemaref": "dapr.smoketest.ping.v1",
-  "data": {"ping": true, "via": "dapr"}
+  "domain": "system",
+  "schemaref": "${CE_TYPE}.v1",
+  "traceparent": "00-00000000000000000000000000000000-0000000000000000-00",
+  "kind": "event",
+  "actor": {"type": "operator", "agent_id": "operator:dapr-smoketest", "cli": null, "provider": null, "model": null},
+  "ordering_key": "system:dapr-smoketest",
+  "data": {"source_id": "dapr-smoketest-cli", "sequence": 0, "ping": true, "via": "dapr"}
 }
 JSON
 )
@@ -174,8 +179,12 @@ except json.JSONDecodeError as e:
 problems = []
 if env.get("specversion") != "1.0":
     problems.append(f"specversion: expected 1.0, got {env.get('specversion')!r}")
-if env.get("type") != "dapr.smoketest.ping":
-    problems.append(f"type: expected dapr.smoketest.ping, got {env.get('type')!r}")
+if env.get("type") != "bloodbank.v1.system.heartbeat.received":
+    problems.append(f"type: expected bloodbank.v1.system.heartbeat.received, got {env.get('type')!r}")
+if env.get("kind") != "event":
+    problems.append(f"kind: expected event, got {env.get('kind')!r}")
+if env.get("domain") != "system":
+    problems.append(f"domain: expected system, got {env.get('domain')!r}")
 if env.get("id") != expected_id:
     problems.append(f"id: expected {expected_id}, got {env.get('id')!r}")
 if env.get("correlationid") != expected_correlation:

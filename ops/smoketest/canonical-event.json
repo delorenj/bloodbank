@@ -2,19 +2,30 @@
   "specversion": "1.0",
   "id": "__ID__",
   "source": "urn:33god:cli:smoketest",
-  "type": "smoketest.ping",
-  "subject": "smoketest/canonical",
+  "type": "bloodbank.v1.system.heartbeat.received",
+  "subject": "bloodbank.evt.v1.system.heartbeat.received",
   "time": "__TIME__",
   "datacontenttype": "application/json",
-  "dataschema": "urn:33god:holyfields:schema:smoketest.ping.v1",
+  "dataschema": "apicurio://holyfields/bloodbank.v1.system.heartbeat.received/versions/1",
   "correlationid": "__CORRELATION_ID__",
-  "causationid": null,
+  "causationid": "__CORRELATION_ID__",
   "producer": "smoketest-cli",
   "service": "smoketest",
-  "domain": "smoketest",
-  "schemaref": "smoketest.ping.v1",
+  "domain": "system",
+  "schemaref": "bloodbank.v1.system.heartbeat.received.v1",
   "traceparent": "00-00000000000000000000000000000000-0000000000000000-00",
+  "kind": "event",
+  "actor": {
+    "type": "operator",
+    "agent_id": "operator:smoketest",
+    "cli": null,
+    "provider": null,
+    "model": null
+  },
+  "ordering_key": "system:smoketest",
   "data": {
+    "source_id": "smoketest-cli",
+    "sequence": 0,
     "ping": true
   }
 }

@@ -3,7 +3,8 @@
 
 This module is the first-wave scaffold for the 33GOD operator CLI. It
 provides argparse-based subcommands (``doctor``, ``trace``, ``replay``,
-``emit``, ``repo-health``) that are intentionally low-risk in this wave:
+``emit``, ``repo-health``, ``verify-envelope``) that are intentionally
+low-risk in this wave:
 
 * No third-party Python dependencies -- standard library only.
 * No publishing of events or commands.
@@ -120,6 +121,55 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         f"({warn_count} warn, {fail_count} fail)"
     )
     return 0 if fail_count == 0 else 1
+
+
+def cmd_verify_envelope(args: argparse.Namespace) -> int:
+    """Validate a Bloodbank v1 envelope against the contract.
+
+    Reads JSON from ``--file`` or stdin, runs ``core.validate.assert_contract``,
+    and prints PASS / FAIL. Useful for replay scripts, ntfy debugging, and
+    CI gates that want to assert any envelope they touch matches the
+    Bloodbank Event Naming Contract v1 (docs/event-naming.md).
+    """
+    sys.path.insert(0, str(bloodbank_root() / "services" / "agent-hooks"))
+    try:
+        from core.validate import assert_contract, ContractViolation  # noqa: WPS433
+    except Exception as exc:  # noqa: BLE001
+        print(f"verify-envelope: cannot import validator: {exc!r}", file=sys.stderr)
+        return 2
+
+    src = args.file
+    if src and src != "-":
+        try:
+            raw = Path(src).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"verify-envelope: cannot read {src}: {exc}", file=sys.stderr)
+            return 2
+    else:
+        raw = sys.stdin.read()
+
+    if not raw.strip():
+        print("verify-envelope: empty input", file=sys.stderr)
+        return 2
+
+    try:
+        env = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"verify-envelope: input is not JSON: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        assert_contract(env)
+    except ContractViolation as exc:
+        print(f"FAIL {env.get('type')!r}: {exc}")
+        return 1
+
+    print(
+        f"PASS type={env.get('type')!r} "
+        f"kind={env.get('kind')!r} "
+        f"subject={env.get('subject')!r}"
+    )
+    return 0
 
 
 def cmd_trace(_args: argparse.Namespace) -> int:
@@ -440,6 +490,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="exit non-zero if the local git working tree is dirty",
     )
     p_repo_health.set_defaults(func=cmd_repo_health)
+
+    p_verify = subparsers.add_parser(
+        "verify-envelope",
+        help="assert a Bloodbank v1 envelope against docs/event-naming.md",
+    )
+    p_verify.add_argument(
+        "--file",
+        default="-",
+        help="path to envelope JSON; '-' or omitted reads from stdin",
+    )
+    p_verify.set_defaults(func=cmd_verify_envelope)
 
     return parser
 

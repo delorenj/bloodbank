@@ -1,12 +1,13 @@
 """bloodbank event-toaster.
 
-Subscribes to *every* `event.>` subject on the bloodbank NATS bus and forwards
-each envelope as a desktop notification via ntfy.delo.sh.
+Subscribes to *every* `bloodbank.evt.v1.>` subject on the bloodbank NATS bus
+and forwards each envelope as a desktop notification via ntfy.delo.sh.
 
 Why direct NATS (no Dapr): the toaster's job is wildcard pass-through.
 Dapr's pub/sub model requires per-topic subscriptions, which makes wildcard
-fan-in clumsy. NATS core subscribe on `event.>` is one line and gets
-everything that flows through the broker, with auto-reconnect from nats-py.
+fan-in clumsy. NATS core subscribe on `bloodbank.evt.v1.>` is one line and
+gets everything that flows through the broker, with auto-reconnect from
+nats-py.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ logging.basicConfig(
 log = logging.getLogger("event-toaster")
 
 NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")
-SUBJECT = os.environ.get("SUBJECT_FILTER", "event.>")
+SUBJECT = os.environ.get("SUBJECT_FILTER", "bloodbank.evt.v1.>")
 NTFY_URL = os.environ.get("NTFY_URL", "https://ntfy.delo.sh").rstrip("/")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "bloodbank")
 NTFY_PRIORITY = os.environ.get("NTFY_PRIORITY", "5")  # 1=min, 5=max (loud)

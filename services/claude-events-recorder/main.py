@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
-"""Claude Code events recorder — subscribes to agent.* events via Dapr.
+"""Claude Code events recorder — subscribes to Bloodbank v1 agent CLI events.
 
 Bookend service for the `claude-events` compose profile. The publisher
 runs on the host (`bloodbank/services/agent-hooks/claude/publish.py`,
-invoked from the metarepo's `.claude/settings.json`) and PUBs directly
-to NATS. This service subscribes via Dapr to all three agent.* events
-and records them in-memory for inspection.
+invoked from `.claude/settings.json`) and PUBs directly to NATS. This
+service subscribes via Dapr to the v1 events the hook emits and records
+them in-memory for inspection.
+
+Subscriptions (v1 contract topics per docs/event-naming.md §15):
+  bloodbank.evt.v1.cli.session.started
+  bloodbank.evt.v1.cli.session.ended
+  bloodbank.evt.v1.conversation.turn.started
+  bloodbank.evt.v1.tool.tool_call.requested
+  bloodbank.evt.v1.tool.tool_call.invoked
+  bloodbank.evt.v1.agent.invocation.completed
 
 Endpoints:
-  GET  /dapr/subscribe        Dapr subscription list (3 routes)
-  POST /events/session_started  Dapr delivers agent.session.started here
-  POST /events/session_ended    Dapr delivers agent.session.ended here
-  POST /events/tool_invoked     Dapr delivers agent.tool.invoked here
-  GET  /inspect/recorded      test hook: count_by_type + sessions + envelopes
-  POST /inspect/reset         test hook: clear recorded buffer
-  GET  /healthz               liveness probe
+  GET  /dapr/subscribe          Dapr subscription list
+  POST /events/<route>          Dapr delivers events here
+  GET  /inspect/recorded        test hook: count_by_type + sessions + envelopes
+  POST /inspect/reset           test hook: clear recorded buffer
+  GET  /healthz                 liveness probe
 
-Schema source of truth (post-V3-110):
-  holyfields/schemas/agent/{session.started,session.ended,tool.invoked}.v1.json
+Schema source of truth: holyfields/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json
 
 Configuration:
   APP_PORT             HTTP port (default: 3001)
@@ -41,54 +46,30 @@ APP_PORT = int(os.environ.get("APP_PORT", "3001"))
 SUBSCRIBE_PUBSUB = os.environ.get("SUBSCRIBE_PUBSUB", "bloodbank-pubsub")
 MAX_BUFFER = int(os.environ.get("MAX_BUFFER", "1024"))
 
-# Topic + route mapping. Mirrors the publisher's topic choices in
-# bloodbank/services/agent-hooks/claude/publish.py. Keep in sync.
-SUBSCRIPTIONS: list[dict] = [
-    {
-        "pubsubname": SUBSCRIBE_PUBSUB,
-        "topic": "event.agent.session.started",
-        "route": "/events/session_started",
-    },
-    {
-        "pubsubname": SUBSCRIBE_PUBSUB,
-        "topic": "event.agent.session.ended",
-        "route": "/events/session_ended",
-    },
-    {
-        "pubsubname": SUBSCRIBE_PUBSUB,
-        "topic": "event.agent.tool.invoked",
-        "route": "/events/tool_invoked",
-    },
-    {
-        "pubsubname": SUBSCRIBE_PUBSUB,
-        "topic": "event.agent.prompt.submitted",
-        "route": "/events/prompt_submitted",
-    },
-    {
-        "pubsubname": SUBSCRIBE_PUBSUB,
-        "topic": "event.agent.tool.requested",
-        "route": "/events/tool_requested",
-    },
-    {
-        "pubsubname": SUBSCRIBE_PUBSUB,
-        "topic": "event.agent.subagent.completed",
-        "route": "/events/subagent_completed",
-    },
+# (route_path, dapr_topic, v1_ce_type) tuples — keep in sync with the
+# publishers in services/agent-hooks/claude/publish.py and copilot/publish.py.
+ROUTES: list[tuple[str, str, str]] = [
+    ("/events/cli_session_started",   "bloodbank.evt.v1.cli.session.started",        "bloodbank.v1.cli.session.started"),
+    ("/events/cli_session_ended",     "bloodbank.evt.v1.cli.session.ended",          "bloodbank.v1.cli.session.ended"),
+    ("/events/turn_started",          "bloodbank.evt.v1.conversation.turn.started",  "bloodbank.v1.conversation.turn.started"),
+    ("/events/tool_call_requested",   "bloodbank.evt.v1.tool.tool_call.requested",   "bloodbank.v1.tool.tool_call.requested"),
+    ("/events/tool_call_invoked",     "bloodbank.evt.v1.tool.tool_call.invoked",     "bloodbank.v1.tool.tool_call.invoked"),
+    ("/events/tool_call_completed",   "bloodbank.evt.v1.tool.tool_call.completed",   "bloodbank.v1.tool.tool_call.completed"),
+    ("/events/agent_invocation_completed", "bloodbank.evt.v1.agent.invocation.completed", "bloodbank.v1.agent.invocation.completed"),
+    ("/events/agent_invocation_failed",    "bloodbank.evt.v1.agent.invocation.failed",    "bloodbank.v1.agent.invocation.failed"),
 ]
-ROUTE_TO_TYPE: dict[str, str] = {
-    "/events/session_started": "agent.session.started",
-    "/events/session_ended": "agent.session.ended",
-    "/events/tool_invoked": "agent.tool.invoked",
-    "/events/prompt_submitted": "agent.prompt.submitted",
-    "/events/tool_requested": "agent.tool.requested",
-    "/events/subagent_completed": "agent.subagent.completed",
-}
+SUBSCRIPTIONS: list[dict] = [
+    {"pubsubname": SUBSCRIBE_PUBSUB, "topic": topic, "route": route}
+    for (route, topic, _) in ROUTES
+]
+ROUTE_TO_TYPE: dict[str, str] = {route: ce_type for (route, _, ce_type) in ROUTES}
 
 _lock = threading.Lock()
 _received: Deque[dict] = deque(maxlen=MAX_BUFFER)
 _count_by_type: dict[str, int] = defaultdict(int)
 # Per-session aggregate so tests can assert lifecycle without scanning the
-# full buffer. Indexed by data.session_id.
+# full buffer. Keyed by envelope.correlationid (the canonical session key
+# under the v1 contract — the publishers set correlationid = session_id).
 _sessions: dict[str, dict] = {}
 
 
@@ -98,43 +79,56 @@ def _record(envelope: dict) -> None:
         ev_type = envelope.get("type", "unknown")
         _count_by_type[ev_type] += 1
 
-        data = envelope.get("data", {}) if isinstance(envelope, dict) else {}
-        sid = data.get("session_id")
+        # Session correlation: prefer correlationid, fall back to data IDs.
+        sid = envelope.get("correlationid")
+        if not isinstance(sid, str):
+            data = envelope.get("data", {}) if isinstance(envelope, dict) else {}
+            sid = data.get("session_id") or data.get("thread_id") or data.get("invocation_id")
         if not isinstance(sid, str):
             return
 
+        data = envelope.get("data", {}) if isinstance(envelope, dict) else {}
         entry = _sessions.get(sid) or {
             "session_id": sid,
             "started": False,
             "ended": False,
             "tool_invocations": 0,
             "tool_requests": 0,
+            "tool_completions": 0,
             "prompts_submitted": 0,
             "subagents_completed": 0,
+            "subagents_failed": 0,
             "first_seen_type": ev_type,
         }
-        # Track event time so test runlists can sort by recency.
         env_time = envelope.get("time")
         if isinstance(env_time, str):
             entry["last_seen"] = env_time
+        actor = envelope.get("actor") or {}
+        if isinstance(actor, dict):
+            entry["cli"] = actor.get("cli") or entry.get("cli")
+            entry["provider"] = actor.get("provider") or entry.get("provider")
 
-        if ev_type == "agent.session.started":
+        if ev_type == "bloodbank.v1.cli.session.started":
             entry["started"] = True
             entry["working_directory"] = data.get("working_directory")
             entry["git_branch"] = data.get("git_branch")
-        elif ev_type == "agent.session.ended":
+        elif ev_type == "bloodbank.v1.cli.session.ended":
             entry["ended"] = True
             entry["end_reason"] = data.get("end_reason")
             entry["duration_seconds"] = data.get("duration_seconds")
             entry["total_turns"] = data.get("total_turns")
-        elif ev_type == "agent.tool.invoked":
-            entry["tool_invocations"] += 1
-        elif ev_type == "agent.tool.requested":
+        elif ev_type == "bloodbank.v1.tool.tool_call.requested":
             entry["tool_requests"] += 1
-        elif ev_type == "agent.prompt.submitted":
+        elif ev_type == "bloodbank.v1.tool.tool_call.invoked":
+            entry["tool_invocations"] += 1
+        elif ev_type == "bloodbank.v1.tool.tool_call.completed":
+            entry["tool_completions"] += 1
+        elif ev_type == "bloodbank.v1.conversation.turn.started":
             entry["prompts_submitted"] += 1
-        elif ev_type == "agent.subagent.completed":
+        elif ev_type == "bloodbank.v1.agent.invocation.completed":
             entry["subagents_completed"] += 1
+        elif ev_type == "bloodbank.v1.agent.invocation.failed":
+            entry["subagents_failed"] += 1
         _sessions[sid] = entry
 
 
@@ -200,10 +194,9 @@ class Handler(BaseHTTPRequestHandler):
 
             with _lock:
                 buffer_size = len(_received)
-            data = envelope.get("data") or {}
             print(
                 f"claude-events-recorder: recorded type={envelope.get('type')} "
-                f"session_id={data.get('session_id')} "
+                f"correlationid={envelope.get('correlationid')} "
                 f"buffer={buffer_size}/{MAX_BUFFER}",
                 file=sys.stdout,
                 flush=True,

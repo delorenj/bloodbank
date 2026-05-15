@@ -2,17 +2,17 @@
 
 Machine-readable counterpart: `streams.json` in this directory.
 
-This file documents the subject hierarchy, stream retention, replay
-semantics, and dead-letter posture for the event platform. The naming
-invariants are locked by ADR-0001 (metarepo, TBD)
-in the metarepo.
+Authoritative naming contract: **`bloodbank/docs/event-naming.md`**. Any
+conflict between this file and the contract is a defect here — fix this
+file. ADR-0001 (metarepo, TBD) locks the stream names and `bloodbank-pubsub`
+component name; everything else flows from the v1 contract.
 
 ## Streams
 
-| Stream                   | Subjects                    | Retention   | Storage | Max age | Discard |
-|--------------------------|-----------------------------|-------------|---------|---------|---------|
-| `BLOODBANK_EVENTS`    | `event.>`                   | `limits`    | `file`  | `7d`    | `old`   |
-| `BLOODBANK_COMMANDS`  | `command.>`, `reply.>`      | `workqueue` | `file`  | `1d`    | `old`   |
+| Stream                | Subjects                                              | Retention   | Storage | Max age | Discard |
+|-----------------------|-------------------------------------------------------|-------------|---------|---------|---------|
+| `BLOODBANK_EVENTS`    | `bloodbank.evt.v1.>`                                  | `limits`    | `file`  | `7d`    | `old`   |
+| `BLOODBANK_COMMANDS`  | `bloodbank.cmd.v1.>`, `bloodbank.rpy.v1.>`            | `workqueue` | `file`  | `1d`    | `old`   |
 
 - **Events** (`limits` retention) are durable CloudEvents facts. They are
   replayable, aged out after 7 days, and consumed by projections and
@@ -23,43 +23,47 @@ in the metarepo.
 
 ## Subject conventions
 
-All subjects are lowercase, dot-separated, and use only ASCII `a-z`, `0-9`,
-`-`, and `_` in each segment.
+Per `bloodbank/docs/event-naming.md` §3:
 
-### Events: `event.<domain>.<entity>.<action>`
+```
+bloodbank.<kind>.v<N>.<domain>.<entity>.<action>
+```
 
-- `domain` — coarse-grained business area (e.g. `artifact`, `agent`,
-  `workspace`, `meeting`, `dashboard`).
-- `entity` — the aggregate root within the domain.
-- `action` — past-tense verb describing the fact that happened.
+where `<kind>` ∈ `{evt, cmd, rpy}`. Six dot-separated tokens, all lowercase
+`[a-z][a-z0-9_]*`. The corresponding CloudEvents `type` drops the `<kind>`
+marker:
+
+```
+bloodbank.v<N>.<domain>.<entity>.<action>          (5 tokens)
+```
+
+### Events: `bloodbank.evt.v1.<domain>.<entity>.<action>`
+
+Past-tense action. Examples:
+
+- `bloodbank.evt.v1.conversation.message.appended`
+- `bloodbank.evt.v1.cli.session.started`
+- `bloodbank.evt.v1.system.heartbeat.received`
+
+### Commands: `bloodbank.cmd.v1.<domain>.<entity>.<action>`
+
+Imperative action. Examples:
+
+- `bloodbank.cmd.v1.agent.invocation.start`
+- `bloodbank.cmd.v1.cli.process.spawn`
+
+### Replies: `bloodbank.rpy.v1.<domain>.<entity>.<action>`
+
+Mirrors the command action; used as `reply_to` on the command envelope.
+Consumers correlate via `correlationid` / `in_reply_to`.
 
 Examples:
 
-- `event.artifact.version.created`
-- `event.agent.session.started`
-- `event.workspace.worktree.deleted`
+- `bloodbank.rpy.v1.agent.invocation.start`
+- `bloodbank.rpy.v1.cli.process.spawn`
 
-### Commands: `command.<target>.<verb>`
-
-- `target` — the service expected to handle the command. Match the service
-  name from `services/registry.yaml`.
-- `verb` — imperative verb.
-
-Examples:
-
-- `command.artifact-service.rebuild`
-- `command.workspace-service.clone-worktree`
-
-### Replies: `reply.<target>.<verb>`
-
-- Mirrors the command subject; used as `reply_to` on the command envelope.
-- One reply subject may carry multiple reply types; consumers match on
-  `correlation_id`.
-
-Examples:
-
-- `reply.artifact-service.rebuild`
-- `reply.workspace-service.clone-worktree`
+For the domain / entity / action allowlists and banned-token rules, see
+`docs/event-naming.md` §6–§9.
 
 ## Retention posture
 
@@ -113,8 +117,7 @@ scaffold. Adding it is V3-007's responsibility.
 
 ## Bootstrapping the streams
 
-Stream creation is not automated in this scaffold. Operator tooling in
-V3-005 / V3-006 will read `streams.json` and apply it via the NATS CLI
-(`nats stream add --config ...`) or the JetStream API. Until then,
-`streams.json` is the declarative source of truth and nothing writes to
-the broker.
+`compose/nats/init.sh` reads `streams.json` and applies each stream
+definition via the `nats` CLI on container startup (the `nats-init`
+one-shot service in `compose/docker-compose.yml`). Idempotent — re-running
+with existing streams is a no-op.

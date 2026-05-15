@@ -2,9 +2,10 @@
 #
 # Bloodbank canonical smoke test.
 #
-# Publishes a canonical CloudEvents envelope to event.smoketest.ping on
-# NATS JetStream, receives it via a short-lived pull consumer, and
-# validates the round-trip. See ops/smoketest/README.md for scope.
+# Publishes a canonical CloudEvents envelope to
+# bloodbank.evt.v1.system.heartbeat.received on NATS JetStream, receives
+# it via a short-lived pull consumer, and validates the round-trip.
+# See ops/smoketest/README.md for scope.
 #
 # Usage:
 #   bash ops/smoketest/smoketest.sh                            # fresh UUID per run
@@ -26,7 +27,7 @@ BLOODBANK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_PROJECT_NAME="bloodbank"
 COMPOSE_FILE="${BLOODBANK_ROOT}/compose/docker-compose.yml"
 STREAM="BLOODBANK_EVENTS"
-SUBJECT="event.smoketest.ping"
+SUBJECT="bloodbank.evt.v1.system.heartbeat.received"
 CANONICAL_EVENT_TEMPLATE="${BLOODBANK_ROOT}/ops/smoketest/canonical-event.json"
 RECEIVE_TIMEOUT="10s"
 
@@ -204,14 +205,18 @@ except json.JSONDecodeError as e:
 problems = []
 if env.get("specversion") != "1.0":
     problems.append(f"specversion: expected 1.0, got {env.get('specversion')!r}")
-if env.get("type") != "smoketest.ping":
-    problems.append(f"type: expected smoketest.ping, got {env.get('type')!r}")
+if env.get("type") != "bloodbank.v1.system.heartbeat.received":
+    problems.append(f"type: expected bloodbank.v1.system.heartbeat.received, got {env.get('type')!r}")
+if env.get("kind") != "event":
+    problems.append(f"kind: expected event, got {env.get('kind')!r}")
+if env.get("domain") != "system":
+    problems.append(f"domain: expected system, got {env.get('domain')!r}")
 if env.get("id") != expected_id:
     problems.append(f"id: expected {expected_id}, got {env.get('id')!r}")
 if env.get("correlationid") != expected_correlation:
     problems.append(f"correlationid: expected {expected_correlation}, got {env.get('correlationid')!r}")
-if env.get("data", {}).get("ping") is not True:
-    problems.append(f"data.ping: expected true, got {env.get('data')!r}")
+if env.get("data", {}).get("source_id") != "smoketest-cli":
+    problems.append(f"data.source_id: expected smoketest-cli, got {env.get('data')!r}")
 if problems:
     print("envelope validation failed:", file=sys.stderr)
     for p in problems:

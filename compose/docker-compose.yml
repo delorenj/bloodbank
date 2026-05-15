@@ -105,7 +105,7 @@ services:
     environment:
       APP_PORT: "3001"
       SUBSCRIBE_PUBSUB: "bloodbank-pubsub"
-      SUBSCRIBE_TOPIC: "event.dapr.subscribe.ping"
+      SUBSCRIBE_TOPIC: "bloodbank.evt.v1.system.heartbeat.received"
       SUBSCRIBE_ROUTE: "/events/smoketest"
       PYTHONUNBUFFERED: "1"
     volumes:
@@ -171,7 +171,7 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # Heartbeat — first real-world event (system.heartbeat.tick)
+  # Heartbeat — first real-world event (bloodbank.v1.system.heartbeat.received)
   # ---------------------------------------------------------------------------
   # Three services behind the `heartbeat` compose profile:
   #   - heartbeat-recorder: subscriber app on port 3001 (mirrors echo-sub
@@ -190,7 +190,7 @@ services:
     environment:
       APP_PORT: "3001"
       SUBSCRIBE_PUBSUB: "bloodbank-pubsub"
-      SUBSCRIBE_TOPIC: "event.system.heartbeat.tick"
+      SUBSCRIBE_TOPIC: "bloodbank.evt.v1.system.heartbeat.received"
       SUBSCRIBE_ROUTE: "/events/heartbeat"
     ports:
       # Test-hook port for /inspect/recorded queries from the host.
@@ -249,7 +249,7 @@ services:
       DAPR_HTTP_HOST: "daprd-heartbeat"
       DAPR_HTTP_PORT: "3500"
       DAPR_PUBSUB: "bloodbank-pubsub"
-      HEARTBEAT_TOPIC: "event.system.heartbeat.tick"
+      HEARTBEAT_TOPIC: "bloodbank.evt.v1.system.heartbeat.received"
       HEARTBEAT_INTERVAL: "${BLOODBANK_HEARTBEAT_INTERVAL:-5}"
       LOG_LEVEL: "INFO"
     depends_on:
@@ -263,7 +263,7 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # Claude-events — agent.* events emitted by Claude Code on the host
+  # Claude-events — bloodbank.v1.* agent CLI events emitted by Claude Code on the host
   # ---------------------------------------------------------------------------
   # The producer (Claude Code via bloodbank/services/agent-hooks/claude/publish.py)
   # runs on the host and PUBs directly to NATS — no Dapr sidecar on the

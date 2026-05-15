@@ -1,13 +1,15 @@
-"""CloudEvents 1.0 envelope builder for Bloodbank agent hooks.
+"""CloudEvents 1.0 envelope builder for Bloodbank agent hooks (v1 contract).
 
-Envelope shape follows holyfields/schemas/_common/cloudevent_base.v1.json.
-Per bloodbank/CLAUDE.md, every event MUST carry correlationid and
-causationid — this builder enforces it.
+Envelope shape follows holyfields/schemas/_common/cloudevent_base.v1.json and
+the Bloodbank Event Naming Contract v1 at bloodbank/docs/event-naming.md.
 
-Optional runtime validation against the corresponding holyfields schema is
-available via core.validate.validate_envelope(); enabled when
-BLOODBANK_HOOK_VALIDATE=1 or when callers pass validate=True. Default off so
-hook publishers stay stdlib-only.
+Every envelope is contract-checked by core.validate.assert_contract before it
+leaves this module. Optional jsonschema validation against the matching
+holyfields schema runs when BLOODBANK_HOOK_VALIDATE=1 (or validate=True).
+
+There is no legacy 3-token path. Anything that does not match
+bloodbank.v1.<domain>.<entity>.<action> raises ContractViolation at build
+time.
 """
 from __future__ import annotations
 
@@ -16,9 +18,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-# W3C Trace Context zero-trace placeholder. Replaced by real trace ids when
-# producers integrate with OpenTelemetry; for now this satisfies the
-# traceparent field's pattern in cloudevent_base.v1.json.
+from .validate import (
+    ContractViolation,
+    KIND_MARKERS,
+    assert_contract,
+    subject_for,
+)
+
+# W3C Trace Context zero-trace placeholder.
 ZERO_TRACEPARENT = "00-00000000000000000000000000000000-0000000000000000-00"
 
 
@@ -37,35 +44,73 @@ def new_uuid() -> str:
 def build_envelope(
     *,
     ce_type: str,
-    subject: str,
+    kind: str = "event",
     source: str,
     producer: str,
     service: str,
-    domain: str,
+    actor: dict,
     data: Any,
     correlation_id: str,
     causation_id: str,
+    subject: str | None = None,
     event_id: str | None = None,
+    ordering_key: str | None = None,
+    command_id: str | None = None,
+    idempotency_key: str | None = None,
+    delivery: str | None = None,
     schemaref: str | None = None,
     dataschema: str | None = None,
     traceparent: str | None = None,
     validate: bool | None = None,
 ) -> dict:
-    """Build a CloudEvents 1.0 envelope.
+    """Build a v1 CloudEvents envelope.
 
-    correlation_id and causation_id are mandatory. For the first event in a
-    chain (e.g. a session-start) callers should pass causation_id == correlation_id
-    so the chain self-roots cleanly.
+    Mandatory:
+        ce_type           — bloodbank.v1.<domain>.<entity>.<action>
+        kind              — "event" | "command" | "reply"
+        source, producer, service — CloudEvents identity
+        actor             — {type, agent_id, [cli, provider, model]} per §10
+        data              — payload
+        correlation_id    — UUID; root events use self-id
+        causation_id      — UUID of the prior event/command
 
-    ``dataschema`` defaults to ``apicurio://holyfields/<ce_type>/versions/1``.
-    ``traceparent`` defaults to the zero-trace placeholder.
-    ``validate`` opts into runtime JSON Schema validation; if None, reads
-    ``BLOODBANK_HOOK_VALIDATE`` from the env (``1`` enables).
+    Kind-specific:
+        kind=event   → ordering_key required
+        kind=command → command_id, idempotency_key required (delivery defaults to single_consumer)
+        kind=reply   → causation_id of the originating command
+
+    Auto-derived when omitted:
+        subject     — subject_for(ce_type, kind)
+        event_id    — new UUID
+        delivery    — "single_consumer" for kind=command
+        dataschema  — apicurio://holyfields/<ce_type>/versions/1
+        schemaref   — <ce_type>.v1
+        traceparent — ZERO_TRACEPARENT
+
+    Raises ContractViolation on any contract failure.
     """
     if not correlation_id:
-        raise ValueError("correlation_id is required")
+        raise ContractViolation("correlation_id is required (§11)")
     if not causation_id:
-        raise ValueError("causation_id is required")
+        raise ContractViolation("causation_id is required (§11)")
+    if kind not in KIND_MARKERS:
+        raise ContractViolation(
+            f"kind {kind!r} must be event|command|reply (§4)"
+        )
+
+    # Derive domain from type segment 3. assert_type_shape inside
+    # assert_contract will re-validate but we need the value now to populate
+    # envelope.domain.
+    parts = ce_type.split(".")
+    if len(parts) != 5:
+        raise ContractViolation(
+            f"type {ce_type!r} must be exactly 5 dotted tokens (§2)"
+        )
+    domain = parts[2]
+
+    if subject is None:
+        subject = subject_for(ce_type, kind)
+
     envelope = {
         "specversion": "1.0",
         "id": event_id or new_uuid(),
@@ -82,14 +127,38 @@ def build_envelope(
         "domain": domain,
         "schemaref": schemaref or f"{ce_type}.v1",
         "traceparent": traceparent or ZERO_TRACEPARENT,
+        "kind": kind,
+        "actor": actor,
         "data": data,
     }
 
+    if kind == "event":
+        if not ordering_key:
+            raise ContractViolation(
+                f"ordering_key is required for kind=event (§11.1)"
+            )
+        envelope["ordering_key"] = ordering_key
+    elif kind == "command":
+        if not command_id:
+            raise ContractViolation(
+                f"command_id is required for kind=command (§11)"
+            )
+        if not idempotency_key:
+            raise ContractViolation(
+                f"idempotency_key is required for kind=command (§11.2)"
+            )
+        envelope["command_id"] = command_id
+        envelope["idempotency_key"] = idempotency_key
+        envelope["delivery"] = delivery or "single_consumer"
+    # kind=reply has no additional required fields beyond causation_id.
+
+    # Always run stdlib contract checks; loud failure on violation.
+    assert_contract(envelope)
+
+    # Optional JSON Schema validation (jsonschema-dependent).
     if validate is None:
         validate = os.environ.get("BLOODBANK_HOOK_VALIDATE") == "1"
     if validate:
-        # Imported lazily so envelope construction never fails when jsonschema
-        # isn't installed and validation isn't requested.
         from .validate import validate_envelope  # noqa: WPS433
         validate_envelope(envelope)
 

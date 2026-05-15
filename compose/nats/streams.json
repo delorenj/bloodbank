@@ -1,31 +1,28 @@
 {
-  "$comment": "Bloodbank NATS JetStream topology. Stream names and subject prefixes are locked by ADR-0001; do not rename.",
+  "$comment": "Bloodbank NATS JetStream topology. Stream names are locked by ADR-0001; subject filters follow the Bloodbank Event Naming Contract v1 — see bloodbank/docs/event-naming.md §3.",
   "project": "bloodbank",
   "subject_conventions": {
     "events": {
-      "prefix": "event.",
-      "wildcard": "event.>",
-      "pattern": "event.<domain>.<entity>.<action>",
-      "example": "event.artifact.version.created"
+      "wildcard": "bloodbank.evt.v1.>",
+      "pattern": "bloodbank.evt.v1.<domain>.<entity>.<action>",
+      "example": "bloodbank.evt.v1.conversation.message.appended"
     },
     "commands": {
-      "prefix": "command.",
-      "wildcard": "command.>",
-      "pattern": "command.<target>.<verb>",
-      "example": "command.artifact-service.rebuild"
+      "wildcard": "bloodbank.cmd.v1.>",
+      "pattern": "bloodbank.cmd.v1.<domain>.<entity>.<action>",
+      "example": "bloodbank.cmd.v1.agent.invocation.start"
     },
     "replies": {
-      "prefix": "reply.",
-      "wildcard": "reply.>",
-      "pattern": "reply.<target>.<verb>",
-      "example": "reply.artifact-service.rebuild"
+      "wildcard": "bloodbank.rpy.v1.>",
+      "pattern": "bloodbank.rpy.v1.<domain>.<entity>.<action>",
+      "example": "bloodbank.rpy.v1.agent.invocation.start"
     }
   },
   "streams": [
     {
       "name": "BLOODBANK_EVENTS",
       "subjects": [
-        "event.>"
+        "bloodbank.evt.v1.>"
       ],
       "retention": "limits",
       "storage": "file",
@@ -57,8 +54,8 @@
     {
       "name": "BLOODBANK_COMMANDS",
       "subjects": [
-        "command.>",
-        "reply.>"
+        "bloodbank.cmd.v1.>",
+        "bloodbank.rpy.v1.>"
       ],
       "retention": "workqueue",
       "storage": "file",
@@ -77,7 +74,7 @@
         ]
       },
       "notes": [
-        "Operational traffic only; covers `command.<target>.<verb>` and `reply.<target>.<verb>`.",
+        "Operational traffic only; covers v1 commands (`bloodbank.cmd.v1.>`) and replies (`bloodbank.rpy.v1.>`).",
         "Dead-letter handling is documented in README.md and will be implemented in V3-007, not here."
       ]
     }

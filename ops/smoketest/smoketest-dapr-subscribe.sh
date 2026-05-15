@@ -33,7 +33,8 @@ DAPR_HTTP="${DAPR_HTTP:-http://127.0.0.1:3501}"
 ECHO_SUB_HTTP="${ECHO_SUB_HTTP:-http://127.0.0.1:3301}"
 
 PUBSUB_NAME="bloodbank-pubsub"
-TOPIC="event.dapr.subscribe.ping"
+TOPIC="bloodbank.evt.v1.system.heartbeat.received"
+CE_TYPE="bloodbank.v1.system.heartbeat.received"
 
 # How long to wait for Dapr to deliver the published event to echo-sub.
 DELIVERY_TIMEOUT_SECS=10
@@ -95,18 +96,22 @@ ENVELOPE=$(cat <<JSON
   "specversion": "1.0",
   "id": "${EVENT_ID}",
   "source": "urn:33god:cli:dapr-subscribe-smoketest",
-  "type": "dapr.subscribe.ping",
-  "subject": "dapr-subscribe-smoketest/canonical",
+  "type": "${CE_TYPE}",
+  "subject": "${TOPIC}",
   "time": "${EVENT_TIME}",
   "datacontenttype": "application/json",
-  "dataschema": "urn:33god:holyfields:schema:dapr.subscribe.ping.v1",
+  "dataschema": "apicurio://holyfields/${CE_TYPE}/versions/1",
   "correlationid": "${CORRELATION_ID}",
-  "causationid": null,
+  "causationid": "${CORRELATION_ID}",
   "producer": "dapr-subscribe-smoketest-cli",
   "service": "smoketest",
-  "domain": "smoketest",
-  "schemaref": "dapr.subscribe.ping.v1",
-  "data": {"ping": true, "via": "dapr-subscribe"}
+  "domain": "system",
+  "schemaref": "${CE_TYPE}.v1",
+  "traceparent": "00-00000000000000000000000000000000-0000000000000000-00",
+  "kind": "event",
+  "actor": {"type": "operator", "agent_id": "operator:dapr-subscribe-smoketest", "cli": null, "provider": null, "model": null},
+  "ordering_key": "system:dapr-subscribe-smoketest",
+  "data": {"source_id": "dapr-subscribe-smoketest-cli", "sequence": 0, "ping": true, "via": "dapr-subscribe"}
 }
 JSON
 )
@@ -203,8 +208,12 @@ if env is None:
 problems = []
 if env.get('specversion') != '1.0':
     problems.append(f\"specversion: expected 1.0, got {env.get('specversion')!r}\")
-if env.get('type') != 'dapr.subscribe.ping':
-    problems.append(f\"type: expected dapr.subscribe.ping, got {env.get('type')!r}\")
+if env.get('type') != 'bloodbank.v1.system.heartbeat.received':
+    problems.append(f\"type: expected bloodbank.v1.system.heartbeat.received, got {env.get('type')!r}\")
+if env.get('kind') != 'event':
+    problems.append(f\"kind: expected event, got {env.get('kind')!r}\")
+if env.get('domain') != 'system':
+    problems.append(f\"domain: expected system, got {env.get('domain')!r}\")
 if env.get('correlationid') != expected_corr:
     problems.append(f\"correlationid: expected {expected_corr}, got {env.get('correlationid')!r}\")
 if env.get('data', {}).get('ping') is not True:

@@ -2,19 +2,20 @@
 #
 # Bloodbank command + reply round-trip smoke test.
 #
-# Proves the BLOODBANK_COMMANDS stream handles the command.*/reply.*
-# subject topology defined in ADR-0001:
+# Proves the BLOODBANK_COMMANDS stream handles the v1 command/reply
+# subject topology per docs/event-naming.md §3:
 #
-#   1. Publisher emits a command envelope on `command.smoketest.ping`.
+#   1. Publisher emits a command envelope on
+#      `bloodbank.cmd.v1.system.heartbeat.send`.
 #   2. A responder role consumes the command, constructs a reply, and
-#      publishes it on `reply.smoketest.ping` with matching correlation_id
-#      and `in_reply_to` pointing at the command_id.
+#      publishes it on `bloodbank.rpy.v1.system.heartbeat.send` with
+#      matching correlation_id and `in_reply_to` pointing at the command_id.
 #   3. The original publisher's role consumes the reply and validates the
 #      correlation chain.
 #
 # This exercises:
-#   - `command.>` subject landing in BLOODBANK_COMMANDS
-#   - `reply.>` subject landing in BLOODBANK_COMMANDS
+#   - `bloodbank.cmd.v1.>` subject landing in BLOODBANK_COMMANDS
+#   - `bloodbank.rpy.v1.>` subject landing in BLOODBANK_COMMANDS
 #   - Workqueue retention (ack removes the message)
 #   - Correlation ID preservation across command → reply
 #
@@ -37,8 +38,10 @@ BLOODBANK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_PROJECT_NAME="bloodbank"
 COMPOSE_FILE="${BLOODBANK_ROOT}/compose/docker-compose.yml"
 STREAM="BLOODBANK_COMMANDS"
-COMMAND_SUBJECT="command.smoketest.ping"
-REPLY_SUBJECT="reply.smoketest.ping"
+COMMAND_SUBJECT="bloodbank.cmd.v1.system.heartbeat.send"
+REPLY_SUBJECT="bloodbank.rpy.v1.system.heartbeat.send"
+COMMAND_TYPE="bloodbank.v1.system.heartbeat.send"
+REPLY_TYPE="bloodbank.v1.system.heartbeat.send"
 RECEIVE_TIMEOUT="10s"
 
 CORRELATION_ID=""
@@ -132,17 +135,31 @@ nats_run consumer add "${STREAM}" "${REPLY_CONSUMER}" \
 
 COMMAND=$(cat <<JSON
 {
-  "command_id": "${COMMAND_ID}",
-  "correlationid": "${CORRELATION_ID}",
-  "causationid": null,
-  "type": "smoketest.ping",
+  "specversion": "1.0",
+  "id": "${COMMAND_ID}",
+  "source": "urn:33god:cli:smoketest",
+  "type": "${COMMAND_TYPE}",
+  "subject": "${COMMAND_SUBJECT}",
   "time": "${CMD_TIME}",
+  "datacontenttype": "application/json",
+  "dataschema": "apicurio://holyfields/${COMMAND_TYPE}/versions/1",
+  "correlationid": "${CORRELATION_ID}",
+  "causationid": "${CORRELATION_ID}",
+  "producer": "smoketest-cli",
+  "service": "smoketest",
+  "domain": "system",
+  "schemaref": "${COMMAND_TYPE}.v1",
+  "traceparent": "00-00000000000000000000000000000000-0000000000000000-00",
+  "kind": "command",
+  "actor": {"type": "operator", "agent_id": "operator:smoketest", "cli": null, "provider": null, "model": null},
+  "command_id": "${COMMAND_ID}",
+  "idempotency_key": "system.heartbeat.send:smoketest:${CORRELATION_ID}",
+  "delivery": "single_consumer",
   "issued_by": "smoketest-cli",
   "target_service": "smoketest-responder",
   "reply_to": "${REPLY_SUBJECT}",
   "timeout_ms": 5000,
-  "payload_schema": "smoketest.ping.v1",
-  "command_payload": {"ping": true}
+  "data": {"ping": true}
 }
 JSON
 )
@@ -170,7 +187,7 @@ fi
 RECEIVED_CMD_ID="$(python3 -c "
 import json, sys
 env = json.loads(sys.argv[1])
-print(env['command_id'])
+print(env.get('command_id', env.get('id', '')))
 " "${RECEIVED_CMD}" 2>/dev/null || echo "")"
 RECEIVED_CORR_ID="$(python3 -c "
 import json, sys
@@ -194,14 +211,27 @@ echo "smoketest-command: responder consumed command (id=${RECEIVED_CMD_ID})"
 REPLY_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 REPLY=$(cat <<JSON
 {
-  "reply_id": "${REPLY_ID}",
-  "in_reply_to": "${RECEIVED_CMD_ID}",
+  "specversion": "1.0",
+  "id": "${REPLY_ID}",
+  "source": "urn:33god:cli:smoketest-responder",
+  "type": "${REPLY_TYPE}",
+  "subject": "${REPLY_SUBJECT}",
+  "time": "${REPLY_TIME}",
+  "datacontenttype": "application/json",
+  "dataschema": "apicurio://holyfields/${REPLY_TYPE}/versions/1",
   "correlationid": "${RECEIVED_CORR_ID}",
   "causationid": "${RECEIVED_CMD_ID}",
-  "type": "smoketest.pong",
-  "time": "${REPLY_TIME}",
+  "producer": "smoketest-responder",
+  "service": "smoketest",
+  "domain": "system",
+  "schemaref": "${REPLY_TYPE}.v1",
+  "traceparent": "00-00000000000000000000000000000000-0000000000000000-00",
+  "kind": "reply",
+  "actor": {"type": "service", "agent_id": "service:smoketest-responder", "cli": null, "provider": null, "model": null},
+  "reply_id": "${REPLY_ID}",
+  "in_reply_to": "${RECEIVED_CMD_ID}",
   "status": "SUCCESS",
-  "result": {"pong": true}
+  "data": {"pong": true}
 }
 JSON
 )
@@ -244,12 +274,14 @@ if env.get('correlationid') != expected_corr:
     problems.append(f\"correlationid: expected {expected_corr}, got {env.get('correlationid')!r}\")
 if env.get('causationid') != expected_cmd_id:
     problems.append(f\"causationid: expected {expected_cmd_id}, got {env.get('causationid')!r}\")
-if env.get('type') != 'smoketest.pong':
-    problems.append(f\"type: expected smoketest.pong, got {env.get('type')!r}\")
+if env.get('type') != 'bloodbank.v1.system.heartbeat.send':
+    problems.append(f\"type: expected bloodbank.v1.system.heartbeat.send, got {env.get('type')!r}\")
+if env.get('kind') != 'reply':
+    problems.append(f\"kind: expected reply, got {env.get('kind')!r}\")
 if env.get('status') != 'SUCCESS':
     problems.append(f\"status: expected SUCCESS, got {env.get('status')!r}\")
-if env.get('result', {}).get('pong') is not True:
-    problems.append(f\"result.pong: expected true, got {env.get('result')!r}\")
+if env.get('data', {}).get('pong') is not True:
+    problems.append(f\"data.pong: expected true, got {env.get('data')!r}\")
 if problems:
     print('reply envelope validation failed:', file=sys.stderr)
     for p in problems: print(f'  - {p}', file=sys.stderr)
