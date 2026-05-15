@@ -7,12 +7,18 @@ Ticket-scoped execution artifacts live here (notes, checklists, evidence snippet
 For every completed ticket, add one closeout file:
 - Path: `_bmad_output/issue-<id>-execution.md`
 - Starter template: `_bmad_output/templates/ticket-closeout.md`
+- Scaffold helper: `ISSUE_ID=<id> mise run bmad:closeout-scaffold`
 
 Required fields:
 - Ticket id + title
 - Scope completed (what changed / what did not)
 - Verification evidence (commands/checks and outcomes)
 - Links to issue + PR (and follow-ups if any)
+
+Scaffold helper options:
+- `ISSUE_TITLE='...'` to prefill the title
+- `OWNER='...'` to prefill owner
+- `OVERWRITE=1` to replace an existing closeout file
 
 ## Closeout artifact index
 
