@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Safely merge a PR for operator loops, tolerating linked-worktree delete edge cases.
 
+- Enforces strict-clean preflight gate by default (`preflight_strict_clean.py`).
+- Supports explicit `--bypass-preflight` override for intentional/manual exceptions.
 - Attempts squash merge + remote branch delete.
 - Verifies merged state independently via `gh pr view`.
 - Treats local branch/worktree cleanup as best-effort follow-up.
@@ -89,10 +91,68 @@ def worktree_paths_for_branch(branch: str) -> list[str]:
     return paths
 
 
+def run_preflight(repo: Path) -> tuple[int, dict[str, object]]:
+    helper = Path(__file__).with_name("preflight_strict_clean.py")
+    cp = subprocess.run(
+        [sys.executable, str(helper), "--repo", str(repo)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    raw = (cp.stdout or "").strip()
+    if not raw:
+        return cp.returncode or 1, {
+            "ok": False,
+            "gate": "strict_clean_preflight",
+            "blocking_reason": cp.stderr.strip() or "empty preflight output",
+        }
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return cp.returncode or 1, {
+            "ok": False,
+            "gate": "strict_clean_preflight",
+            "blocking_reason": "invalid JSON from preflight helper",
+            "stderr": cp.stderr.strip(),
+        }
+
+    return cp.returncode, payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Safe PR merge helper for operator loops")
     parser.add_argument("pr", help="PR number or URL")
+    parser.add_argument(
+        "--bypass-preflight",
+        action="store_true",
+        help="Bypass strict-clean preflight gate (use only for intentional/manual override)",
+    )
     args = parser.parse_args()
+
+    preflight_payload: dict[str, object] = {"ok": None, "bypassed": bool(args.bypass_preflight)}
+    if not args.bypass_preflight:
+        preflight_rc, preflight_payload = run_preflight(Path.cwd())
+        if preflight_rc != 0:
+            report = {
+                "pr": args.pr,
+                "url": None,
+                "state": "BLOCKED",
+                "mergedAt": None,
+                "merge_command_exit": None,
+                "merge_command_stderr": "",
+                "head_branch": None,
+                "preflight": preflight_payload,
+                "cleanup": {
+                    "local_branch_status": "not_applicable",
+                    "local_branch_deleted": None,
+                    "linked_worktrees": [],
+                    "followup_commands": [],
+                },
+            }
+            print(json.dumps(report, indent=2))
+            return 1
 
     merge = run("gh", "pr", "merge", args.pr, "--squash", "--delete-branch")
 
@@ -121,6 +181,7 @@ def main() -> int:
         "merge_command_exit": merge.code,
         "merge_command_stderr": merge.err,
         "head_branch": head_branch,
+        "preflight": preflight_payload,
         "cleanup": {
             "local_branch_status": "not_applicable",
             "local_branch_deleted": None,

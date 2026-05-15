@@ -68,6 +68,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:bmad-closeout-scaffold` | local validation for closeout scaffold helper (required id/create/no-overwrite) |
 | `mise run smoketest:bmad-closeout-loop` | local validation for unified closeout helper JSON/evidence fields |
 | `mise run smoketest:bmad-merge-pr-safe` | local validation for safe merge helper JSON/cleanup follow-up fields |
+| `mise run smoketest:bmad-merge-pr-preflight-guard` | local validation for merge helper strict-clean preflight enforcement + explicit bypass path |
 | `mise run smoketest:bmad-retrigger-pr-checks` | local validation for PR check retrigger helper JSON contract (dry-run path) |
 | `mise run smoketest:bmad-github-body-safety` | guardrail grep for risky inline `gh ... --body "..."` patterns in BMAD operator docs/scripts |
 | `mise run smoketest:bmad-closeout-cleanup-summary` | local validation for closeout cleanup summary helper JSON output contract |
@@ -76,7 +77,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:bmad-gh-readonly-status` | local validation for bounded transient retry behavior in read-only issue/pr status helper |
 | `mise run smoketest:bmad-preflight-strict-clean` | local validation for strict-clean preflight helper JSON/exit contract (clean pass + dirty fail) |
 | `mise run smoketest:hermes-runtime-hygiene` | local validation for Hermes runtime ignore contract (runtime state ignored, skeleton trackable) |
-| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry/gh-readonly-status/preflight-strict-clean/hermes-runtime-hygiene, fail-fast) |
+| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/merge-preflight-guard/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry/gh-readonly-status/preflight-strict-clean/hermes-runtime-hygiene, fail-fast) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline
