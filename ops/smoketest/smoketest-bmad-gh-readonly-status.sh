@@ -52,21 +52,55 @@ try:
     assert rc == 1 and tries == 1 and "deprecated" in err.lower(), (rc, out, err, tries)
     assert sleeps == [], sleeps
 
+    def run_main_case(argv, mocked_response):
+        observed = []
+
+        def fake_cmd(cmd_argv):
+            observed.append(cmd_argv)
+            return mocked_response
+
+        s._run_once = fake_cmd
+        s.time.sleep = lambda _sec: None
+        sys.argv = argv
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            exit_code = s.main()
+        payload = json.loads(stream.getvalue())
+        return exit_code, payload, observed
+
+    # issue-view command contract (no network; mocked gh response)
+    exit_code, payload, observed = run_main_case(
+        ["gh_readonly_status.py", "issue-view", "154"],
+        (0, '{"number":154,"title":"T","state":"OPEN","url":"u","updatedAt":"now"}', ""),
+    )
+    assert exit_code == 0, exit_code
+    assert observed == [["gh", "issue", "view", "154", "--json", "number,title,state,url,updatedAt"]], observed
+    assert payload["ok"] is True, payload
+    assert payload["command"] == "issue-view", payload
+    assert payload["data"]["number"] == 154, payload
+    assert payload["data"]["state"] == "OPEN", payload
+
+    # pr-view command contract (no network; mocked gh response)
+    exit_code, payload, observed = run_main_case(
+        ["gh_readonly_status.py", "pr-view", "151"],
+        (
+            0,
+            '{"number":151,"title":"P","state":"OPEN","url":"u","headRefName":"h","mergeStateStatus":"CLEAN","statusCheckRollup":[],"mergedAt":null,"updatedAt":"now"}',
+            "",
+        ),
+    )
+    assert exit_code == 0, exit_code
+    assert observed == [["gh", "pr", "view", "151", "--json", "number,title,state,url,headRefName,mergeStateStatus,statusCheckRollup,mergedAt,updatedAt"]], observed
+    assert payload["ok"] is True, payload
+    assert payload["command"] == "pr-view", payload
+    assert payload["data"]["number"] == 151, payload
+    assert payload["data"]["headRefName"] == "h", payload
+
     # repo-view command contract (no network; mocked gh response)
-    observed = []
-
-    def fake_repo(argv):
-        observed.append(argv)
-        return (0, '{"nameWithOwner":"delorenj/bloodbank"}', "")
-
-    s._run_once = fake_repo
-    s.time.sleep = lambda _sec: None
-    sys.argv = ["gh_readonly_status.py", "repo-view"]
-    stream = io.StringIO()
-    with contextlib.redirect_stdout(stream):
-        exit_code = s.main()
-    payload = json.loads(stream.getvalue())
-
+    exit_code, payload, observed = run_main_case(
+        ["gh_readonly_status.py", "repo-view"],
+        (0, '{"nameWithOwner":"delorenj/bloodbank"}', ""),
+    )
     assert exit_code == 0, exit_code
     assert observed == [["gh", "repo", "view", "--json", "nameWithOwner"]], observed
     assert payload["ok"] is True, payload
