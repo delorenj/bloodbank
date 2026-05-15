@@ -69,7 +69,7 @@ description = "Bootstrap isolated clean automation worktree (requires ISSUE_ID +
 run = "python3 ops/bmad/bootstrap_clean_worktree.py"
 
 [tasks."bmad:pr-merge-safe"]
-description = "Safely merge PR with merged-state verification; linked-worktree cleanup handled as follow-up"
+description = "Safely merge PR with merged-state verification, cleanup follow-ups, and safe post-merge main reconciliation"
 run = "python3 ops/bmad/merge_pr_safe.py"
 
 [tasks."bmad:closeout-loop"]

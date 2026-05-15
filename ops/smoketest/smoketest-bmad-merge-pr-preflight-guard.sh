@@ -15,6 +15,7 @@ import sys
 import ops.bmad.merge_pr_safe as m
 
 orig_run_preflight = m.run_preflight
+orig_run_post_merge_reconcile = m.run_post_merge_reconcile
 orig_run = m.run
 orig_gh_pr_view = m.gh_pr_view
 orig_branch_exists = m.branch_exists_local
@@ -34,6 +35,13 @@ try:
 
     # Case 2: bypass flag skips preflight and proceeds through merge contract.
     m.run_preflight = lambda _repo: (_ for _ in ()).throw(RuntimeError("should not be called"))
+    m.run_post_merge_reconcile = lambda _repo, apply: {
+        "attempted": bool(apply),
+        "applied": False,
+        "status": "skipped",
+        "reason": "disabled",
+        "helper": None,
+    }
     m.run = lambda *_args: m.CmdResult(code=0, out="", err="")
     m.gh_pr_view = lambda _pr: {
         "number": 123,
@@ -44,7 +52,7 @@ try:
     }
     m.branch_exists_local = lambda _branch: False
 
-    sys.argv = ["merge_pr_safe.py", "123", "--bypass-preflight"]
+    sys.argv = ["merge_pr_safe.py", "123", "--bypass-preflight", "--no-reconcile-main"]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = m.main()
@@ -52,9 +60,40 @@ try:
     assert rc == 0, (rc, payload)
     assert payload["state"] == "MERGED", payload
     assert payload["preflight"]["bypassed"] is True, payload
+    assert payload["post_merge_reconcile"]["status"] == "skipped", payload
+
+    # Case 3: default path attempts post-merge reconcile and surfaces contract.
+    m.run_preflight = lambda _repo: (0, {"ok": True})
+    m.run_post_merge_reconcile = lambda _repo, apply: {
+        "attempted": bool(apply),
+        "applied": True,
+        "status": "ok",
+        "reason": "",
+        "helper": {"applied": True},
+    }
+    m.run = lambda *_args: m.CmdResult(code=0, out="", err="")
+    m.gh_pr_view = lambda _pr: {
+        "number": 124,
+        "state": "MERGED",
+        "mergedAt": "2026-01-01T00:00:00Z",
+        "url": "https://example.test/pr/124",
+        "headRefName": "fix/branch2",
+    }
+    m.branch_exists_local = lambda _branch: False
+
+    sys.argv = ["merge_pr_safe.py", "124"]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = m.main()
+    payload = json.loads(buf.getvalue())
+    assert rc == 0, (rc, payload)
+    assert payload["state"] == "MERGED", payload
+    assert payload["post_merge_reconcile"]["attempted"] is True, payload
+    assert payload["post_merge_reconcile"]["applied"] is True, payload
 
 finally:
     m.run_preflight = orig_run_preflight
+    m.run_post_merge_reconcile = orig_run_post_merge_reconcile
     m.run = orig_run
     m.gh_pr_view = orig_gh_pr_view
     m.branch_exists_local = orig_branch_exists

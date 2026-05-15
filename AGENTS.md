@@ -49,7 +49,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run repo-health:cleanup` | remove generated artifacts; optional `KEEP=N`, `REPORT=1`, and `DRY_RUN=1` preview |
 | `ISSUE_ID=<id> mise run bmad:closeout-scaffold` | scaffold `_bmad_output/issue-<id>-execution.md` from template |
 | `ISSUE_ID=<id> SLUG=<slug> mise run bmad:worktree-bootstrap` | bootstrap isolated clean worktree from `origin/main` for ticket loops |
-| `mise run bmad:pr-merge-safe -- <pr>` | safe squash merge + merged-state verification + cleanup follow-ups |
+| `mise run bmad:pr-merge-safe -- <pr> [--no-reconcile-main]` | safe squash merge + merged-state verification + cleanup follow-ups + safe post-merge main reconciliation attempt |
 | `mise run bmad:closeout-loop -- <pr> [--primary-repo <path>]` | unified closeout summary (merge+cleanup+drift evidence, JSON; defaults `PRIMARY_REPO` env then cwd) |
 | `mise run bmad:closeout-loop:artifact -- <pr> [--primary-repo <path>]` | same as closeout-loop, plus timestamped artifact write to `_bmad_output/evidence/closeout/` |
 | `mise run bmad:closeout-cleanup-summary -- [--evidence-dir <dir>] [--limit <n>]` | read-only summary of closeout artifact cleanup status fields for quick operator review (defaults to `_bmad_output/evidence/closeout`) |
@@ -104,6 +104,7 @@ alongside each service, using Holyfields-generated publishers.
 - Before mutating loop actions (branch/commit/merge), run `mise run bmad:preflight-strict-clean` and treat non-zero as a hard blocker requiring hygiene routing.
 - For non-mutating loop evidence on local drift state, use `mise run repo-health:drift`.
 - If `main` is `ahead` and `behind` with patch-equivalent divergence, use `mise run bmad:reconcile-main-divergence` to confirm and optionally apply safe local reconciliation.
+- `bmad:pr-merge-safe` now attempts safe post-merge reconciliation by default; use `--no-reconcile-main` only when you explicitly need to defer reconciliation.
 - For quick cleanup-status review across closeout artifacts, use `mise run bmad:closeout-cleanup-summary`.
 - Runtime closeout evidence JSONs under `_bmad_output/evidence/closeout/` are operator-generated artifacts and intentionally git-ignored.
 - If primary checkout is dirty/behind, use the dedicated clean-worktree automation path in `ops/bmad/clean-worktree-automation.md` (do not stash/discard unknown local changes).

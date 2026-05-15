@@ -5,6 +5,7 @@
 - Supports explicit `--bypass-preflight` override for intentional/manual exceptions.
 - Attempts squash merge + remote branch delete.
 - Verifies merged state independently via `gh pr view`.
+- Applies optional safe post-merge main reconciliation (`reconcile_main_divergence.py --apply`).
 - Treats local branch/worktree cleanup as best-effort follow-up.
 """
 
@@ -121,6 +122,56 @@ def run_preflight(repo: Path) -> tuple[int, dict[str, object]]:
     return cp.returncode, payload
 
 
+def run_post_merge_reconcile(repo: Path, apply: bool) -> dict[str, object]:
+    if not apply:
+        return {
+            "attempted": False,
+            "applied": False,
+            "status": "skipped",
+            "reason": "disabled",
+            "helper": None,
+        }
+
+    helper = Path(__file__).with_name("reconcile_main_divergence.py")
+    cp = subprocess.run(
+        [sys.executable, str(helper), "--repo", str(repo), "--apply"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    raw = (cp.stdout or "").strip()
+    helper_payload: dict[str, object] | None = None
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                helper_payload = parsed
+        except json.JSONDecodeError:
+            helper_payload = None
+
+    if cp.returncode == 0:
+        return {
+            "attempted": True,
+            "applied": bool((helper_payload or {}).get("applied") is True),
+            "status": "ok",
+            "reason": "",
+            "helper": helper_payload,
+        }
+
+    reason = "helper_failed"
+    if helper_payload and isinstance(helper_payload.get("errors"), list) and helper_payload["errors"]:
+        reason = str(helper_payload["errors"][0])
+
+    return {
+        "attempted": True,
+        "applied": False,
+        "status": "not_applied",
+        "reason": reason,
+        "helper": helper_payload,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Safe PR merge helper for operator loops")
     parser.add_argument("pr", help="PR number or URL")
@@ -128,6 +179,11 @@ def main() -> int:
         "--bypass-preflight",
         action="store_true",
         help="Bypass strict-clean preflight gate (use only for intentional/manual override)",
+    )
+    parser.add_argument(
+        "--no-reconcile-main",
+        action="store_true",
+        help="Skip post-merge patch-equivalent main reconciliation helper",
     )
     args = parser.parse_args()
 
@@ -144,6 +200,13 @@ def main() -> int:
                 "merge_command_stderr": "",
                 "head_branch": None,
                 "preflight": preflight_payload,
+                "post_merge_reconcile": {
+                    "attempted": False,
+                    "applied": False,
+                    "status": "skipped",
+                    "reason": "blocked_before_merge",
+                    "helper": None,
+                },
                 "cleanup": {
                     "local_branch_status": "not_applicable",
                     "local_branch_deleted": None,
@@ -182,6 +245,13 @@ def main() -> int:
         "merge_command_stderr": merge.err,
         "head_branch": head_branch,
         "preflight": preflight_payload,
+        "post_merge_reconcile": {
+            "attempted": False,
+            "applied": False,
+            "status": "skipped",
+            "reason": "not_merged",
+            "helper": None,
+        },
         "cleanup": {
             "local_branch_status": "not_applicable",
             "local_branch_deleted": None,
@@ -214,6 +284,10 @@ def main() -> int:
                     followups.append(f"git worktree remove {path}")
                 followups.append(f"git branch -d {head_branch}")
                 cleanup["followup_commands"] = followups
+
+    report["post_merge_reconcile"] = run_post_merge_reconcile(
+        Path.cwd(), apply=not args.no_reconcile_main
+    )
 
     # Success even if merge command failed, as long as PR is confirmed merged.
     # This covers linked-worktree local deletion failures from gh merge.
