@@ -122,7 +122,7 @@ run = "bash ops/smoketest/smoketest-bmad-closeout-loop.sh"
 
 [tasks."smoketest:ops"]
 description = "Run consolidated local operator reliability smoke checks (fail-fast)"
-run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold"
+run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop"
 
 [tasks.logs]
 description = "Tail every Bloodbank container"
