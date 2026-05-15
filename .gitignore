@@ -90,3 +90,7 @@ _bmad_output/evidence/closeout/*.json
 
 # Local OpenClaw hook workspace artifacts (operator-local; not project source)
 /services/agent-hooks/openclaw/
+
+# Repo-local Hermes runtime state (secrets/sessions/logs)
+agents/hermes/runtime/**
+!agents/hermes/runtime/.gitignore
