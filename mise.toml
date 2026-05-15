@@ -96,6 +96,10 @@ run = "bash ops/smoketest/smoketest-repo-health-cleanup.sh"
 description = "Local smoke test for BMAD closeout scaffold helper"
 run = "bash ops/smoketest/smoketest-bmad-closeout-scaffold.sh"
 
+[tasks."smoketest:ops"]
+description = "Run consolidated local operator reliability smoke checks (fail-fast)"
+run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold"
+
 [tasks.logs]
 description = "Tail every Bloodbank container"
 run = "docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE logs -f"
