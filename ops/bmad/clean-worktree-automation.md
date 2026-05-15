@@ -54,10 +54,12 @@ cd -
 git worktree remove /tmp/bloodbank-issue-<id>
 ```
 
-Optional safe merge helper (handles linked-worktree delete edge case):
+Optional safe merge helper (handles linked-worktree delete edge case + attempts safe post-merge main reconciliation by default):
 
 ```bash
 mise run bmad:pr-merge-safe -- <pr-number-or-url>
+# optional explicit defer:
+# mise run bmad:pr-merge-safe -- <pr-number-or-url> --no-reconcile-main
 ```
 
 Unified closeout helper (merge verification + cleanup follow-ups + primary drift evidence):
