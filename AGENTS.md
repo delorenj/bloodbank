@@ -65,7 +65,8 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:bmad-closeout-loop` | local validation for unified closeout helper JSON/evidence fields |
 | `mise run smoketest:bmad-merge-pr-safe` | local validation for safe merge helper JSON/cleanup follow-up fields |
 | `mise run smoketest:bmad-retrigger-pr-checks` | local validation for PR check retrigger helper JSON contract (dry-run path) |
-| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks, fail-fast) |
+| `mise run smoketest:bmad-github-body-safety` | guardrail grep for risky inline `gh ... --body "..."` patterns in BMAD operator docs/scripts |
+| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/retrigger-checks/github-body-safety, fail-fast) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline
@@ -82,6 +83,7 @@ alongside each service, using Holyfields-generated publishers.
   - `gh run view <run-id> --log-failed` excerpt (error signature)
   - follow-up ticket URL when the fix is out of current PR scope
 - For GitHub CLI reliability fallbacks (`projectCards` deprecation class), use `ops/bmad/github-cli-reliability.md` and prefer `gh ... --json` or `gh api` REST paths in automation loops.
+- For shell-safe issue/PR markdown composition, use `ops/bmad/github-body-authoring.md` and prefer `--body-file`/file-backed REST payloads over inline `--body "..."`.
 - For scriptable evidence capture, use: `python3 cli/bb.py repo-health --json` (includes explicit `worktree_dirty` signal).
 - For gate-style checks, add `--require-clean-worktree` to force non-zero exit on dirty trees.
 - For non-mutating loop evidence on local drift state, use `mise run repo-health:drift`.
