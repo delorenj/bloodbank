@@ -109,7 +109,7 @@ description = "Backup-first helper to align diverged local main to origin/main (
 run = "python3 ops/bmad/align_main_with_backup.py"
 
 [tasks."bmad:recovery-artifact-cleanup"]
-description = "Cleanup helper for backup branches + recovery bundles (dry-run by default)"
+description = "Cleanup helper for backup branches + recovery bundles with optional bundle-age gate (dry-run default)"
 run = "python3 ops/bmad/recovery_artifact_cleanup.py"
 
 [tasks.bootstrap]

@@ -59,7 +59,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run bmad:reconcile-main-divergence -- [--repo <path>] [--apply] [--limit <n>]` | detect/optionally reconcile patch-equivalent `main...origin/main` divergence with commit-side summaries |
 | `mise run bmad:primary-recovery-check -- [--repo <path>]` | read-only divergence diagnostics + helper-availability check for primary checkout recovery |
 | `mise run bmad:align-main-with-backup -- [--repo <path>] [--bundle-dir <path>] [--apply]` | backup-first helper to align diverged local `main` to `origin/main` (read-only by default) |
-| `mise run bmad:recovery-artifact-cleanup -- [--repo <path>] [--bundle-dir <path>] [--keep-branches <n>] [--keep-bundles <n>] [--apply]` | cleanup helper for post-recovery backup branches + bundle artifacts (dry-run default) |
+| `mise run bmad:recovery-artifact-cleanup -- [--repo <path>] [--bundle-dir <path>] [--keep-branches <n>] [--keep-bundles <n>] [--min-bundle-age-hours <h>] [--apply]` | cleanup helper for post-recovery backup branches + bundle artifacts (dry-run default, optional age gate) |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
 | `mise run smoketest`    | NATS-direct event round-trip                     |
 | `mise run smoketest:command` | NATS-direct command + reply round-trip      |
@@ -113,7 +113,7 @@ alongside each service, using Holyfields-generated publishers.
 - If `main` is `ahead` and `behind` with patch-equivalent divergence, use `mise run bmad:reconcile-main-divergence` to confirm and optionally apply safe local reconciliation.
 - If helper files are missing locally while `main` is diverged, run `mise run bmad:primary-recovery-check` then follow `ops/bmad/primary-checkout-recovery.md` before any destructive sync action.
 - For backup-first canonical alignment, use `mise run bmad:align-main-with-backup -- --repo <path>` (read-only) then rerun with `--apply` only after review.
-- After successful alignment verification window, run `mise run bmad:recovery-artifact-cleanup -- --repo <path>` (dry-run) before any cleanup apply.
+- After successful alignment verification window, run `mise run bmad:recovery-artifact-cleanup -- --repo <path>` (dry-run) before any cleanup apply; use `--min-bundle-age-hours` to protect fresh bundles.
 - `bmad:pr-merge-safe` now attempts safe post-merge reconciliation by default; use `--no-reconcile-main` only when you explicitly need to defer reconciliation.
 - For quick cleanup-status review across closeout artifacts, use `mise run bmad:closeout-cleanup-summary`.
 - Runtime closeout evidence JSONs under `_bmad_output/evidence/closeout/` are operator-generated artifacts and intentionally git-ignored.
