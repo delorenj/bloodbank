@@ -23,6 +23,7 @@ Scaffold helper options:
 ## Closeout artifact index
 
 - `issue-38-execution.md` — closes out #38 via PR #39 (BMAD closeout standard)
+- `issue-185-execution.md` — closes out #185 with verified strict-clean recovery evidence (no PR required)
 
 Index append convention (for each new closeout file):
 - `issue-<id>-execution.md` — closes out #<id> via PR #<pr> (<short scope note>)
