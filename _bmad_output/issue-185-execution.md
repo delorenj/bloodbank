@@ -10,6 +10,7 @@
 - Captured current repo/PR/ticket health evidence artifacts for this execution loop.
 - Bootstrapped isolated BMAD worktree for #185 at `/tmp/bloodbank-issue-185` on branch `fix/issue-185-hermes-pm-runtime-submodule-drift`.
 - Re-ran strict-clean preflight on both primary checkout and isolated worktree; blocker is no longer reproducible.
+- Prepared closeout comment draft at `_bmad_output/issue-185-closeout-comment.md` for issue-thread posting/closure.
 
 ## Out of scope
 - Final GitHub issue close/comment action (external write) pending explicit closeout decision.
@@ -19,7 +20,8 @@
 - `ISSUE_ID=185 SLUG=hermes-pm-runtime-submodule-drift mise run bmad:worktree-bootstrap` → `WORKTREE_CREATED: /tmp/bloodbank-issue-185`, branch `fix/issue-185-hermes-pm-runtime-submodule-drift`.
 - `mise run bmad:preflight-strict-clean -- --repo /tmp/bloodbank-issue-185` → `ok: true`, `worktree_dirty: false`.
 - `mise run bmad:preflight-strict-clean -- --repo /home/delorenj/code/33GOD/bloodbank` → `ok: true`, `worktree_dirty: false`.
-- `mise run repo-health:artifact` → `_bmad_output/evidence/repo-health-20260517T080040Z.json`, `_bmad_output/evidence/repo-health-20260517T081022Z.json`, `_bmad_output/evidence/repo-health-20260517T082047Z.json`.
+- `mise run repo-health:artifact` → `_bmad_output/evidence/repo-health-20260517T080040Z.json`, `_bmad_output/evidence/repo-health-20260517T081022Z.json`, `_bmad_output/evidence/repo-health-20260517T082047Z.json`, `_bmad_output/evidence/repo-health-20260517T083057Z.json`.
+- `_bmad_output/issue-185-closeout-comment.md` → closeout text drafted and ready for issue posting.
 
 ## Links
 - Issue: https://github.com/delorenj/bloodbank/issues/185
