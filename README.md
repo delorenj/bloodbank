@@ -1,7 +1,7 @@
 # Bloodbank
 
 The event backbone of the 33GOD ecosystem. Dapr over NATS JetStream, CloudEvents
-on the wire, Holyfields-owned contracts on either side.
+on the wire, repo-local contracts under `schemas/` driving both sides.
 
 This repository contains the self-hosted sandbox (Docker Compose), reference
 services that exercise the platform, the operator CLI (`bb`), and the operator
@@ -17,11 +17,15 @@ workflows (bootstrap, smoketest, replay, trace).
   secret stores are siblings under the same directory.
 - **Wire format:** CloudEvents 1.0 (JSON), with `correlationid` and `causationid`
   on every envelope.
-- **Schemas:** Owned by [Holyfields](../holyfields/). Bloodbank consumes
-  generated SDKs and pulls runtime schemas from Apicurio. No envelope is ever
-  invented locally.
+- **Schemas:** Canonical source-of-truth lives in `schemas/` in this repo
+  (see [`docs/event-naming.md`](docs/event-naming.md) §12). Run
+  `mise run validate:schemas` to verify the tree. Runtime lookup falls
+  back to a sibling `holyfields/schemas/` while downstream consumers cut
+  over. Re-extraction into a neutral registry repo becomes appropriate
+  once two or more serious consumers live outside Bloodbank. No envelope
+  is ever invented outside the schema tree.
 - **Discovery:** EventCatalog. The mount point at `compose/eventcatalog/site` is
-  populated by Holyfields output.
+  populated from the local schema tree.
 
 ADR-0001 in the metarepo ratifies these decisions (TBD; not yet committed).
 
@@ -91,7 +95,7 @@ intentional stubs that will be filled in as the operator surfaces land.
 - Every envelope carries `correlationid` and `causationid`.
 - Sandbox identifiers all use the `bloodbank` prefix (project, network,
   containers). No version suffix.
-- Schemas are owned by Holyfields. Adapters translate; they do not invent.
+- Schemas live under `schemas/`. Adapters translate; they do not invent.
 
 ## Anti-patterns
 

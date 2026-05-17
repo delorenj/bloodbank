@@ -3,12 +3,19 @@
 **Status:** Locked  
 **Adopted:** 2026-05-14  
 **Supersedes:** the `<domain>.<entity>.<action>` shape documented in
-`compose/nats/streams.json` and the open-ended `type` regex in
-`holyfields/schemas/_common/cloudevent_base.v1.json`.
+`compose/nats/streams.json` and the open-ended `type` regex in the legacy
+Holyfields `_common/cloudevent_base.v1.json`.
 
 This document is the single source of truth for Bloodbank event identity.
 Any conflict between this doc and other artifacts (CLAUDE.md, streams.json,
 schemas, code) is a defect in the other artifact.
+
+**Schema home:** the canonical schema tree lives in this repo at
+`bloodbank/schemas/` (see §12). Holyfields previously hosted the tree; that
+copy is retained only as a transitional fallback for downstream consumers
+and will be removed once they cut over. Future re-extraction into a neutral
+registry repo is appropriate once there are multiple serious consumers
+outside Bloodbank.
 
 ---
 
@@ -292,7 +299,7 @@ fields continue to apply per `cloudevent_base.v1.json`. Conceptually:
 
 ## 11. Required envelope fields beyond the CloudEvents base
 
-In addition to everything required by `holyfields/schemas/_common/cloudevent_base.v1.json`:
+In addition to everything required by `bloodbank/schemas/_common/cloudevent_base.v1.json`:
 
 | Field             | Applies to            | Required? | Notes                                                                         |
 | ----------------- | --------------------- | --------- | ----------------------------------------------------------------------------- |
@@ -337,38 +344,42 @@ deduplicates on `(idempotency_key, command_id)` before forwarding.
 
 ---
 
-## 12. Schema directory layout (Holyfields)
+## 12. Schema directory layout
 
-Bloodbank v1 schemas live under:
+Bloodbank v1 schemas live under `bloodbank/schemas/` in this repo:
 
 ```
-holyfields/schemas/bloodbank/v1/
-  conversation/
-    thread.created.v1.json
-    thread.resumed.v1.json
-    turn.started.v1.json
-    turn.completed.v1.json
-    message.appended.v1.json
-  agent/
-    invocation.started.v1.json
-    invocation.completed.v1.json
-    invocation.failed.v1.json
-  llm/
-    request.sent.v1.json
-    response.received.v1.json
-  cli/
-    session.started.v1.json
-    session.ended.v1.json
-    process.spawned.v1.json
-    process.exited.v1.json
-    stdout.appended.v1.json
-    stderr.appended.v1.json
-  tool/
-    tool_call.requested.v1.json
-    tool_call.invoked.v1.json
-    tool_call.completed.v1.json
-  system/
-    heartbeat.v1.json
+bloodbank/schemas/
+  _common/
+    cloudevent_base.v1.json
+    types.v1.json
+  bloodbank/v1/
+    conversation/
+      thread.created.v1.json
+      thread.resumed.v1.json
+      turn.started.v1.json
+      turn.completed.v1.json
+      message.appended.v1.json
+    agent/
+      invocation.started.v1.json
+      invocation.completed.v1.json
+      invocation.failed.v1.json
+    llm/
+      request.sent.v1.json
+      response.received.v1.json
+    cli/
+      session.started.v1.json
+      session.ended.v1.json
+      process.spawned.v1.json
+      process.exited.v1.json
+      stdout.appended.v1.json
+      stderr.appended.v1.json
+    tool/
+      tool_call.requested.v1.json
+      tool_call.invoked.v1.json
+      tool_call.completed.v1.json
+    system/
+      heartbeat.received.v1.json
 ```
 
 Each schema:
@@ -379,10 +390,22 @@ Each schema:
 - MUST set `properties.kind.const` to `event` or `command`.
 - MUST set `properties.domain.const` to match segment 3 of `type`.
 
-The legacy `holyfields/schemas/agent/` and `holyfields/schemas/copilot/`
-directories are removed in the migration PR. There is no
-`holyfields/schemas/bloodbank/v1/copilot/` — provider identity does not
+There is no provider-named subdirectory (no
+`bloodbank/schemas/bloodbank/v1/copilot/`) — provider identity does not
 shape the schema tree.
+
+Runtime validator lookup (`services/agent-hooks/core/validate.py`) resolves
+the schema root in this order:
+
+1. `BLOODBANK_SCHEMAS_DIR` env var (canonical override).
+2. `HOLYFIELDS_SCHEMAS_DIR` env var (backward-compat override).
+3. Walk up from the source file to a directory containing both
+   `docs/event-naming.md` and `schemas/` (this repo).
+4. Sibling `holyfields/schemas/` (transitional fallback).
+5. `$HOME/code/33GOD/bloodbank/schemas` / `holyfields/schemas` final fallback.
+
+Run `mise run validate:schemas` to confirm the tree is internally
+consistent (every `$id` unique, every `$ref` resolves).
 
 ---
 
@@ -467,8 +490,8 @@ aliases, no deprecation period.
 | ID   | Repo       | Work                                                                                                                                                            | Status                                  |
 | ---- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | T-1  | holyfields | Tighten `_common/cloudevent_base.v1.json` `type` regex to §2's regex. Add `kind`, `actor`, `ordering_key` fields.                                               | DONE                                    |
-| T-2  | holyfields | Create `schemas/bloodbank/v1/<domain>/...` tree per §12. Remove `schemas/agent/`'s bloodbank-emission files and the entire `schemas/copilot/` directory.        | DONE                                    |
-| T-3  | holyfields | Update Pydantic + Zod generators to emit `BloodbankV1Type` enum from the schema tree.                                                                           | OPEN — re-run `scripts/generate_*.sh`   |
+| T-2  | bloodbank  | Schema tree at `bloodbank/schemas/bloodbank/v1/<domain>/...` per §12 + `_common/{cloudevent_base,types}.v1.json` deps. Validator and CI consume it locally.     | DONE                                    |
+| T-3  | bloodbank  | Port Pydantic + Zod generators from Holyfields into `bloodbank/scripts` + `bloodbank/tools/generators` and emit `BloodbankV1Type` enum from the local tree.     | OPEN — see RECOMMENDATION.md            |
 | T-4  | bloodbank  | `services/agent-hooks/core/{envelope,validate}.py` enforce §2, §3, §5, §9 and §11 on every envelope. Loud `ContractViolation`; no quarantine.                   | DONE                                    |
 | T-5  | bloodbank  | `services/agent-hooks/{claude,copilot,openclaw}/publish.py` (and `watch.py`) emit v1 types per §15.                                                             | DONE                                    |
 | T-6  | bloodbank  | `compose/nats/streams.json` filters are `bloodbank.evt.v1.>` and `bloodbank.{cmd,rpy}.v1.>`. `compose/docker-compose.yml` env defaults migrated.                | DONE                                    |

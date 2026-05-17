@@ -30,7 +30,7 @@ agent-hooks/
 
 ## Envelope contract
 
-Every envelope conforms to `holyfields/schemas/_common/cloudevent_base.v1.json`
+Every envelope conforms to `bloodbank/schemas/_common/cloudevent_base.v1.json`
 and the v1 naming contract. `core.envelope.build_envelope()` raises
 `ContractViolation` on any deviation. There is no legacy 3-token path and
 no compat aliases — see "Hard rename, no aliases" in
@@ -71,7 +71,8 @@ the fire-and-forget shape of CLI hooks. Override via:
 | `BLOODBANK_DEBUG`        | unset       | `true` logs each publish to stderr                                      |
 | `BLOODBANK_HOOK_VERBOSE` | unset       | when set, log `published <subject>` to stderr                           |
 | `BLOODBANK_HOOK_STRICT`  | unset       | `1` exits non-zero on publish failure (default: fail open)              |
-| `BLOODBANK_HOOK_VALIDATE`| unset       | `1` runs JSON Schema validation against the matching holyfields schema  |
+| `BLOODBANK_HOOK_VALIDATE`| unset       | `1` runs JSON Schema validation against the matching `bloodbank/schemas/` schema  |
+| `BLOODBANK_SCHEMAS_DIR`  | unset       | overrides the schema-tree lookup; defaults to repo-local `bloodbank/schemas/`     |
 
 ## Claude Code
 

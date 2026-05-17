@@ -6,7 +6,7 @@ events through Dapr pub/sub on a configurable interval. Each tick carries
 a monotonic sequence number, an instance-stable producer_id, and the
 producer's start time so consumers can detect restarts.
 
-Schema: holyfields/schemas/bloodbank/v1/system/heartbeat.received.v1.json
+Schema: bloodbank/schemas/bloodbank/v1/system/heartbeat.received.v1.json
 (extends cloudevent_base.v1.json). Envelope shape follows
 bloodbank/docs/event-naming.md.
 

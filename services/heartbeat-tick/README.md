@@ -37,7 +37,7 @@ publishes to its HTTP API, heartbeat-recorder is wired as the
 
 ## Schema
 
-Defined in [Holyfields](../../../holyfields/schemas/system/heartbeat.tick.v1.json).
+Defined in [`bloodbank/schemas/bloodbank/v1/system/heartbeat.received.v1.json`](../../schemas/bloodbank/v1/system/heartbeat.received.v1.json).
 Extends `_common/cloudevent_base.v1.json`. Required `data` fields:
 
 | field | type | purpose |
@@ -48,8 +48,9 @@ Extends `_common/cloudevent_base.v1.json`. Required `data` fields:
 | `interval_ms` | int (≥100) | Configured tick interval (advisory) |
 
 The service constructs the envelope as a JSON dict directly. Switching
-to the Holyfields-generated Pydantic model is a follow-up once the
-Holyfields installable-package story is stable inside containers.
+to a generated Pydantic model is a follow-up once the Bloodbank-local
+SDK generator (see `RECOMMENDATION.md` step 3) and an installable-package
+story for containers land.
 
 ## Configuration (env vars)
 

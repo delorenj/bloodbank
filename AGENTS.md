@@ -9,14 +9,20 @@ EventCatalog for human discovery.
 - **Broker:** NATS JetStream (durable streams: `BLOODBANK_EVENTS`, `BLOODBANK_COMMANDS`)
 - **Runtime:** Dapr (pub/sub + state + secret stores defined under `compose/components/`)
 - **Wire format:** CloudEvents 1.0 (JSON)
-- **Schema registry:** Apicurio (read side); Holyfields generates the SDKs (write side)
+- **Schema home:** `bloodbank/schemas/` in this repo is the canonical
+  source of truth. Holyfields keeps a transitional copy for downstream
+  consumers; future re-extraction is appropriate once multiple independent
+  consumers exist outside Bloodbank.
+- **Schema registry:** Apicurio (read side); Bloodbank-local generators
+  produce the SDKs (write side).
 - **Discovery:** EventCatalog
 - **Producers/consumers:** language-agnostic. Services in this repo are
   Python stdlib-only by design.
 
 There is no in-process broker, no RabbitMQ, and no FastAPI publisher service in
 Bloodbank itself. Production traffic flows through Dapr sidecars embedded
-alongside each service, using Holyfields-generated publishers.
+alongside each service, using publishers generated from the local
+`bloodbank/schemas/` tree.
 
 ## Layout
 
@@ -61,6 +67,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run bmad:align-main-with-backup -- [--repo <path>] [--bundle-dir <path>] [--apply]` | backup-first helper to align diverged local `main` to `origin/main` (read-only by default) |
 | `mise run bmad:recovery-artifact-cleanup -- [--repo <path>] [--bundle-dir <path>] [--keep-branches <n>] [--keep-bundles <n>] [--min-bundle-age-hours <h>] [--apply]` | cleanup helper for post-recovery backup branches + bundle artifacts (dry-run default, optional age gate) |
 | `mise run bootstrap`    | `ops/bootstrap/check-platform.sh` — pre-boot validator |
+| `mise run validate:schemas` | Validate the local schema tree (`$id` uniqueness + `$ref` resolution + Draft 2020-12 check) |
 | `mise run smoketest`    | NATS-direct event round-trip                     |
 | `mise run smoketest:command` | NATS-direct command + reply round-trip      |
 | `mise run smoketest:dapr`    | Dapr publish path                           |
@@ -68,6 +75,7 @@ alongside each service, using Holyfields-generated publishers.
 | `mise run smoketest:heartbeat`      | Heartbeat producer/consumer end-to-end |
 | `mise run smoketest:claude-events`  | Claude `bloodbank.v1.*` event round-trip |
 | `mise run smoketest:bloodbank-naming` | Stdlib contract verifier (no Docker) for §14 sequence × {claude, copilot} + negative probes |
+| `mise run smoketest:schemas` | `validate:schemas` + `smoketest:bloodbank-naming` chained for full schema-side coverage |
 | `mise run smoketest:repo-health-cleanup` | local cleanup + strict worktree checks (default/KEEP/REPORT/DRY_RUN/error) |
 | `mise run smoketest:bmad-closeout-scaffold` | local validation for closeout scaffold helper (required id/create/no-overwrite) |
 | `mise run smoketest:bmad-closeout-loop` | local validation for unified closeout helper JSON/evidence fields |
@@ -141,14 +149,16 @@ alongside each service, using Holyfields-generated publishers.
 - Envelopes are CloudEvents 1.0 with `correlationid` and `causationid` on
   every message. Producers MUST set both. Events additionally carry
   `ordering_key`; commands carry `command_id`, `idempotency_key`, `delivery`.
-- Schemas are owned by Holyfields; Bloodbank never invents an envelope shape.
+- Schemas live in `bloodbank/schemas/` (see `docs/event-naming.md` §12).
+  Bloodbank never invents an envelope shape outside that tree.
 - Sandbox compose project name is `bloodbank`; network is `bloodbank-network`;
   container names are `bloodbank-*`.
 
 ## Anti-patterns
 
 - No service-to-service calls that bypass the broker.
-- No locally-defined envelopes; everything goes through Holyfields.
+- No ad-hoc envelopes; every envelope conforms to a schema under
+  `bloodbank/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json`.
 - No synchronous I/O in event handlers.
 - No assumptions of a centrally-running publisher service — there isn't one.
 - No provider/CLI/model names anywhere in `type` (claude, anthropic, copilot,

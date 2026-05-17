@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/v1/conversation/turn.started.v1.json",
+  "title": "Conversation Turn Started Event",
+  "description": "A new turn started inside a thread. The user prompt is what initiates a turn. See bloodbank/docs/event-naming.md.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.v1.conversation.turn.started"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "conversation"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.v1.conversation.turn.started.",
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt_text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Verbatim user prompt that initiated the turn. May be omitted for privacy."
+        }
+      },
+      "required": [
+        "thread_id",
+        "turn_id"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}

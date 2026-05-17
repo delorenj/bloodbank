@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/_common/types.v1.json",
+  "title": "Common Types",
+  "description": "Shared type definitions used across all 33GOD schemas",
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp in UTC (e.g., '2024-01-15T10:30:00Z')",
+      "examples": ["2024-01-15T10:30:00Z", "2024-12-31T23:59:59.999Z"]
+    },
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "description": "RFC 4122 UUID",
+      "examples": ["550e8400-e29b-41d4-a716-446655440000"]
+    },
+    "semantic_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version (major.minor.patch)",
+      "examples": ["1.0.0", "2.1.3", "0.1.0"]
+    },
+    "agent_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "AI agent name (e.g., 'cack', 'rererere', 'tonny', 'lenoon')"
+    },
+    "session_key": {
+      "type": "string",
+      "pattern": "^agent:[a-z]+:[a-z]+$",
+      "description": "Agent session identifier (e.g., 'agent:main:main', 'agent:eng:main')"
+    },
+    "model_name": {
+      "type": "string",
+      "description": "AI model identifier (e.g., 'claude-sonnet-4-5', 'gpt-4', 'gemini-2.0')"
+    },
+    "channel_type": {
+      "type": "string",
+      "enum": ["telegram", "whatsapp", "discord", "signal", "imessage", "cli", "web", "api"],
+      "description": "Communication channel type"
+    }
+  }
+}

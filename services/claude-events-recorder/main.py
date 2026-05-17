@@ -22,7 +22,7 @@ Endpoints:
   POST /inspect/reset           test hook: clear recorded buffer
   GET  /healthz                 liveness probe
 
-Schema source of truth: holyfields/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json
+Schema source of truth: bloodbank/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json
 
 Configuration:
   APP_PORT             HTTP port (default: 3001)

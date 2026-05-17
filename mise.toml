@@ -112,6 +112,10 @@ run = "python3 ops/bmad/align_main_with_backup.py"
 description = "Cleanup helper for backup branches + recovery bundles with optional bundle-age gate (dry-run default)"
 run = "python3 ops/bmad/recovery_artifact_cleanup.py"
 
+[tasks."validate:schemas"]
+description = "Validate the local schema tree ($id uniqueness + $ref resolution + Draft 2020-12 check)"
+run = "bash scripts/validate_schemas.sh"
+
 [tasks.bootstrap]
 description = "Pre-boot file-presence validator"
 run = "bash ops/bootstrap/check-platform.sh"
@@ -143,6 +147,10 @@ run = "bash ops/smoketest/smoketest-claude-events.sh"
 [tasks."smoketest:bloodbank-naming"]
 description = "Stdlib-only contract verifier (§14 sequence × claude/copilot + negative probes)"
 run = "bash ops/smoketest/smoketest-bloodbank-naming.sh"
+
+[tasks."smoketest:schemas"]
+description = "Schema tree validation + contract verifier (no Docker)"
+run = "mise run validate:schemas && mise run smoketest:bloodbank-naming"
 
 [tasks."smoketest:repo-health-cleanup"]
 description = "Local smoke test for cleanup helper + strict worktree mode"

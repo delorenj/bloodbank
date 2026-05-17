@@ -10,8 +10,13 @@ It exposes two layers:
    §11.
 
 2. Optional JSON Schema validation (validate_envelope) against the
-   holyfields/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json schema.
+   bloodbank/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json schema.
    Requires jsonschema. Off by default at hook time; on in CI.
+
+Schemas live in this repo (bloodbank/schemas/) and are the single source of
+truth. A sibling holyfields/schemas/ tree is honored as a fallback during
+the transition off the prior Holyfields-owned layout — that fallback will be
+removed once consumers cut over.
 
 Failures are loud. There is no quarantine or alias path — see "Hard rename,
 no aliases" in docs/event-naming.md §15.
@@ -99,7 +104,7 @@ class ValidationUnavailable(RuntimeError):
 
 
 class EnvelopeInvalid(ValueError):
-    """Raised when an envelope fails JSON Schema validation against its holyfields schema."""
+    """Raised when an envelope fails JSON Schema validation against its schema."""
 
 
 # --------------------------------------------------------------------------
@@ -276,20 +281,40 @@ def assert_contract(envelope: dict) -> None:
 
 
 # --------------------------------------------------------------------------
-# Optional JSON Schema validation against holyfields
+# Optional JSON Schema validation
 # --------------------------------------------------------------------------
 
 
 def _schemas_root() -> Path:
-    """Locate holyfields/schemas/. Same lookup logic as before — extended to the new layout."""
+    """Locate the schema tree.
+
+    Resolution order:
+      1. BLOODBANK_SCHEMAS_DIR env var (new canonical override).
+      2. HOLYFIELDS_SCHEMAS_DIR env var (backward-compat override).
+      3. Bloodbank repo's own schemas/ — walk up from this file looking for
+         a directory that contains both docs/event-naming.md and schemas/.
+      4. A sibling holyfields/schemas/ — transition fallback.
+      5. Hard fallback under $HOME/code/33GOD.
+    """
+    override = os.environ.get("BLOODBANK_SCHEMAS_DIR")
+    if override:
+        return Path(override)
     override = os.environ.get("HOLYFIELDS_SCHEMAS_DIR")
     if override:
         return Path(override)
     here = Path(__file__).resolve()
-    for parent in [here, *here.parents]:
-        candidate = parent.parent / "holyfields" / "schemas"
-        if candidate.is_dir():
-            return candidate
+    for parent in here.parents:
+        local = parent / "schemas"
+        marker = parent / "docs" / "event-naming.md"
+        if local.is_dir() and marker.is_file():
+            return local
+    for parent in here.parents:
+        sibling = parent.parent / "holyfields" / "schemas"
+        if sibling.is_dir():
+            return sibling
+    home_local = Path.home() / "code" / "33GOD" / "bloodbank" / "schemas"
+    if home_local.is_dir():
+        return home_local
     return Path.home() / "code" / "33GOD" / "holyfields" / "schemas"
 
 

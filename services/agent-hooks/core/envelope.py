@@ -1,11 +1,16 @@
 """CloudEvents 1.0 envelope builder for Bloodbank agent hooks (v1 contract).
 
-Envelope shape follows holyfields/schemas/_common/cloudevent_base.v1.json and
+Envelope shape follows bloodbank/schemas/_common/cloudevent_base.v1.json and
 the Bloodbank Event Naming Contract v1 at bloodbank/docs/event-naming.md.
 
 Every envelope is contract-checked by core.validate.assert_contract before it
 leaves this module. Optional jsonschema validation against the matching
-holyfields schema runs when BLOODBANK_HOOK_VALIDATE=1 (or validate=True).
+schema (bloodbank/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json)
+runs when BLOODBANK_HOOK_VALIDATE=1 (or validate=True).
+
+The `dataschema` URI keeps the `holyfields` Apicurio namespace literal per
+docs/event-naming.md §13 — that key is the registry artifact id, independent
+of where the source-of-truth schemas live on disk.
 
 There is no legacy 3-token path. Anything that does not match
 bloodbank.v1.<domain>.<entity>.<action> raises ContractViolation at build

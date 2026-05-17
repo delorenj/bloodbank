@@ -15,5 +15,13 @@ env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" config set terminal.cwd "$REPO_ROOT
 env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" config set model.default qwen3.6
 env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" config set model.provider ollama-launch
 
+# Prefer VOX/Y TTS by default for Bloodbank Hermes runtimes.
+env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" config set tts.provider vox
+env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" config set tts.vox.base_url https://vox.delo.sh
+env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" config set tts.vox.voice damian
+env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" config set tts.vox.steps 10
+env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" config set tts.vox.cfg 2
+env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" config set tts.vox.timeout 60
+
 echo "Provisioned Hermes runtime at: $HERMES_HOME"
 env HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" doctor
