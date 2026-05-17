@@ -11,6 +11,7 @@
 - Bootstrapped isolated BMAD worktree for #185 at `/tmp/bloodbank-issue-185` on branch `fix/issue-185-hermes-pm-runtime-submodule-drift`.
 - Re-ran strict-clean preflight on both primary checkout and isolated worktree; blocker is no longer reproducible.
 - Prepared and posted closeout evidence comment, then closed issue #185 as `completed`.
+- Performed post-closeout hygiene: pruned stale worktree metadata and deleted merged local ticket branch.
 
 ## Out of scope
 - PR-based remediation patch (none required; closure based on acceptance-criteria verification evidence).
@@ -24,7 +25,8 @@
 - `gh issue close 185 --repo delorenj/bloodbank --reason completed` → closed successfully.
 - `mise run bmad:gh-readonly-status -- issue-view 185` → `state: CLOSED`.
 - `mise run repo-health:json` (post-close) → `issues_open: []`, `prs_open: []`, `errors: []`.
-- `mise run repo-health:artifact` → `_bmad_output/evidence/repo-health-20260517T080040Z.json`, `_bmad_output/evidence/repo-health-20260517T081022Z.json`, `_bmad_output/evidence/repo-health-20260517T082047Z.json`, `_bmad_output/evidence/repo-health-20260517T083057Z.json`, `_bmad_output/evidence/repo-health-20260517T084051Z.json`.
+- `mise run repo-health:artifact` → `_bmad_output/evidence/repo-health-20260517T080040Z.json`, `_bmad_output/evidence/repo-health-20260517T081022Z.json`, `_bmad_output/evidence/repo-health-20260517T082047Z.json`, `_bmad_output/evidence/repo-health-20260517T083057Z.json`, `_bmad_output/evidence/repo-health-20260517T084051Z.json`, `_bmad_output/evidence/repo-health-20260517T085045Z.json`.
+- `git worktree prune && git branch -d fix/issue-185-hermes-pm-runtime-submodule-drift` → stale prunable worktree entry removed; merged local branch deleted.
 
 ## Links
 - Issue: https://github.com/delorenj/bloodbank/issues/185 (closed)
