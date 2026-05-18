@@ -36,6 +36,23 @@ python3 ops/repo-health/idle_gate.py \
 
 echo "$DECISION_OUT"
 
+# Keep idle-decision artifacts bounded similarly to repo-health snapshots.
+python3 - "$KEEP" <<'PY'
+from pathlib import Path
+import sys
+
+keep = int(sys.argv[1])
+paths = sorted(Path("_bmad_output/evidence").glob("repo-health-idle-decision-*.json"))
+if keep <= 0:
+    doomed = paths
+elif keep >= len(paths):
+    doomed = []
+else:
+    doomed = paths[: len(paths) - keep]
+for p in doomed:
+    p.unlink(missing_ok=True)
+PY
+
 SHOULD_CAPTURE_FULL="$({ python3 - "$DECISION_OUT" <<'PY'
 import json, sys
 with open(sys.argv[1], 'r', encoding='utf-8') as f:

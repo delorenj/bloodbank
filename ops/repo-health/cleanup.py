@@ -23,7 +23,9 @@ def _truthy(value: str | None) -> bool:
 
 def main() -> int:
     evidence_dir = Path("_bmad_output/evidence")
-    files = sorted(evidence_dir.glob("repo-health-*.json")) if evidence_dir.exists() else []
+    # Keep cleanup scoped to primary timestamped snapshots only.
+    # Decision artifacts (repo-health-idle-decision-*.json) are intentionally excluded.
+    files = sorted(evidence_dir.glob("repo-health-20*.json")) if evidence_dir.exists() else []
 
     keep_raw = os.getenv("KEEP")
     keep: int | None = None
@@ -57,7 +59,7 @@ def main() -> int:
             path.unlink(missing_ok=True)
 
     report = {
-        "pattern": "_bmad_output/evidence/repo-health-*.json",
+        "pattern": "_bmad_output/evidence/repo-health-20*.json",
         "total_before": len(files),
         "removed_count": len(removed),
         "kept_count": len(kept),
