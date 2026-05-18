@@ -58,7 +58,23 @@ Local regression checks:
 ```bash
 mise run smoketest:bmad-repo-health-retry
 mise run smoketest:bmad-gh-readonly-status
+mise run smoketest:bmad-repo-health-idle-gate
 ```
+
+## Idle-state throttle pattern for pilot loops
+
+For stable loops, evaluate the idle gate before writing full evidence snapshots:
+
+```bash
+python3 cli/bb.py repo-health --json --out /tmp/repo-health.json
+python3 ops/repo-health/idle_gate.py --snapshot /tmp/repo-health.json --interval-minutes 60
+```
+
+Decision handling:
+
+- `should_capture_full=true`: run strict gate + artifact + cleanup.
+- `should_capture_full=false`: skip full artifact rotation for this wake.
+- Any non-idle repo state should force `should_capture_full=true`.
 
 ## Intentional raw-`gh` exceptions (currently)
 
