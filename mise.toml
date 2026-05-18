@@ -64,6 +64,10 @@ run = "python3 ops/repo-health/cleanup.py"
 description = "Evaluate idle-state throttle decision from a repo-health JSON snapshot"
 run = "python3 ops/repo-health/idle_gate.py"
 
+[tasks."repo-health:pilot-step"]
+description = "Hermes pilot helper: idle-gate decision + strict gate + conditional artifact/cleanup"
+run = "bash ops/repo-health/pilot_step.sh"
+
 [tasks."bmad:closeout-scaffold"]
 description = "Scaffold _bmad_output/issue-<id>-execution.md from template (requires ISSUE_ID=...)"
 run = "python3 ops/bmad/scaffold_closeout.py"

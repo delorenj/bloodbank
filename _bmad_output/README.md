@@ -72,3 +72,9 @@ Decision contract:
 - `should_capture_full=true` → run full strict + artifact + cleanup flow.
 - `should_capture_full=false` → skip redundant artifact capture for this wake.
 - Non-idle state always returns `should_capture_full=true`.
+
+For integrated loop execution, use:
+- `mise run repo-health:pilot-step`
+
+This helper writes an idle-gate decision artifact at:
+- `_bmad_output/evidence/repo-health-idle-decision-<utc-timestamp>.json`
