@@ -59,3 +59,16 @@ Use cleanup as needed:
 - `KEEP=5 mise run repo-health:cleanup` (keep newest 5)
 - `KEEP=5 REPORT=1 mise run repo-health:cleanup` (JSON report with removed/kept counts and paths)
 - `DRY_RUN=1 KEEP=5 REPORT=1 mise run repo-health:cleanup` (preview only; no file deletions)
+
+## Idle-state throttle helper (pilot loops)
+
+When a pilot loop is stable for long stretches, evaluate whether a full evidence
+capture is required this run:
+
+1. Generate a snapshot: `python3 cli/bb.py repo-health --json --out /tmp/repo-health.json`
+2. Evaluate gate: `python3 ops/repo-health/idle_gate.py --snapshot /tmp/repo-health.json --interval-minutes 60`
+
+Decision contract:
+- `should_capture_full=true` → run full strict + artifact + cleanup flow.
+- `should_capture_full=false` → skip redundant artifact capture for this wake.
+- Non-idle state always returns `should_capture_full=true`.
