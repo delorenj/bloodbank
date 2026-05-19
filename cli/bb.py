@@ -280,6 +280,49 @@ def _git_ref_path_exists(root: Path, ref: str, rel_path: str) -> bool:
     return rc == 0
 
 
+def _collect_submodule_gitlink_drifts(root: Path) -> tuple[list[dict[str, str]], str | None]:
+    """Return gitlink drift entries for submodules (marker '+' in status output)."""
+    rc, out, err = _run(root, "git", "submodule", "status", "--recursive")
+    if rc != 0:
+        return [], f"submodule_status: ERROR ({err or 'git submodule status failed'})"
+
+    drifts: list[dict[str, str]] = []
+    for raw in out.splitlines():
+        line = raw.rstrip()
+        if not line:
+            continue
+        marker = line[0]
+        if marker != "+":
+            continue
+
+        payload = line[1:].strip().split()
+        if len(payload) < 2:
+            continue
+
+        current_commit = payload[0]
+        path = payload[1]
+        detail = " ".join(payload[2:]).strip()
+
+        recorded_commit = ""
+        rc_tree, tree_out, _ = _run(root, "git", "ls-tree", "HEAD", path)
+        if rc_tree == 0 and tree_out:
+            # ls-tree format: <mode> <type> <object>\t<path>
+            tree_parts = tree_out.split()
+            if len(tree_parts) >= 3:
+                recorded_commit = tree_parts[2]
+
+        drifts.append(
+            {
+                "path": path,
+                "recorded_commit": recorded_commit,
+                "current_commit": current_commit,
+                "detail": detail,
+            }
+        )
+
+    return drifts, None
+
+
 def cmd_repo_health(args: argparse.Namespace) -> int:
     """Print a concise repo/ticket/PR/check snapshot for BMAD evidence."""
     root = bloodbank_root()
@@ -287,6 +330,7 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
     snapshot: dict[str, object] = {
         "git_status": None,
         "worktree_dirty": None,
+        "submodule_gitlink_drifts": [],
         "helper_local_exists": None,
         "helper_on_origin_main": None,
         "issues_open": [],
@@ -319,6 +363,21 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
     git_line = git_lines[0] if git_lines else "<no status output>"
     snapshot["git_status"] = git_line
     snapshot["worktree_dirty"] = len(git_lines) > 1
+
+    drifts, submodule_err = _collect_submodule_gitlink_drifts(root)
+    snapshot["submodule_gitlink_drifts"] = drifts
+    if submodule_err:
+        cast_errors = snapshot["errors"]
+        assert isinstance(cast_errors, list)
+        cast_errors.append(submodule_err)
+
+    if drifts:
+        cast_errors = snapshot["errors"]
+        assert isinstance(cast_errors, list)
+        cast_errors.append(
+            "submodule_gitlink_drifts: WARN (submodule commit differs from superproject gitlink)"
+        )
+
     helper_rel = "ops/bmad/reconcile_main_divergence.py"
     snapshot["helper_local_exists"] = (root / helper_rel).is_file()
     snapshot["helper_on_origin_main"] = _git_ref_path_exists(root, "origin/main", helper_rel)
@@ -413,6 +472,17 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
         lines_out: list[str] = []
         lines_out.append(f"git_status: {snapshot['git_status']}")
         lines_out.append(f"worktree_dirty: {str(snapshot['worktree_dirty']).lower()}")
+
+        drifts_out = snapshot["submodule_gitlink_drifts"]
+        assert isinstance(drifts_out, list)
+        lines_out.append(f"submodule_gitlink_drifts: {len(drifts_out)}")
+        for drift in drifts_out:
+            lines_out.append(
+                "- submodule "
+                f"{drift['path']}: recorded={drift.get('recorded_commit', '')} "
+                f"current={drift.get('current_commit', '')}"
+            )
+
         lines_out.append(
             "helper_local_exists: "
             f"{str(snapshot['helper_local_exists']).lower()}"
