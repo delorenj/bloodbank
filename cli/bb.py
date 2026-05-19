@@ -336,6 +336,7 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
         "issues_open": [],
         "prs_open": [],
         "latest_pr_checks": None,
+        "warnings": [],
         "errors": [],
     }
 
@@ -372,9 +373,9 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
         cast_errors.append(submodule_err)
 
     if drifts:
-        cast_errors = snapshot["errors"]
-        assert isinstance(cast_errors, list)
-        cast_errors.append(
+        cast_warnings = snapshot["warnings"]
+        assert isinstance(cast_warnings, list)
+        cast_warnings.append(
             "submodule_gitlink_drifts: WARN (submodule commit differs from superproject gitlink)"
         )
 
@@ -514,6 +515,11 @@ def cmd_repo_health(args: argparse.Namespace) -> int:
             assert isinstance(check_lines, list)
             for line in check_lines:
                 lines_out.append(f"  {line}")
+
+        warnings_out = snapshot["warnings"]
+        assert isinstance(warnings_out, list)
+        for warn in warnings_out:
+            lines_out.append(warn)
 
         errors_out = snapshot["errors"]
         assert isinstance(errors_out, list)
