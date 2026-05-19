@@ -53,11 +53,13 @@ try:
         require_clean_worktree=False,
     )
     rc = bb.cmd_repo_health(args)
-    assert rc == 1, rc  # drift warning is emitted as non-zero evidence signal
+    assert rc == 0, rc  # drift warnings should not fail repo-health without strict gate
 
     payload = json.loads(Path("/tmp/repo-health-helper-smoke.json").read_text(encoding="utf-8"))
     drifts = payload.get("submodule_gitlink_drifts", [])
     assert len(drifts) == 1, payload
+    warnings = payload.get("warnings", [])
+    assert any("submodule_gitlink_drifts: WARN" in w for w in warnings), payload
     assert drifts[0]["path"] == "agents/hermes/pm/runtime", payload
     assert drifts[0]["recorded_commit"] == "65a0c089c3e1d10ee6a722bef076ee9a0646ab63", payload
     assert drifts[0]["current_commit"] == "2b1061b012511ad46d7449ab0ac82f4fb595f135", payload
@@ -65,7 +67,7 @@ try:
     # Re-run and capture rendered text path for non-json fields
     args = Namespace(limit=5, json_output=False, out_path="/tmp/repo-health-helper-smoke.txt", require_clean_worktree=False)
     rc = bb.cmd_repo_health(args)
-    assert rc == 1, rc
+    assert rc == 0, rc
 
     txt = Path("/tmp/repo-health-helper-smoke.txt").read_text(encoding="utf-8")
     assert "helper_local_exists:" in txt, txt
