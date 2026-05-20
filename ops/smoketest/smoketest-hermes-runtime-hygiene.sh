@@ -32,8 +32,8 @@ if git check-ignore -q "agents/hermes/README.md"; then
 fi
 
 pm_runtime_ignore="$(git config -f .gitmodules --get submodule.agents/hermes/pm/runtime.ignore || true)"
-if [[ "$pm_runtime_ignore" != "untracked" ]]; then
-  echo "agents/hermes/pm/runtime submodule must set ignore=untracked in .gitmodules" >&2
+if [[ "$pm_runtime_ignore" != "dirty" ]]; then
+  echo "agents/hermes/pm/runtime submodule must set ignore=dirty in .gitmodules" >&2
   exit 1
 fi
 

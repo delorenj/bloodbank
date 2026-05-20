@@ -131,7 +131,7 @@ alongside each service, using publishers generated from the local
 - Runtime closeout evidence JSONs under `_bmad_output/evidence/closeout/` are operator-generated artifacts and intentionally git-ignored.
 - If primary checkout is dirty/behind, use the dedicated clean-worktree automation path in `ops/bmad/clean-worktree-automation.md` (do not stash/discard unknown local changes).
 - Local OpenClaw hook scratch path (`services/agent-hooks/openclaw/`) is intentionally treated as operator-local and excluded from repo tracking.
-- Hermes runtime state under `agents/hermes/runtime/` is operator-local; only skeleton docs/launch scripts + `runtime/.gitignore` should be tracked.
+- Hermes PM runtime state under `agents/hermes/pm/runtime/` is operator-local; only intentional scaffold/docs should be tracked, and `.gitmodules` should keep `submodule.agents/hermes/pm/runtime.ignore=dirty` so runtime-local tracked-file edits do not dirty the primary checkout.
 - Keep BMAD artifacts concise and ticket-scoped; avoid process bloat.
 
 ## Conventions
