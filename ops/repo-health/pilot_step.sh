@@ -4,11 +4,13 @@ set -euo pipefail
 # Hermes pilot loop helper:
 # - evaluate idle gate from repo-health snapshot
 # - always run strict cleanliness gate
+# - on strict failure, optionally attempt submodule-drift auto-heal once
 # - run full artifact+cleanup only when gate requires it
 
 INTERVAL_MINUTES="${INTERVAL_MINUTES:-60}"
 KEEP="${KEEP:-8}"
 REPORT="${REPORT:-1}"
+DRIFT_AUTOHEAL_ON_STRICT_FAIL="${DRIFT_AUTOHEAL_ON_STRICT_FAIL:-1}"
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 DECISION_OUT="_bmad_output/evidence/repo-health-idle-decision-${TS}.json"
@@ -61,8 +63,28 @@ print('1' if d.get('should_capture_full') else '0')
 PY
 } )"
 
+run_strict_with_autoheal() {
+  if mise run repo-health:strict; then
+    return 0
+  fi
+
+  if [[ "$DRIFT_AUTOHEAL_ON_STRICT_FAIL" != "1" ]]; then
+    echo "repo-health:strict failed (auto-heal disabled)"
+    return 1
+  fi
+
+  echo "repo-health:strict failed; attempting submodule drift auto-heal"
+  if ! python3 ops/bmad/reconcile_submodule_gitlink_drift.py --repo . --apply; then
+    echo "repo-health:strict auto-heal attempt failed"
+    return 1
+  fi
+
+  echo "repo-health:strict drift auto-heal applied; retrying strict gate"
+  mise run repo-health:strict
+}
+
 # Always run strict gate for repo safety and liveness evidence in logs.
-mise run repo-health:strict
+run_strict_with_autoheal
 
 if [[ "$SHOULD_CAPTURE_FULL" == "1" ]]; then
   mise run repo-health:artifact
