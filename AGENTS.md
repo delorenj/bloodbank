@@ -96,7 +96,7 @@ alongside each service, using publishers generated from the local
 | `mise run smoketest:bmad-recovery-artifact-cleanup` | local validation for backup-branch + bundle cleanup helper contract |
 | `mise run smoketest:bmad-reconcile-submodule-drift` | local validation for submodule gitlink drift reconcile helper contract |
 | `mise run smoketest:hermes-runtime-hygiene` | local validation for Hermes runtime ignore contract (runtime state ignored, skeleton trackable) |
-| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/merge-preflight-guard/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry/repo-health-helper-availability/gh-readonly-status/preflight-strict-clean/reconcile-main-divergence/primary-recovery-check/align-main-with-backup/recovery-artifact-cleanup/reconcile-submodule-drift/hermes-runtime-hygiene, fail-fast) |
+| `mise run smoketest:ops` | consolidated local operator reliability smoke checks (cleanup/scaffold/closeout-loop/merge-safe/merge-preflight-guard/retrigger-checks/github-body-safety/cleanup-summary/artifact-summary/repo-health-retry/repo-health-helper-availability/repo-health-idle-gate/repo-health-pilot-step-autoheal/gh-readonly-status/preflight-strict-clean/reconcile-main-divergence/primary-recovery-check/align-main-with-backup/recovery-artifact-cleanup/reconcile-submodule-drift/hermes-runtime-hygiene, fail-fast) |
 | `mise run logs`         | Tail every Bloodbank container                   |
 
 ## BMAD baseline
@@ -125,6 +125,7 @@ alongside each service, using publishers generated from the local
 - For backup-first canonical alignment, use `mise run bmad:align-main-with-backup -- --repo <path>` (read-only) then rerun with `--apply` only after review.
 - After successful alignment verification window, run `mise run bmad:recovery-artifact-cleanup -- --repo <path>` (dry-run) before any cleanup apply; use `--min-bundle-age-hours` to protect fresh bundles.
 - For persistent submodule gitlink drift (e.g., Hermes PM runtime), run `mise run bmad:reconcile-submodule-drift -- --repo <path>` for diagnostics first, then rerun with `--apply` only when the helper reports no non-drift worktree edits.
+- `repo-health:pilot-step` may auto-heal strict-gate failures by applying the submodule drift helper once (`DRIFT_AUTOHEAL_ON_STRICT_FAIL=1` default); disable with `DRIFT_AUTOHEAL_ON_STRICT_FAIL=0` when manual intervention is desired.
 - `bmad:pr-merge-safe` now attempts safe post-merge reconciliation by default; use `--no-reconcile-main` only when you explicitly need to defer reconciliation.
 - For quick cleanup-status review across closeout artifacts, use `mise run bmad:closeout-cleanup-summary`.
 - Runtime closeout evidence JSONs under `_bmad_output/evidence/closeout/` are operator-generated artifacts and intentionally git-ignored.

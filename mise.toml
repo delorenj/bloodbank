@@ -212,6 +212,10 @@ run = "bash ops/smoketest/smoketest-bmad-repo-health-helper-availability.sh"
 description = "Local smoke test for idle-state repo-health throttle decision helper"
 run = "bash ops/smoketest/smoketest-bmad-repo-health-idle-gate.sh"
 
+[tasks."smoketest:bmad-repo-health-pilot-step-autoheal"]
+description = "Local smoke test for pilot-step strict-fail submodule drift auto-heal path"
+run = "bash ops/smoketest/smoketest-bmad-repo-health-pilot-step-autoheal.sh"
+
 [tasks."smoketest:bmad-gh-readonly-status"]
 description = "Local smoke test for read-only gh status helper retry behavior"
 run = "bash ops/smoketest/smoketest-bmad-gh-readonly-status.sh"
@@ -246,7 +250,7 @@ run = "bash ops/smoketest/smoketest-hermes-runtime-hygiene.sh"
 
 [tasks."smoketest:ops"]
 description = "Run consolidated local operator reliability smoke checks (fail-fast)"
-run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-merge-pr-preflight-guard && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety && mise run smoketest:bmad-closeout-cleanup-summary && mise run smoketest:bmad-closeout-artifact-summary && mise run smoketest:bmad-repo-health-retry && mise run smoketest:bmad-repo-health-helper-availability && mise run smoketest:bmad-repo-health-idle-gate && mise run smoketest:bmad-gh-readonly-status && mise run smoketest:bmad-preflight-strict-clean && mise run smoketest:bmad-reconcile-main-divergence && mise run smoketest:bmad-primary-recovery-check && mise run smoketest:bmad-align-main-with-backup && mise run smoketest:bmad-recovery-artifact-cleanup && mise run smoketest:bmad-reconcile-submodule-drift && mise run smoketest:hermes-runtime-hygiene"
+run = "mise run smoketest:repo-health-cleanup && mise run smoketest:bmad-closeout-scaffold && mise run smoketest:bmad-closeout-loop && mise run smoketest:bmad-merge-pr-safe && mise run smoketest:bmad-merge-pr-preflight-guard && mise run smoketest:bmad-retrigger-pr-checks && mise run smoketest:bmad-github-body-safety && mise run smoketest:bmad-closeout-cleanup-summary && mise run smoketest:bmad-closeout-artifact-summary && mise run smoketest:bmad-repo-health-retry && mise run smoketest:bmad-repo-health-helper-availability && mise run smoketest:bmad-repo-health-idle-gate && mise run smoketest:bmad-repo-health-pilot-step-autoheal && mise run smoketest:bmad-gh-readonly-status && mise run smoketest:bmad-preflight-strict-clean && mise run smoketest:bmad-reconcile-main-divergence && mise run smoketest:bmad-primary-recovery-check && mise run smoketest:bmad-align-main-with-backup && mise run smoketest:bmad-recovery-artifact-cleanup && mise run smoketest:bmad-reconcile-submodule-drift && mise run smoketest:hermes-runtime-hygiene"
 
 [tasks.logs]
 description = "Tail every Bloodbank container"
