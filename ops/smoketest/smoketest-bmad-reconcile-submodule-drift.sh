@@ -72,6 +72,23 @@ try:
     assert ok is True and msg == 'applied', (ok, msg)
     assert any(cmd[:3] == ('git', '-C', 'agents/hermes/pm/runtime') for cmd in calls), calls
 
+    # apply_if_safe(): runtime state.db overwrite blocker retries with forced checkout.
+    calls_force = []
+
+    def fake_run_force(_repo, *cmd):
+        calls_force.append(cmd)
+        if cmd[:5] == ('git', '-C', 'agents/hermes/pm/runtime', 'checkout', '--detach') and '-f' not in cmd:
+            return CP(1, '', 'error: Your local changes to the following files would be overwritten by checkout:\n\tstate.db\nPlease commit your changes or stash them before you switch branches.\nAborting')
+        if cmd[:6] == ('git', '-C', 'agents/hermes/pm/runtime', 'checkout', '--detach', '-f'):
+            return CP(0, '', '')
+        return CP(0, '', '')
+
+    m._run = fake_run_force
+    m._status_lines = lambda _repo: [' M agents/hermes/pm/runtime']
+    ok, msg = m.apply_if_safe(repo, payload)
+    assert ok is True and msg == 'applied', (ok, msg)
+    assert any(cmd[:6] == ('git', '-C', 'agents/hermes/pm/runtime', 'checkout', '--detach', '-f') for cmd in calls_force), calls_force
+
 finally:
     m._run = orig_run
     m._branch = orig_branch

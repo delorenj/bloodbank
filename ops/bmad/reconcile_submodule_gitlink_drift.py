@@ -12,6 +12,8 @@ import json
 import subprocess
 from pathlib import Path
 
+RUNTIME_FORCE_CHECKOUT_PATHS = {"agents/hermes/pm/runtime"}
+
 
 def _run(repo: Path, *cmd: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=str(repo), text=True, capture_output=True, check=False)
@@ -114,6 +116,13 @@ def _safe_to_apply(repo: Path, drift_paths: set[str]) -> tuple[bool, str]:
     return True, "ok"
 
 
+def _runtime_force_checkout_allowed(path: str, stderr: str) -> bool:
+    if path not in RUNTIME_FORCE_CHECKOUT_PATHS:
+        return False
+    lower = (stderr or "").lower()
+    return "would be overwritten by checkout" in lower and "state.db" in lower
+
+
 def apply_if_safe(repo: Path, payload: dict[str, object]) -> tuple[bool, str]:
     drifts = payload.get("drifts")
     assert isinstance(drifts, list)
@@ -130,8 +139,17 @@ def apply_if_safe(repo: Path, payload: dict[str, object]) -> tuple[bool, str]:
             return False, f"invalid drift entry: {drift}"
 
         cp = _run(repo, "git", "-C", path, "checkout", "--detach", recorded)
-        if cp.returncode != 0:
-            return False, cp.stderr.strip() or f"failed to set {path} to {recorded}"
+        if cp.returncode == 0:
+            continue
+
+        stderr = cp.stderr.strip()
+        if _runtime_force_checkout_allowed(path, stderr):
+            retry = _run(repo, "git", "-C", path, "checkout", "--detach", "-f", recorded)
+            if retry.returncode == 0:
+                continue
+            stderr = retry.stderr.strip() or stderr
+
+        return False, stderr or f"failed to set {path} to {recorded}"
 
     return True, "applied"
 
