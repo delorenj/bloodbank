@@ -45,6 +45,12 @@ try:
     ok, msg = m.apply_if_safe(repo, payload)
     assert ok is False and 'current branch = main' in msg, (ok, msg)
 
+    # apply_if_safe(): allows BMAD evidence output paths.
+    m._branch = lambda _repo: 'main'
+    m._status_lines = lambda _repo: [' M agents/hermes/pm/runtime', '?? _bmad_output/']
+    ok, msg = m.apply_if_safe(repo, payload)
+    assert ok is True and msg == 'applied', (ok, msg)
+
     # apply_if_safe(): blocks extra dirty paths.
     m._branch = lambda _repo: 'main'
     m._status_lines = lambda _repo: [' M agents/hermes/pm/runtime', ' M cli/bb.py']

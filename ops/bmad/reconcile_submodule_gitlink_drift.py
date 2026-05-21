@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 RUNTIME_FORCE_CHECKOUT_PATHS = {"agents/hermes/pm/runtime"}
+BMAD_EVIDENCE_PATH_PREFIXES = ("_bmad_output",)
 
 
 def _run(repo: Path, *cmd: str) -> subprocess.CompletedProcess[str]:
@@ -107,6 +108,8 @@ def _safe_to_apply(repo: Path, drift_paths: set[str]) -> tuple[bool, str]:
         if len(line) < 4:
             continue
         path = line[3:]
+        if any(path == prefix or path.startswith(f"{prefix}/") for prefix in BMAD_EVIDENCE_PATH_PREFIXES):
+            continue
         if path not in drift_paths:
             disallowed.append(line)
 
