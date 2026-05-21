@@ -215,13 +215,13 @@ emit an entity not paired with it here.
 
 ### 8.1 Immutable event actions (past tense / past participle)
 
-`created`, `resumed`, `started`, `completed`, `failed`, `canceled`,
+`created`, `resumed`, `started`, `ended`, `completed`, `failed`, `canceled`,
 `generated`, `appended`, `received`, `sent`, `granted`, `denied`, `opened`,
 `closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`.
 
 ### 8.2 Command actions (imperative present)
 
-`create`, `resume`, `start`, `complete`, `fail`, `cancel`, `generate`,
+`create`, `resume`, `start`, `end`, `complete`, `fail`, `cancel`, `generate`,
 `append`, `receive`, `send`, `grant`, `deny`, `open`, `close`, `spawn`,
 `kill`, `checkout`, `invoke`, `request`.
 
