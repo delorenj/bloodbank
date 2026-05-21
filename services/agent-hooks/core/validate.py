@@ -72,14 +72,14 @@ ALLOWED_ENTITIES = frozenset({
 })
 
 EVENT_ACTIONS = frozenset({
-    "created", "resumed", "started", "completed", "failed", "canceled",
+    "created", "resumed", "started", "ended", "completed", "failed", "canceled",
     "generated", "appended", "received", "sent", "granted", "denied",
     "opened", "closed", "spawned", "exited", "checked_out",
     "requested", "invoked",
 })
 
 COMMAND_ACTIONS = frozenset({
-    "create", "resume", "start", "complete", "fail", "cancel",
+    "create", "resume", "start", "end", "complete", "fail", "cancel",
     "generate", "append", "receive", "send", "grant", "deny",
     "open", "close", "spawn", "kill", "checkout", "invoke",
     "request",
@@ -330,17 +330,46 @@ def _load_schema(path: str) -> dict:
         return json.load(f)
 
 
+@lru_cache(maxsize=1)
+def _build_registry() -> Any:
+    """Pre-load every schema under _schemas_root() into a referencing.Registry.
+
+    Schemas use absolute `$id` URLs (`https://33god.dev/schemas/...`), so the
+    naive jsonschema resolver would try to fetch them from the network. The
+    registry maps each `$id` to its on-disk schema, so refs resolve locally.
+
+    Cached once per process; bust the cache by re-importing the module.
+    """
+    from referencing import Registry, Resource
+    from referencing.jsonschema import DRAFT202012
+
+    resources: list[tuple[str, Any]] = []
+    for path in sorted(_schemas_root().rglob("*.json")):
+        try:
+            schema = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        schema_id = schema.get("$id")
+        if not schema_id:
+            continue
+        resources.append(
+            (schema_id, Resource(contents=schema, specification=DRAFT202012))
+        )
+    return Registry().with_resources(resources)
+
+
 def validate_envelope(envelope: dict) -> None:
     """Stdlib contract assertions + optional JSON Schema validation.
 
     Always runs assert_contract. If jsonschema is importable, additionally
-    validates against the corresponding holyfields schema. Otherwise raises
-    ValidationUnavailable.
+    validates against the corresponding bloodbank/schemas schema using a
+    pre-populated `referencing.Registry` so absolute-`$id` refs resolve from
+    the local tree (no network fetch). Otherwise raises ValidationUnavailable.
     """
     assert_contract(envelope)
 
     try:
-        import jsonschema  # type: ignore
+        from jsonschema import Draft202012Validator
     except ImportError as exc:  # pragma: no cover
         raise ValidationUnavailable(
             "jsonschema is not installed; set BLOODBANK_HOOK_VALIDATE=0 to skip"
@@ -348,22 +377,17 @@ def validate_envelope(envelope: dict) -> None:
 
     schema_path = _schema_path_for(envelope["type"])
     schema = _load_schema(str(schema_path))
+    registry = _build_registry()
 
-    base_uri = schema_path.parent.as_uri() + "/"
-    try:
-        resolver = jsonschema.RefResolver(base_uri=base_uri, referrer=schema)
-    except AttributeError:
-        resolver = None
-
-    try:
-        if resolver is not None:
-            jsonschema.validate(envelope, schema, resolver=resolver)
-        else:
-            jsonschema.validate(envelope, schema)
-    except jsonschema.ValidationError as exc:
+    validator = Draft202012Validator(schema, registry=registry)
+    errors = sorted(validator.iter_errors(envelope), key=lambda e: e.path)
+    if errors:
+        first = errors[0]
+        loc = "/".join(str(p) for p in first.absolute_path) or "<root>"
         raise EnvelopeInvalid(
-            f"envelope failed JSON Schema validation against {schema_path.name}: {exc.message}"
-        ) from exc
+            f"envelope failed JSON Schema validation against {schema_path.name} "
+            f"at {loc}: {first.message}"
+        )
 
 
 def load_schema_for(ce_type: str) -> dict:
