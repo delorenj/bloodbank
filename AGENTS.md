@@ -124,7 +124,7 @@ alongside each service, using publishers generated from the local
 - If helper files are missing locally while `main` is diverged, run `mise run bmad:primary-recovery-check` then follow `ops/bmad/primary-checkout-recovery.md` before any destructive sync action.
 - For backup-first canonical alignment, use `mise run bmad:align-main-with-backup -- --repo <path>` (read-only) then rerun with `--apply` only after review.
 - After successful alignment verification window, run `mise run bmad:recovery-artifact-cleanup -- --repo <path>` (dry-run) before any cleanup apply; use `--min-bundle-age-hours` to protect fresh bundles.
-- For persistent submodule gitlink drift (e.g., Hermes PM runtime), run `mise run bmad:reconcile-submodule-drift -- --repo <path>` for diagnostics first, then rerun with `--apply` only when the helper reports no non-drift worktree edits.
+- For persistent submodule gitlink drift (e.g., Hermes PM runtime), run `mise run bmad:reconcile-submodule-drift -- --repo <path>` for diagnostics first, then rerun with `--apply` only when the helper reports no non-drift worktree edits. The helper now retries with a forced checkout for the known runtime `state.db` overwrite blocker on `agents/hermes/pm/runtime`.
 - `repo-health:pilot-step` may auto-heal strict-gate failures by applying the submodule drift helper once (`DRIFT_AUTOHEAL_ON_STRICT_FAIL=1` default); disable with `DRIFT_AUTOHEAL_ON_STRICT_FAIL=0` when manual intervention is desired.
 - `bmad:pr-merge-safe` now attempts safe post-merge reconciliation by default; use `--no-reconcile-main` only when you explicitly need to defer reconciliation.
 - For quick cleanup-status review across closeout artifacts, use `mise run bmad:closeout-cleanup-summary`.
