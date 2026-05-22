@@ -158,7 +158,7 @@ jobs:
       - name: Wait for nats-init to finish
         run: |
           # nats-init is oneshot; wait up to 60s for it to exit successfully.
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             state=$(docker inspect --format '{{.State.Status}}' bloodbank-nats-init 2>/dev/null || echo "missing")
             if [ "$state" = "exited" ]; then
               code=$(docker inspect --format '{{.State.ExitCode}}' bloodbank-nats-init)
@@ -198,7 +198,7 @@ jobs:
         # healthchecks can't execute. Verify readiness from the host by
         # curling the exposed HTTP port (same probe smoke tests use).
         run: |
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
               http://127.0.0.1:3500/v1.0/healthz 2>/dev/null || echo "000")
             if [ "$code" = "204" ]; then
@@ -227,7 +227,7 @@ jobs:
       - name: Wait for daprd-subscribe healthy
         # Same distroless constraint — probe from host via HTTP.
         run: |
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
               http://127.0.0.1:3501/v1.0/healthz 2>/dev/null || echo "000")
             if [ "$code" = "204" ]; then
@@ -255,7 +255,7 @@ jobs:
 
       - name: Wait for daprd-heartbeat ready
         run: |
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
               http://127.0.0.1:3502/v1.0/healthz 2>/dev/null || echo "000")
             if [ "$code" = "204" ]; then
@@ -284,7 +284,7 @@ jobs:
 
       - name: Wait for daprd-claude-events ready
         run: |
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
               http://127.0.0.1:3503/v1.0/healthz 2>/dev/null || echo "000")
             if [ "$code" = "204" ]; then
