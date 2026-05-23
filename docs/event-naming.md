@@ -173,6 +173,7 @@ Segment 3 of `type` MUST be one of:
 | `cli`          | Terminal/process-backed agent runtimes (stdin/stdout/stderr/exit). | active   |
 | `tool`         | Tool-call lifecycle (request, invoke, complete) regardless of CLI. | active   |
 | `system`       | Bloodbank platform health (heartbeats, dapr, nats, replay).        | active   |
+| `audio`        | Audio capture lifecycle — inbox ingestion, transcription jobs.     | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration.                                 | reserved |
@@ -201,6 +202,8 @@ Segment 4 of `type` MUST be one of:
 | `response`         | `llm`                    | A response received from an LLM provider.                   |
 | `tool_call`        | `tool`                   | An agent's intent to call a tool. Underscore form.          |
 | `heartbeat`        | `system`                 | Liveness/health beat.                                       |
+| `file`             | `audio`                  | An on-disk audio artifact observed by an inbox watcher.     |
+| `transcription`    | `audio`                  | A speech-to-text job over a single audio file.              |
 | `approval_request` | `approval` (reserved)    | Human approval prompt issued.                               |
 | `worktree`         | `workspace` (reserved)   | Git worktree lifecycle.                                     |
 | `branch`           | `workspace` (reserved)   | Git branch state changes.                                   |
@@ -323,11 +326,16 @@ turn:<turn_id>
 invocation:<invocation_id>
 cli_session:<session_id>
 process:<process_id>
+transcription:<transcription_id>
+file:<sha256(file_path)|file_id>
 ```
 
 Pick the narrowest bucket that captures the event's natural ordering.
 A `conversation.message.appended` uses `turn:<turn_id>`. A
-`cli.stdout.appended` uses `process:<process_id>`.
+`cli.stdout.appended` uses `process:<process_id>`. An
+`audio.transcription.completed` uses `transcription:<transcription_id>`;
+an `audio.file.received` uses `file:<sha256(file_path)>` so re-detections
+of the same artifact form a stable bucket.
 
 ### 11.2 `idempotency_key` rules
 

@@ -55,7 +55,7 @@ SUBJECT_REGEX = re.compile(
 
 ALLOWED_DOMAINS = frozenset({
     # active
-    "conversation", "agent", "llm", "cli", "tool", "system",
+    "conversation", "agent", "llm", "cli", "tool", "system", "audio",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "workflow", "memory",
 })
@@ -69,6 +69,7 @@ ALLOWED_ENTITIES = frozenset({
     "heartbeat",
     "approval_request",
     "worktree", "branch", "diff",
+    "file", "transcription",
 })
 
 EVENT_ACTIONS = frozenset({
