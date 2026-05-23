@@ -76,7 +76,8 @@ alongside each service, using publishers generated from the local
 | `mise run smoketest:heartbeat`      | Heartbeat producer/consumer end-to-end |
 | `mise run smoketest:claude-events`  | Claude `bloodbank.v1.*` event round-trip |
 | `mise run smoketest:bloodbank-naming` | Stdlib contract verifier (no Docker) for §14 sequence × {claude, copilot} + negative probes |
-| `mise run smoketest:schemas` | `validate:schemas` + `smoketest:bloodbank-naming` chained for full schema-side coverage |
+| `mise run smoketest:schema-contract-consistency` | Drift detector: every schema's declared type must pass `assert_contract` |
+| `mise run smoketest:schemas` | `validate:schemas` + `schema-contract-consistency` + `bloodbank-naming` chained for full schema-side coverage |
 | `mise run smoketest:repo-health-cleanup` | local cleanup + strict worktree checks (default/KEEP/REPORT/DRY_RUN/error) |
 | `mise run smoketest:bmad-closeout-scaffold` | local validation for closeout scaffold helper (required id/create/no-overwrite) |
 | `mise run smoketest:bmad-closeout-loop` | local validation for unified closeout helper JSON/evidence fields |

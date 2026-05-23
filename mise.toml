@@ -160,9 +160,13 @@ run = "bash ops/smoketest/smoketest-claude-events.sh"
 description = "Stdlib-only contract verifier (§14 sequence × claude/copilot + negative probes)"
 run = "bash ops/smoketest/smoketest-bloodbank-naming.sh"
 
+[tasks."smoketest:schema-contract-consistency"]
+description = "Assert every schema in bloodbank/schemas/bloodbank/v1/** declares a type the validator accepts (allowlist drift detector)"
+run = "bash ops/smoketest/smoketest-schema-contract-consistency.sh"
+
 [tasks."smoketest:schemas"]
-description = "Schema tree validation + contract verifier (no Docker)"
-run = "mise run validate:schemas && mise run smoketest:bloodbank-naming"
+description = "Schema tree validation + drift detector + contract verifier (no Docker)"
+run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming"
 
 [tasks."smoketest:repo-health-cleanup"]
 description = "Local smoke test for cleanup helper + strict worktree mode"
