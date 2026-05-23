@@ -88,6 +88,7 @@ htmlcov/
 _bmad_output/evidence/repo-health-*.json
 _bmad_output/evidence/repo-health-idle-decision-*.json
 _bmad_output/evidence/closeout/*.json
+_bmad_output/issue-*-execution.md
 
 # Local OpenClaw hook workspace artifacts (operator-local; not project source)
 /services/agent-hooks/openclaw/
