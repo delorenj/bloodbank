@@ -13,12 +13,20 @@ description = "Boot core sandbox (NATS + nats-init only)"
 run = "docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE up -d nats nats-init"
 
 [tasks."up:all"]
-description = "Boot every compose profile (heartbeat + claude-events + dapr)"
+description = "Boot every compose profile (heartbeat + claude-events + dapr + candystore)"
 run = """
 docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
   --profile heartbeat --profile claude-events \
   --profile dapr-smoketest --profile dapr-subscribe \
-  up -d
+  --profile candystore \
+  up -d --build
+"""
+
+[tasks."up:candystore"]
+description = "Boot candystore profile (postgres + app + daprd)"
+run = """
+docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
+  --profile candystore up -d --build postgres candystore daprd-candystore
 """
 
 [tasks.down]
@@ -27,6 +35,7 @@ run = """
 docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
   --profile heartbeat --profile claude-events \
   --profile dapr-smoketest --profile dapr-subscribe \
+  --profile candystore \
   down -v
 """
 
@@ -267,5 +276,6 @@ run = """
 docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
   --profile heartbeat --profile claude-events \
   --profile dapr-smoketest --profile dapr-subscribe \
+  --profile candystore \
   ps
 """

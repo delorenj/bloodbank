@@ -22,6 +22,7 @@ Hook → v1 CloudEvents type mapping:
 Unknown hook names are rejected (no auto-translation fallback) since
 arbitrary names cannot satisfy the v1 contract regex.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -52,13 +53,13 @@ COPILOT_ACTOR: dict[str, Any] = {
 
 # Copilot camelCase hook → (v1 CloudEvents type, ordering bucket prefix)
 HOOK_MAP: dict[str, tuple[str, str]] = {
-    "sessionStart":        ("bloodbank.v1.cli.session.started",        "cli_session"),
-    "sessionEnd":          ("bloodbank.v1.cli.session.ended",          "cli_session"),
-    "userPromptSubmitted": ("bloodbank.v1.conversation.turn.started",  "thread"),
-    "preToolUse":          ("bloodbank.v1.tool.tool_call.requested",   "invocation"),
-    "postToolUse":         ("bloodbank.v1.tool.tool_call.completed",   "invocation"),
-    "errorOccurred":       ("bloodbank.v1.agent.invocation.failed",    "invocation"),
-    "agentStop":           ("bloodbank.v1.agent.invocation.completed", "invocation"),
+    "sessionStart": ("bloodbank.v1.cli.session.started", "cli_session"),
+    "sessionEnd": ("bloodbank.v1.cli.session.ended", "cli_session"),
+    "userPromptSubmitted": ("bloodbank.v1.conversation.turn.started", "thread"),
+    "preToolUse": ("bloodbank.v1.tool.tool_call.requested", "invocation"),
+    "postToolUse": ("bloodbank.v1.tool.tool_call.completed", "invocation"),
+    "errorOccurred": ("bloodbank.v1.agent.invocation.failed", "invocation"),
+    "agentStop": ("bloodbank.v1.agent.invocation.completed", "invocation"),
 }
 
 
@@ -79,7 +80,9 @@ def _read_stdin() -> Any:
 
 
 def _log(msg: str) -> None:
-    if os.environ.get("BLOODBANK_DEBUG") == "true" or os.environ.get("BLOODBANK_HOOK_VERBOSE"):
+    if os.environ.get("BLOODBANK_DEBUG") == "true" or os.environ.get(
+        "BLOODBANK_HOOK_VERBOSE"
+    ):
         print(f"[bloodbank-copilot-hook] {msg}", file=sys.stderr)
 
 
@@ -97,7 +100,9 @@ def _tool_call_id(session_id: str, hook_name: str, payload: Any) -> str:
     return hashlib.sha1(seed.encode("utf-8"), usedforsecurity=False).hexdigest()[:32]
 
 
-def _shape_data(ce_type: str, session_id: str, hook_name: str, payload: Any) -> dict[str, Any]:
+def _shape_data(
+    ce_type: str, session_id: str, hook_name: str, payload: Any
+) -> dict[str, Any]:
     """Project the raw Copilot hook payload into the v1 schema's required data shape.
 
     Unknown keys from the hook payload are preserved under ``raw`` so downstream
@@ -126,7 +131,9 @@ def _shape_data(ce_type: str, session_id: str, hook_name: str, payload: Any) -> 
         tool_name = "unknown"
         arguments: dict[str, Any] | None = None
         if isinstance(payload, dict):
-            tool_name = str(payload.get("tool") or payload.get("tool_name") or "unknown")
+            tool_name = str(
+                payload.get("tool") or payload.get("tool_name") or "unknown"
+            )
             args = payload.get("arguments") or payload.get("tool_input")
             if isinstance(args, dict):
                 arguments = args
@@ -140,7 +147,9 @@ def _shape_data(ce_type: str, session_id: str, hook_name: str, payload: Any) -> 
             base["arguments"] = arguments
         if ce_type == "bloodbank.v1.tool.tool_call.completed":
             outcome = "success"
-            if isinstance(payload, dict) and (payload.get("is_error") or payload.get("error")):
+            if isinstance(payload, dict) and (
+                payload.get("is_error") or payload.get("error")
+            ):
                 outcome = "error"
             base["outcome"] = outcome
         return base

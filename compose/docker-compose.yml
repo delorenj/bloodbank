@@ -19,6 +19,7 @@ networks:
 volumes:
   bloodbank-nats-data:
   bloodbank-apicurio-data:
+  bloodbank-postgres-data:
 
 services:
   nats:
@@ -331,6 +332,94 @@ services:
       - "${BLOODBANK_DAPR_CLAUDE_EVENTS_HTTP_PORT:-3503}:3500"
     # No container-level healthcheck (distroless image). Liveness is
     # verified externally via curl :3503/v1.0/healthz.
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Candystore - durable Bloodbank event audit trail
+  # ---------------------------------------------------------------------------
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: bloodbank-postgres
+    profiles:
+      - candystore
+    environment:
+      POSTGRES_USER: candystore
+      POSTGRES_PASSWORD: candystore
+      POSTGRES_DB: candystore
+    volumes:
+      - bloodbank-postgres-data:/var/lib/postgresql/data
+      - ../../candystore/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U candystore"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  candystore:
+    build:
+      context: ../../candystore
+    container_name: bloodbank-candystore
+    profiles:
+      - candystore
+    environment:
+      APP_PORT: "3001"
+      DATABASE_URL: "postgresql://candystore:candystore@postgres:5432/candystore"
+      SUBSCRIBE_PUBSUB: "bloodbank-pubsub"
+      SUBSCRIBE_TOPIC: "bloodbank.evt.v1.>"
+      SUBSCRIBE_ROUTE: "/events/all"
+    ports:
+      - "${BLOODBANK_CANDYSTORE_PORT:-3603}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:3001/healthz', timeout=3)\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
+
+  daprd-candystore:
+    image: daprio/daprd:1.13.0
+    container_name: bloodbank-daprd-candystore
+    profiles:
+      - candystore
+    command:
+      - "./daprd"
+      - "--app-id=bloodbank-candystore"
+      - "--dapr-http-port=3500"
+      - "--dapr-grpc-port=50001"
+      - "--app-port=3001"
+      - "--app-channel-address=candystore"
+      - "--app-protocol=http"
+      - "--resources-path=/components"
+      - "--placement-host-address=dapr-placement:50005"
+      - "--log-level=info"
+    depends_on:
+      nats-init:
+        condition: service_completed_successfully
+      dapr-placement:
+        condition: service_started
+      candystore:
+        condition: service_healthy
+    volumes:
+      - ../../candystore/dapr-components:/components:ro
+    ports:
+      - "${BLOODBANK_DAPR_CANDYSTORE_HTTP_PORT:-3505}:3500"
     networks:
       - bloodbank-network
     restart: unless-stopped
