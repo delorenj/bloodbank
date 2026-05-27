@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/v1/agent/invocation.start.v1.json",
+  "title": "Agent Invocation Start Command",
+  "description": "Canonical PM->agent invocation command. Producers publish this envelope on bloodbank.cmd.v1.agent.invocation.start and routers/consumers dispatch using data.target_agent_id.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.v1.agent.invocation.start"
+    },
+    "kind": {
+      "const": "command"
+    },
+    "domain": {
+      "const": "agent"
+    },
+    "delivery": {
+      "const": "single_consumer"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.v1.agent.invocation.start.",
+      "properties": {
+        "target_agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Routing key identifying which agent should execute the invocation."
+        },
+        "thread_id": {
+          "type": ["string", "null"],
+          "description": "Optional existing thread identifier for continuation."
+        },
+        "turn_id": {
+          "type": ["string", "null"],
+          "description": "Optional caller-assigned turn identifier."
+        },
+        "prompt": {
+          "type": ["string", "null"],
+          "description": "Prompt/content for the target agent to execute."
+        },
+        "context": {
+          "type": ["object", "null"],
+          "description": "Optional structured context for the target agent invocation.",
+          "additionalProperties": true
+        }
+      },
+      "required": ["target_agent_id"],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data",
+    "actor",
+    "command_id",
+    "idempotency_key",
+    "delivery"
+  ]
+}

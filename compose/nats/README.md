@@ -49,7 +49,7 @@ Past-tense action. Examples:
 
 Imperative action. Examples:
 
-- `bloodbank.cmd.v1.agent.invocation.start`
+- `bloodbank.cmd.v1.agent.invocation.start` (canonical PM->agent invocation command; route via `data.target_agent_id`)
 - `bloodbank.cmd.v1.cli.process.spawn`
 
 ### Replies: `bloodbank.rpy.v1.<domain>.<entity>.<action>`
