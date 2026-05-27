@@ -10,7 +10,8 @@ workflows (bootstrap, smoketest, replay, trace).
 ## Architecture
 
 - **Broker:** NATS JetStream. Two durable streams: `BLOODBANK_EVENTS` for
-  immutable `event.*` traffic, `BLOODBANK_COMMANDS` for `command.*` / `reply.*`
+  immutable `bloodbank.evt.v1.*` traffic, `BLOODBANK_COMMANDS` for
+  `bloodbank.cmd.v1.*` / `bloodbank.rpy.v1.*` round-trips.
   round-trips. Topology in [`compose/nats/streams.json`](compose/nats/streams.json).
 - **Runtime:** Dapr sidecars. Pub/sub component fronts NATS via
   [`compose/components/pubsub.yaml`](compose/components/pubsub.yaml). State and
@@ -26,6 +27,10 @@ workflows (bootstrap, smoketest, replay, trace).
   is ever invented outside the schema tree.
 - **Discovery:** EventCatalog. The mount point at `compose/eventcatalog/site` is
   populated from the local schema tree.
+- **Durable audit trail:** Candystore lives in the sibling
+  `../candystore` repository and is run by the `candystore` compose profile.
+  See [`docs/candystore-integration.md`](docs/candystore-integration.md) for the
+  ownership boundary and runtime wiring.
 
 ADR-0001 in the metarepo ratifies these decisions (TBD; not yet committed).
 
@@ -56,7 +61,7 @@ The sandbox compose project is `bloodbank`; everything attaches to the
 
 | Path                 | Contents                                                            |
 |----------------------|---------------------------------------------------------------------|
-| `compose/`           | docker-compose.yml + Dapr/NATS/Apicurio/EventCatalog wiring         |
+| `compose/`           | docker-compose.yml + Dapr/NATS/Apicurio/EventCatalog/Candystore wiring |
 | `cli/`               | `bb` operator CLI (`doctor`, `trace`, `replay`, `emit`)             |
 | `ops/bootstrap/`     | Pre-boot file-presence validator                                    |
 | `ops/smoketest/`     | End-to-end round-trip tests                                         |
@@ -91,7 +96,9 @@ intentional stubs that will be filled in as the operator surfaces land.
 
 ## Conventions
 
-- Subjects: `event.{domain}.{entity}.{action}` and `command.{agent}.{action}`.
+- Subjects: `bloodbank.evt.v1.<domain>.<entity>.<action>`,
+  `bloodbank.cmd.v1.<domain>.<entity>.<action>`, and
+  `bloodbank.rpy.v1.<domain>.<entity>.<action>`.
 - Every envelope carries `correlationid` and `causationid`.
 - Sandbox identifiers all use the `bloodbank` prefix (project, network,
   containers). No version suffix.

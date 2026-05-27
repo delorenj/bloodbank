@@ -158,6 +158,9 @@ alongside each service, using publishers generated from the local
   Bloodbank never invents an envelope shape outside that tree.
 - Sandbox compose project name is `bloodbank`; network is `bloodbank-network`;
   container names are `bloodbank-*`.
+- Candystore is the sibling durable audit service, not a duplicate Bloodbank
+  stack. Bloodbank compose owns the runtime wiring and builds `../../candystore`
+  under the `candystore` profile. See `docs/candystore-integration.md`.
 
 ## Anti-patterns
 
