@@ -120,6 +120,15 @@ type     bloodbank.v1.agent.invocation.start
 subject  bloodbank.cmd.v1.agent.invocation.start          # command
 ```
 
+Canonical PM->agent dispatch contract:
+
+- Command envelope type: `bloodbank.v1.agent.invocation.start`
+- Command subject: `bloodbank.cmd.v1.agent.invocation.start`
+- Target routing key: `data.target_agent_id`
+
+Routers and consumers MUST dispatch this command by `data.target_agent_id`
+rather than encoding the target agent in the subject path.
+
 The legacy `event.>` / `command.>` / `reply.>` subject prefixes are
 **deprecated** and will be removed when the migration completes (§16).
 
@@ -369,6 +378,7 @@ bloodbank/schemas/
       turn.completed.v1.json
       message.appended.v1.json
     agent/
+      invocation.start.v1.json
       invocation.started.v1.json
       invocation.completed.v1.json
       invocation.failed.v1.json
