@@ -3,8 +3,8 @@
 #
 # Reads /work/streams.json and applies each stream definition to the
 # connected NATS server. Idempotent: if a stream already exists with the
-# desired name, this script logs and continues; `nats stream add` returns
-# a non-zero exit when the stream already exists, which we tolerate.
+# desired name, this script reconciles its subject list with streams.json and
+# leaves the existing stream data intact.
 #
 # Environment:
 #   NATS_URL   -- NATS server URL. Default: nats://nats:4222
@@ -46,9 +46,20 @@ apply_stream() {
   max_bytes="$8"
   replicas="$9"
 
-  # If the stream already exists, we consider init a no-op.
   if nats --server="${NATS_URL}" stream info "${name}" >/dev/null 2>&1; then
-    echo "nats-init: stream ${name} already exists, skipping"
+    current_subjects=$(
+      nats --server="${NATS_URL}" stream info "${name}" --json \
+        | jq -r '.config.subjects | join(",")'
+    )
+    if [ "$(normalize_subjects "${current_subjects}")" = "$(normalize_subjects "${subjects}")" ]; then
+      echo "nats-init: stream ${name} already exists with desired subjects, skipping"
+      return 0
+    fi
+
+    echo "nats-init: updating stream ${name} subjects ${current_subjects} -> ${subjects}"
+    nats --server="${NATS_URL}" stream edit "${name}" \
+      --subjects="${subjects}" \
+      --force
     return 0
   fi
 
@@ -74,6 +85,14 @@ apply_stream() {
     --max-bytes="${max_bytes}" \
     --replicas="${replicas}" \
     --defaults
+}
+
+normalize_subjects() {
+  printf '%s\n' "$1" \
+    | tr ',' '\n' \
+    | sed '/^$/d' \
+    | sort \
+    | paste -sd, -
 }
 
 # Extract each stream config and apply it. `jq` is included in nats-box.
