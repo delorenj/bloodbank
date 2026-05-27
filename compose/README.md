@@ -1,8 +1,9 @@
 # Bloodbank Compose sandbox
 
-This directory holds the first self-hosted scaffold for the 33GOD event
-platform. It is a **sandbox**, not production wiring. No real event traffic
-is published through Dapr or NATS yet; that is planned in later tickets.
+This directory holds the self-hosted sandbox for the 33GOD event platform. It
+is local runtime wiring, not production traffic. Profiles now carry real local
+event traffic through NATS JetStream and Dapr sidecars for smoke tests,
+heartbeat, Claude-event capture, and Candystore audit storage.
 
 Architectural source of truth:
 
@@ -16,7 +17,8 @@ Architectural source of truth:
 - Dapr app ID prefix: `bloodbank-`
 - NATS events stream: `BLOODBANK_EVENTS`
 - NATS commands stream: `BLOODBANK_COMMANDS`
-- NATS subject prefixes: `event.`, `command.`, `reply.`
+- NATS subject prefixes: `bloodbank.evt.v1.`, `bloodbank.cmd.v1.`,
+  `bloodbank.rpy.v1.`
 - Env var prefix: `BLOODBANK_`
 
 ## Layout
@@ -40,21 +42,27 @@ compose/
 
 ## Services
 
-| Service             | Image                                      | Host port(s)                        | Purpose                                         |
-|---------------------|--------------------------------------------|-------------------------------------|-------------------------------------------------|
-| `nats`              | `nats:2.10-alpine`                         | `4222` (client), `8222` (monitor)   | JetStream broker (`BLOODBANK_EVENTS` + `_COMMANDS`) |
-| `nats-init`         | `natsio/nats-box:0.14.5`                   | -                                   | Oneshot: applies `nats/streams.json` to NATS on each `up` |
-| `dapr-placement`    | `daprio/dapr:1.13.0`                       | `50005`                             | Dapr actor placement for future sidecars        |
-| `apicurio-registry` | `apicurio/apicurio-registry:3.0.6`         | `8080`                              | Runtime schema registry (read side)             |
-| `eventcatalog`      | `quay.io/eventcatalog/eventcatalog:2.11.1` | `3000`                              | Human/agent event discovery UI                  |
+| Service             | Profile(s)        | Host port(s)                        | Purpose                                         |
+|---------------------|-------------------|-------------------------------------|-------------------------------------------------|
+| `nats`              | default           | `4222` (client), `8222` (monitor)   | JetStream broker (`BLOODBANK_EVENTS` + `_COMMANDS`) |
+| `nats-init`         | default           | -                                   | Oneshot: applies `nats/streams.json` to NATS on each `up` |
+| `dapr-placement`    | default           | `50005`                             | Dapr actor placement for sidecars               |
+| `apicurio-registry` | default           | `8080`                              | Runtime schema registry (read side)             |
+| `eventcatalog`      | default           | `3000`                              | Human/agent event discovery UI                  |
+| `echo-sub` + sidecar | `dapr-subscribe` | `3301`, `3501`                      | Minimal Dapr subscribe smoke app                |
+| `heartbeat-*`       | `heartbeat`       | `3601`, `3502`                      | Reference heartbeat producer/consumer path      |
+| `claude-events-*`   | `claude-events`   | `3602`, `3503`                      | Host hook event recorder path                   |
+| `postgres`          | `candystore`      | internal                            | Candystore PostgreSQL database                  |
+| `candystore` + sidecar | `candystore`   | `3603`, `3505`                      | Durable Bloodbank event audit trail             |
 
 All ports can be overridden by `BLOODBANK_*_PORT` env vars without editing
 the compose file (see the service definitions for exact names).
 
-Dapr sidecars are intentionally **not** defined yet. When V3-005 onward adds
-app services, each sidecar must mount `./components` read-only so that
-`bloodbank-pubsub`, `bloodbank-statestore`, and `bloodbank-secretstore`
-are loaded.
+Dapr sidecars are defined per profile. Most sidecars mount `./components`
+read-only. Candystore is the exception: its sidecar mounts
+`../../candystore/dapr-components` so the audit consumer gets its own durable
+JetStream consumer settings while still using the shared `bloodbank-pubsub`
+component name.
 
 ## Image version caveat
 
@@ -103,12 +111,12 @@ docker compose \
 
 ## Dapr component manifests
 
-Each file in `components/` is loaded by a Dapr sidecar once app services land.
+Each file in `components/` is loaded by the Bloodbank-owned Dapr sidecars.
 
 - **`pubsub.yaml`** — `bloodbank-pubsub`; `pubsub.jetstream` targeting
   `nats://nats:4222`, events stream `BLOODBANK_EVENTS`, events subject
-  scope `event.>`. Commands and replies are handled by a future command
-  bus component rather than the pub/sub abstraction.
+  scope `bloodbank.evt.v1.>`. Commands and replies are carried by
+  `BLOODBANK_COMMANDS` on `bloodbank.cmd.v1.>` and `bloodbank.rpy.v1.>`.
 - **`statestore.yaml`** — `bloodbank-statestore`; `state.in-memory` is
   the scaffold default. See "State store tradeoff" below.
 - **`secretstore.yaml`** — `bloodbank-secretstore`;
@@ -128,10 +136,20 @@ only; no code change is required.
 
 ## NATS topology
 
-See `nats/README.md` for subject conventions (`event.<domain>.<entity>.<action>`,
-`command.<target>.<verb>`, `reply.<target>.<verb>`), retention posture, and
-replay metadata header names. See `nats/streams.json` for the machine-readable
-stream definitions.
+See `nats/README.md` for subject conventions
+(`bloodbank.evt.v1.<domain>.<entity>.<action>`,
+`bloodbank.cmd.v1.<domain>.<entity>.<action>`, and
+`bloodbank.rpy.v1.<domain>.<entity>.<action>`), retention posture, and replay
+metadata header names. See `nats/streams.json` for the machine-readable stream
+definitions.
+
+## Candystore
+
+The `candystore` profile builds and runs the sibling `../../candystore`
+repository as the durable Bloodbank event audit trail. The compose stack knows
+about Candystore; Candystore itself remains a separate service repo. The
+runtime boundary, per-service Dapr component rationale, and verification probes
+are documented in [`../docs/candystore-integration.md`](../docs/candystore-integration.md).
 
 ### Stream initialization
 
