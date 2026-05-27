@@ -96,3 +96,9 @@ _bmad_output/issue-*-execution.md
 # Repo-local Hermes runtime state (secrets/sessions/logs)
 agents/hermes/runtime/**
 !agents/hermes/runtime/.gitignore
+
+# Local agent scratch/state artifacts (operator-local)
+.agents/
+.codex/
+claudemap-cache.json
+claudemap-maps.json
