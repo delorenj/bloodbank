@@ -126,7 +126,7 @@ alongside each service, using publishers generated from the local
 - For backup-first canonical alignment, use `mise run bmad:align-main-with-backup -- --repo <path>` (read-only) then rerun with `--apply` only after review.
 - After successful alignment verification window, run `mise run bmad:recovery-artifact-cleanup -- --repo <path>` (dry-run) before any cleanup apply; use `--min-bundle-age-hours` to protect fresh bundles.
 - For persistent submodule gitlink drift (e.g., Hermes PM runtime), run `mise run bmad:reconcile-submodule-drift -- --repo <path>` for diagnostics first, then rerun with `--apply` only when the helper reports no non-drift worktree edits. The helper now retries with a forced checkout for the known runtime `state.db` overwrite blocker on `agents/hermes/pm/runtime`.
-- `repo-health:pilot-step` may auto-heal strict-gate failures by applying the submodule drift helper once (`DRIFT_AUTOHEAL_ON_STRICT_FAIL=1` default); disable with `DRIFT_AUTOHEAL_ON_STRICT_FAIL=0` when manual intervention is desired.
+- `repo-health:pilot-step` may run submodule drift auto-heal in two places: a precheck pass (`DRIFT_AUTOHEAL_PRECHECK=1`, default) and a strict-failure retry pass (`DRIFT_AUTOHEAL_ON_STRICT_FAIL=1`, default). Disable either flag (`=0`) when manual intervention is desired.
 - `bmad:pr-merge-safe` now attempts safe post-merge reconciliation by default; use `--no-reconcile-main` only when you explicitly need to defer reconciliation.
 - For quick cleanup-status review across closeout artifacts, use `mise run bmad:closeout-cleanup-summary`.
 - Runtime closeout evidence JSONs under `_bmad_output/evidence/closeout/` are operator-generated artifacts and intentionally git-ignored.

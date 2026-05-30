@@ -11,6 +11,7 @@ INTERVAL_MINUTES="${INTERVAL_MINUTES:-60}"
 KEEP="${KEEP:-8}"
 REPORT="${REPORT:-1}"
 DRIFT_AUTOHEAL_ON_STRICT_FAIL="${DRIFT_AUTOHEAL_ON_STRICT_FAIL:-1}"
+DRIFT_AUTOHEAL_PRECHECK="${DRIFT_AUTOHEAL_PRECHECK:-1}"
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 DECISION_OUT="_bmad_output/evidence/repo-health-idle-decision-${TS}.json"
@@ -63,6 +64,21 @@ print('1' if d.get('should_capture_full') else '0')
 PY
 } )"
 
+run_precheck_autoheal() {
+  if [[ "$DRIFT_AUTOHEAL_PRECHECK" != "1" ]]; then
+    return 0
+  fi
+
+  echo "repo-health:precheck attempting submodule drift auto-heal"
+  if python3 ops/bmad/reconcile_submodule_gitlink_drift.py --repo . --apply >/dev/null; then
+    echo "repo-health:precheck drift auto-heal complete"
+    return 0
+  fi
+
+  echo "repo-health:precheck auto-heal skipped (non-main branch or non-drift edits present)"
+  return 0
+}
+
 run_strict_with_autoheal() {
   if mise run repo-health:strict; then
     return 0
@@ -82,6 +98,9 @@ run_strict_with_autoheal() {
   echo "repo-health:strict drift auto-heal applied; retrying strict gate"
   mise run repo-health:strict
 }
+
+# Opportunistically reconcile known drift pattern before strict gate.
+run_precheck_autoheal
 
 # Always run strict gate for repo safety and liveness evidence in logs.
 run_strict_with_autoheal
