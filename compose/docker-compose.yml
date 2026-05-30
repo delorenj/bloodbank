@@ -375,7 +375,7 @@ services:
       SUBSCRIBE_TOPIC: "bloodbank.evt.v1.>"
       SUBSCRIBE_ROUTE: "/events/all"
     ports:
-      - "${BLOODBANK_CANDYSTORE_PORT:-3603}:3001"
+      - "127.0.0.1:${BLOODBANK_CANDYSTORE_PORT:-3603}:3001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -419,7 +419,7 @@ services:
     volumes:
       - ../../candystore/dapr-components:/components:ro
     ports:
-      - "${BLOODBANK_DAPR_CANDYSTORE_HTTP_PORT:-3505}:3500"
+      - "127.0.0.1:${BLOODBANK_DAPR_CANDYSTORE_HTTP_PORT:-3505}:3500"
     networks:
       - bloodbank-network
     restart: unless-stopped
