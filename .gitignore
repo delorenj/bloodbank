@@ -87,6 +87,7 @@ htmlcov/
 # BMAD generated evidence artifacts
 _bmad_output/evidence/repo-health-*.json
 _bmad_output/evidence/repo-health-idle-decision-*.json
+_bmad_output/evidence/runtime-drift-context-*.json
 _bmad_output/evidence/closeout/*.json
 _bmad_output/issue-*-execution.md
 agents/hermes/pm/.runtime-scaffold/
