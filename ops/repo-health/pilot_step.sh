@@ -69,7 +69,15 @@ run_precheck_autoheal() {
     return 0
   fi
 
-  echo "repo-health:precheck attempting submodule drift auto-heal"
+  local drift_count
+  drift_count="$({ python3 ops/bmad/reconcile_submodule_gitlink_drift.py --repo . | python3 -c 'import json,sys; print(json.load(sys.stdin).get("drift_count", 0))'; } 2>/dev/null || echo 0)"
+
+  if [[ "$drift_count" == "0" ]]; then
+    echo "repo-health:precheck no submodule drift detected"
+    return 0
+  fi
+
+  echo "repo-health:precheck drift detected (${drift_count}); attempting auto-heal"
   if python3 ops/bmad/reconcile_submodule_gitlink_drift.py --repo . --apply >/dev/null; then
     echo "repo-health:precheck drift auto-heal complete"
     return 0
