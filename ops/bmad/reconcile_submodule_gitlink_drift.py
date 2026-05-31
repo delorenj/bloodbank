@@ -25,8 +25,40 @@ def _branch(repo: Path) -> str:
     return cp.stdout.strip() if cp.returncode == 0 else ""
 
 
+def _submodule_ignore_by_path(repo: Path) -> dict[str, str]:
+    cp = _run(repo, "git", "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..*\.(path|ignore)$")
+    if cp.returncode != 0:
+        return {}
+
+    name_to_path: dict[str, str] = {}
+    name_to_ignore: dict[str, str] = {}
+
+    for raw in cp.stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        key, _, value = line.partition(" ")
+        if not key or not value:
+            continue
+        if key.endswith(".path"):
+            name = key[len("submodule.") : -len(".path")]
+            name_to_path[name] = value.strip()
+        elif key.endswith(".ignore"):
+            name = key[len("submodule.") : -len(".ignore")]
+            name_to_ignore[name] = value.strip()
+
+    out: dict[str, str] = {}
+    for name, path in name_to_path.items():
+        ignore_mode = name_to_ignore.get(name)
+        if ignore_mode:
+            out[path] = ignore_mode
+    return out
+
+
 def _collect_drifts(repo: Path) -> tuple[list[dict[str, str]], list[str]]:
     errors: list[str] = []
+    ignore_by_path = _submodule_ignore_by_path(repo)
+
     cp = _run(repo, "git", "submodule", "status", "--recursive")
     if cp.returncode != 0:
         return [], [cp.stderr.strip() or "git submodule status failed"]
@@ -47,6 +79,9 @@ def _collect_drifts(repo: Path) -> tuple[list[dict[str, str]], list[str]]:
         current_commit = payload[0]
         path = payload[1]
         detail = " ".join(payload[2:]).strip()
+
+        if ignore_by_path.get(path) == "all":
+            continue
 
         recorded_commit = ""
         tree = _run(repo, "git", "ls-tree", "HEAD", path)
