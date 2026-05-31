@@ -280,6 +280,15 @@ def _git_ref_path_exists(root: Path, ref: str, rel_path: str) -> bool:
     return rc == 0
 
 
+def _submodule_ignore_mode(root: Path, path: str) -> str:
+    """Return the configured .gitmodules ignore mode for a submodule path."""
+    key = f"submodule.{path}.ignore"
+    rc, out, _ = _run(root, "git", "config", "-f", ".gitmodules", "--get", key)
+    if rc != 0:
+        return ""
+    return out.strip().lower()
+
+
 def _collect_submodule_gitlink_drifts(root: Path) -> tuple[list[dict[str, str]], str | None]:
     """Return gitlink drift entries for submodules (marker '+' in status output)."""
     rc, out, err = _run(root, "git", "submodule", "status", "--recursive")
@@ -302,6 +311,9 @@ def _collect_submodule_gitlink_drifts(root: Path) -> tuple[list[dict[str, str]],
         current_commit = payload[0]
         path = payload[1]
         detail = " ".join(payload[2:]).strip()
+
+        if _submodule_ignore_mode(root, path) == "all":
+            continue
 
         recorded_commit = ""
         rc_tree, tree_out, _ = _run(root, "git", "ls-tree", "HEAD", path)
