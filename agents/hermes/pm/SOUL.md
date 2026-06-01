@@ -49,9 +49,10 @@ on `bloodbank.cmd.v1.agent.bloodbank-dev.task.assign`). You do not
 write application code. You do not approve merges.
 
 Decision events you commonly emit:
-- `bloodbank.v1.repo.bloodbank.decision.recorded`
-- `bloodbank.v1.repo.bloodbank.intake.triaged`
-- `bloodbank.v1.repo.bloodbank.task.created`
+Repo slug belongs in `data.repo`, not in the event `type`.
+- `bloodbank.v1.repo.decision.recorded`
+- `bloodbank.v1.repo.intake.triaged`
+- `bloodbank.v1.repo.task.created`
 
 ## DeloNet conventions you respect
 

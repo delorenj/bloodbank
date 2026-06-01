@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://33god.dev/schemas/bloodbank/v1/tool/tool_call.completed.v1.json",
-  "title": "Tool Tool call Completed Event",
-  "description": "A tool call reached a terminal state. See bloodbank/docs/event-naming.md.",
+  "$id": "https://33god.dev/schemas/bloodbank/v1/agent/tool.invoked.v1.json",
+  "title": "Agent Tool Invoked Event",
+  "description": "A tool call was invoked by the runtime (mid-execution). See bloodbank/docs/event-naming.md.",
   "type": "object",
   "allOf": [
     {
@@ -11,17 +11,17 @@
   ],
   "properties": {
     "type": {
-      "const": "bloodbank.v1.tool.tool_call.completed"
+      "const": "bloodbank.v1.agent.tool.invoked"
     },
     "kind": {
       "const": "event"
     },
     "domain": {
-      "const": "tool"
+      "const": "agent"
     },
     "data": {
       "type": "object",
-      "description": "Payload for bloodbank.v1.tool.tool_call.completed.",
+      "description": "Payload for bloodbank.v1.agent.tool.invoked.",
       "properties": {
         "invocation_id": {
           "type": "string",
@@ -34,23 +34,12 @@
         "tool_name": {
           "type": "string",
           "minLength": 1
-        },
-        "outcome": {
-          "type": "string",
-          "enum": [
-            "success",
-            "error"
-          ]
-        },
-        "result": {
-          "description": "Tool result (open shape)."
         }
       },
       "required": [
         "invocation_id",
         "tool_call_id",
-        "tool_name",
-        "outcome"
+        "tool_name"
       ],
       "additionalProperties": true
     }

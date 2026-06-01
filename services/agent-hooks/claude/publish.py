@@ -13,8 +13,8 @@ Event types (CLI argument → v1 CloudEvents type):
     session-start    → bloodbank.v1.cli.session.started
     session-end      → bloodbank.v1.cli.session.ended
     prompt-submitted → bloodbank.v1.conversation.turn.started
-    tool-request     → bloodbank.v1.tool.tool_call.requested
-    tool-action      → bloodbank.v1.tool.tool_call.invoked
+    tool-request     → bloodbank.v1.agent.tool.requested
+    tool-action      → bloodbank.v1.agent.tool.invoked
     subagent-stopped → bloodbank.v1.agent.invocation.completed
 
 Session state lives at ~/.claude/bloodbank-session.json (single global
@@ -71,8 +71,8 @@ EVENT_MAP: dict[str, tuple[str, str]] = {
     "session-start":    ("bloodbank.v1.cli.session.started",        "cli_session"),
     "session-end":      ("bloodbank.v1.cli.session.ended",          "cli_session"),
     "prompt-submitted": ("bloodbank.v1.conversation.turn.started",  "thread"),
-    "tool-request":     ("bloodbank.v1.tool.tool_call.requested",   "invocation"),
-    "tool-action":      ("bloodbank.v1.tool.tool_call.invoked",     "invocation"),
+    "tool-request":     ("bloodbank.v1.agent.tool.requested",   "invocation"),
+    "tool-action":      ("bloodbank.v1.agent.tool.invoked",     "invocation"),
     "subagent-stopped": ("bloodbank.v1.agent.invocation.completed", "invocation"),
 }
 
@@ -197,7 +197,7 @@ def _handle_tool_requested(session: SessionState, payload: dict) -> dict:
     }
     return _build_event(
         session,
-        "bloodbank.v1.tool.tool_call.requested",
+        "bloodbank.v1.agent.tool.requested",
         "invocation",
         data,
     )
@@ -221,7 +221,7 @@ def _handle_tool_action(session: SessionState, payload: dict) -> dict:
     }
     return _build_event(
         session,
-        "bloodbank.v1.tool.tool_call.invoked",
+        "bloodbank.v1.agent.tool.invoked",
         "invocation",
         data,
     )

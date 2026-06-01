@@ -180,9 +180,10 @@ Segment 3 of `type` MUST be one of:
 | `agent`        | Agent runtime lifecycle and orchestration of LLM invocations.      | active   |
 | `llm`          | Protocol-boundary events with a model provider.                    | active   |
 | `cli`          | Terminal/process-backed agent runtimes (stdin/stdout/stderr/exit). | active   |
-| `tool`         | Tool-call lifecycle (request, invoke, complete) regardless of CLI. | active   |
+
 | `system`       | Bloodbank platform health (heartbeats, dapr, nats, replay).        | active   |
 | `audio`        | Audio capture lifecycle — inbox ingestion, transcription jobs.     | active   |
+| `repo`         | Repo-scoped PM facts such as decisions, intake triage, and tasks.  | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration.                                 | reserved |
@@ -209,8 +210,11 @@ Segment 4 of `type` MUST be one of:
 | `stderr`           | `cli`                    | A stderr chunk emitted by a CLI process.                    |
 | `request`          | `llm`                    | A request sent to an LLM provider.                          |
 | `response`         | `llm`                    | A response received from an LLM provider.                   |
-| `tool_call`        | `tool`                   | An agent's intent to call a tool. Underscore form.          |
+| `tool`             | `agent`                  | A tool-use action performed by an agent or subagent.        |
 | `heartbeat`        | `system`                 | Liveness/health beat.                                       |
+| `decision`         | `repo`                   | PM decision recorded for a repo; repo slug lives in data.    |
+| `intake`           | `repo`                   | Incoming repo request triaged; repo slug lives in data.      |
+| `task`             | `repo`                   | Repo work item created; repo slug lives in data.             |
 | `file`             | `audio`                  | An on-disk audio artifact observed by an inbox watcher.     |
 | `transcription`    | `audio`                  | A speech-to-text job over a single audio file.              |
 | `approval_request` | `approval` (reserved)    | Human approval prompt issued.                               |
@@ -229,7 +233,8 @@ emit an entity not paired with it here.
 
 `created`, `resumed`, `started`, `ended`, `completed`, `failed`, `canceled`,
 `generated`, `appended`, `received`, `sent`, `granted`, `denied`, `opened`,
-`closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`.
+`closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`,
+`recorded`, `triaged`.
 
 ### 8.2 Command actions (imperative present)
 
@@ -353,7 +358,7 @@ For commands, idempotency is `<action>:<entity-scope>`:
 ```
 agent.invocation.start : thread:<thread_id>:turn:<turn_id>
 cli.process.spawn      : cli_session:<session_id>:cmd:<sha256(args)>
-tool.tool_call.invoke  : invocation:<invocation_id>:tool_call:<id>
+agent.tool.invoke      : invocation:<invocation_id>:tool_call:<id>
 ```
 
 A retry of the same command MUST present the same `idempotency_key`. Bloodbank
@@ -392,10 +397,10 @@ bloodbank/schemas/
       process.exited.v1.json
       stdout.appended.v1.json
       stderr.appended.v1.json
-    tool/
-      tool_call.requested.v1.json
-      tool_call.invoked.v1.json
-      tool_call.completed.v1.json
+    agent/
+      tool.requested.v1.json
+      tool.invoked.v1.json
+      tool.completed.v1.json
     system/
       heartbeat.received.v1.json
 ```
@@ -457,9 +462,9 @@ bloodbank.v1.cli.stdout.appended                 # 0..n; chunked
 bloodbank.v1.cli.stderr.appended                 # 0..n; chunked
 bloodbank.v1.llm.request.sent                    # protocol boundary
 bloodbank.v1.llm.response.received               # protocol boundary
-bloodbank.v1.tool.tool_call.requested            # 0..n
-bloodbank.v1.tool.tool_call.invoked              # 0..n
-bloodbank.v1.tool.tool_call.completed            # 0..n
+bloodbank.v1.agent.tool.requested            # 0..n
+bloodbank.v1.agent.tool.invoked              # 0..n
+bloodbank.v1.agent.tool.completed            # 0..n
 bloodbank.v1.conversation.message.appended       # durable transcript record
 bloodbank.v1.agent.invocation.completed
 bloodbank.v1.conversation.turn.completed
@@ -481,15 +486,15 @@ The hard-rename (no aliases) list, derived from the current
 | `agent.session.started`    | `bloodbank.v1.cli.session.started`        | Plus `bloodbank.v1.conversation.thread.created` on first turn.      |
 | `agent.session.ended`      | `bloodbank.v1.cli.session.ended`          | Plus `bloodbank.v1.conversation.turn.completed` if a turn was open. |
 | `agent.prompt.submitted`   | `bloodbank.v1.conversation.turn.started`  | The prompt is what starts a turn.                                   |
-| `agent.tool.requested`     | `bloodbank.v1.tool.tool_call.requested`   |                                                                     |
-| `agent.tool.invoked`       | `bloodbank.v1.tool.tool_call.invoked`     |                                                                     |
+| `agent.tool.requested`     | `bloodbank.v1.agent.tool.requested`   |                                                                     |
+| `agent.tool.invoked`       | `bloodbank.v1.agent.tool.invoked`     |                                                                     |
 | `agent.subagent.completed` | `bloodbank.v1.agent.invocation.completed` | Sub-agent runs are nested invocations.                              |
 | `agent.subagent.started`   | `bloodbank.v1.agent.invocation.started`   | (openclaw emits this)                                               |
 | `copilot.session.started`  | `bloodbank.v1.cli.session.started`        | `actor.cli=copilot`, `actor.provider=github_copilot`.               |
 | `copilot.session.ended`    | `bloodbank.v1.cli.session.ended`          |                                                                     |
 | `copilot.prompt.submitted` | `bloodbank.v1.conversation.turn.started`  |                                                                     |
-| `copilot.tool.pre`         | `bloodbank.v1.tool.tool_call.requested`   |                                                                     |
-| `copilot.tool.post`        | `bloodbank.v1.tool.tool_call.completed`   |                                                                     |
+| `copilot.tool.pre`         | `bloodbank.v1.agent.tool.requested`   |                                                                     |
+| `copilot.tool.post`        | `bloodbank.v1.agent.tool.completed`   |                                                                     |
 | `copilot.error.occurred`   | `bloodbank.v1.agent.invocation.failed`    |                                                                     |
 | `copilot.agent.stopped`    | `bloodbank.v1.agent.invocation.completed` |                                                                     |
 | `smoketest.ping`           | `bloodbank.v1.system.heartbeat.received`  | Smoke fixture.                                                      |

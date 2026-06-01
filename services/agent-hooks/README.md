@@ -80,8 +80,8 @@ the fire-and-forget shape of CLI hooks. Override via:
 |-------------------|--------------------|---------------------------------------------|----------------------------------------------------|
 | `SessionStart`    | `session-start`    | `bloodbank.v1.cli.session.started`          | `bloodbank.evt.v1.cli.session.started`             |
 | `UserPromptSubmit`| `prompt-submitted` | `bloodbank.v1.conversation.turn.started`    | `bloodbank.evt.v1.conversation.turn.started`       |
-| `PreToolUse`      | `tool-request`     | `bloodbank.v1.tool.tool_call.requested`     | `bloodbank.evt.v1.tool.tool_call.requested`        |
-| `PostToolUse`     | `tool-action`      | `bloodbank.v1.tool.tool_call.invoked`       | `bloodbank.evt.v1.tool.tool_call.invoked`          |
+| `PreToolUse`      | `tool-request`     | `bloodbank.v1.agent.tool.requested`     | `bloodbank.evt.v1.agent.tool.requested`        |
+| `PostToolUse`     | `tool-action`      | `bloodbank.v1.agent.tool.invoked`       | `bloodbank.evt.v1.agent.tool.invoked`          |
 | `SubagentStop`    | `subagent-stopped` | `bloodbank.v1.agent.invocation.completed`   | `bloodbank.evt.v1.agent.invocation.completed`      |
 | `Stop`            | `session-end`      | `bloodbank.v1.cli.session.ended`            | `bloodbank.evt.v1.cli.session.ended`               |
 
@@ -104,8 +104,8 @@ Reference: <https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-cop
 | `sessionStart`       | `bloodbank.v1.cli.session.started`          | `bloodbank.evt.v1.cli.session.started`             |
 | `sessionEnd`         | `bloodbank.v1.cli.session.ended`            | `bloodbank.evt.v1.cli.session.ended`               |
 | `userPromptSubmitted`| `bloodbank.v1.conversation.turn.started`    | `bloodbank.evt.v1.conversation.turn.started`       |
-| `preToolUse`         | `bloodbank.v1.tool.tool_call.requested`     | `bloodbank.evt.v1.tool.tool_call.requested`        |
-| `postToolUse`        | `bloodbank.v1.tool.tool_call.completed`     | `bloodbank.evt.v1.tool.tool_call.completed`        |
+| `preToolUse`         | `bloodbank.v1.agent.tool.requested`     | `bloodbank.evt.v1.agent.tool.requested`        |
+| `postToolUse`        | `bloodbank.v1.agent.tool.completed`     | `bloodbank.evt.v1.agent.tool.completed`        |
 | `errorOccurred`      | `bloodbank.v1.agent.invocation.failed`      | `bloodbank.evt.v1.agent.invocation.failed`         |
 | `agentStop`          | `bloodbank.v1.agent.invocation.completed`   | `bloodbank.evt.v1.agent.invocation.completed`      |
 
@@ -126,7 +126,7 @@ Copilot CLI picks up `~/.copilot/hooks/*.json` on next launch.
 
 `openclaw/watch.py` tails OpenClaw session logs and trajectory files,
 synthesizing the same v1 event shapes (`cli.session.*`,
-`conversation.turn.started`, `tool.tool_call.*`, `agent.invocation.*`).
+`conversation.turn.started`, `agent.tool.*`, `agent.invocation.*`).
 `actor.cli=openclaw`, `actor.agent_id=bloodbank.agent.openclaw.<per-session-agent-id>`.
 
 ## Verify

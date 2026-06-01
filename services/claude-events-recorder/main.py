@@ -11,8 +11,8 @@ Subscriptions (v1 contract topics per docs/event-naming.md §15):
   bloodbank.evt.v1.cli.session.started
   bloodbank.evt.v1.cli.session.ended
   bloodbank.evt.v1.conversation.turn.started
-  bloodbank.evt.v1.tool.tool_call.requested
-  bloodbank.evt.v1.tool.tool_call.invoked
+  bloodbank.evt.v1.agent.tool.requested
+  bloodbank.evt.v1.agent.tool.invoked
   bloodbank.evt.v1.agent.invocation.completed
 
 Endpoints:
@@ -52,9 +52,9 @@ ROUTES: list[tuple[str, str, str]] = [
     ("/events/cli_session_started",   "bloodbank.evt.v1.cli.session.started",        "bloodbank.v1.cli.session.started"),
     ("/events/cli_session_ended",     "bloodbank.evt.v1.cli.session.ended",          "bloodbank.v1.cli.session.ended"),
     ("/events/turn_started",          "bloodbank.evt.v1.conversation.turn.started",  "bloodbank.v1.conversation.turn.started"),
-    ("/events/tool_call_requested",   "bloodbank.evt.v1.tool.tool_call.requested",   "bloodbank.v1.tool.tool_call.requested"),
-    ("/events/tool_call_invoked",     "bloodbank.evt.v1.tool.tool_call.invoked",     "bloodbank.v1.tool.tool_call.invoked"),
-    ("/events/tool_call_completed",   "bloodbank.evt.v1.tool.tool_call.completed",   "bloodbank.v1.tool.tool_call.completed"),
+    ("/events/tool_call_requested",   "bloodbank.evt.v1.agent.tool.requested",   "bloodbank.v1.agent.tool.requested"),
+    ("/events/tool_call_invoked",     "bloodbank.evt.v1.agent.tool.invoked",     "bloodbank.v1.agent.tool.invoked"),
+    ("/events/tool_call_completed",   "bloodbank.evt.v1.agent.tool.completed",   "bloodbank.v1.agent.tool.completed"),
     ("/events/agent_invocation_completed", "bloodbank.evt.v1.agent.invocation.completed", "bloodbank.v1.agent.invocation.completed"),
     ("/events/agent_invocation_failed",    "bloodbank.evt.v1.agent.invocation.failed",    "bloodbank.v1.agent.invocation.failed"),
 ]
@@ -117,11 +117,11 @@ def _record(envelope: dict) -> None:
             entry["end_reason"] = data.get("end_reason")
             entry["duration_seconds"] = data.get("duration_seconds")
             entry["total_turns"] = data.get("total_turns")
-        elif ev_type == "bloodbank.v1.tool.tool_call.requested":
+        elif ev_type == "bloodbank.v1.agent.tool.requested":
             entry["tool_requests"] += 1
-        elif ev_type == "bloodbank.v1.tool.tool_call.invoked":
+        elif ev_type == "bloodbank.v1.agent.tool.invoked":
             entry["tool_invocations"] += 1
-        elif ev_type == "bloodbank.v1.tool.tool_call.completed":
+        elif ev_type == "bloodbank.v1.agent.tool.completed":
             entry["tool_completions"] += 1
         elif ev_type == "bloodbank.v1.conversation.turn.started":
             entry["prompts_submitted"] += 1

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/v1/repo/intake.triaged.v1.json",
+  "title": "Repo Intake Triaged Event",
+  "description": "A PM agent triaged an incoming repo-scoped request. The repo slug belongs in data.repo, not in the CloudEvents type.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.v1.repo.intake.triaged"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "repo"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.v1.repo.intake.triaged.",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "intake_id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requester": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "summary"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}

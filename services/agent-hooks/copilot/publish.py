@@ -14,8 +14,8 @@ Hook → v1 CloudEvents type mapping:
     sessionStart        → bloodbank.v1.cli.session.started
     sessionEnd          → bloodbank.v1.cli.session.ended
     userPromptSubmitted → bloodbank.v1.conversation.turn.started
-    preToolUse          → bloodbank.v1.tool.tool_call.requested
-    postToolUse         → bloodbank.v1.tool.tool_call.completed
+    preToolUse          → bloodbank.v1.agent.tool.requested
+    postToolUse         → bloodbank.v1.agent.tool.completed
     errorOccurred       → bloodbank.v1.agent.invocation.failed
     agentStop           → bloodbank.v1.agent.invocation.completed
 
@@ -56,8 +56,8 @@ HOOK_MAP: dict[str, tuple[str, str]] = {
     "sessionStart": ("bloodbank.v1.cli.session.started", "cli_session"),
     "sessionEnd": ("bloodbank.v1.cli.session.ended", "cli_session"),
     "userPromptSubmitted": ("bloodbank.v1.conversation.turn.started", "thread"),
-    "preToolUse": ("bloodbank.v1.tool.tool_call.requested", "invocation"),
-    "postToolUse": ("bloodbank.v1.tool.tool_call.completed", "invocation"),
+    "preToolUse": ("bloodbank.v1.agent.tool.requested", "invocation"),
+    "postToolUse": ("bloodbank.v1.agent.tool.completed", "invocation"),
     "errorOccurred": ("bloodbank.v1.agent.invocation.failed", "invocation"),
     "agentStop": ("bloodbank.v1.agent.invocation.completed", "invocation"),
 }
@@ -127,7 +127,7 @@ def _shape_data(
             "prompt_text": prompt_text,
             **raw,
         }
-    if ce_type.startswith("bloodbank.v1.tool.tool_call."):
+    if ce_type.startswith("bloodbank.v1.agent.tool."):
         tool_name = "unknown"
         arguments: dict[str, Any] | None = None
         if isinstance(payload, dict):
@@ -145,7 +145,7 @@ def _shape_data(
         }
         if arguments is not None:
             base["arguments"] = arguments
-        if ce_type == "bloodbank.v1.tool.tool_call.completed":
+        if ce_type == "bloodbank.v1.agent.tool.completed":
             outcome = "success"
             if isinstance(payload, dict) and (
                 payload.get("is_error") or payload.get("error")

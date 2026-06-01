@@ -19,8 +19,8 @@
 #   bloodbank.v1.cli.session.started
 #   bloodbank.v1.cli.session.ended
 #   bloodbank.v1.conversation.turn.started
-#   bloodbank.v1.tool.tool_call.requested
-#   bloodbank.v1.tool.tool_call.invoked
+#   bloodbank.v1.agent.tool.requested
+#   bloodbank.v1.agent.tool.invoked
 #   bloodbank.v1.agent.invocation.completed
 #
 # Assertions:
@@ -136,14 +136,14 @@ publish_envelope \
   "{\"thread_id\":\"${SESSION_ID}\",\"turn_id\":\"${SESSION_ID}:1\",\"prompt_text\":\"list .claude/hooks\",\"prompt_length\":18,\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\"}"
 
 publish_envelope \
-  "bloodbank.v1.tool.tool_call.requested" \
-  "bloodbank.evt.v1.tool.tool_call.requested" \
+  "bloodbank.v1.agent.tool.requested" \
+  "bloodbank.evt.v1.agent.tool.requested" \
   "invocation:${SESSION_ID}" \
   "{\"invocation_id\":\"${SESSION_ID}\",\"tool_call_id\":\"tc-1\",\"tool_name\":\"Bash\",\"arguments\":{\"command\":\"ls .claude/hooks\"},\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\",\"turn_number\":1}"
 
 publish_envelope \
-  "bloodbank.v1.tool.tool_call.invoked" \
-  "bloodbank.evt.v1.tool.tool_call.invoked" \
+  "bloodbank.v1.agent.tool.invoked" \
+  "bloodbank.evt.v1.agent.tool.invoked" \
   "invocation:${SESSION_ID}" \
   "{\"invocation_id\":\"${SESSION_ID}\",\"tool_call_id\":\"tc-1\",\"tool_name\":\"Bash\",\"arguments\":{\"command\":\"ls .claude/hooks\"},\"working_directory\":\"/tmp/smoketest\",\"git_branch\":\"main\",\"git_status\":\"clean\",\"turn_number\":1,\"success\":true}"
 
@@ -196,8 +196,8 @@ expected_types = (
     'bloodbank.v1.cli.session.started',
     'bloodbank.v1.cli.session.ended',
     'bloodbank.v1.conversation.turn.started',
-    'bloodbank.v1.tool.tool_call.requested',
-    'bloodbank.v1.tool.tool_call.invoked',
+    'bloodbank.v1.agent.tool.requested',
+    'bloodbank.v1.agent.tool.invoked',
     'bloodbank.v1.agent.invocation.completed',
 )
 for t in expected_types:
