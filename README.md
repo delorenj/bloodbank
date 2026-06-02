@@ -50,7 +50,6 @@ mise run smoketest:command
 mise run smoketest:dapr
 mise run smoketest:dapr-subscribe
 mise run smoketest:heartbeat
-mise run smoketest:claude-events
 ```
 
 The sandbox compose project is `bloodbank`; everything attaches to the
@@ -67,7 +66,7 @@ The sandbox compose project is `bloodbank`; everything attaches to the
 | `ops/smoketest/`     | End-to-end round-trip tests                                         |
 | `ops/replay/`        | Operator-facing replay workflow contract                            |
 | `ops/trace/`         | Correlation/causation walkthrough                                   |
-| `services/`          | Reference services (heartbeat producer/consumer, claude-events recorder) |
+| `services/`          | Reference services (heartbeat producer/consumer, lifecycle controller, agent hooks) |
 | `adapters/`          | Migration scaffolds for legacy producers (blocked on Holyfields)    |
 
 ## Operator CLI

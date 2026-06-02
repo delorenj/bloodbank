@@ -12,7 +12,6 @@ Naming Contract v1 envelopes — see `docs/event-naming.md`.
 | `smoketest-dapr.sh`                  | Dapr `bloodbank-pubsub` loads; publish HTTP API works; Dapr→NATS routing hits the v1 subject              | `nats` + `nats-init` + `dapr-placement` + `daprd-smoketest`                                |
 | `smoketest-dapr-subscribe.sh`        | Dapr delivers a published v1 envelope back to an app callback (the full publish→subscribe loop)           | `nats` + `nats-init` + `dapr-placement` + `echo-sub` + `daprd-subscribe`                   |
 | `smoketest-heartbeat.sh`             | `heartbeat-tick` emits `bloodbank.v1.system.heartbeat.received` and `heartbeat-recorder` records them    | `heartbeat` compose profile                                                                |
-| `smoketest-claude-events.sh`         | Six v1 events (cli, conversation, tool, agent) round-trip through Dapr to `claude-events-recorder`        | `claude-events` compose profile                                                            |
 
 ## Contract-only verifier — `smoketest-bloodbank-naming.sh`
 

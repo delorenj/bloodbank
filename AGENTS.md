@@ -33,7 +33,7 @@ alongside each service, using publishers generated from the local
 | `compose/nats/`     | JetStream topology (`streams.json`) + init script                 |
 | `cli/bb.py`         | Operator CLI (`doctor`, `trace`, `replay`, `emit`)                |
 | `ops/bootstrap/`    | Pre-boot platform validation                                      |
-| `ops/smoketest/`    | End-to-end smoke tests (NATS-direct, Dapr publish, subscribe, heartbeat, claude-events) |
+| `ops/smoketest/`    | End-to-end smoke tests (NATS-direct, Dapr publish, subscribe, heartbeat) |
 | `ops/replay/`       | Operator-facing replay workflow                                   |
 | `ops/trace/`        | Correlation/causation walkthrough                                 |
 | `services/`         | Reference services that participate in the sandbox                |
@@ -44,7 +44,7 @@ alongside each service, using publishers generated from the local
 | Task            | Purpose                                                  |
 |-----------------|----------------------------------------------------------|
 | `mise run up`           | Boot the core sandbox (NATS + nats-init)         |
-| `mise run up:all`       | Boot every profile (heartbeat + claude-events + Dapr smoke) |
+| `mise run up:all`       | Boot every profile (heartbeat + Dapr smoke + candystore) |
 | `mise run down`         | Tear the sandbox down (`-v` removes volumes)     |
 | `mise run doctor`       | `cli/bb.py doctor` — manifest-driven scaffold check |
 | `mise run repo-health`  | `cli/bb.py repo-health` — read-only git/issue/PR/check snapshot |
@@ -74,7 +74,6 @@ alongside each service, using publishers generated from the local
 | `mise run smoketest:dapr`    | Dapr publish path                           |
 | `mise run smoketest:dapr-subscribe` | Dapr publish → subscribe              |
 | `mise run smoketest:heartbeat`      | Heartbeat producer/consumer end-to-end |
-| `mise run smoketest:claude-events`  | Claude `bloodbank.v1.*` event round-trip |
 | `mise run smoketest:bloodbank-naming` | Stdlib contract verifier (no Docker) for §14 sequence × {claude, copilot} + negative probes |
 | `mise run smoketest:schema-contract-consistency` | Drift detector: every schema's declared type must pass `assert_contract` |
 | `mise run smoketest:schemas` | `validate:schemas` + `schema-contract-consistency` + `bloodbank-naming` chained for full schema-side coverage |

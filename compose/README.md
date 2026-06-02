@@ -51,7 +51,6 @@ compose/
 | `eventcatalog`      | default           | `3000`                              | Human/agent event discovery UI                  |
 | `echo-sub` + sidecar | `dapr-subscribe` | `3301`, `3501`                      | Minimal Dapr subscribe smoke app                |
 | `heartbeat-*`       | `heartbeat`       | `3601`, `3502`                      | Reference heartbeat producer/consumer path      |
-| `claude-events-*`   | `claude-events`   | `3602`, `3503`                      | Host hook event recorder path                   |
 | `postgres`          | `candystore`      | internal                            | Candystore PostgreSQL database                  |
 | `candystore` + sidecar | `candystore`   | `3603`, `3505`                      | Durable Bloodbank event audit trail             |
 

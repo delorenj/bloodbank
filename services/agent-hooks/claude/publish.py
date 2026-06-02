@@ -279,7 +279,7 @@ def _publish(envelope: dict, session: SessionState) -> None:
     subject = envelope["subject"]
     body = json.dumps(envelope).encode("utf-8")
     try:
-        nats_publish(subject, body, client_name="claude-events-bridge")
+        nats_publish(subject, body, client_name="agent-hooks-claude")
     except (OSError, RuntimeError) as exc:
         _log_error(f"publish failed subject={subject} err={exc}")
         if os.environ.get("BLOODBANK_HOOK_STRICT") == "1":

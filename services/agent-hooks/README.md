@@ -145,9 +145,8 @@ echo '{"probe":"sessionStart"}' \
 docker logs -f bloodbank-event-toaster
 ```
 
-End-to-end, the catch-all `event-toaster` forwards every envelope to
-`https://ntfy.delo.sh/bloodbank` and the `claude-events-recorder` consumes
-`bloodbank.evt.v1.>` for its `/inspect/recorded` test hook.
+End-to-end, durable audit/inspection is handled by Candystore, which consumes
+`bloodbank.evt.v1.>` through its own Dapr sidecar.
 
 ## Contract verifier
 

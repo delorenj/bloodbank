@@ -13,10 +13,10 @@ description = "Boot core sandbox (NATS + nats-init only)"
 run = "docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE up -d nats nats-init"
 
 [tasks."up:all"]
-description = "Boot every compose profile (heartbeat + claude-events + dapr + candystore)"
+description = "Boot every compose profile (heartbeat + dapr + candystore)"
 run = """
 docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
-  --profile heartbeat --profile claude-events \
+  --profile heartbeat \
   --profile dapr-smoketest --profile dapr-subscribe \
   --profile candystore \
   up -d --build
@@ -33,7 +33,7 @@ docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
 description = "Tear the sandbox down (volumes included)"
 run = """
 docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
-  --profile heartbeat --profile claude-events \
+  --profile heartbeat \
   --profile dapr-smoketest --profile dapr-subscribe \
   --profile candystore \
   down -v
@@ -161,10 +161,6 @@ run = "bash ops/smoketest/smoketest-dapr-subscribe.sh"
 description = "Heartbeat producer/consumer end-to-end"
 run = "bash ops/smoketest/smoketest-heartbeat.sh"
 
-[tasks."smoketest:claude-events"]
-description = "Claude bloodbank.v1.* event round-trip"
-run = "bash ops/smoketest/smoketest-claude-events.sh"
-
 [tasks."smoketest:bloodbank-naming"]
 description = "Stdlib-only contract verifier (§14 sequence × claude/copilot + negative probes)"
 run = "bash ops/smoketest/smoketest-bloodbank-naming.sh"
@@ -274,7 +270,7 @@ raw = true
 description = "List sandbox containers"
 run = """
 docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
-  --profile heartbeat --profile claude-events \
+  --profile heartbeat \
   --profile dapr-smoketest --profile dapr-subscribe \
   --profile candystore \
   ps

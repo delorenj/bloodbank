@@ -14,7 +14,6 @@
 #   - actor, ordering_key (event), correlationid, causationid all present
 #
 # Pure contract verifier. Stdlib-only: NATS/Dapr/Docker are NOT required.
-# Use `smoketest-claude-events.sh` for end-to-end transport verification.
 #
 # Exit codes:
 #   0 — PASS (every envelope satisfies the contract for both actors)
