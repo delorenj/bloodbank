@@ -50,6 +50,8 @@ SEQUENCE=(
   "bloodbank.v1.repo.decision.recorded|repo|{\"repo\":\"candystore\",\"decision\":\"Use repo-neutral decision event types\",\"basis\":[\"event-naming contract\"]}"
   "bloodbank.v1.repo.intake.triaged|repo|{\"repo\":\"candystore\",\"intake_id\":\"intake-1\",\"summary\":\"Operator request triaged\"}"
   "bloodbank.v1.repo.task.created|repo|{\"repo\":\"candystore\",\"task_id\":\"task-1\",\"title\":\"Update event filters\"}"
+  "bloodbank.v1.repo.task.recorded|repo|{\"repo\":\"candystore\",\"task_id\":\"task-1\",\"title\":\"Update event filters\",\"change_kind\":\"status\",\"from\":\"todo\",\"to\":\"in_progress\"}"
+  "bloodbank.v1.repo.task.completed|repo|{\"repo\":\"candystore\",\"task_id\":\"task-1\",\"title\":\"Update event filters\",\"status\":\"completed\"}"
   "bloodbank.v1.agent.invocation.completed|invocation|{\"invocation_id\":\"inv-1\"}"
   "bloodbank.v1.conversation.turn.completed|thread|{\"thread_id\":\"thr-1\",\"turn_id\":\"turn-1\",\"outcome\":\"completed\"}"
 )

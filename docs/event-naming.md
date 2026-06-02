@@ -184,6 +184,7 @@ Segment 3 of `type` MUST be one of:
 | `system`       | Bloodbank platform health (heartbeats, dapr, nats, replay).        | active   |
 | `audio`        | Audio capture lifecycle — inbox ingestion, transcription jobs.     | active   |
 | `repo`         | Repo-scoped PM facts such as decisions, intake triage, and tasks.  | active   |
+| `lifecycle`    | Finite development mission: status, roadmap, checkpoints, gates, blockers. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration.                                 | reserved |
@@ -221,6 +222,12 @@ Segment 4 of `type` MUST be one of:
 | `worktree`         | `workspace` (reserved)   | Git worktree lifecycle.                                     |
 | `branch`           | `workspace` (reserved)   | Git branch state changes.                                   |
 | `diff`             | `workspace` (reserved)   | Captured diff artifact.                                     |
+| `lifecycle`        | `lifecycle`              | Finite development mission envelope.                        |
+| `mission`          | `lifecycle`              | A single lifecycle instance (status, roadmap, checkpoints). |
+| `checkpoint`       | `lifecycle`              | A roadmap milestone that can be reached.                    |
+| `gate`             | `lifecycle`              | An intentional pause or review point on a lifecycle.        |
+| `roadmap`          | `lifecycle`              | A versioned plan of phases and checkpoints.                 |
+| `status`           | `lifecycle`              | Aggregate lifecycle status and health.                      |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -234,7 +241,7 @@ emit an entity not paired with it here.
 `created`, `resumed`, `started`, `ended`, `completed`, `failed`, `canceled`,
 `generated`, `appended`, `received`, `sent`, `granted`, `denied`, `opened`,
 `closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`,
-`recorded`, `triaged`.
+`recorded`, `triaged`, `updated`, `reached`, `resolved`.
 
 ### 8.2 Command actions (imperative present)
 
