@@ -1,0 +1,25 @@
+[project]
+name = "lifecycle-controller"
+version = "0.1.0"
+description = "Bloodbank lifecycle controller — reconciles lifecycle state from sentinel observations"
+requires-python = ">=3.12"
+dependencies = [
+    "asyncpg>=0.29",
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+testpaths = ["tests"]

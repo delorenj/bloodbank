@@ -34,6 +34,8 @@ hive-mind-prompt-*.txt
 gha-creds-*.json
 
 # Python
+.venv/
+venv/
 __pycache__/
 *.py[cod]
 *$py.class
