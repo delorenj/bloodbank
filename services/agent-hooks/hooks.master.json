@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "$comment": "SINGLE SOURCE OF TRUTH for agent-hooks. Edit this file, then run `mise run hooks:sync` (or python3 sync.py --apply) to propagate to every agent's native hook config + publisher event map. Never hand-edit the generated artifacts (*/hooks.json, claude/settings.hooks.json, */event_map.generated.json) or a publisher's HOOK_MAP/EVENT_MAP — sync.py overwrites them from here. Ambiguous/divergent mappings are recorded in hooks.mappings.lock.json so the next sync is seamless. See README.md §'SSOT propagation'.",
+  "meta": {
+    "service_dir_placeholder": "{service_dir}",
+    "contract": "../../docs/event-naming.md",
+    "validator": "core/validate.py",
+    "lock": "hooks.mappings.lock.json"
+  },
+  "lifecycle": {
+    "agent.session.started": {
+      "type": "bloodbank.v1.agent.session.started",
+      "kind": "event",
+      "ordering_bucket": "session",
+      "role": "session_start",
+      "description": "An agent CLI session began. Canonical (resolved 2026-06-07): agent.session.* supersedes cli.session.* for agent CLIs."
+    },
+    "agent.session.ended": {
+      "type": "bloodbank.v1.agent.session.ended",
+      "kind": "event",
+      "ordering_bucket": "session",
+      "role": "session_end",
+      "description": "An agent CLI session ended."
+    },
+    "conversation.turn.started": {
+      "type": "bloodbank.v1.conversation.turn.started",
+      "kind": "event",
+      "ordering_bucket": "thread",
+      "role": "prompt_submit",
+      "description": "A user prompt started a conversation turn."
+    },
+    "conversation.turn.completed": {
+      "type": "bloodbank.v1.conversation.turn.completed",
+      "kind": "event",
+      "ordering_bucket": "thread",
+      "role": "turn_complete",
+      "description": "A conversation turn reached a terminal state."
+    },
+    "agent.tool.requested": {
+      "type": "bloodbank.v1.agent.tool.requested",
+      "kind": "event",
+      "ordering_bucket": "invocation",
+      "role": "pre_tool",
+      "description": "A tool call was requested (pre-execution)."
+    },
+    "agent.tool.invoked": {
+      "type": "bloodbank.v1.agent.tool.invoked",
+      "kind": "event",
+      "ordering_bucket": "invocation",
+      "role": "tool_invoked",
+      "emitted": false,
+      "description": "A tool was invoked. Defined for §14 fidelity but NOT bound to a post-tool hook: resolved 2026-06-07 to use agent.tool.completed for the single post-tool hook surface."
+    },
+    "agent.tool.completed": {
+      "type": "bloodbank.v1.agent.tool.completed",
+      "kind": "event",
+      "ordering_bucket": "invocation",
+      "role": "post_tool",
+      "description": "A tool call reached a terminal state (post-execution, carries outcome). Canonical post-tool event for ALL agents (resolved 2026-06-07)."
+    },
+    "agent.invocation.started": {
+      "type": "bloodbank.v1.agent.invocation.started",
+      "kind": "event",
+      "ordering_bucket": "invocation",
+      "role": "invocation_start",
+      "description": "A (sub)agent invocation started."
+    },
+    "agent.invocation.completed": {
+      "type": "bloodbank.v1.agent.invocation.completed",
+      "kind": "event",
+      "ordering_bucket": "invocation",
+      "role": "subagent_stop",
+      "description": "A (sub)agent invocation completed. Canonical subagent-stop event for ALL agents (resolved 2026-06-07); supersedes the illegal agent.delegation.completed."
+    },
+    "agent.invocation.failed": {
+      "type": "bloodbank.v1.agent.invocation.failed",
+      "kind": "event",
+      "ordering_bucket": "invocation",
+      "role": "invocation_failed",
+      "description": "An agent invocation failed/errored."
+    }
+  },
+  "agents": {
+    "claude": {
+      "label": "Claude Code",
+      "dialect": "claude_settings",
+      "config_target": "claude/settings.hooks.json",
+      "live_target": "~/.claude/settings.json",
+      "publisher": "claude/publish.py",
+      "event_map_target": "claude/event_map.generated.json",
+      "runner": "$HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py",
+      "default_timeout": 3,
+      "actor": {
+        "type": "agent_cli",
+        "agent_id": "bloodbank.agent.claude",
+        "cli": "claude",
+        "provider": "anthropic",
+        "model": null
+      },
+      "bindings": [
+        { "native": "SessionStart", "role": "session_start", "arg": "session-start", "lifecycle": "agent.session.started", "payload": "empty" },
+        { "native": "UserPromptSubmit", "role": "prompt_submit", "arg": "prompt-submitted", "lifecycle": "conversation.turn.started", "payload": "stdin" },
+        { "native": "PreToolUse", "role": "pre_tool", "arg": "tool-request", "lifecycle": "agent.tool.requested", "payload": "stdin", "matcher": ".*" },
+        { "native": "PostToolUse", "role": "post_tool", "arg": "tool-action", "lifecycle": "agent.tool.completed", "payload": "stdin", "matcher": ".*" },
+        { "native": "SubagentStop", "role": "subagent_stop", "arg": "subagent-stopped", "lifecycle": "agent.invocation.completed", "payload": "stdin" },
+        { "native": "Stop", "role": "session_end", "arg": "session-end", "lifecycle": "agent.session.ended", "payload": "stdin" }
+      ]
+    },
+    "copilot": {
+      "label": "GitHub Copilot CLI",
+      "dialect": "copilot",
+      "config_target": "copilot/hooks.json",
+      "live_target": "~/.copilot/hooks/bloodbank.json",
+      "publisher": "copilot/publish.py",
+      "event_map_target": "copilot/event_map.generated.json",
+      "runner": "python3 {service_dir}/copilot/publish.py",
+      "default_timeout_sec": 5,
+      "actor": {
+        "type": "agent_cli",
+        "agent_id": "bloodbank.agent.copilot",
+        "cli": "copilot",
+        "provider": "github_copilot",
+        "model": null
+      },
+      "bindings": [
+        { "native": "sessionStart", "role": "session_start", "arg": "sessionStart", "lifecycle": "agent.session.started", "payload": "stdin" },
+        { "native": "sessionEnd", "role": "session_end", "arg": "sessionEnd", "lifecycle": "agent.session.ended", "payload": "stdin" },
+        { "native": "userPromptSubmitted", "role": "prompt_submit", "arg": "userPromptSubmitted", "lifecycle": "conversation.turn.started", "payload": "stdin" },
+        { "native": "preToolUse", "role": "pre_tool", "arg": "preToolUse", "lifecycle": "agent.tool.requested", "payload": "stdin" },
+        { "native": "postToolUse", "role": "post_tool", "arg": "postToolUse", "lifecycle": "agent.tool.completed", "payload": "stdin" },
+        { "native": "errorOccurred", "role": "invocation_failed", "arg": "errorOccurred", "lifecycle": "agent.invocation.failed", "payload": "stdin" },
+        { "native": "agentStop", "role": "subagent_stop", "arg": "agentStop", "lifecycle": "agent.invocation.completed", "payload": "stdin" }
+      ]
+    },
+    "codex": {
+      "label": "Codex CLI",
+      "dialect": "codex",
+      "config_target": "codex/hooks.json",
+      "live_target": "~/.codex/hooks.json",
+      "publisher": "codex/publish.py",
+      "event_map_target": "codex/event_map.generated.json",
+      "runner": "python3 {service_dir}/codex/publish.py",
+      "default_timeout": 3000,
+      "actor": {
+        "type": "agent_cli",
+        "agent_id": "bloodbank.agent.codex",
+        "cli": "codex",
+        "provider": "openai",
+        "model": null
+      },
+      "bindings": [
+        { "native": "SessionStart", "role": "session_start", "arg": "SessionStart", "lifecycle": "agent.session.started", "payload": "empty" },
+        { "native": "Stop", "role": "session_end", "arg": "Stop", "lifecycle": "agent.session.ended", "payload": "empty", "extra_args": ["user_stop"] },
+        { "native": "UserPromptSubmit", "role": "prompt_submit", "arg": "UserPromptSubmit", "lifecycle": "conversation.turn.started", "payload": "stdin" },
+        { "native": "PreToolUse", "role": "pre_tool", "arg": "PreToolUse", "lifecycle": "agent.tool.requested", "payload": "stdin", "matcher": ".*" },
+        { "native": "PostToolUse", "role": "post_tool", "arg": "PostToolUse", "lifecycle": "agent.tool.completed", "payload": "stdin", "matcher": ".*" },
+        { "native": "SubagentStart", "role": "invocation_start", "arg": "SubagentStart", "lifecycle": "agent.invocation.started", "payload": "stdin" },
+        { "native": "SubagentStop", "role": "subagent_stop", "arg": "SubagentStop", "lifecycle": "agent.invocation.completed", "payload": "stdin" }
+      ]
+    },
+    "hermes": {
+      "label": "Hermes PM agent",
+      "dialect": "runtime",
+      "config_target": null,
+      "event_map_target": null,
+      "note": "Hermes is a Python agent runtime (agents/hermes/pm/runtime/), NOT a hook-config CLI — it already participates in Bloodbank as a consumer (runtime/bloodbank-consumer.py). To emit session lifecycle it must call a publisher at session start/end from the runtime: a hermes-agent-template runtime-scaffold integration (use the hermes-pm-template-maintenance skill so it propagates to the fleet), not a hook-config deploy. Bindings are the canonical events hermes SHOULD emit; live emission is pending that runtime wire-up. dialect=runtime is inert to sync/deploy (no config generated/installed).",
+      "actor": {
+        "type": "agent_cli",
+        "agent_id": "bloodbank.agent.hermes",
+        "cli": "hermes",
+        "provider": null,
+        "model": null
+      },
+      "bindings": [
+        { "native": "session.start", "role": "session_start", "lifecycle": "agent.session.started", "payload": "runtime" },
+        { "native": "session.end", "role": "session_end", "lifecycle": "agent.session.ended", "payload": "runtime" },
+        { "native": "prompt", "role": "prompt_submit", "lifecycle": "conversation.turn.started", "payload": "runtime" },
+        { "native": "invocation.start", "role": "invocation_start", "lifecycle": "agent.invocation.started", "payload": "runtime" },
+        { "native": "invocation.stop", "role": "subagent_stop", "lifecycle": "agent.invocation.completed", "payload": "runtime" }
+      ]
+    },
+    "openclaw": {
+      "label": "OpenClaw",
+      "dialect": "watcher",
+      "config_target": null,
+      "publisher": "openclaw/watch.py",
+      "event_map_target": null,
+      "note": "Log/trajectory tailer, not a hook-config CLI. Synthesizes the same lifecycle roles; no native config file to generate. Bindings below are documentation of intended coverage only.",
+      "actor": {
+        "type": "agent_cli",
+        "agent_id": "bloodbank.agent.openclaw",
+        "cli": "openclaw",
+        "provider": null,
+        "model": null
+      },
+      "bindings": [
+        { "native": "session.start", "role": "session_start", "lifecycle": "agent.session.started", "payload": "synthetic" },
+        { "native": "session.end", "role": "session_end", "lifecycle": "agent.session.ended", "payload": "synthetic" },
+        { "native": "prompt", "role": "prompt_submit", "lifecycle": "conversation.turn.started", "payload": "synthetic" },
+        { "native": "tool.pre", "role": "pre_tool", "lifecycle": "agent.tool.requested", "payload": "synthetic" },
+        { "native": "tool.post", "role": "post_tool", "lifecycle": "agent.tool.completed", "payload": "synthetic" },
+        { "native": "invocation.start", "role": "invocation_start", "lifecycle": "agent.invocation.started", "payload": "synthetic" },
+        { "native": "invocation.stop", "role": "subagent_stop", "lifecycle": "agent.invocation.completed", "payload": "synthetic" }
+      ]
+    }
+  }
+}

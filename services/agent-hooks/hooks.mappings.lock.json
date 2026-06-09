@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "$comment": "RESOLUTION MEMORY for ambiguous/divergent hook mappings. sync.py consults this BEFORE prompting: any ambiguity whose id is recorded here is auto-applied (seamless re-sync). New/changed ambiguities are surfaced for interactive resolution and then appended here. Keys: 'role:<role>' for cross-agent divergence on a lifecycle role; 'type:<illegal-type>' for a referenced type that failed the contract. Do not delete entries unless you intend to re-open that decision.",
+  "policy": {
+    "on_unresolved": "prompt",
+    "on_recorded": "apply",
+    "auto_apply_strategies": ["unify-to", "rename", "drop", "keep"]
+  },
+  "resolutions": {
+    "role:session_start": {
+      "resolution": "bloodbank.v1.agent.session.started",
+      "ordering_bucket": "session",
+      "strategy": "unify-to",
+      "diverged": {
+        "claude": "bloodbank.v1.session.started (4-token, contract-illegal hand-edit)",
+        "copilot": "bloodbank.v1.cli.session.started",
+        "codex": "bloodbank.v1.cli.session.started"
+      },
+      "rationale": "Operator chose to evolve session events under the agent domain. agent.session.started is a legal 5-token type (domain=agent, entity=session, action=started) using already-allowlisted tokens — no contract regex/domain change needed, unlike the bare session.* form. Supersedes cli.session.* for agent CLIs.",
+      "decided_at": "2026-06-07",
+      "decided_by": "interactive (jaradd@gmail.com)"
+    },
+    "role:session_end": {
+      "resolution": "bloodbank.v1.agent.session.ended",
+      "ordering_bucket": "session",
+      "strategy": "unify-to",
+      "diverged": {
+        "claude": "bloodbank.v1.session.ended (4-token, contract-illegal hand-edit)",
+        "copilot": "bloodbank.v1.cli.session.ended",
+        "codex": "bloodbank.v1.cli.session.ended"
+      },
+      "rationale": "Mirror of role:session_start. agent.session.ended.",
+      "decided_at": "2026-06-07",
+      "decided_by": "interactive (jaradd@gmail.com)"
+    },
+    "role:post_tool": {
+      "resolution": "bloodbank.v1.agent.tool.completed",
+      "ordering_bucket": "invocation",
+      "strategy": "unify-to",
+      "diverged": {
+        "claude": "bloodbank.v1.agent.tool.invoked",
+        "copilot": "bloodbank.v1.agent.tool.completed",
+        "codex": "bloodbank.v1.agent.tool.completed"
+      },
+      "rationale": "The single post-tool hook fires after execution and carries outcome/result, so agent.tool.completed is the accurate, outcome-bearing event the other two agents already use. Claude moves off agent.tool.invoked for cross-agent consistency.",
+      "decided_at": "2026-06-07",
+      "decided_by": "interactive (jaradd@gmail.com)"
+    },
+    "role:subagent_stop": {
+      "resolution": "bloodbank.v1.agent.invocation.completed",
+      "ordering_bucket": "invocation",
+      "strategy": "unify-to",
+      "diverged": {
+        "claude": "bloodbank.v1.agent.delegation.completed (delegation entity not allowlisted, contract-illegal hand-edit)",
+        "copilot": "bloodbank.v1.agent.invocation.completed",
+        "codex": "bloodbank.v1.agent.invocation.completed"
+      },
+      "rationale": "delegation is not an allowed entity and has no schema. Sub-agent runs are nested invocations per §14, so agent.invocation.completed is canonical. Claude reverts off the illegal delegation type.",
+      "decided_at": "2026-06-07",
+      "decided_by": "interactive (jaradd@gmail.com)"
+    }
+  }
+}

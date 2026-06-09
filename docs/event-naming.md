@@ -345,7 +345,7 @@ order with siblings on the same logical entity. Convention:
 thread:<thread_id>
 turn:<turn_id>
 invocation:<invocation_id>
-cli_session:<session_id>
+session:<session_id>             # agent CLI session (was cli_session)
 process:<process_id>
 transcription:<transcription_id>
 file:<sha256(file_path)|file_id>
@@ -454,7 +454,7 @@ or equivalent) uses the type as the key when uploading.
 
 ## 14. Canonical event sequence for an agent turn
 
-For a single agent turn from any CLI (Claude, Copilot, future), the
+For a single agent turn from any CLI (Claude, Copilot, Codex, future), the
 normalized event sequence is:
 
 ```
@@ -463,7 +463,7 @@ bloodbank.v1.conversation.thread.created         # only on first turn of a threa
 bloodbank.v1.conversation.thread.resumed         # if a known thread is reopened
 bloodbank.v1.conversation.turn.started
 bloodbank.v1.agent.invocation.started
-bloodbank.v1.cli.session.started                 # CLI-backed paths only
+bloodbank.v1.agent.session.started               # agent CLI session (supersedes cli.session.started)
 bloodbank.v1.cli.process.spawned                 # CLI-backed paths only
 bloodbank.v1.cli.stdout.appended                 # 0..n; chunked
 bloodbank.v1.cli.stderr.appended                 # 0..n; chunked
@@ -477,33 +477,52 @@ bloodbank.v1.agent.invocation.completed
 bloodbank.v1.conversation.turn.completed
 ```
 
-Claude and Copilot adapters MUST emit the same sequence; only `actor.*` and
-payload details differ.
+Claude, Copilot, and Codex adapters MUST emit the same sequence; only
+`actor.*` and payload details differ.
 
 ---
 
 ## 15. Migration map — legacy → v1 type renames
 
-The hard-rename (no aliases) list, derived from the current
-`services/agent-hooks/{claude,copilot}/publish.py` `EVENT_MAP` /
-`HOOK_MAP` and the openclaw watcher:
+The hard-rename (no aliases) list. As of 2026-06-07 the agent-hooks mapping is
+no longer hand-maintained in each `publish.py`: it is propagated from the single
+source of truth `services/agent-hooks/hooks.master.json` by `sync.py`
+(`mise run hooks:sync`). Divergence resolutions are recorded in
+`services/agent-hooks/hooks.mappings.lock.json`.
+
+Two resolutions landed in this revision (see the lock for rationale):
+
+- **`cli.session.*` → `agent.session.*`** — agent CLI session events moved
+  under the `agent` domain (beside `agent.invocation` / `agent.tool`). The
+  `cli` domain keeps `process` / `stdout` / `stderr`. Ordering bucket
+  `cli_session` → `session`.
+- **post-tool hooks emit `agent.tool.completed`** (not `agent.tool.invoked`)
+  on every agent — the single post-tool hook fires after execution and
+  carries `outcome`.
 
 | Legacy `type`              | v1 `type`                                 | Notes                                                               |
 | -------------------------- | ----------------------------------------- | ------------------------------------------------------------------- |
-| `agent.session.started`    | `bloodbank.v1.cli.session.started`        | Plus `bloodbank.v1.conversation.thread.created` on first turn.      |
-| `agent.session.ended`      | `bloodbank.v1.cli.session.ended`          | Plus `bloodbank.v1.conversation.turn.completed` if a turn was open. |
+| `agent.session.started`    | `bloodbank.v1.agent.session.started`        | Plus `bloodbank.v1.conversation.thread.created` on first turn.      |
+| `agent.session.ended`      | `bloodbank.v1.agent.session.ended`          | Plus `bloodbank.v1.conversation.turn.completed` if a turn was open. |
 | `agent.prompt.submitted`   | `bloodbank.v1.conversation.turn.started`  | The prompt is what starts a turn.                                   |
 | `agent.tool.requested`     | `bloodbank.v1.agent.tool.requested`   |                                                                     |
 | `agent.tool.invoked`       | `bloodbank.v1.agent.tool.invoked`     |                                                                     |
 | `agent.subagent.completed` | `bloodbank.v1.agent.invocation.completed` | Sub-agent runs are nested invocations.                              |
 | `agent.subagent.started`   | `bloodbank.v1.agent.invocation.started`   | (openclaw emits this)                                               |
-| `copilot.session.started`  | `bloodbank.v1.cli.session.started`        | `actor.cli=copilot`, `actor.provider=github_copilot`.               |
-| `copilot.session.ended`    | `bloodbank.v1.cli.session.ended`          |                                                                     |
+| `copilot.session.started`  | `bloodbank.v1.agent.session.started`        | `actor.cli=copilot`, `actor.provider=github_copilot`.               |
+| `copilot.session.ended`    | `bloodbank.v1.agent.session.ended`          |                                                                     |
 | `copilot.prompt.submitted` | `bloodbank.v1.conversation.turn.started`  |                                                                     |
 | `copilot.tool.pre`         | `bloodbank.v1.agent.tool.requested`   |                                                                     |
 | `copilot.tool.post`        | `bloodbank.v1.agent.tool.completed`   |                                                                     |
 | `copilot.error.occurred`   | `bloodbank.v1.agent.invocation.failed`    |                                                                     |
 | `copilot.agent.stopped`    | `bloodbank.v1.agent.invocation.completed` |                                                                     |
+| `codex.session.started`    | `bloodbank.v1.agent.session.started`        | `actor.cli=codex`, `actor.provider=openai`.                         |
+| `codex.session.ended`      | `bloodbank.v1.agent.session.ended`          |                                                                     |
+| `codex.prompt.submitted`   | `bloodbank.v1.conversation.turn.started`  |                                                                     |
+| `codex.tool.pre`           | `bloodbank.v1.agent.tool.requested`       |                                                                     |
+| `codex.tool.post`          | `bloodbank.v1.agent.tool.completed`       |                                                                     |
+| `codex.subagent.started`   | `bloodbank.v1.agent.invocation.started`   |                                                                     |
+| `codex.subagent.stopped`   | `bloodbank.v1.agent.invocation.completed` |                                                                     |
 | `smoketest.ping`           | `bloodbank.v1.system.heartbeat.received`  | Smoke fixture.                                                      |
 
 Anything not on this table that does not match §2's regex MUST be
@@ -523,11 +542,11 @@ aliases, no deprecation period.
 | T-2  | bloodbank  | Schema tree at `bloodbank/schemas/bloodbank/v1/<domain>/...` per §12 + `_common/{cloudevent_base,types}.v1.json` deps. Validator and CI consume it locally.     | DONE                                    |
 | T-3  | bloodbank  | Port Pydantic + Zod generators from Holyfields into `bloodbank/scripts` + `bloodbank/tools/generators` and emit `BloodbankV1Type` enum from the local tree.     | OPEN — see RECOMMENDATION.md            |
 | T-4  | bloodbank  | `services/agent-hooks/core/{envelope,validate}.py` enforce §2, §3, §5, §9 and §11 on every envelope. Loud `ContractViolation`; no quarantine.                   | DONE                                    |
-| T-5  | bloodbank  | `services/agent-hooks/{claude,copilot,openclaw}/publish.py` (and `watch.py`) emit v1 types per §15.                                                             | DONE                                    |
+| T-5  | bloodbank  | `services/agent-hooks/{claude,copilot,codex,openclaw}/publish.py` (and `watch.py`) emit v1 types per §15.                                                       | DONE                                    |
 | T-6  | bloodbank  | `compose/nats/streams.json` filters are `bloodbank.evt.v1.>` and `bloodbank.{cmd,rpy}.v1.>`. `compose/docker-compose.yml` env defaults migrated.                | DONE                                    |
 | T-7  | bloodbank  | `services/event-toaster/main.py` subscribes to `bloodbank.evt.v1.>`. (ntfy formatter is operator-local — out of scope per goal.)                                | PARTIAL — subject default migrated      |
 | T-8  | bloodbank  | `cli/bb.py verify-envelope` runs the full v1 contract against any envelope on stdin/file.                                                                       | DONE                                    |
-| T-9  | bloodbank  | `ops/smoketest/smoketest-bloodbank-naming.sh` + `mise run smoketest:bloodbank-naming` — stdlib verifier (no Docker) for §14 sequence × {claude, copilot}.       | DONE                                    |
+| T-9  | bloodbank  | `ops/smoketest/smoketest-bloodbank-naming.sh` + `mise run smoketest:bloodbank-naming` — stdlib verifier (no Docker) for §14 sequence × {claude, copilot, codex}. | DONE                                    |
 | T-10 | bloodbank  | `compose/nats/README.md`, `services/agent-hooks/README.md`, `ops/smoketest/README.md`, `AGENTS.md` all point here.                                              | DONE                                    |
 | T-11 | 33god meta | If ADR-0001 needs an amendment recording this contract, file ADR-0002.                                                                                          | OPEN — metarepo-side                    |
 
@@ -547,7 +566,7 @@ tokens ∩ §9 banned tokens == ∅
 subject == "bloodbank." + {evt|cmd|rpy} + ".v1." + tokens[2..5].join(".")
 subject's kind marker matches envelope.kind
 source, actor, subject, correlationid, ordering_key all present on every event
-actor.cli ∈ {claude, copilot, ...} per actual emitter
+actor.cli ∈ {claude, copilot, codex, ...} per actual emitter
 ordering_key is stable across events on the same entity
 ```
 

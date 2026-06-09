@@ -74,7 +74,7 @@ alongside each service, using publishers generated from the local
 | `mise run smoketest:dapr`    | Dapr publish path                           |
 | `mise run smoketest:dapr-subscribe` | Dapr publish → subscribe              |
 | `mise run smoketest:heartbeat`      | Heartbeat producer/consumer end-to-end |
-| `mise run smoketest:bloodbank-naming` | Stdlib contract verifier (no Docker) for §14 sequence × {claude, copilot} + negative probes |
+| `mise run smoketest:bloodbank-naming` | Stdlib contract verifier (no Docker) for §14 sequence × {claude, copilot, codex} + negative probes |
 | `mise run smoketest:schema-contract-consistency` | Drift detector: every schema's declared type must pass `assert_contract` |
 | `mise run smoketest:schemas` | `validate:schemas` + `schema-contract-consistency` + `bloodbank-naming` chained for full schema-side coverage |
 | `mise run smoketest:repo-health-cleanup` | local cleanup + strict worktree checks (default/KEEP/REPORT/DRY_RUN/error) |
@@ -160,6 +160,12 @@ alongside each service, using publishers generated from the local
 - Candystore is the sibling durable audit service, not a duplicate Bloodbank
   stack. Bloodbank compose owns the runtime wiring and builds `../../candystore`
   under the `candystore` profile. See `docs/candystore-integration.md`.
+- **agent-hooks mapping has one source of truth:**
+  `services/agent-hooks/hooks.master.json`. Propagate with `mise run hooks:sync`;
+  gate with `mise run hooks:check`. Per-agent native configs
+  (`*/hooks.json`, `claude/settings.hooks.json`) and publisher event maps
+  (`*/event_map.generated.json`, `EVENT_MAP`/`HOOK_MAP`) are GENERATED — never
+  hand-edit them. Ambiguity resolutions live in `hooks.mappings.lock.json`.
 
 ## Anti-patterns
 

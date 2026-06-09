@@ -6,7 +6,7 @@ Naming Contract v1 envelopes — see `docs/event-naming.md`.
 
 | Test                                 | What it proves                                                                                          | Requires                                                                                  |
 |--------------------------------------|----------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|
-| `smoketest-bloodbank-naming.sh`      | Stdlib-only contract verifier: §14 sequence × {claude, copilot} + negative probes against `cli/bb.py`    | python3                                                                                   |
+| `smoketest-bloodbank-naming.sh`      | Stdlib-only contract verifier: §14 sequence × {claude, copilot, codex} + negative probes against `cli/bb.py` | python3                                                                                |
 | `smoketest.sh`                       | NATS JetStream reachable; `BLOODBANK_EVENTS` stream accepts a v1 envelope; round-trips unchanged          | `nats` + `nats-init`                                                                       |
 | `smoketest-command.sh`               | `BLOODBANK_COMMANDS` handles `bloodbank.cmd.v1.>` → `bloodbank.rpy.v1.>` with correlation preservation    | `nats` + `nats-init`                                                                       |
 | `smoketest-dapr.sh`                  | Dapr `bloodbank-pubsub` loads; publish HTTP API works; Dapr→NATS routing hits the v1 subject              | `nats` + `nats-init` + `dapr-placement` + `daprd-smoketest`                                |
@@ -16,11 +16,12 @@ Naming Contract v1 envelopes — see `docs/event-naming.md`.
 ## Contract-only verifier — `smoketest-bloodbank-naming.sh`
 
 Pure stdlib-only. No Docker, no NATS. Synthesizes the §14 canonical
-sequence (15 events) for both `actor.cli=claude` and `actor.cli=copilot`
-and pipes each envelope through `cli/bb.py verify-envelope`, which runs
-`core.validate.assert_contract`. Also runs negative-case probes that MUST
-be rejected (legacy 3-token type, banned token, wrong tense, missing
-actor, subject/kind marker mismatch).
+sequence for `actor.cli=claude`, `actor.cli=copilot`, and
+`actor.cli=codex`, then pipes each envelope through
+`cli/bb.py verify-envelope`, which runs `core.validate.assert_contract`.
+It also runs negative-case probes that MUST be rejected: legacy 3-token
+type, banned token, wrong tense, missing actor, and subject/kind marker
+mismatch.
 
 ```bash
 mise run smoketest:bloodbank-naming

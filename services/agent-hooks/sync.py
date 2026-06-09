@@ -1,0 +1,622 @@
+#!/usr/bin/env python3
+"""Propagate hooks.master.json (SSOT) → each agent's native hook implementation.
+
+One source of truth — `hooks.master.json` — defines the canonical lifecycle
+event catalog and, per agent, how that agent's *native* hook surface binds to
+it. This tool maps and propagates the SSOT into every agent's unique
+implementation:
+
+  * <agent>/event_map.generated.json   — publisher's hook-arg → (ce_type, bucket)
+  * claude/settings.hooks.json          — Claude settings fragment (merge target)
+  * copilot/hooks.json                  — Copilot CLI hooks config
+  * codex/hooks.json                    — Codex CLI hooks config
+
+Ambiguous / divergent mappings (a contract-illegal type, or the same lifecycle
+"role" bound to different types across agents) are resolved against
+`hooks.mappings.lock.json`. Recorded resolutions are applied automatically so
+the *next* sync is seamless; unrecorded ones are surfaced for interactive
+resolution (`--resolve`) and then appended to the lock.
+
+Modes:
+    python3 sync.py --check          read-only; report; nonzero exit on drift/ambiguity
+    python3 sync.py --check --json   machine-readable report (for agents/CI)
+    python3 sync.py --apply          write generated artifacts (blocked on unresolved ambiguity)
+    python3 sync.py --resolve        interactively resolve open ambiguities, append to lock
+    python3 sync.py --apply --resolve  resolve then apply
+
+Exit codes:
+    0  clean (apply succeeded, or check found everything in sync)
+    2  usage / load error
+    3  unresolved ambiguities (need --resolve or a lock entry)
+    4  generated artifacts are out of date (check only; run --apply)
+
+Stdlib-only, like the publishers. Imports core.validate for contract checks.
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import os
+import shutil
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+SERVICE_DIR = Path(__file__).resolve().parent
+MASTER_PATH = SERVICE_DIR / "hooks.master.json"
+LOCK_PATH = SERVICE_DIR / "hooks.mappings.lock.json"
+
+if str(SERVICE_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVICE_DIR))
+
+from core.validate import (  # noqa: E402
+    ContractViolation,
+    _schema_path_for,
+    assert_action_tense,
+    assert_type_shape,
+)
+
+GENERATED_HEADER = {
+    "_do_not_edit": "GENERATED from hooks.master.json by sync.py — run `mise run hooks:sync`.",
+}
+
+
+# --------------------------------------------------------------------------
+# Load / save
+# --------------------------------------------------------------------------
+
+
+def _load_json(path: Path) -> dict:
+    with path.open() as f:
+        return json.load(f)
+
+
+def load_master() -> dict:
+    if not MASTER_PATH.exists():
+        _die(f"missing SSOT: {MASTER_PATH}")
+    return _load_json(MASTER_PATH)
+
+
+def load_lock() -> dict:
+    if not LOCK_PATH.exists():
+        return {"version": 1, "policy": {"on_unresolved": "prompt"}, "resolutions": {}}
+    return _load_json(LOCK_PATH)
+
+
+def save_lock(lock: dict) -> None:
+    with LOCK_PATH.open("w") as f:
+        json.dump(lock, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
+def _die(msg: str) -> "NoReturn":  # type: ignore[name-defined]
+    print(f"hooks-sync: ERROR: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+# --------------------------------------------------------------------------
+# Resolution model
+# --------------------------------------------------------------------------
+
+
+def _resolutions(lock: dict) -> dict:
+    return lock.get("resolutions", {})
+
+
+def effective_type(binding: dict, lifecycle: dict, lock: dict) -> tuple[str, str]:
+    """Resolve a binding to its (ce_type, ordering_bucket).
+
+    A `role:<role>` entry in the lock overrides the binding's catalog type —
+    this is what makes the lock authoritative and re-syncs seamless: any agent
+    (even a newly added one) whose binding role is already decided gets the
+    remembered resolution, regardless of which lifecycle key it references.
+    """
+    role = binding.get("role")
+    res = _resolutions(lock).get(f"role:{role}")
+    if res and res.get("resolution"):
+        bucket = res.get("ordering_bucket")
+        if not bucket:
+            life = lifecycle.get(binding.get("lifecycle", ""), {})
+            bucket = life.get("ordering_bucket", "invocation")
+        return res["resolution"], bucket
+    life = lifecycle.get(binding.get("lifecycle", ""))
+    if not life:
+        raise KeyError(
+            f"binding role={role!r} references unknown lifecycle "
+            f"{binding.get('lifecycle')!r}"
+        )
+    return life["type"], life["ordering_bucket"]
+
+
+# --------------------------------------------------------------------------
+# Ambiguity / drift detection
+# --------------------------------------------------------------------------
+
+
+def detect_ambiguities(master: dict, lock: dict) -> list[dict]:
+    """Return open (unresolved) ambiguities. Empty list == clean."""
+    lifecycle = master["lifecycle"]
+    agents = master["agents"]
+    ambiguities: list[dict] = []
+
+    # (1) Contract-illegality of any catalog type that is actually emitted.
+    for key, life in lifecycle.items():
+        if life.get("emitted") is False:
+            continue
+        ce_type = life["type"]
+        try:
+            _, _, action = assert_type_shape(ce_type)
+            assert_action_tense(action, life.get("kind", "event"))
+        except ContractViolation as exc:
+            if f"type:{ce_type}" in _resolutions(lock):
+                continue
+            ambiguities.append(
+                {
+                    "id": f"type:{ce_type}",
+                    "kind": "illegal-type",
+                    "detail": f"lifecycle {key!r} type {ce_type!r} violates contract: {exc}",
+                    "candidates": [],
+                }
+            )
+
+    # (2) Cross-agent divergence: same role, different *catalog* type, no lock entry.
+    role_types: dict[str, dict[str, str]] = {}
+    for agent_name, agent in agents.items():
+        if agent.get("dialect") in ("watcher", "runtime"):
+            continue
+        for b in agent.get("bindings", []):
+            role = b.get("role")
+            life = lifecycle.get(b.get("lifecycle", ""))
+            if not role or not life:
+                continue
+            role_types.setdefault(role, {})[agent_name] = life["type"]
+
+    for role, per_agent in role_types.items():
+        distinct = set(per_agent.values())
+        if len(distinct) > 1 and f"role:{role}" not in _resolutions(lock):
+            ambiguities.append(
+                {
+                    "id": f"role:{role}",
+                    "kind": "divergent-role",
+                    "detail": f"role {role!r} maps to {len(distinct)} types across agents: {per_agent}",
+                    "candidates": sorted(distinct),
+                }
+            )
+
+    # (3) Missing schema for any emitted, contract-legal type.
+    seen: set[str] = set()
+    for agent_name, agent in agents.items():
+        if agent.get("dialect") in ("watcher", "runtime"):
+            continue
+        for b in agent.get("bindings", []):
+            try:
+                ce_type, _ = effective_type(b, lifecycle, lock)
+            except KeyError:
+                continue
+            if ce_type in seen:
+                continue
+            seen.add(ce_type)
+            try:
+                assert_type_shape(ce_type)
+            except ContractViolation:
+                continue  # already reported in (1)
+            if not _schema_path_for(ce_type).exists():
+                ambiguities.append(
+                    {
+                        "id": f"schema:{ce_type}",
+                        "kind": "missing-schema",
+                        "detail": f"no schema file for {ce_type} at {_schema_path_for(ce_type)}",
+                        "candidates": [],
+                    }
+                )
+    return ambiguities
+
+
+# --------------------------------------------------------------------------
+# Generation
+# --------------------------------------------------------------------------
+
+
+def _runner(agent: dict) -> str:
+    return agent["runner"].replace("{service_dir}", str(SERVICE_DIR))
+
+
+def render_event_map(agent: dict, lifecycle: dict, lock: dict) -> dict:
+    out: dict[str, Any] = dict(GENERATED_HEADER)
+    table: dict[str, list[str]] = {}
+    for b in agent.get("bindings", []):
+        ce_type, bucket = effective_type(b, lifecycle, lock)
+        table[b["arg"]] = [ce_type, bucket]
+    out["map"] = table
+    return out
+
+
+def _command(agent: dict, b: dict, *, codex_empty_echo: bool) -> str:
+    runner = _runner(agent)
+    parts: list[str] = []
+    payload = b.get("payload", "stdin")
+    if payload == "stdin":
+        parts.append("cat | ")
+    elif payload == "empty" and codex_empty_echo:
+        parts.append("echo '{}' | ")
+    cmd = "".join(parts) + f"{runner} {b['arg']}"
+    for extra in b.get("extra_args", []):
+        cmd += f" {extra}"
+    return cmd
+
+
+def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
+    dialect = agent["dialect"]
+    if dialect == "watcher":
+        return None
+    if dialect == "copilot":
+        hooks: dict[str, list] = {}
+        for b in agent["bindings"]:
+            hooks[b["native"]] = [
+                {
+                    "type": "command",
+                    "bash": f"exec {_runner(agent)} {b['arg']}",
+                    "timeoutSec": agent.get("default_timeout_sec", 5),
+                }
+            ]
+        return {"version": 1, "hooks": hooks}
+    if dialect in ("codex", "claude_settings"):
+        codex_empty_echo = dialect == "codex"
+        timeout = agent.get("default_timeout", 3000 if dialect == "codex" else 3)
+        hooks = {}
+        for b in agent["bindings"]:
+            entry: dict[str, Any] = {}
+            if b.get("matcher") is not None:
+                entry["matcher"] = b["matcher"]
+            entry["hooks"] = [
+                {
+                    "type": "command",
+                    "command": _command(agent, b, codex_empty_echo=codex_empty_echo),
+                    "timeout": timeout,
+                }
+            ]
+            hooks[b["native"]] = [entry]
+        return {"hooks": hooks}
+    _die(f"unknown dialect {dialect!r} for agent")
+    return None  # unreachable
+
+
+def generate(master: dict, lock: dict) -> dict[Path, dict]:
+    """Return {target_path: content_dict} for every artifact the SSOT produces."""
+    lifecycle = master["lifecycle"]
+    out: dict[Path, dict] = {}
+    for agent_name, agent in master["agents"].items():
+        if agent.get("event_map_target"):
+            out[SERVICE_DIR / agent["event_map_target"]] = render_event_map(
+                agent, lifecycle, lock
+            )
+        if agent.get("config_target"):
+            cfg = render_config(agent, lifecycle, lock)
+            if cfg is not None:
+                out[SERVICE_DIR / agent["config_target"]] = cfg
+    return out
+
+
+def _serialize(content: dict) -> str:
+    return json.dumps(content, indent=2, ensure_ascii=False) + "\n"
+
+
+# --------------------------------------------------------------------------
+# Interactive resolution
+# --------------------------------------------------------------------------
+
+
+def resolve_interactive(master: dict, lock: dict, ambiguities: list[dict]) -> bool:
+    """Prompt the operator for each open ambiguity; append to lock. Returns True if all resolved."""
+    if not ambiguities:
+        return True
+    if not sys.stdin.isatty():
+        print(
+            "hooks-sync: unresolved ambiguities and no TTY for --resolve; "
+            "resolve in hooks.mappings.lock.json or run interactively.",
+            file=sys.stderr,
+        )
+        return False
+    res = lock.setdefault("resolutions", {})
+    for amb in ambiguities:
+        print(f"\n[AMBIGUITY] {amb['id']}  ({amb['kind']})")
+        print(f"  {amb['detail']}")
+        cands = amb.get("candidates") or []
+        for i, c in enumerate(cands, 1):
+            print(f"    {i}) {c}")
+        print("    or type a full ce_type / 'skip'")
+        choice = input("  resolution> ").strip()
+        if choice.lower() == "skip" or not choice:
+            print("  (skipped)")
+            continue
+        if choice.isdigit() and 1 <= int(choice) <= len(cands):
+            chosen = cands[int(choice) - 1]
+        else:
+            chosen = choice
+        rationale = input("  rationale> ").strip() or "operator decision"
+        res[amb["id"]] = {
+            "resolution": chosen,
+            "strategy": "unify-to",
+            "rationale": rationale,
+            "decided_at": os.environ.get("HOOKS_SYNC_DATE", "manual"),
+            "decided_by": "interactive",
+        }
+    save_lock(lock)
+    print("\nhooks-sync: lock updated.")
+    return len(detect_ambiguities(master, lock)) == 0
+
+
+# --------------------------------------------------------------------------
+# Commands
+# --------------------------------------------------------------------------
+
+
+def cmd_check(master: dict, lock: dict, as_json: bool) -> int:
+    ambiguities = detect_ambiguities(master, lock)
+    desired = generate(master, lock)
+    stale: list[str] = []
+    for path, content in desired.items():
+        want = _serialize(content)
+        have = path.read_text() if path.exists() else None
+        if have != want:
+            stale.append(str(path.relative_to(SERVICE_DIR)))
+
+    # Soft check: publisher embedded fallback maps vs SSOT.
+    drifted_fallbacks = _check_publisher_fallbacks(master, lock)
+
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "ambiguities": ambiguities,
+                    "stale_artifacts": stale,
+                    "publisher_fallback_drift": drifted_fallbacks,
+                    "clean": not ambiguities and not stale,
+                },
+                indent=2,
+            )
+        )
+    else:
+        if ambiguities:
+            print(f"hooks-sync: {len(ambiguities)} UNRESOLVED ambiguity(ies):")
+            for a in ambiguities:
+                print(f"  - [{a['kind']}] {a['id']}: {a['detail']}")
+        if stale:
+            print(f"hooks-sync: {len(stale)} artifact(s) out of date (run --apply):")
+            for s in stale:
+                print(f"  - {s}")
+        for d in drifted_fallbacks:
+            print(f"hooks-sync: WARN publisher fallback drift: {d}")
+        if not ambiguities and not stale:
+            print("hooks-sync: OK — SSOT, lock, and all generated artifacts are in sync.")
+
+    if ambiguities:
+        return 3
+    if stale:
+        return 4
+    return 0
+
+
+def cmd_apply(master: dict, lock: dict, do_resolve: bool) -> int:
+    ambiguities = detect_ambiguities(master, lock)
+    if ambiguities:
+        if do_resolve:
+            if not resolve_interactive(master, lock, ambiguities):
+                print("hooks-sync: ambiguities remain; not applying.", file=sys.stderr)
+                return 3
+            lock = load_lock()
+        else:
+            print(
+                f"hooks-sync: {len(ambiguities)} unresolved ambiguity(ies); "
+                "run with --resolve or add lock entries.",
+                file=sys.stderr,
+            )
+            for a in ambiguities:
+                print(f"  - [{a['kind']}] {a['id']}: {a['detail']}", file=sys.stderr)
+            return 3
+
+    desired = generate(master, lock)
+    written = 0
+    for path, content in desired.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        want = _serialize(content)
+        if not path.exists() or path.read_text() != want:
+            path.write_text(want)
+            written += 1
+            print(f"hooks-sync: wrote {path.relative_to(SERVICE_DIR)}")
+    print(f"hooks-sync: apply complete ({written} file(s) changed, {len(desired)} total).")
+    return 0
+
+
+def _check_publisher_fallbacks(master: dict, lock: dict) -> list[str]:
+    """Compare each publisher's embedded _DEFAULT_MAP to the SSOT-derived map."""
+    drift: list[str] = []
+    lifecycle = master["lifecycle"]
+    for agent_name, agent in master["agents"].items():
+        if agent.get("dialect") in ("watcher", "runtime"):
+            continue
+        mod_name = f"{agent_name}.publish"
+        try:
+            __import__(mod_name)
+            mod = sys.modules[mod_name]
+        except Exception:
+            continue
+        default_map = getattr(mod, "_DEFAULT_MAP", None)
+        if not isinstance(default_map, dict):
+            continue
+        want = {}
+        for b in agent.get("bindings", []):
+            try:
+                want[b["arg"]] = effective_type(b, lifecycle, lock)
+            except KeyError:
+                pass
+        for arg, pair in want.items():
+            got = default_map.get(arg)
+            if got is not None and tuple(got) != tuple(pair):
+                drift.append(f"{agent_name}:{arg} fallback={tuple(got)} ssot={tuple(pair)}")
+    return drift
+
+
+# --------------------------------------------------------------------------
+# Install (deploy generated artifacts to each agent's live location)
+# --------------------------------------------------------------------------
+
+
+def _expand(p: str) -> Path:
+    return Path(os.path.expanduser(p))
+
+
+def _merge_hooks(live: dict, generated_hooks: dict, marker: str) -> dict:
+    """Update our publisher hook at INNER-hook granularity.
+
+    The bloodbank publisher hook may be its own group OR nested among foreign
+    sibling hooks inside a single group's ``hooks`` list (e.g. Claude's Stop
+    group holds hindsight + git-checkpoint + publish + notify). We update ONLY
+    our inner hook's ``command``/``timeout`` in place — never touching foreign
+    hooks, groups, or matchers. If our hook is absent for an event, append the
+    generated group(s) that carry it.
+    """
+    hooks = live.setdefault("hooks", {})
+    for event, gen_groups in generated_hooks.items():
+        gen_bb = [
+            h
+            for g in gen_groups
+            for h in g.get("hooks", [])
+            if marker in str(h.get("command", ""))
+        ]
+        if not gen_bb:
+            continue
+        groups = hooks.setdefault(event, [])
+        live_bb = [
+            (g, h)
+            for g in groups
+            for h in g.get("hooks", [])
+            if marker in str(h.get("command", ""))
+        ]
+        if live_bb:
+            _, lh = live_bb[0]
+            gh = gen_bb[0]
+            lh["command"] = gh["command"]
+            if "timeout" in gh:
+                lh["timeout"] = gh["timeout"]
+            for g, h in live_bb[1:]:  # drop any duplicate publisher hooks
+                if h in g.get("hooks", []):
+                    g["hooks"].remove(h)
+            hooks[event] = [g for g in groups if g.get("hooks")]
+        else:
+            groups.extend(gen_groups)
+    return live
+
+
+def _norm(obj: Any) -> str:
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False)
+
+
+def _backup(path: Path) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    bak = path.with_name(path.name + f".bak-{stamp}")
+    shutil.copy2(path, bak)
+    return bak
+
+
+def cmd_install(master: dict) -> int:
+    """Deploy each agent's generated config to its live_target.
+
+    copilot         → symlink live_target → repo config_target
+    claude/codex    → surgical JSON merge of our entries into the live file
+                      (replace-in-place; preserve order and all foreign hooks),
+                      backing up the live file only when content actually changes.
+    watcher/runtime → skipped (no hook-config surface).
+    """
+    changed = 0
+    for name, agent in master["agents"].items():
+        dialect = agent.get("dialect")
+        live = agent.get("live_target")
+        cfg = agent.get("config_target")
+        if not live or not cfg:
+            if dialect in ("watcher", "runtime"):
+                print(f"hooks-sync: {name} ({dialect}) — no live config to install (skip)")
+            continue
+        src = SERVICE_DIR / cfg
+        dest = _expand(live)
+        if not src.exists():
+            print(f"hooks-sync: WARN {name}: generated {src} missing; run --apply first")
+            continue
+
+        if dialect == "copilot":
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.is_symlink() and Path(os.readlink(dest)).resolve() == src.resolve():
+                print(f"hooks-sync: {name} symlink up to date ({dest})")
+                continue
+            if dest.exists() or dest.is_symlink():
+                dest.unlink()
+            dest.symlink_to(src)
+            changed += 1
+            print(f"hooks-sync: {name} linked {dest} -> {src}")
+            continue
+
+        if dialect in ("claude_settings", "codex"):
+            marker = agent.get("publisher", f"{name}/publish.py")
+            gen_hooks = _load_json(src).get("hooks", {})
+            if dest.exists():
+                try:
+                    liveobj = _load_json(dest)
+                except (OSError, json.JSONDecodeError):
+                    print(f"hooks-sync: WARN {name}: {dest} unreadable JSON; skipping")
+                    continue
+            else:
+                liveobj = {}
+            original = copy.deepcopy(liveobj)
+            merged = _merge_hooks(liveobj, gen_hooks, marker)
+            if dest.exists() and _norm(merged) == _norm(original):
+                print(f"hooks-sync: {name} {dest} up to date")
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                bak = _backup(dest)
+                print(f"hooks-sync: {name} backed up {dest} -> {bak.name}")
+            with dest.open("w") as f:
+                json.dump(merged, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            changed += 1
+            print(f"hooks-sync: {name} installed into {dest}")
+            continue
+
+        print(f"hooks-sync: {name}: unknown install dialect {dialect!r} (skip)")
+    print(f"hooks-sync: install complete ({changed} live target(s) changed).")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(description="Propagate hooks.master.json to all agents.")
+    p.add_argument("--check", action="store_true", help="read-only drift/ambiguity report")
+    p.add_argument("--apply", action="store_true", help="write generated artifacts")
+    p.add_argument("--install", action="store_true", help="deploy generated configs to live agent locations")
+    p.add_argument("--resolve", action="store_true", help="interactively resolve open ambiguities")
+    p.add_argument("--json", action="store_true", help="machine-readable output (with --check)")
+    args = p.parse_args(argv[1:])
+
+    master = load_master()
+    lock = load_lock()
+
+    if args.resolve and not args.apply:
+        amb = detect_ambiguities(master, lock)
+        resolve_interactive(master, lock, amb)
+        return cmd_check(master, load_lock(), args.json)
+    if args.apply:
+        rc = cmd_apply(master, lock, args.resolve)
+        if rc != 0:
+            return rc
+        if args.install:
+            return cmd_install(master)
+        return 0
+    if args.install:
+        return cmd_install(master)
+    # default: check
+    return cmd_check(master, lock, args.json)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

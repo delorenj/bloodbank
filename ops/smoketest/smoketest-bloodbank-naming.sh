@@ -2,7 +2,7 @@
 #
 # Bloodbank Event Naming Contract v1 verifier (docs/event-naming.md §16.2).
 #
-# Walks the canonical §14 agent-turn sequence for both Claude and Copilot
+# Walks the canonical §14 agent-turn sequence for Claude, Copilot, and Codex
 # actors, runs each synthetic envelope through `cli/bb.py verify-envelope`,
 # and asserts that:
 #
@@ -36,7 +36,8 @@ SEQUENCE=(
   "bloodbank.v1.conversation.thread.created|thread|{\"thread_id\":\"thr-1\"}"
   "bloodbank.v1.conversation.turn.started|thread|{\"thread_id\":\"thr-1\",\"turn_id\":\"turn-1\"}"
   "bloodbank.v1.agent.invocation.started|invocation|{\"invocation_id\":\"inv-1\"}"
-  "bloodbank.v1.cli.session.started|cli_session|{\"session_id\":\"sess-1\"}"
+  "bloodbank.v1.agent.session.started|session|{\"session_id\":\"sess-1\"}"
+  "bloodbank.v1.agent.session.ended|session|{\"session_id\":\"sess-1\",\"end_reason\":\"user_stop\"}"
   "bloodbank.v1.cli.process.spawned|process|{\"session_id\":\"sess-1\",\"process_id\":\"proc-1\"}"
   "bloodbank.v1.cli.stdout.appended|process|{\"session_id\":\"sess-1\",\"process_id\":\"proc-1\",\"chunk\":\"hello\"}"
   "bloodbank.v1.cli.stderr.appended|process|{\"session_id\":\"sess-1\",\"process_id\":\"proc-1\",\"chunk\":\"warn\"}"
@@ -59,6 +60,7 @@ SEQUENCE=(
 ACTORS=(
   "claude|anthropic"
   "copilot|github_copilot"
+  "codex|openai"
 )
 
 verify_one() {

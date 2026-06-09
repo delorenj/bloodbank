@@ -9,12 +9,15 @@ fails the agent.
 Usage (from .claude/settings.json):
     python3 .../agent-hooks/claude/publish.py <event-type> [end-reason]
 
-Event types (CLI argument → v1 CloudEvents type):
-    session-start    → bloodbank.v1.cli.session.started
-    session-end      → bloodbank.v1.cli.session.ended
+Event types (CLI argument → v1 CloudEvents type). The map is sourced from
+claude/event_map.generated.json (projected from hooks.master.json by sync.py)
+and merged over the embedded fallback below — do NOT hand-edit it; edit
+hooks.master.json then run `mise run hooks:sync`:
+    session-start    → bloodbank.v1.agent.session.started
+    session-end      → bloodbank.v1.agent.session.ended
     prompt-submitted → bloodbank.v1.conversation.turn.started
     tool-request     → bloodbank.v1.agent.tool.requested
-    tool-action      → bloodbank.v1.agent.tool.invoked
+    tool-action      → bloodbank.v1.agent.tool.completed
     subagent-stopped → bloodbank.v1.agent.invocation.completed
 
 Session state lives at ~/.claude/bloodbank-session.json (single global
@@ -22,6 +25,7 @@ session across every Claude Code invocation, regardless of cwd) and is
 archived to ~/.claude/bloodbank-sessions/<session_id>.json on session-end.
 Per-event git/working-directory context is captured live from cwd.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -38,6 +42,7 @@ if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
 from core.envelope import build_envelope  # noqa: E402
+from core.event_map import resolve_map  # noqa: E402
 from core.nats_publish import publish as nats_publish  # noqa: E402
 from core.session import (  # noqa: E402
     SessionState,
@@ -66,15 +71,24 @@ CLAUDE_ACTOR: dict[str, Any] = {
     "model": None,
 }
 
-# CLI hook arg → (v1 CloudEvents type, ordering bucket prefix)
-EVENT_MAP: dict[str, tuple[str, str]] = {
-    "session-start":    ("bloodbank.v1.cli.session.started",        "cli_session"),
-    "session-end":      ("bloodbank.v1.cli.session.ended",          "cli_session"),
-    "prompt-submitted": ("bloodbank.v1.conversation.turn.started",  "thread"),
-    "tool-request":     ("bloodbank.v1.agent.tool.requested",   "invocation"),
-    "tool-action":      ("bloodbank.v1.agent.tool.invoked",     "invocation"),
+# Embedded fallback. The active map is sourced from
+# claude/event_map.generated.json (projected from hooks.master.json by sync.py)
+# and merged over this default; `session-stop` is kept as an alias for the
+# Stop hook's historical arg. Keep in sync via `mise run hooks:sync`.
+_DEFAULT_MAP: dict[str, tuple[str, str]] = {
+    "session-start": ("bloodbank.v1.agent.session.started", "session"),
+    "session-end": ("bloodbank.v1.agent.session.ended", "session"),
+    "session-stop": ("bloodbank.v1.agent.session.ended", "session"),
+    "prompt-submitted": ("bloodbank.v1.conversation.turn.started", "thread"),
+    "tool-request": ("bloodbank.v1.agent.tool.requested", "invocation"),
+    "tool-action": ("bloodbank.v1.agent.tool.completed", "invocation"),
     "subagent-stopped": ("bloodbank.v1.agent.invocation.completed", "invocation"),
 }
+
+# CLI hook arg → (v1 CloudEvents type, ordering bucket prefix)
+EVENT_MAP: dict[str, tuple[str, str]] = resolve_map(
+    Path(__file__).resolve().parent, _DEFAULT_MAP
+)
 
 
 def _log_error(msg: str) -> None:
@@ -107,7 +121,7 @@ def _read_stdin() -> dict[str, Any]:
 
 
 def _tool_call_id(session: SessionState, tool_name: str, turn_number: int) -> str:
-    """Deterministic tool_call_id shared by request/invoke pairs of the same tool use."""
+    """Deterministic tool_call_id shared by request/complete pairs of the same tool use."""
     seed = f"{session.session_id}:{turn_number}:{tool_name}"
     return hashlib.sha1(seed.encode("utf-8"), usedforsecurity=False).hexdigest()[:32]
 
@@ -121,9 +135,9 @@ def _build_event(
     event_id: str | None = None,
 ) -> dict[str, Any]:
     """Build a v1 event envelope rooted at the session's correlation chain."""
-    # Ordering bucket maps the legacy session_id to whichever entity the
-    # event belongs to. session_id stands in for thread_id / invocation_id /
-    # cli_session_id since Claude Code's hook surface doesn't currently
+    # Ordering bucket maps the session_id to whichever entity the event
+    # belongs to. session_id stands in for thread_id / invocation_id /
+    # session_id since Claude Code's hook surface doesn't currently
     # distinguish them.
     ordering_key = f"{bucket_prefix}:{session.session_id}"
     return build_envelope(
@@ -141,7 +155,7 @@ def _build_event(
     )
 
 
-def _handle_session_start(session: SessionState) -> dict:
+def _handle_session_start(session: SessionState, ce_type: str, bucket: str) -> dict:
     session.reset()
     cwd = os.getcwd()
     data = {
@@ -153,15 +167,17 @@ def _handle_session_start(session: SessionState) -> dict:
     }
     return _build_event(
         session,
-        "bloodbank.v1.cli.session.started",
-        "cli_session",
+        ce_type,
+        bucket,
         data,
         # First event id == session id so the chain self-roots cleanly.
         event_id=session.session_id,
     )
 
 
-def _handle_prompt_submitted(session: SessionState, payload: dict) -> dict:
+def _handle_prompt_submitted(
+    session: SessionState, ce_type: str, bucket: str, payload: dict
+) -> dict:
     prompt_text = str(payload.get("prompt", ""))
     cwd = os.getcwd()
     turn_id = f"{session.session_id}:{session.turn_number + 1}"
@@ -173,15 +189,12 @@ def _handle_prompt_submitted(session: SessionState, payload: dict) -> dict:
         "working_directory": cwd,
         "git_branch": git_branch(cwd),
     }
-    return _build_event(
-        session,
-        "bloodbank.v1.conversation.turn.started",
-        "thread",
-        data,
-    )
+    return _build_event(session, ce_type, bucket, data)
 
 
-def _handle_tool_requested(session: SessionState, payload: dict) -> dict:
+def _handle_tool_requested(
+    session: SessionState, ce_type: str, bucket: str, payload: dict
+) -> dict:
     tool_name = str(payload.get("tool_name", "unknown"))
     tool_input = payload.get("tool_input") or {}
     cwd = os.getcwd()
@@ -195,15 +208,23 @@ def _handle_tool_requested(session: SessionState, payload: dict) -> dict:
         "git_branch": git_branch(cwd),
         "turn_number": turn_number,
     }
-    return _build_event(
-        session,
-        "bloodbank.v1.agent.tool.requested",
-        "invocation",
-        data,
-    )
+    return _build_event(session, ce_type, bucket, data)
 
 
-def _handle_tool_action(session: SessionState, payload: dict) -> dict:
+def _tool_outcome(payload: dict) -> str:
+    """Infer success/error for a Claude PostToolUse payload (fires post-execution)."""
+    if isinstance(payload, dict):
+        if payload.get("is_error"):
+            return "error"
+        resp = payload.get("tool_response") or payload.get("tool_result")
+        if isinstance(resp, dict) and (resp.get("error") or resp.get("is_error")):
+            return "error"
+    return "success"
+
+
+def _handle_tool_completed(
+    session: SessionState, ce_type: str, bucket: str, payload: dict
+) -> dict:
     tool_name = str(payload.get("tool_name", "unknown"))
     tool_input = payload.get("tool_input") or {}
     cwd = os.getcwd()
@@ -213,36 +234,26 @@ def _handle_tool_action(session: SessionState, payload: dict) -> dict:
         "tool_call_id": _tool_call_id(session, tool_name, turn_number),
         "tool_name": tool_name,
         "arguments": tool_input,
+        "outcome": _tool_outcome(payload),
         "working_directory": cwd,
         "git_branch": git_branch(cwd),
         "git_status": git_status_word(cwd),
         "turn_number": turn_number,
-        "success": True,
     }
-    return _build_event(
-        session,
-        "bloodbank.v1.agent.tool.invoked",
-        "invocation",
-        data,
-    )
+    return _build_event(session, ce_type, bucket, data)
 
 
-def _handle_subagent_completed(session: SessionState) -> dict:
+def _handle_subagent_completed(session: SessionState, ce_type: str, bucket: str) -> dict:
     data = {
         "invocation_id": session.session_id,
         "stop_reason": "completed",
         "working_directory": os.getcwd(),
     }
-    return _build_event(
-        session,
-        "bloodbank.v1.agent.invocation.completed",
-        "invocation",
-        data,
-    )
+    return _build_event(session, ce_type, bucket, data)
 
 
 def _handle_session_end(
-    session: SessionState, end_reason: str
+    session: SessionState, ce_type: str, bucket: str, end_reason: str
 ) -> dict | None:
     if not session.path.exists():
         return None
@@ -264,12 +275,7 @@ def _handle_session_end(
         "working_directory": cwd,
         "git_branch": git_branch(cwd),
     }
-    return _build_event(
-        session,
-        "bloodbank.v1.cli.session.ended",
-        "cli_session",
-        data,
-    )
+    return _build_event(session, ce_type, bucket, data)
 
 
 def _publish(envelope: dict, session: SessionState) -> None:
@@ -294,29 +300,34 @@ def main(argv: list[str]) -> int:
     if len(argv) < 2:
         return 0
     event_type = argv[1].strip()
-    if event_type not in EVENT_MAP:
+    mapping = EVENT_MAP.get(event_type)
+    if mapping is None:
         _log_error(f"unknown event-type: {event_type}")
         return 0
+    ce_type, bucket = mapping
 
     session = SessionState(path=SESSION_FILE)
     payload = _read_stdin()
 
+    # Dispatch by resolved ce_type so that argument aliases (e.g. the Stop
+    # hook's session-stop / session-end) route to the same handler.
     try:
-        if event_type == "session-start":
-            envelope: dict | None = _handle_session_start(session)
-        elif event_type == "session-end":
+        if ce_type == "bloodbank.v1.agent.session.started":
+            envelope: dict | None = _handle_session_start(session, ce_type, bucket)
+        elif ce_type == "bloodbank.v1.agent.session.ended":
             end_reason = argv[2] if len(argv) > 2 else "user_stop"
-            envelope = _handle_session_end(session, end_reason)
-        elif event_type == "prompt-submitted":
-            envelope = _handle_prompt_submitted(session, payload)
-        elif event_type == "tool-request":
-            envelope = _handle_tool_requested(session, payload)
-        elif event_type == "tool-action":
-            envelope = _handle_tool_action(session, payload)
+            envelope = _handle_session_end(session, ce_type, bucket, end_reason)
+        elif ce_type == "bloodbank.v1.conversation.turn.started":
+            envelope = _handle_prompt_submitted(session, ce_type, bucket, payload)
+        elif ce_type == "bloodbank.v1.agent.tool.requested":
+            envelope = _handle_tool_requested(session, ce_type, bucket, payload)
+        elif ce_type == "bloodbank.v1.agent.tool.completed":
+            envelope = _handle_tool_completed(session, ce_type, bucket, payload)
             session.bump_tool(str(payload.get("tool_name", "unknown")))
-        elif event_type == "subagent-stopped":
-            envelope = _handle_subagent_completed(session)
+        elif ce_type == "bloodbank.v1.agent.invocation.completed":
+            envelope = _handle_subagent_completed(session, ce_type, bucket)
         else:
+            _log_error(f"unhandled ce_type for event_type={event_type}: {ce_type}")
             return 0
     except Exception as exc:  # never break the agent
         _log_error(f"handler error event_type={event_type} err={exc!r}")
@@ -326,7 +337,7 @@ def main(argv: list[str]) -> int:
         return 0
     _publish(envelope, session)
 
-    if event_type == "session-end":
+    if ce_type == "bloodbank.v1.agent.session.ended":
         session.archive(SESSIONS_DIR)
     return 0
 

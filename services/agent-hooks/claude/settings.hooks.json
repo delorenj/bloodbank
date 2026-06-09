@@ -1,0 +1,72 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py session-start",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | $HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py prompt-submitted",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | $HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py tool-request",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | $HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py tool-action",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | $HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py subagent-stopped",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | $HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py session-end",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

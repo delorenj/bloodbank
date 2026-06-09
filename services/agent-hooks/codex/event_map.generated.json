@@ -1,0 +1,33 @@
+{
+  "_do_not_edit": "GENERATED from hooks.master.json by sync.py — run `mise run hooks:sync`.",
+  "map": {
+    "SessionStart": [
+      "bloodbank.v1.agent.session.started",
+      "session"
+    ],
+    "Stop": [
+      "bloodbank.v1.agent.session.ended",
+      "session"
+    ],
+    "UserPromptSubmit": [
+      "bloodbank.v1.conversation.turn.started",
+      "thread"
+    ],
+    "PreToolUse": [
+      "bloodbank.v1.agent.tool.requested",
+      "invocation"
+    ],
+    "PostToolUse": [
+      "bloodbank.v1.agent.tool.completed",
+      "invocation"
+    ],
+    "SubagentStart": [
+      "bloodbank.v1.agent.invocation.started",
+      "invocation"
+    ],
+    "SubagentStop": [
+      "bloodbank.v1.agent.invocation.completed",
+      "invocation"
+    ]
+  }
+}

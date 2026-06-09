@@ -1,0 +1,83 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{}' | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py SessionStart",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{}' | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py Stop user_stop",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py UserPromptSubmit",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py PreToolUse",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py PostToolUse",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py SubagentStart",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py SubagentStop",
+            "timeout": 3000
+          }
+        ]
+      }
+    ]
+  }
+}

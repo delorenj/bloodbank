@@ -162,16 +162,36 @@ description = "Heartbeat producer/consumer end-to-end"
 run = "bash ops/smoketest/smoketest-heartbeat.sh"
 
 [tasks."smoketest:bloodbank-naming"]
-description = "Stdlib-only contract verifier (§14 sequence × claude/copilot + negative probes)"
+description = "Stdlib-only contract verifier (§14 sequence × claude/copilot/codex + negative probes)"
 run = "bash ops/smoketest/smoketest-bloodbank-naming.sh"
 
 [tasks."smoketest:schema-contract-consistency"]
 description = "Assert every schema in bloodbank/schemas/bloodbank/v1/** declares a type the validator accepts (allowlist drift detector)"
 run = "bash ops/smoketest/smoketest-schema-contract-consistency.sh"
 
+[tasks."hooks:check"]
+description = "agent-hooks SSOT drift/ambiguity gate (read-only): hooks.master.json vs generated configs + publisher maps"
+run = "python3 services/agent-hooks/sync.py --check"
+
+[tasks."hooks:sync"]
+description = "Propagate services/agent-hooks/hooks.master.json (SSOT) to every agent's native hook config + event map"
+run = "python3 services/agent-hooks/sync.py --apply"
+
+[tasks."deploy"]
+description = "Deploy all agent hooks from the SSOT: regenerate (sync) + install into each agent's live config (~/.claude/settings.json merge, ~/.copilot symlink, ~/.codex merge)"
+run = "python3 services/agent-hooks/sync.py --apply --install"
+
+[tasks."hooks:deploy"]
+description = "Alias of `deploy` — sync the SSOT and install into live agent locations"
+run = "python3 services/agent-hooks/sync.py --apply --install"
+
+[tasks."smoketest:agent-hooks-ssot"]
+description = "Verify SSOT propagation: sync --check is green + every agent binding builds a contract+schema-valid envelope"
+run = "bash ops/smoketest/smoketest-agent-hooks-ssot.sh"
+
 [tasks."smoketest:schemas"]
-description = "Schema tree validation + drift detector + contract verifier (no Docker)"
-run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming"
+description = "Schema tree validation + drift detector + contract verifier + agent-hooks SSOT (no Docker)"
+run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming && mise run smoketest:agent-hooks-ssot"
 
 [tasks."smoketest:repo-health-cleanup"]
 description = "Local smoke test for cleanup helper + strict worktree mode"

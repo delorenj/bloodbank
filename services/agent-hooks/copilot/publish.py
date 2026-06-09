@@ -10,17 +10,19 @@ Reference: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copi
 Usage (from ~/.copilot/hooks/bloodbank.json):
     python3 .../agent-hooks/copilot/publish.py <hookName>
 
-Hook → v1 CloudEvents type mapping:
-    sessionStart        → bloodbank.v1.cli.session.started
-    sessionEnd          → bloodbank.v1.cli.session.ended
+Hook → v1 CloudEvents type mapping (canonical; sourced from hooks.master.json
+via copilot/event_map.generated.json, with the table below as fallback):
+    sessionStart        → bloodbank.v1.agent.session.started
+    sessionEnd          → bloodbank.v1.agent.session.ended
     userPromptSubmitted → bloodbank.v1.conversation.turn.started
     preToolUse          → bloodbank.v1.agent.tool.requested
     postToolUse         → bloodbank.v1.agent.tool.completed
     errorOccurred       → bloodbank.v1.agent.invocation.failed
     agentStop           → bloodbank.v1.agent.invocation.completed
 
-Unknown hook names are rejected (no auto-translation fallback) since
-arbitrary names cannot satisfy the v1 contract regex.
+The map is NOT hand-maintained: edit hooks.master.json then run
+`mise run hooks:sync`. Unknown hook names are rejected (no auto-translation
+fallback) since arbitrary names cannot satisfy the v1 contract regex.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
 from core.envelope import build_envelope  # noqa: E402
+from core.event_map import resolve_map  # noqa: E402
 from core.nats_publish import publish as nats_publish  # noqa: E402
 from core.session import SessionState  # noqa: E402
 
@@ -51,16 +54,23 @@ COPILOT_ACTOR: dict[str, Any] = {
     "model": None,
 }
 
-# Copilot camelCase hook → (v1 CloudEvents type, ordering bucket prefix)
-HOOK_MAP: dict[str, tuple[str, str]] = {
-    "sessionStart": ("bloodbank.v1.cli.session.started", "cli_session"),
-    "sessionEnd": ("bloodbank.v1.cli.session.ended", "cli_session"),
+# Embedded fallback. The active map is sourced from
+# copilot/event_map.generated.json (projected from hooks.master.json by
+# sync.py) and merged over this default. Keep in sync via `mise run hooks:sync`.
+_DEFAULT_MAP: dict[str, tuple[str, str]] = {
+    "sessionStart": ("bloodbank.v1.agent.session.started", "session"),
+    "sessionEnd": ("bloodbank.v1.agent.session.ended", "session"),
     "userPromptSubmitted": ("bloodbank.v1.conversation.turn.started", "thread"),
     "preToolUse": ("bloodbank.v1.agent.tool.requested", "invocation"),
     "postToolUse": ("bloodbank.v1.agent.tool.completed", "invocation"),
     "errorOccurred": ("bloodbank.v1.agent.invocation.failed", "invocation"),
     "agentStop": ("bloodbank.v1.agent.invocation.completed", "invocation"),
 }
+
+# Copilot camelCase hook → (v1 CloudEvents type, ordering bucket prefix)
+HOOK_MAP: dict[str, tuple[str, str]] = resolve_map(
+    Path(__file__).resolve().parent, _DEFAULT_MAP
+)
 
 
 def _session_path() -> Path:
@@ -110,9 +120,9 @@ def _shape_data(
     """
     raw = {"hook": hook_name, "payload": payload}
 
-    if ce_type == "bloodbank.v1.cli.session.started":
+    if ce_type == "bloodbank.v1.agent.session.started":
         return {"session_id": session_id, **raw}
-    if ce_type == "bloodbank.v1.cli.session.ended":
+    if ce_type == "bloodbank.v1.agent.session.ended":
         end_reason = None
         if isinstance(payload, dict):
             end_reason = payload.get("reason") or payload.get("end_reason")
