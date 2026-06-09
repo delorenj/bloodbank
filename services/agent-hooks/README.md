@@ -87,6 +87,35 @@ then installs each agent's config into its live `live_target`:
 
 For hermes, `deploy` reads the fleet registry and installs into **every** provisioned agent (uninitialized runtimes are skipped; a missing `config.yaml` is created). Newly-provisioned agents appear in the registry, so the next `mise run deploy` covers them.
 
+### Health checks (deployed-config validation → Holocene)
+
+`health/hook_healthcheck.py` validates that every config this service deploys (claude/codex/copilot
++ the hermes fleet) actually produces **error-free hooks**, then publishes the result to the Holocene
+control-plane dashboard.
+
+```bash
+mise run health:hooks:check        # gate: exit nonzero if any deployed config has a failing hook
+mise run health:hooks              # run + publish snapshot to Holocene (Redis)
+mise run health:hooks:install-timer  # systemd user timer → runs health:hooks every 5 min
+```
+
+What it checks, per config (no destructive side effects — safe to schedule):
+- **our bloodbank publisher commands** are sandbox-validated: the configured `publish.py <arg>` must
+  resolve in the publisher's map AND build a contract+schema-valid envelope (catches the `session-stop`
+  class — a configured arg the publisher doesn't know). No NATS publish.
+- **foreign commands** (hindsight, git-checkpoint, lint-skills, claude-notify, zellij, …) are
+  **static-checked only** — referenced scripts exist + are executable + `bash -n` parses. Never executed.
+- **hermes** configs additionally: each publisher command is present for all events and exact-match
+  present in `shell-hooks-allowlist.json` (an un-allowlisted hook silently never fires).
+
+`--emit` writes a `ToolingStatSnapshot` to Redis key `holocene:tooling:stat:agent-hook-tests` (the key
+Holocene's API reads; `TOOLING_REDIS_URL`/`REDIS_URL`, default `redis://127.0.0.1:6379/0`) plus a local
+artifact at `_bmad_output/evidence/health/agent-hook-tests.json`. Holocene renders it as the **Agent Hook
+Tests** panel (one row per agent type; hermes rolls up the fleet) — registered in
+`holocene/apps/api/src/tooling.ts`. The systemd timer (`ops/systemd/bloodbank-agent-hooks-health.{service,timer}`)
+keeps it current. This is the functional complement to Holocene's existing `agent-hook-health` panel
+(which only checks config *presence*).
+
 The merge is **inner-hook surgical**: it updates only the bloodbank publisher
 hook (identified by the `<agent>/publish.py` substring) in place, preserving
 every foreign hook (hindsight, git-checkpoint, notify, lint-skills, zellij, …),

@@ -185,6 +185,22 @@ run = "python3 services/agent-hooks/sync.py --apply --install"
 description = "Alias of `deploy` — sync the SSOT and install into live agent locations"
 run = "python3 services/agent-hooks/sync.py --apply --install"
 
+[tasks."health:hooks"]
+description = "Validate deployed hook configs (sandbox ours + static-check foreign) and publish the snapshot to Holocene (Redis holocene:tooling:stat:agent-hook-tests)"
+run = "BLOODBANK_ENABLED=false TOOLING_REDIS_URL=${TOOLING_REDIS_URL:-redis://127.0.0.1:6379/0} python3 services/agent-hooks/health/hook_healthcheck.py --emit"
+
+[tasks."health:hooks:check"]
+description = "Gate: every DEPLOYED hook config must produce error-free hooks (exit nonzero on failure). Live machine state; not in smoketest:schemas."
+run = "BLOODBANK_ENABLED=false python3 services/agent-hooks/health/hook_healthcheck.py --check"
+
+[tasks."health:hooks:install-timer"]
+description = "Install + enable the systemd user timer running health:hooks every 5 min"
+run = "bash services/agent-hooks/ops/systemd/install-timer.sh"
+
+[tasks."smoketest:hook-health"]
+description = "Standalone deployed-config health check (env-dependent; not chained into smoketest:schemas)"
+run = "bash ops/smoketest/smoketest-hook-health.sh"
+
 [tasks."smoketest:agent-hooks-ssot"]
 description = "Verify SSOT propagation: sync --check is green + every agent binding builds a contract+schema-valid envelope"
 run = "bash ops/smoketest/smoketest-agent-hooks-ssot.sh"
