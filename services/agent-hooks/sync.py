@@ -534,6 +534,34 @@ def _backup(path: Path) -> Path:
     return bak
 
 
+def _splice_top_level_block(raw: str, key: str, block_yaml: str) -> str:
+    """Replace/insert the top-level ``key:`` block in raw YAML text, preserving
+    every other byte (comments, scalar styles, key order) verbatim.
+
+    A whole-document safe_load→safe_dump round-trip would coerce YAML 1.1 scalars
+    (on/off/yes/no → true/false) and strip comments in unrelated keys; splicing
+    only our block avoids touching operator content.
+    """
+    block_yaml = block_yaml if block_yaml.endswith("\n") else block_yaml + "\n"
+    if not raw.strip():
+        return block_yaml
+    lines = raw.splitlines(keepends=True)
+    prefix = key + ":"
+    start = next((i for i, ln in enumerate(lines) if ln.startswith(prefix)), None)
+    if start is None:  # append as a new top-level key
+        sep = "" if raw.endswith("\n") else "\n"
+        return raw + sep + block_yaml
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        ln = lines[j]
+        if ln.strip() == "":
+            continue
+        if not ln[:1].isspace():  # next top-level key or column-0 comment
+            end = j
+            break
+    return "".join(lines[:start]) + block_yaml + "".join(lines[end:])
+
+
 def _install_hermes_one(label: str, cfg_path: Path, alw_path: Path, gen_hooks: dict, marker: str) -> tuple[int, str]:
     """Merge the hooks: block into one agent's config.yaml + seed its allowlist.
 
@@ -544,29 +572,43 @@ def _install_hermes_one(label: str, cfg_path: Path, alw_path: Path, gen_hooks: d
     import yaml  # caller guarantees availability
 
     changed = 0
-    # 1) config.yaml hooks: block
-    if cfg_path.exists():
+    # 1) config.yaml `hooks:` block
+    raw = cfg_path.read_text() if cfg_path.exists() else ""
+    if raw:
         try:
-            cfg = yaml.safe_load(cfg_path.read_text()) or {}
+            cfg = yaml.safe_load(raw) or {}
         except yaml.YAMLError:
             return 0, "WARN unreadable config.yaml"
     else:
         cfg = {}
     if not isinstance(cfg, dict):
         return 0, "WARN config.yaml not a mapping"
-    original = copy.deepcopy(cfg)
-    block = cfg.setdefault("hooks", {})
-    if not isinstance(block, dict):
+    block = cfg.get("hooks")
+    if block is None:  # absent OR present-but-null `hooks:` placeholder
+        block = {}
+    elif not isinstance(block, dict):
         return 0, "WARN hooks: not a mapping"
+    old_block = copy.deepcopy(block)
     for event, entries in gen_hooks.items():
-        kept = [e for e in (block.get(event) or []) if marker not in str((e or {}).get("command", ""))]
+        existing = block.get(event)
+        if existing is None:
+            existing = []
+        elif not isinstance(existing, list):
+            return 0, f"WARN hooks.{event}: not a list"
+        kept = [e for e in existing if marker not in str((e or {}).get("command", "")) if isinstance(e, dict)]
+        kept += [e for e in existing if not isinstance(e, dict)]  # preserve foreign non-dict entries verbatim
         kept.extend(entries)
         block[event] = kept
-    if not cfg_path.exists() or _norm(cfg) != _norm(original):
+    if not cfg_path.exists() or _norm(block) != _norm(old_block):
+        # Splice ONLY the `hooks:` block into the raw text — never round-trip the
+        # whole operator document (that would coerce on/off/yes/no scalars and
+        # strip comments in unrelated keys). The hooks block is entirely ours.
+        block_yaml = yaml.safe_dump({"hooks": block}, sort_keys=False, allow_unicode=True)
+        new_text = _splice_top_level_block(raw, "hooks", block_yaml)
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
         if cfg_path.exists():
             _backup(cfg_path)
-        cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
+        cfg_path.write_text(new_text)
         changed += 1
 
     # 2) allowlist (exact event+command match required by hermes)
@@ -646,7 +688,12 @@ def _install_hermes_fleet(name: str, agent: dict) -> int:
         if not runtime.is_dir():
             skipped += 1
             continue
-        c, status = _install_hermes_one(aid, runtime / "config.yaml", runtime / alw_name, gen_hooks, marker)
+        try:
+            c, status = _install_hermes_one(aid, runtime / "config.yaml", runtime / alw_name, gen_hooks, marker)
+        except Exception as exc:  # one bad/locked agent must not abort the fleet
+            warned += 1
+            print(f"hooks-sync:   {aid}: WARN install error: {exc!r} ({runtime})")
+            continue
         total_changed += c
         if status.startswith("WARN"):
             warned += 1

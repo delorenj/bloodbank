@@ -92,6 +92,22 @@ def _event_name(argv: list[str], payload: dict) -> str | None:
     return v.strip() if isinstance(v, str) and v.strip() else None
 
 
+def _flatten(payload: dict) -> dict:
+    """Lift hermes' payload['extra'] to the top level.
+
+    hermes-agent's shell_hooks._serialize_payload promotes only
+    {tool_name, args→tool_input, session_id} to the top level and nests
+    everything else (result, model, reason, tool_call_id, is_error, …) under
+    ``payload['extra']``. Merge extra up (real top-level keys win) so the rest
+    of this publisher can read fields uniformly.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    merged = dict(payload.get("extra") or {})
+    merged.update({k: v for k, v in payload.items() if k != "extra"})
+    return merged
+
+
 def _value(payload: dict, *keys: str) -> Any:
     for k in keys:
         if payload.get(k) not in (None, ""):
@@ -119,10 +135,25 @@ def _tool_call_id(session_id: str, payload: dict) -> str:
 
 
 def _outcome(payload: dict) -> str:
+    """Infer success/error from a (flattened) hermes post_tool_call payload.
+
+    Tool errors are usually encoded inside ``result`` (a dict or a JSON string
+    with an ``error``/``is_error`` key), not as a top-level flag.
+    """
     if payload.get("is_error") or payload.get("error"):
         return "error"
     if str(payload.get("status", "")).lower() in {"error", "failed", "failure"}:
         return "error"
+    res = payload.get("result")
+    if isinstance(res, dict) and (res.get("error") or res.get("is_error")):
+        return "error"
+    if isinstance(res, str) and res.lstrip().startswith("{"):
+        try:
+            j = json.loads(res)
+        except json.JSONDecodeError:
+            j = None
+        if isinstance(j, dict) and (j.get("error") or j.get("is_error")):
+            return "error"
     return "success"
 
 
@@ -164,19 +195,30 @@ def main(argv: list[str]) -> int:
         _log(f"unsupported hermes event (ignored): {event}")
         return 1 if os.environ.get("BLOODBANK_HOOK_STRICT") == "1" else 0
     ce_type, bucket = mapping
+    flat = _flatten(payload)
 
     session = SessionState(path=SESSION_FILE)
-    # Prefer Hermes' own session id for correlation; fall back to local state.
-    hermes_sid = _value(payload, "session_id", "sessionId")
-    if ce_type == "bloodbank.v1.agent.session.started" and not hermes_sid:
+    is_start = ce_type == "bloodbank.v1.agent.session.started"
+    # session.started always opens a fresh chain so the new session never
+    # causes off a prior session's leftover last_event_id.
+    if is_start:
         session.reset()
+    # Prefer Hermes' own session id for correlation; fall back to local state.
+    hermes_sid = _value(flat, "session_id", "sessionId")
     correlation = str(hermes_sid) if hermes_sid else session.session_id
+    if is_start:
+        # Self-root: id == correlationid == causationid (contract §11; mirrors claude).
+        event_id: str | None = correlation
+        causation = correlation
+    else:
+        event_id = None
+        causation = session.last_event_id or correlation
 
     actor = dict(HERMES_ACTOR)
-    actor["model"] = _model(payload)
+    actor["model"] = _model(flat)
 
     try:
-        data = _shape_data(ce_type, correlation, event, payload)
+        data = _shape_data(ce_type, correlation, event, flat)
         envelope = build_envelope(
             ce_type=ce_type,
             kind="event",
@@ -186,9 +228,9 @@ def main(argv: list[str]) -> int:
             actor=actor,
             data=data,
             correlation_id=correlation,
-            causation_id=session.last_event_id or correlation,
+            causation_id=causation,
             ordering_key=f"{bucket}:{correlation}",
-            event_id=correlation if ce_type == "bloodbank.v1.agent.session.started" and not hermes_sid else None,
+            event_id=event_id,
         )
     except Exception as exc:  # never block hermes
         _log(f"envelope build failed event={event} type={ce_type} err={exc!r}")

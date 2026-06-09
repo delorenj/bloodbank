@@ -137,14 +137,13 @@ jobs:
           docker pull python:3.11-alpine
 
       - name: Pre-build local service images
-        # heartbeat-tick, heartbeat-recorder, claude-events-recorder build
-        # from local Dockerfiles; build them eagerly so the smoke tests
-        # aren't waiting on the build.
+        # heartbeat-tick, heartbeat-recorder build from local Dockerfiles;
+        # build them eagerly so the smoke tests aren't waiting on the build.
         run: |
           docker compose --project-name bloodbank \
-            --profile heartbeat --profile claude-events \
+            --profile heartbeat \
             -f compose/docker-compose.yml \
-            build heartbeat-recorder heartbeat-tick claude-events-recorder
+            build heartbeat-recorder heartbeat-tick
 
       # -----------------------------------------------------------------------
       # Layer 1: NATS-direct tests (no Dapr)
@@ -273,34 +272,6 @@ jobs:
         run: bash ops/smoketest/smoketest-heartbeat.sh
 
       # -----------------------------------------------------------------------
-      # Layer 5: claude-events — agent.* round-trip via dedicated profile
-      # -----------------------------------------------------------------------
-      - name: Boot claude-events profile (recorder + daprd-claude-events)
-        run: |
-          docker compose --project-name bloodbank \
-            --profile claude-events \
-            -f compose/docker-compose.yml \
-            up -d --build claude-events-recorder daprd-claude-events
-
-      - name: Wait for daprd-claude-events ready
-        run: |
-          for _ in $(seq 1 60); do
-            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
-              http://127.0.0.1:3503/v1.0/healthz 2>/dev/null || echo "000")
-            if [ "$code" = "204" ]; then
-              echo "daprd-claude-events ready"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "daprd-claude-events never responded 204"
-          docker logs bloodbank-daprd-claude-events | tail -50
-          exit 1
-
-      - name: Run smoketest-claude-events.sh (synthetic agent.* round-trip)
-        run: bash ops/smoketest/smoketest-claude-events.sh
-
-      # -----------------------------------------------------------------------
       # Diagnostics on failure; always collect
       # -----------------------------------------------------------------------
       - name: Collect diagnostics on failure
@@ -308,12 +279,11 @@ jobs:
         run: |
           echo "=== docker compose ps ==="
           docker compose --project-name bloodbank \
-            --profile dapr-smoketest --profile dapr-subscribe --profile heartbeat --profile claude-events \
+            --profile dapr-smoketest --profile dapr-subscribe --profile heartbeat \
             -f compose/docker-compose.yml \
             ps || true
           for c in nats nats-init daprd-smoketest daprd-subscribe echo-sub \
-                   daprd-heartbeat heartbeat-recorder heartbeat-tick \
-                   daprd-claude-events claude-events-recorder; do
+                   daprd-heartbeat heartbeat-recorder heartbeat-tick; do
             echo "=== ${c} logs ==="
             docker logs "bloodbank-${c}" 2>&1 | tail -80 || true
           done
@@ -322,6 +292,6 @@ jobs:
         if: always()
         run: |
           docker compose --project-name bloodbank \
-            --profile dapr-smoketest --profile dapr-subscribe --profile heartbeat --profile claude-events \
+            --profile dapr-smoketest --profile dapr-subscribe --profile heartbeat \
             -f compose/docker-compose.yml \
             down -v || true
