@@ -534,90 +534,133 @@ def _backup(path: Path) -> Path:
     return bak
 
 
-def _install_hermes(name: str, agent: dict, src: Path, dest: Path) -> int:
-    """Merge the hermes `hooks:` block into config.yaml (YAML) + seed the allowlist.
+def _install_hermes_one(label: str, cfg_path: Path, alw_path: Path, gen_hooks: dict, marker: str) -> tuple[int, str]:
+    """Merge the hooks: block into one agent's config.yaml + seed its allowlist.
 
-    hermes-agent reads shell hooks from the `hooks:` block in config.yaml and
-    gates each (event, command) via shell-hooks-allowlist.json. We merge our
-    entries (identified by the publisher substring), preserving the operator's
-    other config/hooks, and pre-approve our commands so they fire non-interactively.
+    Returns (files_changed, status) where status is 'changed' | 'ok' | a warn string.
+    Surgical: replaces only our entries (publisher substring) per event, preserving
+    the operator's other config keys and any foreign hooks; backs up on real change.
     """
-    try:
-        import yaml
-    except ImportError:
-        print(
-            f"hooks-sync: WARN {name}: PyYAML unavailable — cannot merge {dest}. "
-            f"Add the hooks: block from {src.relative_to(SERVICE_DIR)} to config.yaml manually."
-        )
-        return 0
-    marker = agent.get("publisher", "hermes/publish.py")
-    gen_hooks = _load_json(src).get("hooks", {})
-    changed = 0
+    import yaml  # caller guarantees availability
 
-    # 1) merge `hooks:` block into config.yaml
-    if dest.exists():
+    changed = 0
+    # 1) config.yaml hooks: block
+    if cfg_path.exists():
         try:
-            cfg = yaml.safe_load(dest.read_text()) or {}
+            cfg = yaml.safe_load(cfg_path.read_text()) or {}
         except yaml.YAMLError:
-            print(f"hooks-sync: WARN {name}: {dest} is unreadable YAML; skipping")
-            return 0
+            return 0, "WARN unreadable config.yaml"
     else:
         cfg = {}
     if not isinstance(cfg, dict):
-        print(f"hooks-sync: WARN {name}: {dest} is not a YAML mapping; skipping")
-        return 0
+        return 0, "WARN config.yaml not a mapping"
     original = copy.deepcopy(cfg)
     block = cfg.setdefault("hooks", {})
     if not isinstance(block, dict):
-        print(f"hooks-sync: WARN {name}: existing hooks: in {dest} is not a mapping; skipping")
-        return 0
+        return 0, "WARN hooks: not a mapping"
     for event, entries in gen_hooks.items():
         kept = [e for e in (block.get(event) or []) if marker not in str((e or {}).get("command", ""))]
         kept.extend(entries)
         block[event] = kept
-    if not dest.exists() or _norm(cfg) != _norm(original):
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.exists():
-            bak = _backup(dest)
-            print(f"hooks-sync: {name} backed up {dest.name} -> {bak.name}")
-        dest.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
+    if not cfg_path.exists() or _norm(cfg) != _norm(original):
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        if cfg_path.exists():
+            _backup(cfg_path)
+        cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
         changed += 1
-        print(f"hooks-sync: {name} merged hooks: into {dest}")
-    else:
-        print(f"hooks-sync: {name} {dest} up to date")
 
-    # 2) seed the shell-hooks allowlist (exact event+command match required)
-    alw_target = agent.get("allowlist_target")
-    if alw_target:
-        alw_path = _expand(alw_target)
-        try:
-            alw = json.loads(alw_path.read_text()) if alw_path.exists() else {"approvals": []}
-        except (OSError, json.JSONDecodeError):
-            alw = {"approvals": []}
-        approvals = alw.setdefault("approvals", [])
-        have = {(e.get("event"), e.get("command")) for e in approvals if isinstance(e, dict)}
-        stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        added = 0
-        for event, entries in gen_hooks.items():
-            for e in entries:
-                cmd = e.get("command")
-                if cmd and (event, cmd) not in have:
-                    approvals.append({"event": event, "command": cmd, "approved_at": stamp,
-                                      "approved_by": "bloodbank-hooks-deploy"})
-                    have.add((event, cmd))
-                    added += 1
-        if added or not alw_path.exists():
-            alw_path.parent.mkdir(parents=True, exist_ok=True)
-            if alw_path.exists():
-                _backup(alw_path)
-            with alw_path.open("w") as f:
-                json.dump(alw, f, indent=2, sort_keys=True)
-                f.write("\n")
-            changed += 1
-            print(f"hooks-sync: {name} seeded {added} allowlist approval(s) in {alw_path}")
+    # 2) allowlist (exact event+command match required by hermes)
+    try:
+        alw = json.loads(alw_path.read_text()) if alw_path.exists() else {"approvals": []}
+    except (OSError, json.JSONDecodeError):
+        alw = {"approvals": []}
+    approvals = alw.setdefault("approvals", [])
+    have = {(e.get("event"), e.get("command")) for e in approvals if isinstance(e, dict)}
+    stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    added = 0
+    for event, entries in gen_hooks.items():
+        for e in entries:
+            cmd = e.get("command")
+            if cmd and (event, cmd) not in have:
+                approvals.append({"event": event, "command": cmd, "approved_at": stamp,
+                                  "approved_by": "bloodbank-hooks-deploy"})
+                have.add((event, cmd))
+                added += 1
+    if added or not alw_path.exists():
+        alw_path.parent.mkdir(parents=True, exist_ok=True)
+        if alw_path.exists():
+            _backup(alw_path)
+        with alw_path.open("w") as f:
+            json.dump(alw, f, indent=2, sort_keys=True)
+            f.write("\n")
+        changed += 1
+    return changed, ("changed" if changed else "ok")
+
+
+def _install_hermes_fleet(name: str, agent: dict) -> int:
+    """Fleet-wide hermes install: read the registry and deploy into every agent.
+
+    Each agent runs with HERMES_HOME=<role_dir>/<runtime_subdir>, so its shell-hooks
+    config + allowlist live there. Uninitialized runtimes (no dir) are skipped;
+    missing config.yaml is created.
+    """
+    try:
+        import yaml
+    except ImportError:
+        print(f"hooks-sync: WARN {name}: PyYAML unavailable — cannot deploy hermes fleet.")
+        return 0
+    src = SERVICE_DIR / agent["config_target"]
+    if not src.exists():
+        print(f"hooks-sync: WARN {name}: generated {src} missing; run --apply first")
+        return 0
+    gen_hooks = _load_json(src).get("hooks", {})
+    marker = agent.get("publisher", "hermes/publish.py")
+    runtime_subdir = agent.get("runtime_subdir", "runtime")
+    alw_name = agent.get("allowlist_filename", "shell-hooks-allowlist.json")
+
+    targets: list[tuple[str, Path]] = []
+    reg = agent.get("fleet_registry")
+    if reg:
+        reg_path = _expand(reg)
+        if reg_path.exists():
+            try:
+                rd = yaml.safe_load(reg_path.read_text()) or {}
+            except yaml.YAMLError:
+                rd = {}
+            for aid, meta in (rd.get("agents") or {}).items():
+                role_dir = (meta or {}).get("role_dir")
+                if role_dir:
+                    targets.append((aid, Path(role_dir) / runtime_subdir))
         else:
-            print(f"hooks-sync: {name} allowlist up to date")
-    return changed
+            print(f"hooks-sync: WARN {name}: fleet registry {reg_path} not found")
+    if agent.get("live_target"):  # optional explicit extra target
+        targets.append(("(explicit)", _expand(agent["live_target"]).parent))
+
+    if not targets:
+        print(f"hooks-sync: WARN {name}: no fleet targets discovered")
+        return 0
+
+    total_changed = 0
+    installed = skipped = up_to_date = warned = 0
+    for aid, runtime in targets:
+        if not runtime.is_dir():
+            skipped += 1
+            continue
+        c, status = _install_hermes_one(aid, runtime / "config.yaml", runtime / alw_name, gen_hooks, marker)
+        total_changed += c
+        if status.startswith("WARN"):
+            warned += 1
+            print(f"hooks-sync:   {aid}: {status} ({runtime})")
+        elif c:
+            installed += 1
+            print(f"hooks-sync:   {aid}: installed ({runtime})")
+        else:
+            up_to_date += 1
+    print(
+        f"hooks-sync: hermes fleet — {len(targets)} agent(s): "
+        f"{installed} installed, {up_to_date} up-to-date, {skipped} skipped (uninitialized), {warned} warned"
+    )
+    return total_changed
 
 
 def cmd_install(master: dict) -> int:
@@ -627,13 +670,19 @@ def cmd_install(master: dict) -> int:
     claude/codex    → surgical JSON merge of our entries into the live file
                       (replace-in-place; preserve order and all foreign hooks),
                       backing up the live file only when content actually changes.
+    hermes_config   → fleet-wide: merge hooks: + seed allowlist into every agent
+                      in the registry (see _install_hermes_fleet).
     watcher/runtime → skipped (no hook-config surface).
     """
     changed = 0
     for name, agent in master["agents"].items():
         dialect = agent.get("dialect")
-        live = agent.get("live_target")
         cfg = agent.get("config_target")
+        if dialect == "hermes_config":
+            if cfg:
+                changed += _install_hermes_fleet(name, agent)
+            continue
+        live = agent.get("live_target")
         if not live or not cfg:
             if dialect in ("watcher", "runtime"):
                 print(f"hooks-sync: {name} ({dialect}) — no live config to install (skip)")
@@ -681,10 +730,6 @@ def cmd_install(master: dict) -> int:
                 f.write("\n")
             changed += 1
             print(f"hooks-sync: {name} installed into {dest}")
-            continue
-
-        if dialect == "hermes_config":
-            changed += _install_hermes(name, agent, src, dest)
             continue
 
         print(f"hooks-sync: {name}: unknown install dialect {dialect!r} (skip)")

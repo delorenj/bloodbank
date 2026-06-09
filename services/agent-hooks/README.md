@@ -82,8 +82,10 @@ then installs each agent's config into its live `live_target`:
 | claude | `~/.claude/settings.json` | surgical JSON merge |
 | copilot | `~/.copilot/hooks/bloodbank.json` | symlink → repo `copilot/hooks.json` |
 | codex | `~/.codex/hooks.json` | surgical JSON merge |
-| hermes | pm `runtime/config.yaml` `hooks:` block + `runtime/shell-hooks-allowlist.json` | YAML merge + allowlist seed |
+| hermes | **fleet-wide** — every agent in `~/.hermes/agents-registry.yaml`: `<role_dir>/runtime/config.yaml` `hooks:` block + `runtime/shell-hooks-allowlist.json` | YAML merge + allowlist seed per agent |
 | openclaw | — | skipped (`watcher` — log tailer, no hook-config) |
+
+For hermes, `deploy` reads the fleet registry and installs into **every** provisioned agent (uninitialized runtimes are skipped; a missing `config.yaml` is created). Newly-provisioned agents appear in the registry, so the next `mise run deploy` covers them.
 
 The merge is **inner-hook surgical**: it updates only the bloodbank publisher
 hook (identified by the `<agent>/publish.py` substring) in place, preserving
@@ -252,15 +254,14 @@ argv) with the payload piped as JSON on stdin, gated by `shell-hooks-allowlist.j
 | `post_tool_call`   | `bloodbank.v1.agent.tool.completed` |
 | `subagent_stop`    | `bloodbank.v1.agent.invocation.completed` |
 
-`actor.cli=hermes`, `actor.agent_id=bloodbank.agent.hermes`. The pm agent sets
-`HERMES_HOME=runtime`, so `mise run deploy` merges the `hooks:` block into
-`agents/hermes/pm/runtime/config.yaml` and pre-approves the commands in
-`runtime/shell-hooks-allowlist.json`. Verify the live path with
-`agents/hermes/pm/hermes hooks test on_session_start` (fires the real hook →
-publishes `agent.session.started`). Hermes has no clean user-prompt event, so
-`conversation.turn.started` is not mapped. **Fleet-wide:** add the same `hooks:`
-block to `hermes-agent-template` (via the `hermes-pm-template-maintenance` skill)
-so every provisioned agent inherits it; `deploy` here targets the pm agent only.
+`actor.cli=hermes`, `actor.agent_id=bloodbank.agent.hermes`. Each agent sets
+`HERMES_HOME=<role_dir>/runtime`, so `mise run deploy` is **fleet-wide**: it reads
+`~/.hermes/agents-registry.yaml` and, for every agent, merges the `hooks:` block
+into `<role_dir>/runtime/config.yaml` and pre-approves the commands in
+`runtime/shell-hooks-allowlist.json`. Verify any agent's live path with
+`<role_dir>/hermes hooks test on_session_start` (fires the real hook → publishes
+`agent.session.started`). Hermes has no clean user-prompt event, so
+`conversation.turn.started` is not mapped.
 
 ## OpenClaw
 
