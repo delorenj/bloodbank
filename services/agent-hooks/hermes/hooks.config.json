@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "on_session_start": [
+      {
+        "command": "python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/hermes/publish.py on_session_start",
+        "timeout": 5
+      }
+    ],
+    "on_session_end": [
+      {
+        "command": "python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/hermes/publish.py on_session_end",
+        "timeout": 5
+      }
+    ],
+    "pre_tool_call": [
+      {
+        "command": "python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/hermes/publish.py pre_tool_call",
+        "timeout": 5
+      }
+    ],
+    "post_tool_call": [
+      {
+        "command": "python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/hermes/publish.py post_tool_call",
+        "timeout": 5
+      }
+    ],
+    "subagent_stop": [
+      {
+        "command": "python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/hermes/publish.py subagent_stop",
+        "timeout": 5
+      }
+    ]
+  }
+}

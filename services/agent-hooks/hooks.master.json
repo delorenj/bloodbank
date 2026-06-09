@@ -160,10 +160,15 @@
     },
     "hermes": {
       "label": "Hermes PM agent",
-      "dialect": "runtime",
-      "config_target": null,
-      "event_map_target": null,
-      "note": "Hermes is a Python agent runtime (agents/hermes/pm/runtime/), NOT a hook-config CLI — it already participates in Bloodbank as a consumer (runtime/bloodbank-consumer.py). To emit session lifecycle it must call a publisher at session start/end from the runtime: a hermes-agent-template runtime-scaffold integration (use the hermes-pm-template-maintenance skill so it propagates to the fleet), not a hook-config deploy. Bindings are the canonical events hermes SHOULD emit; live emission is pending that runtime wire-up. dialect=runtime is inert to sync/deploy (no config generated/installed).",
+      "dialect": "hermes_config",
+      "config_target": "hermes/hooks.config.json",
+      "event_map_target": "hermes/event_map.generated.json",
+      "publisher": "hermes/publish.py",
+      "live_target": "/home/delorenj/code/33GOD/agents/hermes/pm/runtime/config.yaml",
+      "allowlist_target": "/home/delorenj/code/33GOD/agents/hermes/pm/runtime/shell-hooks-allowlist.json",
+      "runner": "python3 {service_dir}/hermes/publish.py",
+      "default_timeout": 5,
+      "note": "Hermes-agent fires shell hooks from the `hooks:` block in its config.yaml (agent/shell_hooks.py); commands run shell=False (shlex argv) with the payload piped as JSON on stdin, gated by shell-hooks-allowlist.json. The pm agent sets HERMES_HOME=runtime, so its config + allowlist live under agents/hermes/pm/runtime/. live_target/allowlist_target point at that agent; FLEET-WIDE coverage = add the same hooks block + allowlist to hermes-agent-template (hermes-pm-template-maintenance skill) so every provisioned agent inherits it. Only session/tool/invocation roles map; hermes has no clean user-prompt (turn.started) hook event.",
       "actor": {
         "type": "agent_cli",
         "agent_id": "bloodbank.agent.hermes",
@@ -172,11 +177,11 @@
         "model": null
       },
       "bindings": [
-        { "native": "session.start", "role": "session_start", "lifecycle": "agent.session.started", "payload": "runtime" },
-        { "native": "session.end", "role": "session_end", "lifecycle": "agent.session.ended", "payload": "runtime" },
-        { "native": "prompt", "role": "prompt_submit", "lifecycle": "conversation.turn.started", "payload": "runtime" },
-        { "native": "invocation.start", "role": "invocation_start", "lifecycle": "agent.invocation.started", "payload": "runtime" },
-        { "native": "invocation.stop", "role": "subagent_stop", "lifecycle": "agent.invocation.completed", "payload": "runtime" }
+        { "native": "on_session_start", "role": "session_start", "arg": "on_session_start", "lifecycle": "agent.session.started" },
+        { "native": "on_session_end", "role": "session_end", "arg": "on_session_end", "lifecycle": "agent.session.ended" },
+        { "native": "pre_tool_call", "role": "pre_tool", "arg": "pre_tool_call", "lifecycle": "agent.tool.requested" },
+        { "native": "post_tool_call", "role": "post_tool", "arg": "post_tool_call", "lifecycle": "agent.tool.completed" },
+        { "native": "subagent_stop", "role": "subagent_stop", "arg": "subagent_stop", "lifecycle": "agent.invocation.completed" }
       ]
     },
     "openclaw": {

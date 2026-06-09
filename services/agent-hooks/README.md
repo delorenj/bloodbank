@@ -82,7 +82,8 @@ then installs each agent's config into its live `live_target`:
 | claude | `~/.claude/settings.json` | surgical JSON merge |
 | copilot | `~/.copilot/hooks/bloodbank.json` | symlink → repo `copilot/hooks.json` |
 | codex | `~/.codex/hooks.json` | surgical JSON merge |
-| hermes / openclaw | — | skipped (`runtime`/`watcher` — no hook-config surface) |
+| hermes | pm `runtime/config.yaml` `hooks:` block + `runtime/shell-hooks-allowlist.json` | YAML merge + allowlist seed |
+| openclaw | — | skipped (`watcher` — log tailer, no hook-config) |
 
 The merge is **inner-hook surgical**: it updates only the bloodbank publisher
 hook (identified by the `<agent>/publish.py` substring) in place, preserving
@@ -236,6 +237,30 @@ Install by merging the entries from `codex/hooks.json` into the existing
 ```bash
 cp "$(pwd)/codex/hooks.json" ~/.codex/hooks.json
 ```
+
+## Hermes
+
+Hermes-agent fires **shell hooks** declared in the `hooks:` block of its
+`config.yaml` (`agent/shell_hooks.py`); each command runs `shell=False` (shlex
+argv) with the payload piped as JSON on stdin, gated by `shell-hooks-allowlist.json`.
+
+| Hermes event | v1 CloudEvents `type` |
+|--------------|------------------------|
+| `on_session_start` | `bloodbank.v1.agent.session.started` |
+| `on_session_end`   | `bloodbank.v1.agent.session.ended` |
+| `pre_tool_call`    | `bloodbank.v1.agent.tool.requested` |
+| `post_tool_call`   | `bloodbank.v1.agent.tool.completed` |
+| `subagent_stop`    | `bloodbank.v1.agent.invocation.completed` |
+
+`actor.cli=hermes`, `actor.agent_id=bloodbank.agent.hermes`. The pm agent sets
+`HERMES_HOME=runtime`, so `mise run deploy` merges the `hooks:` block into
+`agents/hermes/pm/runtime/config.yaml` and pre-approves the commands in
+`runtime/shell-hooks-allowlist.json`. Verify the live path with
+`agents/hermes/pm/hermes hooks test on_session_start` (fires the real hook →
+publishes `agent.session.started`). Hermes has no clean user-prompt event, so
+`conversation.turn.started` is not mapped. **Fleet-wide:** add the same `hooks:`
+block to `hermes-agent-template` (via the `hermes-pm-template-maintenance` skill)
+so every provisioned agent inherits it; `deploy` here targets the pm agent only.
 
 ## OpenClaw
 
