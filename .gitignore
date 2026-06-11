@@ -92,6 +92,8 @@ _bmad_output/evidence/repo-health-idle-decision-*.json
 _bmad_output/evidence/runtime-drift-context-*.json
 _bmad_output/evidence/closeout/*.json
 _bmad_output/issue-*-execution.md
+# agent-hooks health-check runtime artifacts (regenerated every timer run)
+_bmad_output/evidence/health/
 agents/hermes/pm/.runtime-scaffold/
 
 # Local OpenClaw hook workspace artifacts (operator-local; not project source)

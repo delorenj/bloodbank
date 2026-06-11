@@ -370,15 +370,15 @@
       {
         "id": "hermes",
         "label": "Hermes",
-        "severity": "warning",
-        "statusLabel": "Warn",
-        "summary": "20/22 fleet configs ok \u00b7 2 uninitialized",
+        "severity": "ok",
+        "statusLabel": "OK",
+        "summary": "22/22 fleet configs ok",
         "detail": {
           "agent": "hermes",
           "configCount": 22,
-          "configsOk": 20,
+          "configsOk": 22,
           "configsFailing": 0,
-          "uninitialized": 2,
+          "uninitialized": 0,
           "configs": [
             {
               "label": "bloodbank-pm",
@@ -430,10 +430,51 @@
             },
             {
               "label": "hermes-agent-pm",
-              "config": "/home/delorenj/code/hermes-agent/agents/hermes/pm/runtime/config.yaml",
-              "ok": false,
-              "entries": [],
-              "note": "config file absent"
+              "config": "/home/delorenj/.hermes/hermes-agent/agents/hermes/pm/runtime/config.yaml",
+              "ok": true,
+              "entries": [
+                {
+                  "event": "on_session_start",
+                  "kind": "bloodbank",
+                  "arg": "on_session_start",
+                  "ok": true,
+                  "check": "envelope",
+                  "error": null
+                },
+                {
+                  "event": "on_session_end",
+                  "kind": "bloodbank",
+                  "arg": "on_session_end",
+                  "ok": true,
+                  "check": "envelope",
+                  "error": null
+                },
+                {
+                  "event": "pre_tool_call",
+                  "kind": "bloodbank",
+                  "arg": "pre_tool_call",
+                  "ok": true,
+                  "check": "envelope",
+                  "error": null
+                },
+                {
+                  "event": "post_tool_call",
+                  "kind": "bloodbank",
+                  "arg": "post_tool_call",
+                  "ok": true,
+                  "check": "envelope",
+                  "error": null
+                },
+                {
+                  "event": "subagent_stop",
+                  "kind": "bloodbank",
+                  "arg": "subagent_stop",
+                  "ok": true,
+                  "check": "envelope",
+                  "error": null
+                }
+              ],
+              "note": null
             },
             {
               "label": "33god-pm",
@@ -532,59 +573,11 @@
               "note": null
             },
             {
-              "label": "stemjangler-pm",
-              "config": "/home/delorenj/code/drumjangler/agents/hermes/pm/runtime/config.yaml",
-              "ok": true,
-              "entries": [
-                {
-                  "event": "on_session_start",
-                  "kind": "bloodbank",
-                  "arg": "on_session_start",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "on_session_end",
-                  "kind": "bloodbank",
-                  "arg": "on_session_end",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "pre_tool_call",
-                  "kind": "bloodbank",
-                  "arg": "pre_tool_call",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "post_tool_call",
-                  "kind": "bloodbank",
-                  "arg": "post_tool_call",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "subagent_stop",
-                  "kind": "bloodbank",
-                  "arg": "subagent_stop",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                }
-              ],
-              "note": null
-            },
-            {
               "label": "delodocs-pm",
-              "config": "/home/delorenj/code/DeLoDocs/_agents/hermes/pm/runtime/config.yaml",
-              "ok": false,
+              "config": "/home/delorenj/code/DeLoDocs/agents/hermes/pm/runtime/config.yaml",
+              "ok": true,
               "entries": [],
-              "note": "config file absent"
+              "note": null
             },
             {
               "label": "candystore-pm",
@@ -782,48 +775,7 @@
               "label": "zshyzsh-pm",
               "config": "/home/delorenj/.config/zshyzsh/agents/hermes/pm/runtime/config.yaml",
               "ok": true,
-              "entries": [
-                {
-                  "event": "on_session_start",
-                  "kind": "bloodbank",
-                  "arg": "on_session_start",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "on_session_end",
-                  "kind": "bloodbank",
-                  "arg": "on_session_end",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "pre_tool_call",
-                  "kind": "bloodbank",
-                  "arg": "pre_tool_call",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "post_tool_call",
-                  "kind": "bloodbank",
-                  "arg": "post_tool_call",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "subagent_stop",
-                  "kind": "bloodbank",
-                  "arg": "subagent_stop",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                }
-              ],
+              "entries": [],
               "note": null
             },
             {
@@ -876,7 +828,7 @@
             },
             {
               "label": "holocene-pm",
-              "config": "/home/delorenj/code/holocene/agents/hermes/pm/runtime/config.yaml",
+              "config": "/home/delorenj/code/33GOD/holocene/agents/hermes/pm/runtime/config.yaml",
               "ok": true,
               "entries": [
                 {
@@ -1070,96 +1022,14 @@
               "label": "zshyzsh-scrum-master",
               "config": "/home/delorenj/.config/zshyzsh/agents/hermes/scrum-master/runtime/config.yaml",
               "ok": true,
-              "entries": [
-                {
-                  "event": "on_session_start",
-                  "kind": "bloodbank",
-                  "arg": "on_session_start",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "on_session_end",
-                  "kind": "bloodbank",
-                  "arg": "on_session_end",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "pre_tool_call",
-                  "kind": "bloodbank",
-                  "arg": "pre_tool_call",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "post_tool_call",
-                  "kind": "bloodbank",
-                  "arg": "post_tool_call",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "subagent_stop",
-                  "kind": "bloodbank",
-                  "arg": "subagent_stop",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                }
-              ],
+              "entries": [],
               "note": null
             },
             {
               "label": "sidepiece-pm",
               "config": "/home/delorenj/code/sidepiece/agents/hermes/pm/runtime/config.yaml",
               "ok": true,
-              "entries": [
-                {
-                  "event": "on_session_start",
-                  "kind": "bloodbank",
-                  "arg": "on_session_start",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "on_session_end",
-                  "kind": "bloodbank",
-                  "arg": "on_session_end",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "pre_tool_call",
-                  "kind": "bloodbank",
-                  "arg": "pre_tool_call",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "post_tool_call",
-                  "kind": "bloodbank",
-                  "arg": "post_tool_call",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                },
-                {
-                  "event": "subagent_stop",
-                  "kind": "bloodbank",
-                  "arg": "subagent_stop",
-                  "ok": true,
-                  "check": "envelope",
-                  "error": null
-                }
-              ],
+              "entries": [],
               "note": null
             },
             {
@@ -1353,14 +1223,62 @@
                 }
               ],
               "note": null
+            },
+            {
+              "label": "drumjangler-pm",
+              "config": "/home/delorenj/code/drumjangler/agents/hermes/pm/runtime/config.yaml",
+              "ok": true,
+              "entries": [
+                {
+                  "event": "on_session_start",
+                  "kind": "bloodbank",
+                  "arg": "on_session_start",
+                  "ok": true,
+                  "check": "envelope",
+                  "error": null
+                },
+                {
+                  "event": "on_session_end",
+                  "kind": "bloodbank",
+                  "arg": "on_session_end",
+                  "ok": true,
+                  "check": "envelope",
+                  "error": null
+                },
+                {
+                  "event": "pre_tool_call",
+                  "kind": "bloodbank",
+                  "arg": "pre_tool_call",
+                  "ok": true,
+                  "check": "envelope",
+                  "error": null
+                },
+                {
+                  "event": "post_tool_call",
+                  "kind": "bloodbank",
+                  "arg": "post_tool_call",
+                  "ok": true,
+                  "check": "envelope",
+                  "error": null
+                },
+                {
+                  "event": "subagent_stop",
+                  "kind": "bloodbank",
+                  "arg": "subagent_stop",
+                  "ok": true,
+                  "check": "envelope",
+                  "error": null
+                }
+              ],
+              "note": null
             }
           ]
         }
       }
     ],
     "summary": {
-      "total": 136,
-      "ok": 134,
+      "total": 126,
+      "ok": 124,
       "failing": 2,
       "agents": 4
     },
@@ -2498,102 +2416,12 @@
         "ok": true,
         "check": "envelope",
         "error": null
-      },
-      {
-        "agent": "hermes",
-        "event": "on_session_start",
-        "kind": "bloodbank",
-        "arg": "on_session_start",
-        "ok": true,
-        "check": "envelope",
-        "error": null
-      },
-      {
-        "agent": "hermes",
-        "event": "on_session_end",
-        "kind": "bloodbank",
-        "arg": "on_session_end",
-        "ok": true,
-        "check": "envelope",
-        "error": null
-      },
-      {
-        "agent": "hermes",
-        "event": "pre_tool_call",
-        "kind": "bloodbank",
-        "arg": "pre_tool_call",
-        "ok": true,
-        "check": "envelope",
-        "error": null
-      },
-      {
-        "agent": "hermes",
-        "event": "post_tool_call",
-        "kind": "bloodbank",
-        "arg": "post_tool_call",
-        "ok": true,
-        "check": "envelope",
-        "error": null
-      },
-      {
-        "agent": "hermes",
-        "event": "subagent_stop",
-        "kind": "bloodbank",
-        "arg": "subagent_stop",
-        "ok": true,
-        "check": "envelope",
-        "error": null
-      },
-      {
-        "agent": "hermes",
-        "event": "on_session_start",
-        "kind": "bloodbank",
-        "arg": "on_session_start",
-        "ok": true,
-        "check": "envelope",
-        "error": null
-      },
-      {
-        "agent": "hermes",
-        "event": "on_session_end",
-        "kind": "bloodbank",
-        "arg": "on_session_end",
-        "ok": true,
-        "check": "envelope",
-        "error": null
-      },
-      {
-        "agent": "hermes",
-        "event": "pre_tool_call",
-        "kind": "bloodbank",
-        "arg": "pre_tool_call",
-        "ok": true,
-        "check": "envelope",
-        "error": null
-      },
-      {
-        "agent": "hermes",
-        "event": "post_tool_call",
-        "kind": "bloodbank",
-        "arg": "post_tool_call",
-        "ok": true,
-        "check": "envelope",
-        "error": null
-      },
-      {
-        "agent": "hermes",
-        "event": "subagent_stop",
-        "kind": "bloodbank",
-        "arg": "subagent_stop",
-        "ok": true,
-        "check": "envelope",
-        "error": null
       }
     ]
   },
   "status": "critical",
-  "observedAt": "2026-06-09T23:25:15.235447Z",
-  "expiresAt": "2026-06-16T23:25:15.235449Z",
+  "observedAt": "2026-06-11T03:31:21.282180Z",
+  "expiresAt": "2026-06-18T03:31:21.282182Z",
   "meta": {
     "redisKey": "holocene:tooling:stat:agent-hook-tests",
     "source": "bloodbank/services/agent-hooks/health"
