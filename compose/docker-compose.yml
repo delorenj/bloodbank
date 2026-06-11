@@ -118,7 +118,7 @@ services:
       - "${BLOODBANK_ECHO_SUB_PORT:-3301}:3001"
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3001/healthz || exit 1"]
-      interval: 5s
+      interval: 30s
       timeout: 3s
       retries: 10
       start_period: 3s
@@ -198,7 +198,7 @@ services:
       - "${BLOODBANK_HEARTBEAT_RECORDER_PORT:-3601}:3001"
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3001/healthz || exit 1"]
-      interval: 5s
+      interval: 30s
       timeout: 3s
       retries: 10
       start_period: 3s
@@ -281,7 +281,7 @@ services:
       - ../../candystore/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U candystore"]
-      interval: 5s
+      interval: 30s
       timeout: 3s
       retries: 10
       start_period: 5s
@@ -312,7 +312,7 @@ services:
           "CMD-SHELL",
           "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:3001/healthz', timeout=3)\"",
         ]
-      interval: 5s
+      interval: 30s
       timeout: 3s
       retries: 10
       start_period: 5s
