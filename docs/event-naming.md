@@ -185,6 +185,7 @@ Segment 3 of `type` MUST be one of:
 | `audio`        | Audio capture lifecycle — inbox ingestion, transcription jobs.     | active   |
 | `repo`         | Repo-scoped PM facts such as decisions, intake triage, and tasks.  | active   |
 | `lifecycle`    | Finite development mission: status, roadmap, checkpoints, gates, blockers. | active   |
+| `finance`      | Household finance facts from the tiller sync — accounts, transactions, recurring/zombie subscriptions, cashflow projection. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration.                                 | reserved |
@@ -228,6 +229,13 @@ Segment 4 of `type` MUST be one of:
 | `gate`             | `lifecycle`              | An intentional pause or review point on a lifecycle.        |
 | `roadmap`          | `lifecycle`              | A versioned plan of phases and checkpoints.                 |
 | `status`           | `lifecycle`              | Aggregate lifecycle status and health.                      |
+| `sync`             | `finance`                | One sheet→Postgres sync run (tiller).                       |
+| `account`          | `finance`                | A tracked bank/credit/manual account.                       |
+| `transaction`      | `finance`                | A posted transaction on an account.                         |
+| `subscription`     | `finance`                | A recurring charge/income series (detected or curated).     |
+| `zombie_charge`    | `finance`                | A charge on a series the owner already canceled.            |
+| `paycheck`         | `finance`                | A recognized income deposit.                                |
+| `projection`       | `finance`                | The liquid cashflow projection (breaches, troughs).         |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -241,7 +249,8 @@ emit an entity not paired with it here.
 `created`, `resumed`, `started`, `ended`, `completed`, `failed`, `canceled`,
 `generated`, `appended`, `received`, `sent`, `granted`, `denied`, `opened`,
 `closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`,
-`recorded`, `triaged`, `updated`, `reached`, `resolved`.
+`recorded`, `triaged`, `updated`, `reached`, `resolved`, `detected`,
+`flagged`, `breached`.
 
 ### 8.2 Command actions (imperative present)
 
@@ -349,6 +358,11 @@ session:<session_id>             # agent CLI session (was cli_session)
 process:<process_id>
 transcription:<transcription_id>
 file:<sha256(file_path)|file_id>
+sync:<run_id>                    # finance: one tiller sync run
+account:<account_id>             # finance: per-account transaction/paycheck order
+transaction:<txn_id>
+subscription:<series_id>         # finance: recurring-series lifecycle incl. zombie strikes
+projection:liquid                # finance: single household-wide projection bucket
 ```
 
 Pick the narrowest bucket that captures the event's natural ordering.

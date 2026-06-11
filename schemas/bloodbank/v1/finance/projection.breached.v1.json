@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/v1/finance/projection.breached.v1.json",
+  "title": "Finance Projection Breached Event",
+  "description": "The cashflow projection crossed a threshold (buffer dip, projected negative, or next-day bounce risk). Producer: tiller. See bloodbank/docs/event-naming.md.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.v1.finance.projection.breached"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "finance"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.v1.finance.projection.breached.",
+      "properties": {
+        "min_cents": {
+          "type": "integer"
+        },
+        "on_date": {
+          "type": "string",
+          "format": "date",
+          "minLength": 1
+        },
+        "threshold_cents": {
+          "type": "integer"
+        },
+        "horizon_days": {
+          "type": "integer"
+        },
+        "item": {
+          "type": "string",
+          "minLength": 1
+        },
+        "amount_cents": {
+          "type": "integer"
+        },
+        "projected_cents": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "on_date"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}
