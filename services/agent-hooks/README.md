@@ -306,13 +306,13 @@ With NATS up (`mise run up` from the bloodbank root):
 ```bash
 # Single-hook smoke
 echo '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
-  | python3 services/agent-hooks/claude/publish.py tool-action
+  | python3 services/agent-hooks/publish.py --client claude --hook tool-action
 
 echo '{"probe":"sessionStart"}' \
-  | BLOODBANK_HOOK_VERBOSE=1 python3 services/agent-hooks/copilot/publish.py sessionStart
+  | BLOODBANK_HOOK_VERBOSE=1 python3 services/agent-hooks/publish.py --client copilot --hook sessionStart
 
 echo '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
-  | BLOODBANK_HOOK_VERBOSE=1 python3 services/agent-hooks/codex/publish.py PreToolUse
+  | BLOODBANK_HOOK_VERBOSE=1 python3 services/agent-hooks/publish.py --client codex --hook PreToolUse
 
 # Tail the catch-all toaster, then trigger a hook in another shell.
 docker logs -f bloodbank-event-toaster

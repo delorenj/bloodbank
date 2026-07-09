@@ -1,0 +1,22 @@
+{
+  "project_name": "Bloodbank",
+  "project_description": "Event bus for the 33god development pipeline",
+  "project_slug": "bb",
+  "repo_path": "/home/delorenj/code/33GOD/bloodbank",
+  "ticket_provider": {
+    "type": "plane",
+    "identifier": "BB",
+    "board_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+    "board_url": "https://plane.delo.sh/33god/settings/projects/10d06f8d-c110-4ce5-beaa-0914534b090a"
+  },
+  "agents": {
+    "bb-scrum-master": {
+      "role": "scrum-master",
+      "role_dir": "agents/hermes/scrum-master"
+    },
+    "bb-pm": {
+      "role": "pm",
+      "role_dir": "agents/hermes/pm"
+    }
+  }
+}

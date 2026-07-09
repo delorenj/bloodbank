@@ -56,7 +56,7 @@ SUBJECT_REGEX = re.compile(
 ALLOWED_DOMAINS = frozenset({
     # active
     "conversation", "agent", "llm", "cli", "system", "audio", "repo", "lifecycle",
-    "finance",
+    "finance", "attendance",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "workflow", "memory",
 })
@@ -74,6 +74,7 @@ ALLOWED_ENTITIES = frozenset({
     "file", "transcription",
     "mission", "checkpoint", "gate", "roadmap", "status",
     "sync", "account", "transaction", "subscription", "zombie_charge", "paycheck", "projection",
+    "clock",
 })
 
 EVENT_ACTIONS = frozenset({
@@ -82,14 +83,14 @@ EVENT_ACTIONS = frozenset({
     "opened", "closed", "spawned", "exited", "checked_out",
     "requested", "invoked", "recorded", "triaged",
     "updated", "reached", "resolved",
-    "detected", "flagged", "breached",
+    "detected", "flagged", "breached", "clocked_in", "clocked_out",
 })
 
 COMMAND_ACTIONS = frozenset({
     "create", "resume", "start", "end", "complete", "fail", "cancel",
     "generate", "append", "receive", "send", "grant", "deny",
     "open", "close", "spawn", "kill", "checkout", "invoke",
-    "request",
+    "request", "toggle", "clock_in", "clock_out",
 })
 
 BANNED_TOKENS = frozenset({

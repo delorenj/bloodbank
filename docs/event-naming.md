@@ -186,6 +186,7 @@ Segment 3 of `type` MUST be one of:
 | `repo`         | Repo-scoped PM facts such as decisions, intake triage, and tasks.  | active   |
 | `lifecycle`    | Finite development mission: status, roadmap, checkpoints, gates, blockers. | active   |
 | `finance`      | Household finance facts from the tiller sync — accounts, transactions, recurring/zombie subscriptions, cashflow projection. | active   |
+| `attendance`   | Timekeeping and clock-state transitions across work sessions.       | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration.                                 | reserved |
@@ -236,6 +237,7 @@ Segment 4 of `type` MUST be one of:
 | `zombie_charge`    | `finance`                | A charge on a series the owner already canceled.            |
 | `paycheck`         | `finance`                | A recognized income deposit.                                |
 | `projection`       | `finance`                | The liquid cashflow projection (breaches, troughs).         |
+| `clock`            | `attendance`             | A time-clock integration session or state transition.       |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -250,13 +252,13 @@ emit an entity not paired with it here.
 `generated`, `appended`, `received`, `sent`, `granted`, `denied`, `opened`,
 `closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`,
 `recorded`, `triaged`, `updated`, `reached`, `resolved`, `detected`,
-`flagged`, `breached`.
+`flagged`, `breached`, `clocked_in`, `clocked_out`.
 
 ### 8.2 Command actions (imperative present)
 
 `create`, `resume`, `start`, `end`, `complete`, `fail`, `cancel`, `generate`,
 `append`, `receive`, `send`, `grant`, `deny`, `open`, `close`, `spawn`,
-`kill`, `checkout`, `invoke`, `request`.
+`kill`, `checkout`, `invoke`, `request`, `toggle`, `clock_in`, `clock_out`.
 
 Pairing across kinds is by semantic intent, not lexical: command `start`
 yields event `started`; command `kill` yields event `exited`; command
@@ -363,6 +365,7 @@ account:<account_id>             # finance: per-account transaction/paycheck ord
 transaction:<txn_id>
 subscription:<series_id>         # finance: recurring-series lifecycle incl. zombie strikes
 projection:liquid                # finance: single household-wide projection bucket
+clock:<clock_system>:<principal> # attendance: one worker/system time-clock state bucket
 ```
 
 Pick the narrowest bucket that captures the event's natural ordering.
