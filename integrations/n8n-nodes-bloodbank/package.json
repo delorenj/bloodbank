@@ -1,0 +1,38 @@
+{
+  "name": "n8n-nodes-bloodbank",
+  "version": "0.1.0",
+  "description": "n8n node to publish schema-validated events to the 33GOD bloodbank NATS bus (self-contained; in-process NATS publish, event list generated from bloodbank/schemas)",
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "bloodbank",
+    "nats",
+    "cloudevents",
+    "33god"
+  ],
+  "license": "MIT",
+  "author": "Jarad DeLorenzo <jaradd@gmail.com>",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "dist/index.js",
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/Bloodbank/Bloodbank.node.js"
+    ]
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "codegen": "node codegen/generate-events.mjs",
+    "build": "npm run codegen && tsc",
+    "deploy": "bash scripts/deploy.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "n8n-workflow": "^2.9.0",
+    "typescript": "^5.9.3"
+  }
+}

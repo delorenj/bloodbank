@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""bb-emit — publish a Bloodbank v3 event to NATS from the host.
+
+Dependency-free (stdlib only). Wraps a `data` payload (read from stdin, or --data)
+in the 33GOD CloudEvents v1 envelope, derives the NATS subject / domain /
+ordering_key / correlationid from --type, and PUBs to NATS on 127.0.0.1:4222 —
+the same core subject the bloodbank-event-toaster listens on (bloodbank.evt.v1.>),
+so a correct emit fans out to ntfy.delo.sh/bloodbank plus every other consumer.
+
+This is the host-side seed of the future n8n-nodes-bloodbank node: same envelope
+construction, same subject binding.
+
+Fail-open by default — a dead bus must never break the calling pipeline. Pass
+--strict to exit non-zero on publish failure.
+
+Envelope contract: bloodbank/schemas/_common/cloudevent_base.v1.json
+Subject binding : type `bloodbank.v1.<domain>.<entity>.<action>`
+                  -> subject `bloodbank.evt.v1.<domain>.<entity>.<action>`
+
+Usage:
+  echo '{"transcription_id":"42","file_path":"/x.mp3","transcript_text":""}' \
+    | bb-emit --type bloodbank.v1.audio.transcription.completed
+"""
+import argparse
+import json
+import socket
+import sys
+import uuid
+from datetime import datetime, timezone
+
+# RFC 4122 URL namespace — deterministic correlationid so started/completed/failed
+# for one transcription_id share a causal chain without threading state through n8n.
+_NS = uuid.UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
+
+
+def _rfc3339_now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _nats_publish(subject, body, host, port, timeout=3.0):
+    with socket.create_connection((host, port), timeout=timeout) as s:
+        f = s.makefile("rwb", buffering=0)
+        f.readline()  # eat INFO
+        f.write(b'CONNECT {"verbose":false,"pedantic":false,"name":"bb-emit","lang":"py-stdlib"}\r\n')
+        f.write(b"PUB " + subject.encode() + b" " + str(len(body)).encode() + b"\r\n" + body + b"\r\n")
+        f.write(b"PING\r\n")
+        f.flush()
+        while True:
+            line = f.readline()
+            if not line:
+                raise IOError("NATS closed connection before PONG")
+            if line.startswith(b"PONG"):
+                return
+            if line.startswith(b"-ERR"):
+                raise IOError("NATS -ERR: " + line.decode(errors="replace").strip())
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Publish a Bloodbank v3 event to NATS.")
+    ap.add_argument("--type", required=True,
+                    help="bloodbank.v<N>.<domain>.<entity>.<action>")
+    ap.add_argument("--data", help="data JSON as a string (default: read from stdin)")
+    ap.add_argument("--source", default="urn:33god:service:n8n-inbox-transcribe")
+    ap.add_argument("--producer", default="n8n")
+    ap.add_argument("--service", default="inbox-transcribe")
+    ap.add_argument("--correlation", help="explicit correlationid (uuid); default derived from transcription_id")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=4222)
+    ap.add_argument("--strict", action="store_true",
+                    help="exit non-zero on publish/validation failure (default: fail-open)")
+    a = ap.parse_args()
+
+    fail_rc = 1 if a.strict else 0
+
+    raw = a.data if a.data is not None else sys.stdin.read()
+    try:
+        data = json.loads(raw) if raw and raw.strip() else {}
+    except json.JSONDecodeError as e:
+        print(f"bb-emit: invalid data JSON: {e}", file=sys.stderr)
+        return fail_rc
+    if not isinstance(data, dict):
+        print("bb-emit: data must be a JSON object", file=sys.stderr)
+        return fail_rc
+
+    parts = a.type.split(".")
+    if len(parts) != 5 or parts[0] != "bloodbank" or not parts[1].startswith("v"):
+        print(f"bb-emit: --type must be bloodbank.v<N>.<domain>.<entity>.<action>, got '{a.type}'",
+              file=sys.stderr)
+        return fail_rc
+    domain = parts[2]
+    subject = "bloodbank.evt." + a.type[len("bloodbank."):]
+
+    tid = str(data.get("transcription_id") or data.get("id") or "").strip()
+    correlationid = a.correlation or str(uuid.uuid5(_NS, tid or a.type))
+
+    envelope = {
+        "specversion": "1.0",
+        "id": str(uuid.uuid4()),
+        "source": a.source,
+        "type": a.type,
+        "subject": subject,
+        "time": _rfc3339_now(),
+        "datacontenttype": "application/json",
+        "correlationid": correlationid,
+        "producer": a.producer,
+        "service": a.service,
+        "domain": domain,
+        "schemaref": f"{a.type}.v1",
+        "kind": "event",
+        "ordering_key": f"transcription:{tid}" if tid else f"{domain}:{uuid.uuid4()}",
+        "data": data,
+    }
+
+    body = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+    try:
+        _nats_publish(subject, body, a.host, a.port)
+    except Exception as e:  # noqa: BLE001 — fail-open at the bus boundary
+        print(f"bb-emit: publish FAILED ({e}); failing open", file=sys.stderr)
+        return fail_rc
+    print(f"bb-emit: published {a.type} -> {subject} (corr={correlationid[:8]})", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
