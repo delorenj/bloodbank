@@ -265,13 +265,7 @@ def assert_contract(envelope: dict) -> None:
             raise ContractViolation(
                 f"subject {subject!r} does not match v1 regex {SUBJECT_REGEX.pattern!r}"
             )
-        # subject kind marker MUST agree with envelope.kind
-        marker = subject.split(".")[1]
-        if MARKER_TO_KIND[marker] != kind:
-            raise ContractViolation(
-                f"subject kind marker {marker!r} maps to {MARKER_TO_KIND[marker]!r} "
-                f"but envelope.kind == {kind!r}"
-            )
+        assert_subject_matches(subject, ce_type, kind)
 
     # §11 actor shape
     actor = envelope["actor"]

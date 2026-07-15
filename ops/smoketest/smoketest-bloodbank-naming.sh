@@ -146,6 +146,9 @@ negative_probe "missing actor on kind=event" "$MISSING_ACTOR"
 SUBJECT_MISMATCH='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.v1.conversation.message.appended","subject":"bloodbank.cmd.v1.conversation.message.appended","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
 negative_probe "subject kind marker mismatch (cmd on kind=event)" "$SUBJECT_MISMATCH"
 
+SUBJECT_TYPE_MISMATCH='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.v1.conversation.message.appended","subject":"bloodbank.evt.v1.system.heartbeat.received","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
+negative_probe "subject suffix mismatch with envelope type" "$SUBJECT_TYPE_MISMATCH"
+
 total=$((pass_count + fail_count))
 echo "smoketest-bloodbank-naming: ${pass_count}/${total} checks passed"
 
