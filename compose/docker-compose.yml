@@ -175,26 +175,29 @@ services:
   # Heartbeat — first real-world event (bloodbank.v1.system.heartbeat.received)
   # ---------------------------------------------------------------------------
   # Three services behind the `heartbeat` compose profile:
-  #   - heartbeat-recorder: subscriber app on port 3001 (mirrors echo-sub
-  #     pattern; records ticks + exposes /inspect/recorded for tests)
+  #   - heartbeat-recorder: the shared stdlib smoke subscriber on port 3001;
+  #     records ticks + exposes /inspect/received for tests
   #   - daprd-heartbeat: sidecar attached to recorder via --app-port; ALSO
   #     services heartbeat-tick's publish requests via its HTTP API
   #   - heartbeat-tick: long-running publisher emitting on a 5s interval
   #     by default; configurable via HEARTBEAT_INTERVAL env var
 
   heartbeat-recorder:
-    build:
-      context: ../services/heartbeat-recorder
+    image: python:3.11-alpine
     container_name: bloodbank-heartbeat-recorder
     profiles:
       - heartbeat
+    command: ["python", "-u", "/work/app.py"]
     environment:
       APP_PORT: "3001"
       SUBSCRIBE_PUBSUB: "bloodbank-pubsub"
       SUBSCRIBE_TOPIC: "bloodbank.evt.v1.system.heartbeat.received"
       SUBSCRIBE_ROUTE: "/events/heartbeat"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ../ops/smoketest/echo-sub/app.py:/work/app.py:ro
     ports:
-      # Test-hook port for /inspect/recorded queries from the host.
+      # Test-hook port for /inspect/received queries from the host.
       - "${BLOODBANK_HEARTBEAT_RECORDER_PORT:-3601}:3001"
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --quiet --timeout=3 http://127.0.0.1:3001/healthz || exit 1"]
