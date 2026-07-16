@@ -148,6 +148,9 @@ alongside each service, using publishers generated from the local
 - v1 remains the default. The only registered v2 type is
   `bloodbank.v2.repo.maintenance.failed`, persisted on the exact subject
   `bloodbank.evt.v2.repo.maintenance.failed` for action-phase failures.
+- Every non-v1 type requires an explicit entry in
+  `services/agent-hooks/core/validate.py`; a matching type shape isn't enough
+  to register it.
 - Legacy `event.>` / `command.>` / `reply.>` subject prefixes and 3-token
   types (`agent.session.started`, `copilot.tool.pre`, etc.) are **deprecated**;
   removal is tracked by the §16 migration tickets in `docs/event-naming.md`.

@@ -49,6 +49,12 @@ The targeted action-failure extension uses the exact subject
 `bloodbank.evt.v2.repo.maintenance.failed`. The stream doesn't bind a broad
 v2 wildcard; all other events remain v1.
 
+A consumer subscribed to `bloodbank.evt.v1.>` does not receive this v2 event.
+Consumers that need action failures MUST add a second subscription to the
+exact v2 subject. Durable JetStream consumers use that exact filter; catch-all
+services such as event-toaster remain v1-only until they explicitly add the
+second subscription.
+
 ### Commands: `bloodbank.cmd.v1.<domain>.<entity>.<action>`
 
 Imperative action. Examples:

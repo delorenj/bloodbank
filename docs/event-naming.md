@@ -156,7 +156,10 @@ The only registered v2 type is
 `setup`, `preflight`, `provider`, and `merge` failure payload branches and adds
 `failure.phase=action`. The action branch requires
 `failure.code=action_failed`, successful provider context, zero merge counts,
-and positive `action_attempts` and `action_failures` counts.
+and a bounded `outcome.actions` collection. Each action record has a
+provider-neutral `type` and `status` of `success` or `failed`; at least one
+record MUST be failed. Attempt and failure totals are derived from this single
+collection, so producers cannot publish contradictory independent counters.
 
 The v2 schema is version 1 of the v2 event type:
 
@@ -168,6 +171,11 @@ The v2 schema is version 1 of the v2 event type:
 The `BLOODBANK_EVENTS` stream binds this exact v2 subject alongside the v1
 wildcard. No broad `bloodbank.evt.v2.>` registration exists. Producers MUST
 continue to emit v1 for all other maintenance and reporting events.
+
+The stdlib contract validator explicitly registers this one non-v1 type. It
+rejects every other v2 type and every v3-or-later type before schema lookup.
+Adding another non-v1 type requires both a reviewed schema and a registry
+entry; a version-shaped type alone is not registration.
 
 Canonical PM->agent dispatch contract:
 

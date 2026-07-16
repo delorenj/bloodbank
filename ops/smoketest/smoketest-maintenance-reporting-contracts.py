@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "services" / "agent-hooks"))
 from core.validate import (  # noqa: E402
     ContractViolation,
     EnvelopeInvalid,
+    assert_contract,
     validate_envelope,
 )
 
@@ -86,8 +87,9 @@ PAYLOADS = {
             "provider_status": "complete",
             "merge_attempts": 0,
             "merge_failures": 0,
-            "action_attempts": 1,
-            "action_failures": 1,
+            "actions": [
+                {"type": "close", "status": "failed"},
+            ],
         },
         "failure": {
             "phase": "action",
@@ -313,8 +315,7 @@ class MaintenanceReportingContractTests(unittest.TestCase):
                     summary=f"The {phase} phase failed safely.",
                 )
                 event["data"]["outcome"].update(outcome)
-                event["data"]["outcome"].pop("action_attempts")
-                event["data"]["outcome"].pop("action_failures")
+                event["data"]["outcome"].pop("actions")
                 validate_envelope(event)
 
     def test_v2_action_failure_contract_is_exact_and_noncontradictory(self) -> None:
@@ -333,8 +334,6 @@ class MaintenanceReportingContractTests(unittest.TestCase):
             ("outcome", "provider", None),
             ("outcome", "provider_returncode", 1),
             ("outcome", "provider_status", "failed"),
-            ("outcome", "action_attempts", 0),
-            ("outcome", "action_failures", 0),
             ("outcome", "merge_attempts", 1),
         )
         for container, field, value in mutations:
@@ -344,12 +343,37 @@ class MaintenanceReportingContractTests(unittest.TestCase):
                 with self.assertRaises(self.failure_types):
                     validate_envelope(invalid)
 
-        for field in ("action_attempts", "action_failures"):
-            with self.subTest(missing=field):
+        missing = envelope(ce_type)
+        missing["data"]["outcome"].pop("actions")
+        with self.assertRaises(self.failure_types):
+            validate_envelope(missing)
+
+        invalid_actions = (
+            [],
+            [{"type": "close", "status": "success"}],
+            [{"type": "close", "status": "unknown"}],
+            [{"type": "close", "status": "failed"}] * 101,
+        )
+        for actions in invalid_actions:
+            with self.subTest(actions=actions[:2]):
                 invalid = envelope(ce_type)
-                invalid["data"]["outcome"].pop(field)
+                invalid["data"]["outcome"]["actions"] = actions
                 with self.assertRaises(self.failure_types):
                     validate_envelope(invalid)
+
+        partial = envelope(ce_type)
+        partial["data"]["outcome"]["actions"] = [
+            {"type": "comment", "status": "success"},
+            {"type": "close", "status": "failed"},
+        ]
+        validate_envelope(partial)
+
+        all_failed = envelope(ce_type)
+        all_failed["data"]["outcome"]["actions"] = [
+            {"type": "comment", "status": "failed"},
+            {"type": "close", "status": "failed"},
+        ]
+        validate_envelope(all_failed)
 
     def test_hybrid_v1_type_with_v2_schema_binding_is_rejected(self) -> None:
         hybrid = envelope("bloodbank.v2.repo.maintenance.failed")
@@ -364,6 +388,38 @@ class MaintenanceReportingContractTests(unittest.TestCase):
         )
         with self.assertRaises(self.failure_types):
             validate_envelope(hybrid)
+
+    def test_unregistered_non_v1_types_fail_before_schema_lookup(self) -> None:
+        unregistered = (
+            "bloodbank.v2.reporting.report.failed",
+            "bloodbank.v2.agent.invocation.failed",
+            "bloodbank.v3.repo.maintenance.failed",
+        )
+        for ce_type in unregistered:
+            with self.subTest(ce_type=ce_type):
+                event = envelope("bloodbank.v2.repo.maintenance.failed")
+                _, version, domain, entity, action = ce_type.split(".")
+                event.update(
+                    type=ce_type,
+                    subject=(
+                        f"bloodbank.evt.{version}.{domain}.{entity}.{action}"
+                    ),
+                    domain=domain,
+                )
+                with self.assertRaises(ContractViolation):
+                    assert_contract(event)
+                with self.assertRaises(ContractViolation):
+                    validate_envelope(event)
+
+    def test_missing_v1_schema_is_normalized_to_envelope_invalid(self) -> None:
+        event = envelope("bloodbank.v1.repo.maintenance.failed")
+        event.update(
+            type="bloodbank.v1.repo.maintenance.closed",
+            subject="bloodbank.evt.v1.repo.maintenance.closed",
+        )
+        assert_contract(event)
+        with self.assertRaises(EnvelopeInvalid):
+            validate_envelope(event)
 
     def test_v2_subject_is_persisted_by_jetstream(self) -> None:
         topology = json.loads((ROOT / "compose/nats/streams.json").read_text())

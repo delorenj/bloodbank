@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://33god.dev/schemas/bloodbank/v2/repo/maintenance.failed.v1.json",
   "title": "Repo Maintenance Failed Event v2",
-  "description": "A repository maintenance run failed during setup, preflight, provider execution, a runner-owned action, or merge. v2 adds the action failure phase while preserving the v1 payload semantics for every existing phase.",
+  "description": "A repository maintenance run failed during setup, preflight, provider execution, a runner-owned action, or merge. v2 adds the action failure phase and a bounded action-status collection while preserving the v1 payload semantics for every existing phase.",
   "type": "object",
   "allOf": [
     {
@@ -102,13 +102,41 @@
               "type": "integer",
               "minimum": 0
             },
-            "action_attempts": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "action_failures": {
-              "type": "integer",
-              "minimum": 1
+            "actions": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                  },
+                  "status": {
+                    "enum": [
+                      "success",
+                      "failed"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "status"
+                ]
+              },
+              "contains": {
+                "properties": {
+                  "status": {
+                    "const": "failed"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "minContains": 1
             }
           },
           "required": [
@@ -204,17 +232,8 @@
                   }
                 },
                 "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "action_attempts"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "action_failures"
-                      ]
-                    }
+                  "required": [
+                    "actions"
                   ]
                 }
               }
@@ -264,17 +283,8 @@
                   }
                 },
                 "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "action_attempts"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "action_failures"
-                      ]
-                    }
+                  "required": [
+                    "actions"
                   ]
                 }
               }
@@ -328,17 +338,8 @@
                   }
                 },
                 "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "action_attempts"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "action_failures"
-                      ]
-                    }
+                  "required": [
+                    "actions"
                   ]
                 }
               }
@@ -395,18 +396,13 @@
                   "merge_failures": {
                     "const": 0
                   },
-                  "action_attempts": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "action_failures": {
-                    "type": "integer",
-                    "minimum": 1
+                  "actions": {
+                    "type": "array",
+                    "minItems": 1
                   }
                 },
                 "required": [
-                  "action_attempts",
-                  "action_failures"
+                  "actions"
                 ]
               }
             }
