@@ -120,6 +120,18 @@ type     bloodbank.v1.agent.invocation.start
 subject  bloodbank.cmd.v1.agent.invocation.start          # command
 ```
 
+Repository maintenance and company reporting use these provider-neutral
+event routes:
+
+| CloudEvents `type`                              | NATS subject                                          |
+| ----------------------------------------------- | ----------------------------------------------------- |
+| `bloodbank.v1.repo.maintenance.started`         | `bloodbank.evt.v1.repo.maintenance.started`           |
+| `bloodbank.v1.repo.maintenance.completed`       | `bloodbank.evt.v1.repo.maintenance.completed`         |
+| `bloodbank.v1.repo.maintenance.failed`          | `bloodbank.evt.v1.repo.maintenance.failed`            |
+| `bloodbank.v1.reporting.report.started`         | `bloodbank.evt.v1.reporting.report.started`           |
+| `bloodbank.v1.reporting.report.completed`       | `bloodbank.evt.v1.reporting.report.completed`         |
+| `bloodbank.v1.reporting.report.failed`          | `bloodbank.evt.v1.reporting.report.failed`            |
+
 Canonical PM->agent dispatch contract:
 
 - Command envelope type: `bloodbank.v1.agent.invocation.start`
@@ -187,6 +199,7 @@ Segment 3 of `type` MUST be one of:
 | `lifecycle`    | Finite development mission: status, roadmap, checkpoints, gates, blockers. | active   |
 | `finance`      | Household finance facts from the tiller sync — accounts, transactions, recurring/zombie subscriptions, cashflow projection. | active   |
 | `attendance`   | Timekeeping and clock-state transitions across work sessions.       | active   |
+| `reporting`    | Company reporting runs, archives, and delivery outcomes.             | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration.                                 | reserved |
@@ -218,6 +231,7 @@ Segment 4 of `type` MUST be one of:
 | `decision`         | `repo`                   | PM decision recorded for a repo; repo slug lives in data.    |
 | `intake`           | `repo`                   | Incoming repo request triaged; repo slug lives in data.      |
 | `task`             | `repo`                   | Repo work item created; repo slug lives in data.             |
+| `maintenance`      | `repo`                   | Automated repository maintenance run and merge-gate outcome. |
 | `file`             | `audio`                  | An on-disk audio artifact observed by an inbox watcher.     |
 | `transcription`    | `audio`                  | A speech-to-text job over a single audio file.              |
 | `approval_request` | `approval` (reserved)    | Human approval prompt issued.                               |
@@ -238,6 +252,7 @@ Segment 4 of `type` MUST be one of:
 | `paycheck`         | `finance`                | A recognized income deposit.                                |
 | `projection`       | `finance`                | The liquid cashflow projection (breaches, troughs).         |
 | `clock`            | `attendance`             | A time-clock integration session or state transition.       |
+| `report`           | `reporting`              | One company report run, archive, and delivery lifecycle.     |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -427,6 +442,14 @@ bloodbank/schemas/
       tool.completed.v1.json
     system/
       heartbeat.received.v1.json
+    repo/
+      maintenance.started.v1.json
+      maintenance.completed.v1.json
+      maintenance.failed.v1.json
+    reporting/
+      report.started.v1.json
+      report.completed.v1.json
+      report.failed.v1.json
 ```
 
 Each schema:
