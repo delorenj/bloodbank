@@ -4,49 +4,49 @@
     "sessionStart": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/copilot/publish.py sessionStart",
+        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook sessionStart",
         "timeoutSec": 5
       }
     ],
     "sessionEnd": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/copilot/publish.py sessionEnd",
+        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook sessionEnd",
         "timeoutSec": 5
       }
     ],
     "userPromptSubmitted": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/copilot/publish.py userPromptSubmitted",
+        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook userPromptSubmitted",
         "timeoutSec": 5
       }
     ],
     "preToolUse": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/copilot/publish.py preToolUse",
+        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook preToolUse",
         "timeoutSec": 5
       }
     ],
     "postToolUse": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/copilot/publish.py postToolUse",
+        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook postToolUse",
         "timeoutSec": 5
       }
     ],
     "errorOccurred": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/copilot/publish.py errorOccurred",
+        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook errorOccurred",
         "timeoutSec": 5
       }
     ],
     "agentStop": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/copilot/publish.py agentStop",
+        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook agentStop",
         "timeoutSec": 5
       }
     ]

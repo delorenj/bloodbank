@@ -1,0 +1,26 @@
+{
+  "project_name": "Bloodbank",
+  "project_description": "Event bus for the 33god development pipeline",
+  "project_slug": "bb",
+  "repo_path": "/home/delorenj/code/33GOD/bloodbank",
+  "ticket_provider": {
+    "type": "plane",
+    "workspace": "33god",
+    "identifier": "BB",
+    "board_id": "",
+    "state": "planned"
+  },
+  "agents": {
+    "bloodbank-pm": {
+      "role": "pm",
+      "role_dir": "agents/hermes/pm"
+    }
+  },
+  "automation": {
+    "reconcile": {
+      "enabled": false,
+      "grace_hours": 0,
+      "auto_review": true
+    }
+  }
+}

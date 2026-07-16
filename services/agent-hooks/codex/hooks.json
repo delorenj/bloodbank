@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{}' | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py SessionStart",
+            "command": "echo '{}' | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook SessionStart",
             "timeout": 3000
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{}' | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py Stop user_stop",
+            "command": "echo '{}' | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook Stop user_stop",
             "timeout": 3000
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py UserPromptSubmit",
+            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook UserPromptSubmit",
             "timeout": 3000
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py PreToolUse",
+            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook PreToolUse",
             "timeout": 3000
           }
         ]
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py PostToolUse",
+            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook PostToolUse",
             "timeout": 3000
           }
         ]
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py SubagentStart",
+            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook SubagentStart",
             "timeout": 3000
           }
         ]
@@ -73,7 +73,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/code/33GOD/bloodbank/services/agent-hooks/codex/publish.py SubagentStop",
+            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook SubagentStop",
             "timeout": 3000
           }
         ]
