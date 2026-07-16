@@ -62,6 +62,13 @@ PAYLOADS = {
             "merge_attempts": 0,
             "merge_failures": 0,
         },
+        "failure": {
+            "phase": "provider",
+            "code": "provider_failed",
+            "summary": "All configured maintenance providers failed.",
+            "retryable": True,
+            "redacted": True,
+        },
     },
     "bloodbank.v1.reporting.report.started": {
         "schema_version": 1,
@@ -80,21 +87,20 @@ PAYLOADS = {
         "completed_at": "2026-07-15T11:00:00Z",
         "outcome": {
             "status": "complete",
-            "sections_expected": 2,
-            "sections_complete": 2,
-            "sections_degraded": 0,
+            "sections": {
+                "executive-summary": "complete",
+                "repo-maintenance": "complete",
+            },
         },
         "artifacts": {
-            "report_json_path": "/var/lib/delonet-daily-report/2026-07-15.report.json",
-            "markdown_path": "/var/lib/delonet-daily-report/2026-07-15.md",
-            "commit_marker_path": (
-                "/var/lib/delonet-daily-report/2026-07-15.committed.json"
-            ),
+            "report_artifact_id": "report:2026-07-15:json",
+            "markdown_artifact_id": "report:2026-07-15:markdown",
+            "commit_marker_id": "report:2026-07-15:committed",
         },
         "delivery": {
             "status": "delivered",
             "channel": "telegram",
-            "destination": "company-owner",
+            "destination_alias": "company-owner",
             "attempts": 1,
             "delivered_at": "2026-07-15T11:00:00Z",
         },
@@ -110,11 +116,12 @@ PAYLOADS = {
             "code": "delivery_unavailable",
             "summary": "The configured delivery channel was unavailable.",
             "retryable": True,
+            "redacted": True,
         },
         "delivery": {
             "status": "failed",
             "channel": "telegram",
-            "destination": "company-owner",
+            "destination_alias": "company-owner",
             "attempts": 3,
         },
     },
@@ -190,6 +197,177 @@ class MaintenanceReportingContractTests(unittest.TestCase):
             with self.subTest(ce_type=ce_type, problem="missing-required"):
                 invalid = envelope(ce_type)
                 invalid["data"].pop("schema_version")
+                with self.assertRaises(self.failure_types):
+                    validate_envelope(invalid)
+
+    def test_setup_failure_without_provider_is_valid_and_consistent(self) -> None:
+        ce_type = "bloodbank.v1.repo.maintenance.failed"
+        setup = envelope(ce_type)
+        setup["data"]["failure"].update(
+            phase="setup",
+            code="mirror_unavailable",
+            summary="The repository mirror could not be prepared.",
+        )
+        setup["data"]["outcome"].update(
+            provider=None,
+            provider_returncode=None,
+            provider_status=None,
+            merge_attempts=0,
+            merge_failures=0,
+        )
+        validate_envelope(setup)
+
+        contradictory = copy.deepcopy(setup)
+        contradictory["data"]["outcome"]["provider"] = "provider-a"
+        with self.assertRaises(self.failure_types):
+            validate_envelope(contradictory)
+
+        provider_failure = envelope(ce_type)
+        provider_failure["data"]["outcome"]["provider"] = None
+        with self.assertRaises(self.failure_types):
+            validate_envelope(provider_failure)
+
+        merge_failure = envelope(ce_type)
+        merge_failure["data"]["failure"].update(
+            phase="merge",
+            code="merge_rejected",
+            summary="The live merge gate rejected the candidate.",
+        )
+        merge_failure["data"]["outcome"].update(
+            provider_returncode=0,
+            provider_status="complete",
+            merge_attempts=1,
+            merge_failures=1,
+        )
+        validate_envelope(merge_failure)
+        merge_failure["data"]["outcome"]["merge_failures"] = 0
+        with self.assertRaises(self.failure_types):
+            validate_envelope(merge_failure)
+
+    def test_completed_outcomes_reject_contradictory_states(self) -> None:
+        maintenance = envelope("bloodbank.v1.repo.maintenance.completed")
+        maintenance["data"]["outcome"]["provider_returncode"] = 1
+        with self.assertRaises(self.failure_types):
+            validate_envelope(maintenance)
+        maintenance = envelope("bloodbank.v1.repo.maintenance.completed")
+        maintenance["data"]["outcome"]["provider_status"] = "failed"
+        with self.assertRaises(self.failure_types):
+            validate_envelope(maintenance)
+
+        report = envelope("bloodbank.v1.reporting.report.completed")
+        report["data"]["outcome"]["sections"]["executive-summary"] = "degraded"
+        with self.assertRaises(self.failure_types):
+            validate_envelope(report)
+
+        partial = envelope("bloodbank.v1.reporting.report.completed")
+        partial["data"]["outcome"]["status"] = "partial"
+        with self.assertRaises(self.failure_types):
+            validate_envelope(partial)
+        partial["data"]["outcome"]["sections"]["repo-maintenance"] = "degraded"
+        validate_envelope(partial)
+
+    def test_delivery_branches_are_coherent(self) -> None:
+        completed_type = "bloodbank.v1.reporting.report.completed"
+        delivered = envelope(completed_type)
+        delivered["data"]["delivery"]["attempts"] = 0
+        with self.assertRaises(self.failure_types):
+            validate_envelope(delivered)
+        delivered = envelope(completed_type)
+        delivered["data"]["delivery"]["delivered_at"] = None
+        with self.assertRaises(self.failure_types):
+            validate_envelope(delivered)
+        delivered = envelope(completed_type)
+        delivered["data"]["delivery"]["delivered_at"] = "not-a-date-time"
+        with self.assertRaises(self.failure_types):
+            validate_envelope(delivered)
+
+        skipped = envelope(completed_type)
+        skipped["data"]["delivery"] = {
+            "status": "skipped",
+            "channel": "telegram",
+            "destination_alias": "company-owner",
+            "attempts": 0,
+            "delivered_at": None,
+            "reason": "delivery_disabled",
+        }
+        validate_envelope(skipped)
+        skipped["data"]["delivery"]["attempts"] = 1
+        with self.assertRaises(self.failure_types):
+            validate_envelope(skipped)
+
+        failed_type = "bloodbank.v1.reporting.report.failed"
+        not_attempted = envelope(failed_type)
+        not_attempted["data"]["delivery"] = {
+            "status": "not_attempted",
+            "channel": None,
+            "destination_alias": None,
+            "attempts": 0,
+        }
+        validate_envelope(not_attempted)
+        not_attempted["data"]["delivery"]["attempts"] = 1
+        with self.assertRaises(self.failure_types):
+            validate_envelope(not_attempted)
+
+        failed = envelope(failed_type)
+        failed["data"]["delivery"]["attempts"] = 0
+        with self.assertRaises(self.failure_types):
+            validate_envelope(failed)
+
+    def test_date_and_datetime_formats_are_enforced(self) -> None:
+        for ce_type in PAYLOADS:
+            with self.subTest(ce_type=ce_type, field="time"):
+                invalid = envelope(ce_type)
+                invalid["time"] = "not-a-date-time"
+                with self.assertRaises(self.failure_types):
+                    validate_envelope(invalid)
+
+            timestamp_field = "at" if ".maintenance." in ce_type else "started_at"
+            with self.subTest(ce_type=ce_type, field=timestamp_field):
+                invalid = envelope(ce_type)
+                invalid["data"][timestamp_field] = "2026-99-99 25:00"
+                with self.assertRaises(self.failure_types):
+                    validate_envelope(invalid)
+
+            if ".report." in ce_type:
+                with self.subTest(ce_type=ce_type, field="report_date"):
+                    invalid = envelope(ce_type)
+                    invalid["data"]["report_date"] = "2026-99-99"
+                    with self.assertRaises(self.failure_types):
+                        validate_envelope(invalid)
+
+    def test_private_or_secret_telemetry_is_rejected(self) -> None:
+        completed = envelope("bloodbank.v1.reporting.report.completed")
+        completed["data"]["artifacts"]["report_artifact_id"] = (
+            "/home/operator/private/report.json"
+        )
+        with self.assertRaises(self.failure_types):
+            validate_envelope(completed)
+
+        destination = envelope("bloodbank.v1.reporting.report.completed")
+        destination["data"]["delivery"]["destination_alias"] = "-100123456789"
+        with self.assertRaises(self.failure_types):
+            validate_envelope(destination)
+
+        for ce_type in (
+            "bloodbank.v1.repo.maintenance.failed",
+            "bloodbank.v1.reporting.report.failed",
+        ):
+            for summary in (
+                "stderr dump contained raw process output",
+                "token=exampleSecret123",
+                "github_pat_exampleSecret123",
+                "failed at /home/operator/.config/secret",
+                "credential URL https://user:password@example.invalid",
+            ):
+                with self.subTest(ce_type=ce_type, summary=summary):
+                    invalid = envelope(ce_type)
+                    invalid["data"]["failure"]["summary"] = summary
+                    with self.assertRaises(self.failure_types):
+                        validate_envelope(invalid)
+
+            with self.subTest(ce_type=ce_type, field="stderr"):
+                invalid = envelope(ce_type)
+                invalid["data"]["failure"]["stderr"] = "raw process output"
                 with self.assertRaises(self.failure_types):
                     validate_envelope(invalid)
 

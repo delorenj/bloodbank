@@ -67,57 +67,82 @@
             },
             "code": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
             },
             "summary": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "maxLength": 500,
+              "pattern": "^(?!.*(?:stderr|STDERR|(?:token|Token|secret|Secret|password|Password)\\s*[:=]|gh[pousr]_|github_pat_|sk-[A-Za-z0-9]|://[^\\s/@:]+:[^\\s/@]+@|/(?:home|root|etc|var|run|tmp)/)).*$",
+              "description": "Bounded operator-safe summary. Producers must redact credentials, credential-bearing URLs, stderr dumps, and absolute filesystem paths before publishing."
             },
             "retryable": {
               "type": "boolean"
+            },
+            "redacted": {
+              "const": true
             }
           },
           "required": [
             "phase",
             "code",
             "summary",
-            "retryable"
+            "retryable",
+            "redacted"
           ]
         },
         "delivery": {
           "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "status": {
-              "enum": [
-                "not_attempted",
-                "failed"
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "not_attempted"
+                },
+                "channel": {
+                  "type": "null"
+                },
+                "destination_alias": {
+                  "type": "null"
+                },
+                "attempts": {
+                  "const": 0
+                }
+              },
+              "required": [
+                "status",
+                "channel",
+                "destination_alias",
+                "attempts"
               ]
             },
-            "channel": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "minLength": 1
-            },
-            "destination": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "minLength": 1
-            },
-            "attempts": {
-              "type": "integer",
-              "minimum": 0
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "failed"
+                },
+                "channel": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                },
+                "destination_alias": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                },
+                "attempts": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "status",
+                "channel",
+                "destination_alias",
+                "attempts"
+              ]
             }
-          },
-          "required": [
-            "status",
-            "channel",
-            "destination",
-            "attempts"
           ]
         }
       },

@@ -71,7 +71,7 @@
               "minLength": 1
             },
             "provider_returncode": {
-              "type": "integer"
+              "const": 0
             },
             "provider_status": {
               "enum": [

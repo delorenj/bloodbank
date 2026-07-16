@@ -132,6 +132,21 @@ event routes:
 | `bloodbank.v1.reporting.report.completed`       | `bloodbank.evt.v1.reporting.report.completed`         |
 | `bloodbank.v1.reporting.report.failed`          | `bloodbank.evt.v1.reporting.report.failed`            |
 
+These lifecycle events use strict, privacy-preserving telemetry. Maintenance
+failures identify a structured phase and code. Setup and preflight failures
+set provider fields to `null`; provider and merge failures use schema branches
+that require only the fields valid for that phase. Completed report coverage
+lists each section and its state instead of publishing independent counters
+that can contradict one another.
+
+Report artifacts use opaque IDs such as `report:2026-07-15:json`, never raw
+filesystem paths. Delivery metadata uses a configured logical
+`destination_alias`, never a chat ID, user ID, phone number, or webhook URL.
+Failure summaries are redacted, limited to 500 characters, and marked with
+`redacted: true`. Producers MUST NOT publish stderr dumps, credentials,
+credential-bearing URLs, access tokens, or absolute filesystem paths in these
+events.
+
 Canonical PM->agent dispatch contract:
 
 - Command envelope type: `bloodbank.v1.agent.invocation.start`
@@ -361,6 +376,10 @@ In addition to everything required by `bloodbank/schemas/_common/cloudevent_base
 | `delivery`        | command               | yes       | Always `single_consumer` for v1.                                              |
 | `correlationid`   | event, command, reply | yes       | Already required by base. For commands, equals `command_id` when root-issued. |
 | `causationid`     | event, command, reply | yes       | Already required by base. For replies, equals the originating `command_id`.   |
+
+Schema validation enforces JSON Schema `date` and `date-time` formats. Invalid
+calendar dates and non-RFC 3339 timestamps fail validation; the `format`
+keyword is not documentation-only.
 
 ### 11.1 `ordering_key` rules
 

@@ -54,96 +54,151 @@
         },
         "outcome": {
           "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "status": {
-              "enum": [
-                "complete",
-                "partial"
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "complete"
+                },
+                "sections": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "propertyNames": {
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+                  },
+                  "additionalProperties": {
+                    "const": "complete"
+                  }
+                }
+              },
+              "required": [
+                "status",
+                "sections"
               ]
             },
-            "sections_expected": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "sections_complete": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "sections_degraded": {
-              "type": "integer",
-              "minimum": 0
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "partial"
+                },
+                "sections": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "propertyNames": {
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+                  },
+                  "additionalProperties": {
+                    "enum": [
+                      "complete",
+                      "degraded"
+                    ]
+                  },
+                  "not": {
+                    "additionalProperties": {
+                      "const": "complete"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "status",
+                "sections"
+              ]
             }
-          },
-          "required": [
-            "status",
-            "sections_expected",
-            "sections_complete",
-            "sections_degraded"
           ]
         },
         "artifacts": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "report_json_path": {
+            "report_artifact_id": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
             },
-            "markdown_path": {
+            "markdown_artifact_id": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
             },
-            "commit_marker_path": {
+            "commit_marker_id": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
             }
           },
           "required": [
-            "report_json_path",
-            "markdown_path",
-            "commit_marker_path"
+            "report_artifact_id",
+            "markdown_artifact_id",
+            "commit_marker_id"
           ]
         },
         "delivery": {
           "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "status": {
-              "enum": [
-                "delivered",
-                "skipped"
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "delivered"
+                },
+                "channel": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                },
+                "destination_alias": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                },
+                "attempts": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "delivered_at": {
+                  "$ref": "../../../_common/types.v1.json#/$defs/timestamp"
+                }
+              },
+              "required": [
+                "status",
+                "channel",
+                "destination_alias",
+                "attempts",
+                "delivered_at"
               ]
             },
-            "channel": {
-              "type": "string",
-              "minLength": 1
-            },
-            "destination": {
-              "type": "string",
-              "minLength": 1
-            },
-            "attempts": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "delivered_at": {
-              "oneOf": [
-                {
-                  "$ref": "../../../_common/types.v1.json#/$defs/timestamp"
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "skipped"
                 },
-                {
+                "channel": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                },
+                "destination_alias": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                },
+                "attempts": {
+                  "const": 0
+                },
+                "delivered_at": {
                   "type": "null"
+                },
+                "reason": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$"
                 }
+              },
+              "required": [
+                "status",
+                "channel",
+                "destination_alias",
+                "attempts",
+                "delivered_at",
+                "reason"
               ]
             }
-          },
-          "required": [
-            "status",
-            "channel",
-            "destination",
-            "attempts",
-            "delivered_at"
           ]
         }
       },

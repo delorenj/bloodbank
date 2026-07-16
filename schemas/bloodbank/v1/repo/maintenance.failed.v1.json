@@ -67,20 +67,31 @@
               "const": false
             },
             "provider": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "minLength": 1
             },
             "provider_returncode": {
-              "type": "integer"
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "provider_status": {
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "complete",
                 "changed",
                 "noop",
                 "no_work",
                 "blocked",
-                "failed"
+                "failed",
+                null
               ]
             },
             "merge_attempts": {
@@ -101,8 +112,189 @@
             "merge_attempts",
             "merge_failures"
           ]
+        },
+        "failure": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "phase": {
+              "enum": [
+                "setup",
+                "preflight",
+                "provider",
+                "merge"
+              ]
+            },
+            "code": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "pattern": "^(?!.*(?:stderr|STDERR|(?:token|Token|secret|Secret|password|Password)\\s*[:=]|gh[pousr]_|github_pat_|sk-[A-Za-z0-9]|://[^\\s/@:]+:[^\\s/@]+@|/(?:home|root|etc|var|run|tmp)/)).*$",
+              "description": "Bounded operator-safe summary. Producers must redact credentials, credential-bearing URLs, stderr dumps, and absolute filesystem paths before publishing."
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "redacted": {
+              "const": true
+            }
+          },
+          "required": [
+            "phase",
+            "code",
+            "summary",
+            "retryable",
+            "redacted"
+          ]
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "failure": {
+                "properties": {
+                  "phase": {
+                    "enum": [
+                      "setup",
+                      "preflight"
+                    ]
+                  }
+                },
+                "required": [
+                  "phase"
+                ]
+              }
+            },
+            "required": [
+              "failure"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "properties": {
+                  "provider": {
+                    "type": "null"
+                  },
+                  "provider_returncode": {
+                    "type": "null"
+                  },
+                  "provider_status": {
+                    "type": "null"
+                  },
+                  "merge_attempts": {
+                    "const": 0
+                  },
+                  "merge_failures": {
+                    "const": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "failure": {
+                "properties": {
+                  "phase": {
+                    "const": "provider"
+                  }
+                },
+                "required": [
+                  "phase"
+                ]
+              }
+            },
+            "required": [
+              "failure"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "properties": {
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "provider_returncode": {
+                    "type": "integer"
+                  },
+                  "provider_status": {
+                    "enum": [
+                      "blocked",
+                      "failed"
+                    ]
+                  },
+                  "merge_attempts": {
+                    "const": 0
+                  },
+                  "merge_failures": {
+                    "const": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "failure": {
+                "properties": {
+                  "phase": {
+                    "const": "merge"
+                  }
+                },
+                "required": [
+                  "phase"
+                ]
+              }
+            },
+            "required": [
+              "failure"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "properties": {
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "provider_returncode": {
+                    "const": 0
+                  },
+                  "provider_status": {
+                    "enum": [
+                      "complete",
+                      "changed",
+                      "noop",
+                      "no_work"
+                    ]
+                  },
+                  "merge_attempts": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "merge_failures": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
       "required": [
         "schema_version",
         "run_id",
@@ -110,7 +302,8 @@
         "tick",
         "at",
         "automerge",
-        "outcome"
+        "outcome",
+        "failure"
       ]
     }
   },
