@@ -19,6 +19,18 @@
     "domain": {
       "const": "reporting"
     },
+    "subject": {
+      "const": "bloodbank.evt.v1.reporting.report.failed"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "apicurio://holyfields/bloodbank.v1.reporting.report.failed/versions/1"
+    },
+    "schemaref": {
+      "const": "bloodbank.v1.reporting.report.failed.v1"
+    },
     "data": {
       "type": "object",
       "additionalProperties": false,
@@ -121,9 +133,23 @@
     }
   },
   "required": [
+    "specversion",
+    "id",
+    "source",
     "type",
+    "subject",
+    "time",
+    "datacontenttype",
+    "dataschema",
+    "correlationid",
+    "causationid",
+    "producer",
+    "service",
     "kind",
     "domain",
+    "schemaref",
+    "actor",
+    "ordering_key",
     "data"
   ]
 }
