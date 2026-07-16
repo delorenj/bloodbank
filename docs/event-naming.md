@@ -1,4 +1,4 @@
-# Bloodbank Event Naming Contract — v1
+# Bloodbank Event Naming Contract — versioned, with v1 baseline
 
 **Status:** Locked  
 **Adopted:** 2026-05-14  
@@ -36,10 +36,10 @@ whole point.
 Every event's CloudEvents `type` is exactly five dotted tokens:
 
 ```
-bloodbank.v1.<domain>.<entity>.<action>
+bloodbank.v<N>.<domain>.<entity>.<action>
 ```
 
-The vendor prefix (`bloodbank`) and contract version (`v1`) are baked into
+The vendor prefix (`bloodbank`) and contract version (`v<N>`) are baked into
 the type so a consumer reading a single envelope knows the contract and its
 version without parsing `dataschema`.
 
@@ -56,6 +56,7 @@ bloodbank.v1.conversation.message.appended
 bloodbank.v1.llm.response.received
 bloodbank.v1.cli.stdout.appended
 bloodbank.v1.agent.invocation.started
+bloodbank.v2.repo.maintenance.failed
 ```
 
 Invalid (contract violation):
@@ -88,7 +89,7 @@ segment so JetStream streams can be bound by transport-level routing
 without parsing the envelope body:
 
 ```
-bloodbank.<kind>.v1.<domain>.<entity>.<action>
+bloodbank.<kind>.v<N>.<domain>.<entity>.<action>
 ```
 
 `<kind>` ∈ `{ evt, cmd, rpy }`:
@@ -128,6 +129,7 @@ event routes:
 | `bloodbank.v1.repo.maintenance.started`         | `bloodbank.evt.v1.repo.maintenance.started`           |
 | `bloodbank.v1.repo.maintenance.completed`       | `bloodbank.evt.v1.repo.maintenance.completed`         |
 | `bloodbank.v1.repo.maintenance.failed`          | `bloodbank.evt.v1.repo.maintenance.failed`            |
+| `bloodbank.v2.repo.maintenance.failed`          | `bloodbank.evt.v2.repo.maintenance.failed`            |
 | `bloodbank.v1.reporting.report.started`         | `bloodbank.evt.v1.reporting.report.started`           |
 | `bloodbank.v1.reporting.report.completed`       | `bloodbank.evt.v1.reporting.report.completed`         |
 | `bloodbank.v1.reporting.report.failed`          | `bloodbank.evt.v1.reporting.report.failed`            |
@@ -146,6 +148,34 @@ Failure summaries are redacted, limited to 500 characters, and marked with
 `redacted: true`. Producers MUST NOT publish stderr dumps, credentials,
 credential-bearing URLs, access tokens, or absolute filesystem paths in these
 events.
+
+### 3.1 Targeted repo maintenance v2 extension
+
+The only registered v2 type is
+`bloodbank.v2.repo.maintenance.failed`. It preserves the v1
+`setup`, `preflight`, `provider`, and `merge` failure payload branches and adds
+`failure.phase=action`. The action branch requires
+`failure.code=action_failed`, successful provider context, zero merge counts,
+and a bounded `outcome.actions` collection. Each action record has a
+provider-neutral `type` and `status` of `success` or `failed`; at least one
+record MUST be failed. Attempt and failure totals are derived from this single
+collection, so producers cannot publish contradictory independent counters.
+
+The v2 schema is version 1 of the v2 event type:
+
+- `dataschema` is
+  `apicurio://holyfields/bloodbank.v2.repo.maintenance.failed/versions/1`.
+- `schemaref` is `bloodbank.v2.repo.maintenance.failed.v1`.
+- The NATS subject is `bloodbank.evt.v2.repo.maintenance.failed`.
+
+The `BLOODBANK_EVENTS` stream binds this exact v2 subject alongside the v1
+wildcard. No broad `bloodbank.evt.v2.>` registration exists. Producers MUST
+continue to emit v1 for all other maintenance and reporting events.
+
+The stdlib contract validator explicitly registers this one non-v1 type. It
+rejects every other v2 type and every v3-or-later type before schema lookup.
+Adding another non-v1 type requires both a reviewed schema and a registry
+entry; a version-shaped type alone is not registration.
 
 Canonical PM->agent dispatch contract:
 
@@ -427,7 +457,8 @@ deduplicates on `(idempotency_key, command_id)` before forwarding.
 
 ## 12. Schema directory layout
 
-Bloodbank v1 schemas live under `bloodbank/schemas/` in this repo:
+Versioned Bloodbank schemas live under `bloodbank/schemas/` in this repo. The
+v1 tree remains unchanged; the v2 tree contains only registered v2 types:
 
 ```
 bloodbank/schemas/
@@ -470,17 +501,20 @@ bloodbank/schemas/
       report.started.v1.json
       report.completed.v1.json
       report.failed.v1.json
+  bloodbank/v2/
+    repo/
+      maintenance.failed.v1.json
 ```
 
 Each schema:
 
-- `$id` MUST be `https://33god.dev/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json`.
+- `$id` MUST be `https://33god.dev/schemas/bloodbank/v<N>/<domain>/<entity>.<action>.v1.json`.
 - MUST `$ref` `../../../_common/cloudevent_base.v1.json`.
 - MUST set `properties.type.const` to the full 5-token type string.
 - MUST set `properties.kind.const` to `event` or `command`.
 - MUST set `properties.domain.const` to match segment 3 of `type`.
 
-There is no provider-named subdirectory (no
+There is no provider-named subdirectory (for example,
 `bloodbank/schemas/bloodbank/v1/copilot/`) — provider identity does not
 shape the schema tree.
 

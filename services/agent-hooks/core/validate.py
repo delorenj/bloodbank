@@ -50,6 +50,14 @@ SUBJECT_REGEX = re.compile(
     r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
 )
 
+# v1 retains its convention-based open registry for backward compatibility.
+# Every later contract version is opt-in and maps to one reviewed schema path.
+REGISTERED_NON_V1_SCHEMAS = {
+    "bloodbank.v2.repo.maintenance.failed": (
+        "bloodbank/v2/repo/maintenance.failed.v1.json"
+    ),
+}
+
 # --------------------------------------------------------------------------
 # §6, §7, §8, §9 - allowlists / banned tokens
 # --------------------------------------------------------------------------
@@ -122,7 +130,7 @@ class EnvelopeInvalid(ValueError):
 
 
 def _split_type(ce_type: str) -> tuple[str, str, str, str, str]:
-    """Split a v1 type into (vendor, version, domain, entity, action)."""
+    """Split a versioned type into (vendor, version, domain, entity, action)."""
     if not isinstance(ce_type, str):
         raise ContractViolation(f"type must be str, got {type(ce_type).__name__}")
     if not TYPE_REGEX.match(ce_type):
@@ -131,6 +139,15 @@ def _split_type(ce_type: str) -> tuple[str, str, str, str, str]:
         )
     parts = ce_type.split(".")
     return parts[0], parts[1], parts[2], parts[3], parts[4]
+
+
+def assert_registered_version(ce_type: str) -> None:
+    """Reject non-v1 types unless their exact type has a reviewed schema."""
+    _, version, _, _, _ = _split_type(ce_type)
+    if version != "v1" and ce_type not in REGISTERED_NON_V1_SCHEMAS:
+        raise ContractViolation(
+            f"type {ce_type!r} is not registered for contract version {version!r}"
+        )
 
 
 def assert_type_shape(ce_type: str) -> tuple[str, str, str]:
@@ -235,7 +252,8 @@ def assert_contract(envelope: dict) -> None:
     ce_type = envelope["type"]
     kind = envelope["kind"]
 
-    # §2 + §6-§9
+    # §2 + explicit post-v1 registration + §6-§9
+    assert_registered_version(ce_type)
     domain, entity, action = assert_type_shape(ce_type)
     assert_banned_tokens(ce_type)
     assert_action_tense(action, kind)
@@ -264,7 +282,7 @@ def assert_contract(envelope: dict) -> None:
     if subject is not None:
         if not SUBJECT_REGEX.match(subject):
             raise ContractViolation(
-                f"subject {subject!r} does not match v1 regex {SUBJECT_REGEX.pattern!r}"
+                f"subject {subject!r} does not match versioned regex {SUBJECT_REGEX.pattern!r}"
             )
         assert_subject_matches(subject, ce_type, kind)
 
@@ -347,9 +365,22 @@ def _schemas_root() -> Path:
 
 
 def _schema_path_for(ce_type: str) -> Path:
-    """Map a v1 CE type to schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json."""
-    _, _, domain, entity, action = _split_type(ce_type)
-    return _schemas_root() / "bloodbank" / "v1" / domain / f"{entity}.{action}.v1.json"
+    """Map a CE type to its versioned schema directory and v1 schema file."""
+    _, version, domain, entity, action = _split_type(ce_type)
+    if version != "v1":
+        relative = REGISTERED_NON_V1_SCHEMAS.get(ce_type)
+        if relative is None:
+            raise ContractViolation(
+                f"type {ce_type!r} has no registered non-v1 schema"
+            )
+        return _schemas_root() / relative
+    return (
+        _schemas_root()
+        / "bloodbank"
+        / version
+        / domain
+        / f"{entity}.{action}.v1.json"
+    )
 
 
 @lru_cache(maxsize=64)
@@ -404,7 +435,13 @@ def validate_envelope(envelope: dict) -> None:
         ) from exc
 
     schema_path = _schema_path_for(envelope["type"])
-    schema = _load_schema(str(schema_path))
+    try:
+        schema = _load_schema(str(schema_path))
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+        raise EnvelopeInvalid(
+            f"registered schema for {envelope['type']!r} is unavailable or invalid: "
+            f"{schema_path}"
+        ) from exc
     registry = _build_registry()
 
     validator = Draft202012Validator(
@@ -423,13 +460,14 @@ def validate_envelope(envelope: dict) -> None:
 
 
 def load_schema_for(ce_type: str) -> dict:
-    """Read the schema for a v1 type as a dict."""
+    """Read the schema for a versioned Bloodbank type as a dict."""
     return _load_schema(str(_schema_path_for(ce_type)))
 
 
 __all__ = [
     "ALLOWED_DOMAINS",
     "ALLOWED_ENTITIES",
+    "REGISTERED_NON_V1_SCHEMAS",
     "BANNED_TOKENS",
     "COMMAND_ACTIONS",
     "ContractViolation",
@@ -445,6 +483,7 @@ __all__ = [
     "assert_contract",
     "assert_subject_matches",
     "assert_type_shape",
+    "assert_registered_version",
     "load_schema_for",
     "subject_for",
     "validate_envelope",
