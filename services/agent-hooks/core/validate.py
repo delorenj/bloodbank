@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,7 @@ SUBJECT_REGEX = re.compile(
 ALLOWED_DOMAINS = frozenset({
     # active
     "conversation", "agent", "llm", "cli", "system", "audio", "repo", "lifecycle",
-    "finance", "attendance",
+    "finance", "attendance", "reporting",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "workflow", "memory",
 })
@@ -68,13 +69,13 @@ ALLOWED_ENTITIES = frozenset({
     "request", "response",
     "tool",
     "heartbeat",
-    "decision", "intake", "task",
+    "decision", "intake", "task", "maintenance",
     "approval_request",
     "worktree", "branch", "diff",
     "file", "transcription",
     "mission", "checkpoint", "gate", "roadmap", "status",
     "sync", "account", "transaction", "subscription", "zombie_charge", "paycheck", "projection",
-    "clock",
+    "clock", "report",
 })
 
 EVENT_ACTIONS = frozenset({
@@ -286,6 +287,31 @@ def assert_contract(envelope: dict) -> None:
 # Optional JSON Schema validation
 # --------------------------------------------------------------------------
 
+_RFC3339_DATETIME = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+
+
+def _is_rfc3339_datetime(value: object) -> bool:
+    """Return whether value is a real RFC 3339 date-time."""
+    if not isinstance(value, str) or not _RFC3339_DATETIME.fullmatch(value):
+        return False
+    try:
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    return True
+
+
+def _draft202012_format_checker(validator_class: Any) -> Any:
+    """Use Draft 2020-12 formats, filling the optional date-time checker gap."""
+    checker = validator_class.FORMAT_CHECKER
+    if "date-time" not in checker.checkers:
+        checker.checks("date-time")(_is_rfc3339_datetime)
+    return checker
+
 
 def _schemas_root() -> Path:
     """Locate the schema tree.
@@ -381,7 +407,11 @@ def validate_envelope(envelope: dict) -> None:
     schema = _load_schema(str(schema_path))
     registry = _build_registry()
 
-    validator = Draft202012Validator(schema, registry=registry)
+    validator = Draft202012Validator(
+        schema,
+        registry=registry,
+        format_checker=_draft202012_format_checker(Draft202012Validator),
+    )
     errors = sorted(validator.iter_errors(envelope), key=lambda e: e.path)
     if errors:
         first = errors[0]

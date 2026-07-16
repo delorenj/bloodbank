@@ -165,6 +165,10 @@ run = "bash ops/smoketest/smoketest-heartbeat.sh"
 description = "Stdlib-only contract verifier (§14 sequence × claude/copilot/codex + negative probes)"
 run = "bash ops/smoketest/smoketest-bloodbank-naming.sh"
 
+[tasks."smoketest:maintenance-reporting-contracts"]
+description = "Full-envelope schema tests for maintenance and reporting lifecycle events"
+run = "python3 ops/smoketest/smoketest-maintenance-reporting-contracts.py"
+
 [tasks."smoketest:schema-contract-consistency"]
 description = "Assert every schema in bloodbank/schemas/bloodbank/v1/** declares a type the validator accepts (allowlist drift detector)"
 run = "bash ops/smoketest/smoketest-schema-contract-consistency.sh"
@@ -207,7 +211,7 @@ run = "bash ops/smoketest/smoketest-agent-hooks-ssot.sh"
 
 [tasks."smoketest:schemas"]
 description = "Schema tree validation + drift detector + contract verifier + agent-hooks SSOT (no Docker)"
-run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming && mise run smoketest:agent-hooks-ssot"
+run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming && mise run smoketest:maintenance-reporting-contracts && mise run smoketest:agent-hooks-ssot"
 
 [tasks."smoketest:repo-health-cleanup"]
 description = "Local smoke test for cleanup helper + strict worktree mode"
