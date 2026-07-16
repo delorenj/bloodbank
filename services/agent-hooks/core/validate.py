@@ -347,9 +347,15 @@ def _schemas_root() -> Path:
 
 
 def _schema_path_for(ce_type: str) -> Path:
-    """Map a v1 CE type to schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json."""
-    _, _, domain, entity, action = _split_type(ce_type)
-    return _schemas_root() / "bloodbank" / "v1" / domain / f"{entity}.{action}.v1.json"
+    """Map a CE type to its versioned schema directory and v1 schema file."""
+    _, version, domain, entity, action = _split_type(ce_type)
+    return (
+        _schemas_root()
+        / "bloodbank"
+        / version
+        / domain
+        / f"{entity}.{action}.v1.json"
+    )
 
 
 @lru_cache(maxsize=64)
@@ -423,7 +429,7 @@ def validate_envelope(envelope: dict) -> None:
 
 
 def load_schema_for(ce_type: str) -> dict:
-    """Read the schema for a v1 type as a dict."""
+    """Read the schema for a versioned Bloodbank type as a dict."""
     return _load_schema(str(_schema_path_for(ce_type)))
 
 
