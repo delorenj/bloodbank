@@ -214,6 +214,7 @@ Segment 3 of `type` MUST be one of:
 | `lifecycle`    | Finite development mission: status, roadmap, checkpoints, gates, blockers. | active   |
 | `finance`      | Household finance facts from the tiller sync — accounts, transactions, recurring/zombie subscriptions, cashflow projection. | active   |
 | `attendance`   | Timekeeping and clock-state transitions across work sessions.       | active   |
+| `curator`      | Purpose-driven curation of a watched directory — classify, enrich, rename, and route incoming files (the `folder-curator` skill). | active   |
 | `reporting`    | Company reporting runs, archives, and delivery outcomes.             | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
@@ -247,7 +248,7 @@ Segment 4 of `type` MUST be one of:
 | `intake`           | `repo`                   | Incoming repo request triaged; repo slug lives in data.      |
 | `task`             | `repo`                   | Repo work item created; repo slug lives in data.             |
 | `maintenance`      | `repo`                   | Automated repository maintenance run and merge-gate outcome. |
-| `file`             | `audio`                  | An on-disk audio artifact observed by an inbox watcher.     |
+| `file`             | `audio`, `curator`       | An on-disk artifact observed by a watcher — an audio inbox file, or a file arriving in a curated directory. |
 | `transcription`    | `audio`                  | A speech-to-text job over a single audio file.              |
 | `approval_request` | `approval` (reserved)    | Human approval prompt issued.                               |
 | `worktree`         | `workspace` (reserved)   | Git worktree lifecycle.                                     |
@@ -282,7 +283,7 @@ emit an entity not paired with it here.
 `generated`, `appended`, `received`, `sent`, `granted`, `denied`, `opened`,
 `closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`,
 `recorded`, `triaged`, `updated`, `reached`, `resolved`, `detected`,
-`flagged`, `breached`, `clocked_in`, `clocked_out`.
+`flagged`, `routed`, `breached`, `clocked_in`, `clocked_out`.
 
 ### 8.2 Command actions (imperative present)
 

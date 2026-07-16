@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/v1/curator/file.flagged.v1.json",
+  "title": "Curator File Flagged Event",
+  "description": "folder-curator could not confidently place a file (it matched zero or multiple categories) and parked it in the review queue (pipeline-status: new) for human/agent triage. Carries the curated directory's declared purpose to aid the decision. ordering_key 'file:<sha256(file_path)>'.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.v1.curator.file.flagged"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "curator"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.v1.curator.file.flagged.",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute path of the file parked for review."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why it was parked (e.g. 'matched multiple categories', 'no category matched')."
+        },
+        "confidence": {
+          "type": ["string", "null"],
+          "description": "Classification confidence, typically 'low' for a flagged item."
+        },
+        "purpose": {
+          "type": ["string", "null"],
+          "description": "The curated directory's declared purpose, echoed to guide triage."
+        },
+        "review_location": {
+          "type": ["string", "null"],
+          "description": "Directory-relative path where the file is parked awaiting triage (the review/ingest folder)."
+        },
+        "file_hash_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 of the file's contents (ledger key)."
+        }
+      },
+      "required": [
+        "file_path",
+        "reason"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}
