@@ -409,7 +409,7 @@ def test_observation_snapshot_and_blocker() -> None:
     )
     print("  PASS blocker.resolved canonical schema")
 
-    event_envelope(
+    snapshot = event_envelope(
         "bloodbank.v1.lifecycle.snapshot.updated",
         {
             "contract_version": 1,
@@ -436,6 +436,10 @@ def test_observation_snapshot_and_blocker() -> None:
                     "kind": "human_review",
                     "status": "pending",
                     "description": "Review the lifecycle contract",
+                    "skill_ref": {
+                        "name": "bmad-code-review",
+                        "selector": "6.10.2",
+                    },
                     "owner_id": "operator:delorenj",
                     "due_at": None,
                     "source_observation_ids": [OBSERVATION_ID],
@@ -470,7 +474,39 @@ def test_observation_snapshot_and_blocker() -> None:
         },
     )
     print(
-        "  PASS snapshot carries frontier, obligations, gates, blockers, capabilities"
+        "  PASS snapshot carries frontier, skill-addressable obligations, gates, blockers, capabilities"
+    )
+
+    missing_skill_ref = copy.deepcopy(snapshot)
+    del missing_skill_ref["data"]["obligations"][0]["skill_ref"]
+    expect_invalid(
+        "obligation without skill_ref",
+        lambda: validate_envelope(missing_skill_ref),
+    )
+
+    malformed_skill_name = copy.deepcopy(snapshot)
+    malformed_skill_name["data"]["obligations"][0]["skill_ref"]["name"] = (
+        "BMAD Code Review"
+    )
+    expect_invalid(
+        "obligation with malformed canonical skill name",
+        lambda: validate_envelope(malformed_skill_name),
+    )
+
+    empty_skill_selector = copy.deepcopy(snapshot)
+    empty_skill_selector["data"]["obligations"][0]["skill_ref"]["selector"] = ""
+    expect_invalid(
+        "obligation with empty skill selector",
+        lambda: validate_envelope(empty_skill_selector),
+    )
+
+    embedded_execution_policy = copy.deepcopy(snapshot)
+    embedded_execution_policy["data"]["obligations"][0]["skill_ref"]["command"] = (
+        "spawn reviewer"
+    )
+    expect_invalid(
+        "obligation skill_ref with embedded execution policy",
+        lambda: validate_envelope(embedded_execution_policy),
     )
 
 

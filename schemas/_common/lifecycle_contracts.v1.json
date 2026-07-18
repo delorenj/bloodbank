@@ -253,6 +253,24 @@
         "expected_state_version"
       ]
     },
+    "skill_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Canonical skill identity and version selector. Lifecycle supplies this value and Momo/Skillex resolves it; Bloodbank does not attach execution policy.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^(?:[a-z0-9]|[a-z0-9][a-z0-9-]*[a-z0-9])$",
+          "description": "Canonical Skillex skill name (lowercase alphanumerics and dashes)."
+        },
+        "selector": {
+          "type": "string",
+          "pattern": "^\\S+$",
+          "description": "Version, tag, or revision selector interpreted by the skill resolver."
+        }
+      },
+      "required": ["name", "selector"]
+    },
     "obligation": {
       "type": "object",
       "additionalProperties": false,
@@ -264,6 +282,7 @@
           "enum": ["pending", "satisfied", "waived", "violated"]
         },
         "description": { "type": "string", "minLength": 1 },
+        "skill_ref": { "$ref": "#/$defs/skill_ref" },
         "owner_id": { "type": ["string", "null"] },
         "due_at": {
           "oneOf": [
@@ -282,6 +301,7 @@
         "kind",
         "status",
         "description",
+        "skill_ref",
         "owner_id",
         "due_at",
         "source_observation_ids"
