@@ -67,6 +67,7 @@ def build_envelope(
     delivery: str | None = None,
     schemaref: str | None = None,
     dataschema: str | None = None,
+    schema_version: int = 1,
     traceparent: str | None = None,
     validate: bool | None = None,
 ) -> dict:
@@ -90,8 +91,8 @@ def build_envelope(
         subject     — subject_for(ce_type, kind)
         event_id    — new UUID
         delivery    — "single_consumer" for kind=command
-        dataschema  — apicurio://holyfields/<ce_type>/versions/1
-        schemaref   — <ce_type>.v1
+        dataschema  — apicurio://holyfields/<ce_type>/versions/<schema_version>
+        schemaref   — <ce_type>.v<schema_version>
         traceparent — ZERO_TRACEPARENT
 
     Raises ContractViolation on any contract failure.
@@ -102,6 +103,8 @@ def build_envelope(
         raise ContractViolation("causation_id is required (§11)")
     if kind not in KIND_MARKERS:
         raise ContractViolation(f"kind {kind!r} must be event|command|reply (§4)")
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version < 1:
+        raise ContractViolation("schema_version must be an integer >= 1")
 
     # Derive domain from type segment 3. assert_type_shape inside
     # assert_contract will re-validate but we need the value now to populate
@@ -126,13 +129,13 @@ def build_envelope(
         "time": now_iso(),
         "datacontenttype": "application/json",
         "dataschema": dataschema
-        or f"apicurio://holyfields/{schema_identity}/versions/1",
+        or f"apicurio://holyfields/{schema_identity}/versions/{schema_version}",
         "correlationid": correlation_id,
         "causationid": causation_id,
         "producer": producer,
         "service": service,
         "domain": domain,
-        "schemaref": schemaref or f"{schema_identity}.v1",
+        "schemaref": schemaref or f"{schema_identity}.v{schema_version}",
         "traceparent": traceparent or ZERO_TRACEPARENT,
         "kind": kind,
         "actor": actor,

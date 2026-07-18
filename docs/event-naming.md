@@ -155,6 +155,7 @@ Canonical standalone lifecycle authority traffic is:
 | CloudEvents `type`                                  | Kind      | NATS subject                                               |
 | --------------------------------------------------- | --------- | ---------------------------------------------------------- |
 | `bloodbank.v1.lifecycle.observation.recorded`       | event     | `bloodbank.evt.v1.lifecycle.observation.recorded`          |
+| `bloodbank.v1.lifecycle.obligation_evidence.submitted` | event  | `bloodbank.evt.v1.lifecycle.obligation_evidence.submitted` |
 | `bloodbank.v1.lifecycle.snapshot.updated`           | event     | `bloodbank.evt.v1.lifecycle.snapshot.updated`              |
 | `bloodbank.v1.lifecycle.status.updated`             | event     | `bloodbank.evt.v1.lifecycle.status.updated`                |
 | `bloodbank.v1.lifecycle.blocker.detected`           | event     | `bloodbank.evt.v1.lifecycle.blocker.detected`              |
@@ -164,8 +165,12 @@ Canonical standalone lifecycle authority traffic is:
 
 The command and reply intentionally share their CloudEvent type. Their
 canonical schemas are selected by `(type, kind)` as described in §§12–13.
-Bloodbank validates and transports these contracts; only `delorenj/lifecycle`
-may publish authoritative lifecycle state. See `docs/lifecycle-contracts.md`.
+The snapshot event retains its CloudEvent type while its incompatible schema
+artifact advances to v2; the exact `schemaref` selects that artifact. The
+obligation-evidence event reports completed actor work and never asserts a
+lifecycle verdict. Bloodbank validates and transports these contracts; only
+`delorenj/lifecycle` may evaluate evidence or publish authoritative lifecycle
+state. See `docs/lifecycle-contracts.md`.
 
 ### 3.1 Targeted repo maintenance v2 extension
 
@@ -488,6 +493,7 @@ bloodbank/schemas/
   _common/
     cloudevent_base.v1.json
     lifecycle_contracts.v1.json
+    lifecycle_contracts.v2.json
     types.v1.json
   bloodbank/v1/
     conversation/
@@ -527,7 +533,9 @@ bloodbank/schemas/
       report.failed.v1.json
     lifecycle/
       observation.recorded.v1.json
+      obligation_evidence.submitted.v1.json
       snapshot.updated.v1.json
+      snapshot.updated.v2.json
       status.updated.v1.json
       blocker.detected.v1.json
       blocker.resolved.v1.json
@@ -543,6 +551,8 @@ Each schema:
 - Conventional `$id` values MUST be `https://33god.dev/schemas/bloodbank/v<N>/<domain>/<entity>.<action>.v1.json`.
 - Registered same-type command/reply variant `$id` values append
   `.command` or `.reply` before `.v1.json`.
+- Registered later schema artifacts for an unchanged CloudEvent type append
+  `.v<N>.json`; their exact `dataschema` and `schemaref` versions select them.
 - MUST `$ref` `../../../_common/cloudevent_base.v1.json`.
 - MUST set `properties.type.const` to the full 5-token type string.
 - MUST set `properties.kind.const` to `event`, `command`, or `reply`.

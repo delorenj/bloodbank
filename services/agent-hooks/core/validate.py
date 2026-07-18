@@ -75,6 +75,17 @@ REGISTERED_SCHEMA_VARIANTS = {
     ),
 }
 
+# A CloudEvent type may retain its semantic identity while its schema artifact
+# advances incompatibly.  The envelope's exact ``schemaref`` selects that
+# artifact; v1 remains the default for existing callers.  Keeping this map
+# explicit makes every non-default wire version a reviewed contract rather
+# than an accidental filename convention.
+REGISTERED_SCHEMA_VERSIONS = {
+    ("bloodbank.v1.lifecycle.snapshot.updated", "event", 2): (
+        "bloodbank/v1/lifecycle/snapshot.updated.v2.json"
+    ),
+}
+
 # --------------------------------------------------------------------------
 # §6, §7, §8, §9 - allowlists / banned tokens
 # --------------------------------------------------------------------------
@@ -132,6 +143,7 @@ ALLOWED_ENTITIES = frozenset(
         "roadmap",
         "status",
         "observation",
+        "obligation_evidence",
         "snapshot",
         "blocker",
         "intent",
@@ -170,6 +182,7 @@ EVENT_ACTIONS = frozenset(
         "requested",
         "invoked",
         "recorded",
+        "submitted",
         "triaged",
         "updated",
         "reached",
@@ -527,20 +540,60 @@ def schema_identity_for(ce_type: str, kind: str | None = None) -> str:
     return f"{ce_type}.{kind}"
 
 
-def _schema_path_for(ce_type: str, kind: str | None = None) -> Path:
+def _schema_path_for(
+    ce_type: str,
+    kind: str | None = None,
+    schema_version: int = 1,
+) -> Path:
     """Map a CE type and kind to its canonical versioned schema file."""
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version < 1:
+        raise ContractViolation("schema_version must be an integer >= 1")
     _, version, domain, entity, action = _split_type(ce_type)
+    registered_version = REGISTERED_SCHEMA_VERSIONS.get(
+        (ce_type, kind or "event", schema_version)
+    )
+    if registered_version is not None:
+        return _schemas_root() / registered_version
     variant_identity = schema_identity_for(ce_type, kind)
     if variant_identity != ce_type:
+        if schema_version != 1:
+            raise ContractViolation(
+                f"type {ce_type!r} kind {kind!r} has no registered schema v{schema_version}"
+            )
         return _schemas_root() / REGISTERED_SCHEMA_VARIANTS[(ce_type, kind)]
     if version != "v1":
+        if schema_version != 1:
+            raise ContractViolation(
+                f"type {ce_type!r} has no registered schema v{schema_version}"
+            )
         relative = REGISTERED_NON_V1_SCHEMAS.get(ce_type)
         if relative is None:
             raise ContractViolation(f"type {ce_type!r} has no registered non-v1 schema")
         return _schemas_root() / relative
-    return (
-        _schemas_root() / "bloodbank" / version / domain / f"{entity}.{action}.v1.json"
+    path = (
+        _schemas_root()
+        / "bloodbank"
+        / version
+        / domain
+        / f"{entity}.{action}.v{schema_version}.json"
     )
+    if schema_version != 1 and not path.is_file():
+        raise ContractViolation(
+            f"type {ce_type!r} kind {kind!r} has no registered schema v{schema_version}"
+        )
+    return path
+
+
+def _schema_version_for(envelope: dict[str, Any]) -> int:
+    schemaref = envelope.get("schemaref")
+    if not isinstance(schemaref, str):
+        raise ContractViolation("schemaref must be a string")
+    match = re.search(r"\.v([1-9][0-9]*)$", schemaref)
+    if match is None:
+        raise ContractViolation(
+            f"schemaref {schemaref!r} does not end in a valid schema version"
+        )
+    return int(match.group(1))
 
 
 @lru_cache(maxsize=64)
@@ -594,7 +647,12 @@ def validate_envelope(envelope: dict) -> None:
             "jsonschema is not installed; set BLOODBANK_HOOK_VALIDATE=0 to skip"
         ) from exc
 
-    schema_path = _schema_path_for(envelope["type"], envelope["kind"])
+    schema_version = _schema_version_for(envelope)
+    schema_path = _schema_path_for(
+        envelope["type"],
+        envelope["kind"],
+        schema_version,
+    )
     try:
         schema = _load_schema(str(schema_path))
     except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
@@ -619,13 +677,17 @@ def validate_envelope(envelope: dict) -> None:
         )
 
 
-def load_schema_for(ce_type: str, kind: str | None = None) -> dict:
+def load_schema_for(
+    ce_type: str,
+    kind: str | None = None,
+    schema_version: int = 1,
+) -> dict:
     """Read the canonical schema for a Bloodbank type and optional kind.
 
     Existing unambiguous contracts remain type-only. A registered same-type
     command/reply contract rejects omitted or unknown kinds.
     """
-    return _load_schema(str(_schema_path_for(ce_type, kind)))
+    return _load_schema(str(_schema_path_for(ce_type, kind, schema_version)))
 
 
 __all__ = [
@@ -633,6 +695,7 @@ __all__ = [
     "ALLOWED_ENTITIES",
     "REGISTERED_NON_V1_SCHEMAS",
     "REGISTERED_SCHEMA_VARIANTS",
+    "REGISTERED_SCHEMA_VERSIONS",
     "BANNED_TOKENS",
     "COMMAND_ACTIONS",
     "ContractViolation",

@@ -4,7 +4,9 @@
 
 **Contract and transport owner:** Bloodbank
 
-**Contract version:** v1
+**CloudEvent type namespace:** v1
+
+**Current snapshot schema artifact:** v2
 
 Bloodbank owns versioned schemas, naming, validation, NATS subjects, Dapr
 transport, and producer authorization. It does not evaluate transitions,
@@ -22,7 +24,8 @@ standalone component.
 | Contract | Purpose |
 | --- | --- |
 | `lifecycle.observation.recorded` event | Lossless source identity, provenance, immutable source time, payload hash, and source payload. |
-| `lifecycle.snapshot.updated` event | Versioned authoritative state plus legal frontier, obligations, blockers, gates, capabilities, provenance, freshness, and outbox identity. |
+| `lifecycle.obligation_evidence.submitted` event | Completed skill evidence for an exact obligation, target actor, and invocation. It is an authority input, never a satisfaction verdict. |
+| `lifecycle.snapshot.updated` event | Versioned authoritative state plus legal frontier, obligations, blockers, gates, versioned capabilities, provenance, freshness, and outbox identity. |
 | `lifecycle.status.updated` event | Versioned status/health transition with prior state, provenance, freshness, and outbox identity. |
 | `lifecycle.blocker.detected` / `.resolved` events | Versioned blocker activation and resolution. |
 | `lifecycle.intent.submit` command | Actor- and capability-scoped intent with idempotency and optimistic concurrency. |
@@ -40,6 +43,23 @@ the skill version, tag, or revision. Lifecycle supplies that reference and
 Momo/Skillex interprets it as invocation intent. Bloodbank only defines the
 wire shape; commands, models, providers, and execution policy are deliberately
 not part of `skill_ref`.
+
+Snapshot schema v2 is a deliberate incompatible artifact revision under the
+unchanged `bloodbank.v1.lifecycle.snapshot.updated` CloudEvent type. Its
+`contract_version`, `dataschema`, and `schemaref` are all 2, and every
+capability requires the authority-owned `capability_version`. Snapshot v1
+remains valid for existing consumers but cannot carry that additional field.
+Current producers and clients use v2; clients derive the capability ID and
+version from the authoritative snapshot rather than guessing a default.
+
+`lifecycle.obligation_evidence.submitted` requires the exact lifecycle,
+repository, obligation identity and kind, authority-selected target actor,
+canonical skill reference, stable invocation ID, completion time, and an
+integrity-addressed completion artifact. Its evidence kind is
+`skill_completion` and outcome is `completed`; invocation, request, or review-
+requested records do not validate as completion. Lifecycle alone correlates
+and evaluates this input, records the resulting observation, and determines
+whether an obligation becomes satisfied or state may advance.
 
 `status.updated` preserves the extracted reconciler's real first-publication
 shape without weakening repository identity: `state_version=1` requires
@@ -157,12 +177,12 @@ subject.
 The extraction-source pin
 `03415705a39d77f1e6d73c8a9c92ee177320df7e` contained 72 JSON schemas: 2
 common definitions and 70 wire contracts (64 event, 6 command, 0 reply).
-This closure contains 79 JSON schemas: 3 common definitions and 76 wire
-contracts (68 event, 7 command, 1 reply).
+This closure contains 82 JSON schemas: 4 common definitions and 78 wire
+contracts (70 event, 7 command, 1 reply).
 
 | Domain | Source pin | Contract closure |
 | --- | ---: | ---: |
-| `_common` | 2 | 3 |
+| `_common` | 2 | 4 |
 | `agent` | 9 | 9 |
 | `attendance` | 7 | 7 |
 | `audio` | 5 | 5 |
@@ -170,7 +190,7 @@ contracts (68 event, 7 command, 1 reply).
 | `conversation` | 5 | 5 |
 | `curator` | 4 | 4 |
 | `finance` | 12 | 12 |
-| `lifecycle` | 6 | 12 |
+| `lifecycle` | 6 | 14 |
 | `llm` | 2 | 2 |
 | `repo` | 9 | 9 |
 | `reporting` | 3 | 3 |
@@ -190,7 +210,9 @@ mise run smoketest:schemas
 The focused lifecycle suite covers same-type command/reply selection,
 cross-kind rejection, subject binding, all verdict branches, initial and later
 status publications, observation time/provenance, blocker presence, snapshot
-frontier/obligations/gates/capabilities, and an unrelated legacy consumer.
+v1 compatibility, exact snapshot v2 selection and required capability version,
+strict completion evidence, frontier/obligations/gates/capabilities, and an
+unrelated legacy consumer.
 
 Extraction history and the removal of the embedded writer are recorded in
 `docs/lifecycle-controller-extraction-provenance.md`.

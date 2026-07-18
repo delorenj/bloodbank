@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/_common/lifecycle_contracts.v2.json",
+  "title": "Lifecycle Contract Types v2",
+  "description": "Breaking lifecycle wire-type additions used only by explicitly versioned schemas. Bloodbank owns the shape and transport; Lifecycle remains the sole authority.",
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capability_id": { "type": "string", "minLength": 1 },
+        "capability_version": { "type": "integer", "minimum": 1 },
+        "actor_id": { "type": "string", "minLength": 1 },
+        "actions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "scope": { "type": "string", "minLength": 1 },
+        "issued_at": { "$ref": "types.v1.json#/$defs/timestamp" },
+        "expires_at": {
+          "oneOf": [
+            { "$ref": "types.v1.json#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "state_version": { "type": "integer", "minimum": 1 }
+      },
+      "required": [
+        "capability_id",
+        "capability_version",
+        "actor_id",
+        "actions",
+        "scope",
+        "issued_at",
+        "expires_at",
+        "state_version"
+      ]
+    }
+  }
+}

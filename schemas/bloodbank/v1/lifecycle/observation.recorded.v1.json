@@ -27,7 +27,7 @@
         "repo": { "type": "string", "minLength": 1 },
         "observation_kind": {
           "type": "string",
-          "enum": ["repo_task_event", "repository_event", "ci_event", "agent_event", "external_event"]
+          "enum": ["repo_task_event", "repository_event", "ci_event", "agent_event", "external_event", "obligation_evidence"]
         },
         "source_event": {
           "$ref": "../../../_common/lifecycle_contracts.v1.json#/$defs/source_event"

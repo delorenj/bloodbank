@@ -31,6 +31,8 @@ REPLY_EVENT_ID = "00000000-0000-4000-8000-000000000007"
 APPLIED_EVENT_ID = "00000000-0000-4000-8000-000000000008"
 CORRELATION_ID = "00000000-0000-4000-8000-000000000009"
 ROOT_CAUSATION_ID = "00000000-0000-4000-8000-000000000010"
+INVOCATION_ID = "00000000-0000-4000-8000-000000000011"
+EVIDENCE_EVENT_ID = "00000000-0000-4000-8000-000000000012"
 
 ACTOR = {"type": "service", "agent_id": "delorenj.lifecycle"}
 
@@ -95,7 +97,12 @@ def blocker() -> dict:
     }
 
 
-def event_envelope(ce_type: str, data: dict, event_id: str = SOURCE_EVENT_ID) -> dict:
+def event_envelope(
+    ce_type: str,
+    data: dict,
+    event_id: str = SOURCE_EVENT_ID,
+    schema_version: int = 1,
+) -> dict:
     return build_envelope(
         ce_type=ce_type,
         source="urn:33god:service:lifecycle",
@@ -106,6 +113,43 @@ def event_envelope(ce_type: str, data: dict, event_id: str = SOURCE_EVENT_ID) ->
         correlation_id=CORRELATION_ID,
         causation_id=ROOT_CAUSATION_ID,
         event_id=event_id,
+        ordering_key="lifecycle:lc-33god",
+        schema_version=schema_version,
+        validate=True,
+    )
+
+
+def obligation_evidence_envelope() -> dict:
+    return build_envelope(
+        ce_type="bloodbank.v1.lifecycle.obligation_evidence.submitted",
+        source="urn:33god:service:momo",
+        producer="momo",
+        service="momo",
+        actor={"type": "service", "agent_id": "momo"},
+        data={
+            "contract_version": 1,
+            "lifecycle_id": "lc-33god",
+            "repo": "33GOD",
+            "obligation_id": "obligation-review",
+            "obligation_kind": "independent_review",
+            "target_actor_id": "reviewer",
+            "invocation_id": INVOCATION_ID,
+            "skill_ref": {
+                "name": "bmad-code-review",
+                "selector": "6.10.2",
+            },
+            "completed_at": T,
+            "evidence": {
+                "kind": "skill_completion",
+                "outcome": "completed",
+                "artifact_id": "review:lc-33god:obligation-review",
+                "artifact_sha256": "b" * 64,
+                "summary": "Independent review completed with recorded findings.",
+            },
+        },
+        correlation_id=CORRELATION_ID,
+        causation_id=INVOCATION_ID,
+        event_id=EVIDENCE_EVENT_ID,
         ordering_key="lifecycle:lc-33god",
         validate=True,
     )
@@ -474,7 +518,53 @@ def test_observation_snapshot_and_blocker() -> None:
         },
     )
     print(
-        "  PASS snapshot carries frontier, skill-addressable obligations, gates, blockers, capabilities"
+        "  PASS snapshot v1 remains compatible without capability_version"
+    )
+
+    snapshot_v1_schema = load_schema_for(
+        "bloodbank.v1.lifecycle.snapshot.updated", "event", 1
+    )
+    snapshot_v2_schema = load_schema_for(
+        "bloodbank.v1.lifecycle.snapshot.updated", "event", 2
+    )
+    assert snapshot_v1_schema["$id"].endswith("snapshot.updated.v1.json")
+    assert snapshot_v2_schema["$id"].endswith("snapshot.updated.v2.json")
+
+    snapshot_v2_data = copy.deepcopy(snapshot["data"])
+    snapshot_v2_data["contract_version"] = 2
+    snapshot_v2_data["capabilities"][0]["capability_version"] = 3
+    snapshot_v2 = event_envelope(
+        "bloodbank.v1.lifecycle.snapshot.updated",
+        snapshot_v2_data,
+        schema_version=2,
+    )
+    assert snapshot_v2["schemaref"].endswith(".v2")
+    assert snapshot_v2["dataschema"].endswith("/versions/2")
+    print("  PASS snapshot v2 requires and carries authority capability_version")
+
+    missing_capability_version = copy.deepcopy(snapshot_v2)
+    del missing_capability_version["data"]["capabilities"][0][
+        "capability_version"
+    ]
+    expect_invalid(
+        "snapshot v2 without capability_version",
+        lambda: validate_envelope(missing_capability_version),
+    )
+
+    capability_version_on_v1 = copy.deepcopy(snapshot)
+    capability_version_on_v1["data"]["capabilities"][0]["capability_version"] = 3
+    expect_invalid(
+        "snapshot v1 carrying unversioned capability_version",
+        lambda: validate_envelope(capability_version_on_v1),
+    )
+
+    expect_invalid(
+        "unregistered snapshot schema v3",
+        lambda: event_envelope(
+            "bloodbank.v1.lifecycle.snapshot.updated",
+            snapshot_v2_data,
+            schema_version=3,
+        ),
     )
 
     missing_skill_ref = copy.deepcopy(snapshot)
@@ -507,6 +597,44 @@ def test_observation_snapshot_and_blocker() -> None:
     expect_invalid(
         "obligation skill_ref with embedded execution policy",
         lambda: validate_envelope(embedded_execution_policy),
+    )
+
+
+def test_obligation_completion_evidence() -> None:
+    evidence = obligation_evidence_envelope()
+    assert evidence["subject"] == (
+        "bloodbank.evt.v1.lifecycle.obligation_evidence.submitted"
+    )
+    print("  PASS canonical obligation completion evidence")
+
+    invocation_only = copy.deepcopy(evidence)
+    invocation_only["data"]["evidence"]["kind"] = "skill_invocation"
+    expect_invalid(
+        "skill invocation presented as completion evidence",
+        lambda: validate_envelope(invocation_only),
+    )
+
+    requested_only = copy.deepcopy(evidence)
+    requested_only["data"]["evidence"]["outcome"] = "requested"
+    expect_invalid(
+        "skill request presented as completion evidence",
+        lambda: validate_envelope(requested_only),
+    )
+
+    missing_artifact = copy.deepcopy(evidence)
+    del missing_artifact["data"]["evidence"]["artifact_sha256"]
+    expect_invalid(
+        "completion evidence without artifact integrity",
+        lambda: validate_envelope(missing_artifact),
+    )
+
+    wrong_obligation_subject = copy.deepcopy(evidence)
+    wrong_obligation_subject["subject"] = (
+        "bloodbank.evt.v1.lifecycle.observation.recorded"
+    )
+    expect_invalid(
+        "completion evidence on wrong subject",
+        lambda: validate_envelope(wrong_obligation_subject),
     )
 
 
@@ -553,6 +681,8 @@ def main() -> None:
     test_status_initial_publication()
     print("lifecycle-contracts: observation and authority outputs")
     test_observation_snapshot_and_blocker()
+    print("lifecycle-contracts: obligation completion evidence")
+    test_obligation_completion_evidence()
     print("lifecycle-contracts: unrelated compatibility")
     test_unrelated_legacy_consumer()
     print("lifecycle-contracts: extraction boundary")
