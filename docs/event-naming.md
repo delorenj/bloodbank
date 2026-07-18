@@ -165,12 +165,14 @@ Canonical standalone lifecycle authority traffic is:
 
 The command and reply intentionally share their CloudEvent type. Their
 canonical schemas are selected by `(type, kind)` as described in §§12–13.
-The snapshot event retains its CloudEvent type while its incompatible schema
-artifact advances to v2; the exact `schemaref` selects that artifact. The
-obligation-evidence event reports completed actor work and never asserts a
-lifecycle verdict. Bloodbank validates and transports these contracts; only
-`delorenj/lifecycle` may evaluate evidence or publish authoritative lifecycle
-state. See `docs/lifecycle-contracts.md`.
+The snapshot event retains its CloudEvent type while its additive authority
+schema advances to v3; the exact `schemaref` selects that artifact. Snapshot
+v3 carries the authority-owned obligation occurrence identity and activation
+time in addition to required capability versions. Obligation-evidence v2
+identifies that exact occurrence, reports completed actor work, and never
+asserts a lifecycle verdict. Bloodbank validates and transports these
+contracts; only `delorenj/lifecycle` may evaluate evidence or publish
+authoritative lifecycle state. See `docs/lifecycle-contracts.md`.
 
 ### 3.1 Targeted repo maintenance v2 extension
 

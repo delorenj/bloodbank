@@ -193,7 +193,7 @@ contracts (70 event, 7 command, 1 reply).
 
 | Domain | Source pin | Contract closure |
 | --- | ---: | ---: |
-| `_common` | 2 | 4 |
+| `_common` | 2 | 5 |
 | `agent` | 9 | 9 |
 | `attendance` | 7 | 7 |
 | `audio` | 5 | 5 |
@@ -221,9 +221,9 @@ mise run smoketest:schemas
 The focused lifecycle suite covers same-type command/reply selection,
 cross-kind rejection, subject binding, all verdict branches, initial and later
 status publications, observation time/provenance, blocker presence, snapshot
-v1 compatibility, exact snapshot v2 selection and required capability version,
-strict completion evidence, frontier/obligations/gates/capabilities, and an
-unrelated legacy consumer.
+v1/v2 compatibility, exact snapshot v3 selection, required capability version,
+authority-owned obligation occurrence identity, strict completion-evidence v2,
+frontier/obligations/gates/capabilities, and an unrelated legacy consumer.
 
 Extraction history and the removal of the embedded writer are recorded in
 `docs/lifecycle-controller-extraction-provenance.md`.
