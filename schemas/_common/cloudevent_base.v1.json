@@ -42,11 +42,11 @@
     "subject": {
       "type": "string",
       "minLength": 1,
-      "description": "Event subject. Convention: '<entity>/<id>' or a path like 'threads/<id>/turns/<id>/messages/<id>'. Optional at the CloudEvents layer; required by the Bloodbank contract so consumers can filter without parsing data.",
+      "description": "Canonical NATS subject bound to type and kind: bloodbank.<evt|cmd|rpy>.v<N>.<domain>.<entity>.<action>. Required by the Bloodbank contract.",
       "examples": [
-        "threads/thr_123/turns/turn_456/messages/msg_789",
-        "cli_sessions/sess_abc",
-        "weather/sensor-42"
+        "bloodbank.evt.v1.conversation.message.appended",
+        "bloodbank.cmd.v1.lifecycle.intent.submit",
+        "bloodbank.rpy.v1.lifecycle.intent.submit"
       ]
     },
     "time": {
@@ -61,7 +61,7 @@
     "dataschema": {
       "type": "string",
       "format": "uri-reference",
-      "description": "Apicurio registry URI identifying the schema that validates data. Convention: 'apicurio://holyfields/<type>/versions/<n>'.",
+      "description": "Apicurio registry URI identifying the canonical envelope schema. Convention: 'apicurio://holyfields/<type>/versions/<n>'; registered same-type command/reply variants append '.command' or '.reply' to the artifact identity only.",
       "examples": [
         "apicurio://holyfields/bloodbank.v1.llm.response.received/versions/1"
       ]
@@ -76,7 +76,7 @@
         { "type": "null" }
       ],
       "default": null,
-      "description": "ID of the event or command that directly caused this one. Null for root events. Together with correlationid forms a DAG of causation."
+      "description": "ID of the CloudEvent that directly caused this one. The field is mandatory; a root-event schema may allow null or a producer may self-reference its stable event ID. Together with correlationid forms a DAG of causation."
     },
     "producer": {
       "type": "string",
@@ -104,7 +104,7 @@
     "schemaref": {
       "type": "string",
       "minLength": 1,
-      "description": "Short schema reference, distinct from dataschema (which is the full URI). For Bloodbank v1 events: '<type>.v<N>' (e.g. 'bloodbank.v1.llm.response.received.v1').",
+      "description": "Short schema reference, distinct from dataschema (which is the full URI). Normally '<type>.v<N>'; registered same-type command/reply variants append '.command' or '.reply' before the schema version.",
       "examples": [
         "bloodbank.v1.llm.response.received.v1",
         "bloodbank.v1.conversation.message.appended.v1"
@@ -192,12 +192,15 @@
     "id",
     "source",
     "type",
+    "subject",
     "time",
     "correlationid",
+    "causationid",
     "producer",
     "service",
     "domain",
     "kind",
+    "actor",
     "data"
   ]
 }

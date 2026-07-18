@@ -9,9 +9,11 @@ It exposes two layers:
    §6-§8 (allowlists), §9 (banned tokens), and required-field presence per
    §11.
 
-2. Optional JSON Schema validation (validate_envelope) against the
-   bloodbank/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json schema.
-   Requires jsonschema. Off by default at hook time; on in CI.
+2. Optional JSON Schema validation (validate_envelope) against the canonical
+   schema selected by CloudEvent type and Bloodbank kind. Most v1 contracts
+   retain the conventional <entity>.<action>.v1.json path; command/reply pairs
+   that share a CloudEvent type are explicitly registered by kind. Requires
+   jsonschema. Off by default at hook time; on in CI.
 
 Schemas live in this repo (bloodbank/schemas/) and are the single source of
 truth. A sibling holyfields/schemas/ tree is honored as a fallback during
@@ -21,6 +23,7 @@ removed once consumers cut over.
 Failures are loud. There is no quarantine or alias path — see "Hard rename,
 no aliases" in docs/event-naming.md §15.
 """
+
 from __future__ import annotations
 
 import json
@@ -58,54 +61,174 @@ REGISTERED_NON_V1_SCHEMAS = {
     ),
 }
 
+# A command and its reply intentionally share one canonical CloudEvent type.
+# When their envelope shapes differ, selecting a schema from `type` alone is
+# ambiguous and can validate a reply as a command (or vice versa). Every such
+# pair is registered explicitly by (type, kind); there is no fallback path for
+# a registered variant type.
+REGISTERED_SCHEMA_VARIANTS = {
+    ("bloodbank.v1.lifecycle.intent.submit", "command"): (
+        "bloodbank/v1/lifecycle/intent.submit.command.v1.json"
+    ),
+    ("bloodbank.v1.lifecycle.intent.submit", "reply"): (
+        "bloodbank/v1/lifecycle/intent.submit.reply.v1.json"
+    ),
+}
+
 # --------------------------------------------------------------------------
 # §6, §7, §8, §9 - allowlists / banned tokens
 # --------------------------------------------------------------------------
 
-ALLOWED_DOMAINS = frozenset({
-    # active
-    "conversation", "agent", "llm", "cli", "system", "audio", "repo", "lifecycle",
-    "finance", "attendance", "curator", "reporting",
-    # reserved (registered but not yet emitted)
-    "approval", "workspace", "workflow", "memory",
-})
+ALLOWED_DOMAINS = frozenset(
+    {
+        # active
+        "conversation",
+        "agent",
+        "llm",
+        "cli",
+        "system",
+        "audio",
+        "repo",
+        "lifecycle",
+        "finance",
+        "attendance",
+        "curator",
+        "reporting",
+        # reserved (registered but not yet emitted)
+        "approval",
+        "workspace",
+        "workflow",
+        "memory",
+    }
+)
 
-ALLOWED_ENTITIES = frozenset({
-    "thread", "turn", "message",
-    "invocation",
-    "session", "process", "stdout", "stderr",
-    "request", "response",
-    "tool",
-    "heartbeat",
-    "decision", "intake", "task", "maintenance",
-    "approval_request",
-    "worktree", "branch", "diff",
-    "file", "transcription",
-    "mission", "checkpoint", "gate", "roadmap", "status",
-    "sync", "account", "transaction", "subscription", "zombie_charge", "paycheck", "projection",
-    "clock", "report",
-})
+ALLOWED_ENTITIES = frozenset(
+    {
+        "thread",
+        "turn",
+        "message",
+        "invocation",
+        "session",
+        "process",
+        "stdout",
+        "stderr",
+        "request",
+        "response",
+        "tool",
+        "heartbeat",
+        "decision",
+        "intake",
+        "task",
+        "maintenance",
+        "approval_request",
+        "worktree",
+        "branch",
+        "diff",
+        "file",
+        "transcription",
+        "mission",
+        "checkpoint",
+        "gate",
+        "roadmap",
+        "status",
+        "observation",
+        "snapshot",
+        "blocker",
+        "intent",
+        "sync",
+        "account",
+        "transaction",
+        "subscription",
+        "zombie_charge",
+        "paycheck",
+        "projection",
+        "clock",
+        "report",
+    }
+)
 
-EVENT_ACTIONS = frozenset({
-    "created", "resumed", "started", "ended", "completed", "failed", "canceled",
-    "generated", "appended", "received", "sent", "granted", "denied",
-    "opened", "closed", "spawned", "exited", "checked_out",
-    "requested", "invoked", "recorded", "triaged",
-    "updated", "reached", "resolved",
-    "detected", "flagged", "routed", "breached", "clocked_in", "clocked_out",
-})
+EVENT_ACTIONS = frozenset(
+    {
+        "created",
+        "resumed",
+        "started",
+        "ended",
+        "completed",
+        "failed",
+        "canceled",
+        "generated",
+        "appended",
+        "received",
+        "sent",
+        "granted",
+        "denied",
+        "opened",
+        "closed",
+        "spawned",
+        "exited",
+        "checked_out",
+        "requested",
+        "invoked",
+        "recorded",
+        "triaged",
+        "updated",
+        "reached",
+        "resolved",
+        "detected",
+        "flagged",
+        "routed",
+        "breached",
+        "clocked_in",
+        "clocked_out",
+    }
+)
 
-COMMAND_ACTIONS = frozenset({
-    "create", "resume", "start", "end", "complete", "fail", "cancel",
-    "generate", "append", "receive", "send", "grant", "deny",
-    "open", "close", "spawn", "kill", "checkout", "invoke",
-    "request", "toggle", "clock_in", "clock_out",
-})
+COMMAND_ACTIONS = frozenset(
+    {
+        "create",
+        "resume",
+        "start",
+        "end",
+        "complete",
+        "fail",
+        "cancel",
+        "generate",
+        "append",
+        "receive",
+        "send",
+        "grant",
+        "deny",
+        "open",
+        "close",
+        "spawn",
+        "kill",
+        "checkout",
+        "invoke",
+        "request",
+        "toggle",
+        "clock_in",
+        "clock_out",
+        "submit",
+    }
+)
 
-BANNED_TOKENS = frozenset({
-    "claude", "anthropic", "copilot", "github", "openai", "gemini",
-    "cursor", "opencode", "amazonq", "codex", "ollama", "llama", "mistral",
-})
+BANNED_TOKENS = frozenset(
+    {
+        "claude",
+        "anthropic",
+        "copilot",
+        "github",
+        "openai",
+        "gemini",
+        "cursor",
+        "opencode",
+        "amazonq",
+        "codex",
+        "ollama",
+        "llama",
+        "mistral",
+    }
+)
 
 # --------------------------------------------------------------------------
 # Exceptions
@@ -232,8 +355,19 @@ def assert_subject_matches(subject: str, ce_type: str, kind: str) -> None:
 
 
 REQUIRED_BASE_FIELDS = (
-    "specversion", "id", "source", "type", "time",
-    "correlationid", "producer", "service", "domain", "kind", "data",
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "subject",
+    "time",
+    "correlationid",
+    "causationid",
+    "producer",
+    "service",
+    "domain",
+    "kind",
+    "data",
 )
 REQUIRED_EVENT_FIELDS = ("actor", "ordering_key")
 REQUIRED_COMMAND_FIELDS = ("actor", "command_id", "idempotency_key", "delivery")
@@ -263,7 +397,13 @@ def assert_contract(envelope: dict) -> None:
         raise ContractViolation(f"kind {kind!r} not in {{event, command, reply}} (§4)")
 
     # §11 kind-specific required fields
-    extra_required = REQUIRED_EVENT_FIELDS if kind == "event" else REQUIRED_COMMAND_FIELDS if kind == "command" else ("actor",)
+    extra_required = (
+        REQUIRED_EVENT_FIELDS
+        if kind == "event"
+        else REQUIRED_COMMAND_FIELDS
+        if kind == "command"
+        else ("actor",)
+    )
     missing_extra = [f for f in extra_required if f not in envelope]
     if missing_extra:
         raise ContractViolation(
@@ -277,14 +417,13 @@ def assert_contract(envelope: dict) -> None:
             f"type segment 3 {domain!r}"
         )
 
-    # §3 subject shape (if provided)
-    subject = envelope.get("subject")
-    if subject is not None:
-        if not SUBJECT_REGEX.match(subject):
-            raise ContractViolation(
-                f"subject {subject!r} does not match versioned regex {SUBJECT_REGEX.pattern!r}"
-            )
-        assert_subject_matches(subject, ce_type, kind)
+    # §3 subject is mandatory and binds type + kind to the transport route.
+    subject = envelope["subject"]
+    if not isinstance(subject, str) or not SUBJECT_REGEX.match(subject):
+        raise ContractViolation(
+            f"subject {subject!r} does not match versioned regex {SUBJECT_REGEX.pattern!r}"
+        )
+    assert_subject_matches(subject, ce_type, kind)
 
     # §11 actor shape
     actor = envelope["actor"]
@@ -297,7 +436,7 @@ def assert_contract(envelope: dict) -> None:
     # §11.2 command delivery
     if kind == "command" and envelope.get("delivery") != "single_consumer":
         raise ContractViolation(
-            f"command.delivery must be 'single_consumer' for v1 (§11)"
+            "command.delivery must be 'single_consumer' for v1 (§11)"
         )
 
 
@@ -364,22 +503,43 @@ def _schemas_root() -> Path:
     return Path.home() / "code" / "33GOD" / "holyfields" / "schemas"
 
 
-def _schema_path_for(ce_type: str) -> Path:
-    """Map a CE type to its versioned schema directory and v1 schema file."""
+def schema_identity_for(ce_type: str, kind: str | None = None) -> str:
+    """Return the registry artifact identity for a canonical contract.
+
+    The CloudEvent type remains unchanged for command/reply pairs. Only the
+    schema artifact identity carries the kind suffix needed to distinguish
+    their envelope shapes.
+    """
+    _split_type(ce_type)
+    variant_kinds = {
+        registered_kind
+        for registered_type, registered_kind in REGISTERED_SCHEMA_VARIANTS
+        if registered_type == ce_type
+    }
+    if not variant_kinds:
+        return ce_type
+    if kind not in variant_kinds:
+        expected = "|".join(sorted(variant_kinds))
+        raise ContractViolation(
+            f"type {ce_type!r} requires an explicit registered kind ({expected}); "
+            f"got {kind!r}"
+        )
+    return f"{ce_type}.{kind}"
+
+
+def _schema_path_for(ce_type: str, kind: str | None = None) -> Path:
+    """Map a CE type and kind to its canonical versioned schema file."""
     _, version, domain, entity, action = _split_type(ce_type)
+    variant_identity = schema_identity_for(ce_type, kind)
+    if variant_identity != ce_type:
+        return _schemas_root() / REGISTERED_SCHEMA_VARIANTS[(ce_type, kind)]
     if version != "v1":
         relative = REGISTERED_NON_V1_SCHEMAS.get(ce_type)
         if relative is None:
-            raise ContractViolation(
-                f"type {ce_type!r} has no registered non-v1 schema"
-            )
+            raise ContractViolation(f"type {ce_type!r} has no registered non-v1 schema")
         return _schemas_root() / relative
     return (
-        _schemas_root()
-        / "bloodbank"
-        / version
-        / domain
-        / f"{entity}.{action}.v1.json"
+        _schemas_root() / "bloodbank" / version / domain / f"{entity}.{action}.v1.json"
     )
 
 
@@ -434,7 +594,7 @@ def validate_envelope(envelope: dict) -> None:
             "jsonschema is not installed; set BLOODBANK_HOOK_VALIDATE=0 to skip"
         ) from exc
 
-    schema_path = _schema_path_for(envelope["type"])
+    schema_path = _schema_path_for(envelope["type"], envelope["kind"])
     try:
         schema = _load_schema(str(schema_path))
     except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
@@ -459,15 +619,20 @@ def validate_envelope(envelope: dict) -> None:
         )
 
 
-def load_schema_for(ce_type: str) -> dict:
-    """Read the schema for a versioned Bloodbank type as a dict."""
-    return _load_schema(str(_schema_path_for(ce_type)))
+def load_schema_for(ce_type: str, kind: str | None = None) -> dict:
+    """Read the canonical schema for a Bloodbank type and optional kind.
+
+    Existing unambiguous contracts remain type-only. A registered same-type
+    command/reply contract rejects omitted or unknown kinds.
+    """
+    return _load_schema(str(_schema_path_for(ce_type, kind)))
 
 
 __all__ = [
     "ALLOWED_DOMAINS",
     "ALLOWED_ENTITIES",
     "REGISTERED_NON_V1_SCHEMAS",
+    "REGISTERED_SCHEMA_VARIANTS",
     "BANNED_TOKENS",
     "COMMAND_ACTIONS",
     "ContractViolation",
@@ -485,6 +650,7 @@ __all__ = [
     "assert_type_shape",
     "assert_registered_version",
     "load_schema_for",
+    "schema_identity_for",
     "subject_for",
     "validate_envelope",
 ]

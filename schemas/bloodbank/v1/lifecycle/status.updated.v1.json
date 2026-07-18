@@ -1,226 +1,151 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://33god.dev/schemas/bloodbank/v1/lifecycle/status.updated.v1.json",
-  "title": "Lifecycle Status Updated Event",
-  "description": "The aggregate lifecycle status changed. This is the primary event for detecting blocked pipelines, stalls, and state transitions. Consumers filter on data.current.status and data.previous.status.",
+  "title": "Authoritative Lifecycle Status Updated Event",
+  "description": "An outbox-published status or health transition computed by the standalone delorenj/lifecycle authority. On the initial state_version=1 publication, previous and previous_state_version are null; later publications require both prior values. repo remains mandatory and non-empty on every publication.",
   "type": "object",
   "allOf": [
-    {
-      "$ref": "../../../_common/cloudevent_base.v1.json"
-    }
+    { "$ref": "../../../_common/cloudevent_base.v1.json" }
   ],
   "properties": {
-    "type": {
-      "const": "bloodbank.v1.lifecycle.status.updated"
+    "type": { "const": "bloodbank.v1.lifecycle.status.updated" },
+    "kind": { "const": "event" },
+    "domain": { "const": "lifecycle" },
+    "subject": { "const": "bloodbank.evt.v1.lifecycle.status.updated" },
+    "datacontenttype": { "const": "application/json" },
+    "dataschema": {
+      "const": "apicurio://holyfields/bloodbank.v1.lifecycle.status.updated/versions/1"
     },
-    "kind": {
-      "const": "event"
-    },
-    "domain": {
-      "const": "lifecycle"
-    },
+    "schemaref": { "const": "bloodbank.v1.lifecycle.status.updated.v1" },
     "data": {
       "type": "object",
-      "description": "Payload for bloodbank.v1.lifecycle.lifecycle.status.updated.",
+      "additionalProperties": false,
       "properties": {
-        "lifecycle_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "schema_version": {
-          "type": "string",
-          "description": "Schema version of this payload shape."
-        },
-        "repo": {
-          "type": "string",
-          "minLength": 1
+        "contract_version": { "const": 1 },
+        "lifecycle_id": { "type": "string", "minLength": 1 },
+        "repo": { "type": "string", "minLength": 1 },
+        "spec_version": { "type": "integer", "minimum": 1 },
+        "state_version": { "type": "integer", "minimum": 1 },
+        "previous_state_version": {
+          "type": ["integer", "null"],
+          "minimum": 1
         },
         "previous": {
-          "type": "object",
-          "properties": {
-            "status": {
-              "type": "string",
-              "enum": ["planned", "active", "waiting", "blocked", "paused", "disabled", "completed", "canceled", "archived"]
-            },
-            "health": {
-              "type": "string",
-              "enum": ["nominal", "at_risk", "stalled", "degraded", "blocked"]
-            },
-            "phase": {
-              "type": "string",
-              "description": "Current roadmap phase at time of previous state."
-            },
-            "progress_percent": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 100
-            }
-          },
-          "required": ["status", "health"]
+          "oneOf": [
+            { "$ref": "../../../_common/lifecycle_contracts.v1.json#/$defs/state_summary" },
+            { "type": "null" }
+          ]
         },
         "current": {
-          "type": "object",
-          "properties": {
-            "status": {
-              "type": "string",
-              "enum": ["planned", "active", "waiting", "blocked", "paused", "disabled", "completed", "canceled", "archived"]
-            },
-            "health": {
-              "type": "string",
-              "enum": ["nominal", "at_risk", "stalled", "degraded", "blocked"]
-            },
-            "phase": {
-              "type": "string"
-            },
-            "progress_percent": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 100
-            }
-          },
-          "required": ["status", "health"]
+          "$ref": "../../../_common/lifecycle_contracts.v1.json#/$defs/state_summary"
         },
         "transition": {
           "type": "object",
-          "description": "Metadata about how and why this transition occurred.",
+          "additionalProperties": false,
           "properties": {
-            "reason": {
-              "type": "string",
-              "description": "Machine-readable reason code (e.g. NO_RUNNABLE_WORK, PROGRESS_DETECTED, GATE_RESOLVED)."
-            },
-            "computed": {
-              "type": "boolean",
-              "description": "True if this transition was auto-computed by the lifecycle evaluator."
-            },
-            "detector": {
-              "type": "string",
-              "description": "Name/version of the detector that computed this transition."
-            },
-            "confidence": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1,
-              "description": "Confidence score for computed transitions."
-            }
-          }
+            "reason": { "type": "string", "minLength": 1 },
+            "computed": { "const": true },
+            "detector": { "type": "string", "minLength": 1 },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "required": ["reason", "computed", "detector"]
         },
         "blockers": {
           "type": "array",
-          "description": "Active blockers when status is blocked or waiting.",
           "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "missing_human_input",
-                  "human_review_required",
-                  "dependency_not_ready",
-                  "dependency_failed",
-                  "ci_failing",
-                  "tests_failing",
-                  "merge_conflict",
-                  "agent_run_failed",
-                  "agent_idle",
-                  "scheduler_down",
-                  "auth_required",
-                  "credential_missing",
-                  "environment_unavailable",
-                  "rate_limited",
-                  "scope_ambiguous",
-                  "acceptance_criteria_missing",
-                  "planning_gap",
-                  "ticket_state_inconsistent",
-                  "repository_locked",
-                  "repository_dirty"
-                ]
-              },
-              "scope": {
-                "type": "string",
-                "enum": ["lifecycle", "ticket", "repo", "agent", "system"]
-              },
-              "blocking": {
-                "type": "boolean"
-              },
-              "summary": {
-                "type": "string"
-              },
-              "owner_kind": {
-                "type": "string",
-                "enum": ["human", "agent", "system", "service"]
-              },
-              "owner_id": {
-                "type": "string"
-              },
-              "created_at": {
-                "type": "string",
-                "format": "date-time"
-              }
-            },
-            "required": ["id", "kind", "blocking"]
+            "$ref": "../../../_common/lifecycle_contracts.v1.json#/$defs/blocker"
           }
         },
         "signals": {
           "type": "object",
-          "description": "Aggregate signals that fed into the status computation.",
+          "additionalProperties": false,
           "properties": {
-            "open_work_items": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "runnable_work_items": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "active_agent_runs": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "open_blockers": {
-              "type": "integer",
-              "minimum": 0
-            },
+            "open_work_items": { "type": "integer", "minimum": 0 },
+            "runnable_work_items": { "type": "integer", "minimum": 0 },
+            "active_agent_runs": { "type": "integer", "minimum": 0 },
+            "open_blockers": { "type": "integer", "minimum": 0 },
             "last_progress_at": {
-              "type": "string",
-              "format": "date-time"
+              "oneOf": [
+                { "$ref": "../../../_common/types.v1.json#/$defs/timestamp" },
+                { "type": "null" }
+              ]
             }
-          }
+          },
+          "required": [
+            "open_work_items",
+            "runnable_work_items",
+            "active_agent_runs",
+            "open_blockers",
+            "last_progress_at"
+          ]
         },
-        "policy": {
-          "type": "object",
-          "description": "Alerting and evaluation policy for this lifecycle.",
-          "properties": {
-            "progress_expected": {
-              "type": "boolean"
-            },
-            "alerts_enabled": {
-              "type": "boolean"
-            },
-            "silence_if_status_in": {
-              "type": "array",
-              "items": {
-                "type": "string"
+        "provenance": {
+          "$ref": "../../../_common/lifecycle_contracts.v1.json#/$defs/provenance"
+        },
+        "freshness": {
+          "$ref": "../../../_common/lifecycle_contracts.v1.json#/$defs/freshness"
+        },
+        "publication": {
+          "$ref": "../../../_common/lifecycle_contracts.v1.json#/$defs/publication"
+        }
+      },
+      "required": [
+        "contract_version",
+        "lifecycle_id",
+        "repo",
+        "spec_version",
+        "state_version",
+        "previous_state_version",
+        "previous",
+        "current",
+        "transition",
+        "blockers",
+        "provenance",
+        "freshness",
+        "publication"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": { "state_version": { "const": 1 } },
+            "required": ["state_version"]
+          },
+          "then": {
+            "properties": {
+              "previous_state_version": { "type": "null" },
+              "previous": { "type": "null" }
+            }
+          },
+          "else": {
+            "properties": {
+              "previous_state_version": { "type": "integer", "minimum": 1 },
+              "previous": {
+                "$ref": "../../../_common/lifecycle_contracts.v1.json#/$defs/state_summary"
               }
             }
           }
         }
-      },
-      "required": [
-        "lifecycle_id",
-        "repo",
-        "previous",
-        "current"
-      ],
-      "additionalProperties": true
+      ]
     }
   },
   "required": [
+    "specversion",
+    "id",
+    "source",
     "type",
+    "subject",
+    "time",
+    "datacontenttype",
+    "dataschema",
+    "correlationid",
+    "causationid",
+    "producer",
+    "service",
     "kind",
     "domain",
+    "schemaref",
+    "actor",
+    "ordering_key",
     "data"
   ]
 }

@@ -16,6 +16,7 @@ There is no legacy 3-token path. Anything that does not match
 bloodbank.v1.<domain>.<entity>.<action> raises ContractViolation at build
 time.
 """
+
 from __future__ import annotations
 
 import os
@@ -27,6 +28,7 @@ from .validate import (
     ContractViolation,
     KIND_MARKERS,
     assert_contract,
+    schema_identity_for,
     subject_for,
 )
 
@@ -99,9 +101,7 @@ def build_envelope(
     if not causation_id:
         raise ContractViolation("causation_id is required (§11)")
     if kind not in KIND_MARKERS:
-        raise ContractViolation(
-            f"kind {kind!r} must be event|command|reply (§4)"
-        )
+        raise ContractViolation(f"kind {kind!r} must be event|command|reply (§4)")
 
     # Derive domain from type segment 3. assert_type_shape inside
     # assert_contract will re-validate but we need the value now to populate
@@ -115,6 +115,7 @@ def build_envelope(
 
     if subject is None:
         subject = subject_for(ce_type, kind)
+    schema_identity = schema_identity_for(ce_type, kind)
 
     envelope = {
         "specversion": "1.0",
@@ -124,13 +125,14 @@ def build_envelope(
         "subject": subject,
         "time": now_iso(),
         "datacontenttype": "application/json",
-        "dataschema": dataschema or f"apicurio://holyfields/{ce_type}/versions/1",
+        "dataschema": dataschema
+        or f"apicurio://holyfields/{schema_identity}/versions/1",
         "correlationid": correlation_id,
         "causationid": causation_id,
         "producer": producer,
         "service": service,
         "domain": domain,
-        "schemaref": schemaref or f"{ce_type}.v1",
+        "schemaref": schemaref or f"{schema_identity}.v1",
         "traceparent": traceparent or ZERO_TRACEPARENT,
         "kind": kind,
         "actor": actor,
@@ -139,18 +141,14 @@ def build_envelope(
 
     if kind == "event":
         if not ordering_key:
-            raise ContractViolation(
-                f"ordering_key is required for kind=event (§11.1)"
-            )
+            raise ContractViolation("ordering_key is required for kind=event (§11.1)")
         envelope["ordering_key"] = ordering_key
     elif kind == "command":
         if not command_id:
-            raise ContractViolation(
-                f"command_id is required for kind=command (§11)"
-            )
+            raise ContractViolation("command_id is required for kind=command (§11)")
         if not idempotency_key:
             raise ContractViolation(
-                f"idempotency_key is required for kind=command (§11.2)"
+                "idempotency_key is required for kind=command (§11.2)"
             )
         envelope["command_id"] = command_id
         envelope["idempotency_key"] = idempotency_key
@@ -165,6 +163,7 @@ def build_envelope(
         validate = os.environ.get("BLOODBANK_HOOK_VALIDATE") == "1"
     if validate:
         from .validate import validate_envelope  # noqa: WPS433
+
         validate_envelope(envelope)
 
     return envelope

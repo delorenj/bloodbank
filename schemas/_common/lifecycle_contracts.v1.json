@@ -1,0 +1,341 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/_common/lifecycle_contracts.v1.json",
+  "title": "Lifecycle Contract Types",
+  "description": "Shared deterministic wire types for the standalone delorenj/lifecycle authority. Bloodbank owns these schemas and transport only; it does not evaluate or persist lifecycle state.",
+  "$defs": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "active",
+        "waiting",
+        "blocked",
+        "paused",
+        "disabled",
+        "completed",
+        "canceled",
+        "archived"
+      ]
+    },
+    "health": {
+      "type": "string",
+      "enum": ["nominal", "at_risk", "stalled", "degraded", "blocked"]
+    },
+    "state_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "health": { "$ref": "#/$defs/health" },
+        "phase": { "type": ["string", "null"] },
+        "progress_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": ["status", "health", "phase", "progress_percent"]
+    },
+    "source_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Identity and provenance copied from the observed source CloudEvent. observed_at is the immutable source event time, never adapter receipt time.",
+      "properties": {
+        "event_id": { "$ref": "types.v1.json#/$defs/uuid" },
+        "type": {
+          "type": "string",
+          "pattern": "^bloodbank\\.v[0-9]+\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+        },
+        "subject": {
+          "type": "string",
+          "pattern": "^bloodbank\\.(evt|cmd|rpy)\\.v[0-9]+\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+        },
+        "source": { "type": "string", "minLength": 1 },
+        "producer": { "type": "string", "minLength": 1 },
+        "ordering_key": { "type": "string", "minLength": 1 },
+        "observed_at": { "$ref": "types.v1.json#/$defs/timestamp" }
+      },
+      "required": [
+        "event_id",
+        "type",
+        "subject",
+        "source",
+        "producer",
+        "ordering_key",
+        "observed_at"
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Evidence lineage for an authoritative lifecycle publication.",
+      "properties": {
+        "authority": { "const": "delorenj/lifecycle" },
+        "authority_instance": { "type": "string", "minLength": 1 },
+        "reconciliation_id": { "$ref": "types.v1.json#/$defs/uuid" },
+        "policy_version": { "type": "string", "minLength": 1 },
+        "source_observation_ids": {
+          "type": "array",
+          "items": { "$ref": "types.v1.json#/$defs/uuid" },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "authority",
+        "authority_instance",
+        "reconciliation_id",
+        "policy_version",
+        "source_observation_ids"
+      ]
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Freshness boundary used for this authority decision.",
+      "properties": {
+        "observed_through": { "$ref": "types.v1.json#/$defs/timestamp" },
+        "evaluated_at": { "$ref": "types.v1.json#/$defs/timestamp" },
+        "status": { "type": "string", "enum": ["fresh", "stale"] },
+        "max_age_seconds": { "type": "integer", "minimum": 0 }
+      },
+      "required": [
+        "observed_through",
+        "evaluated_at",
+        "status",
+        "max_age_seconds"
+      ]
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Transactional-outbox identity used by idempotent consumers and projections.",
+      "properties": {
+        "outbox_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Standalone transactional-outbox row identity."
+        },
+        "aggregate_id": { "type": "string", "minLength": 1 },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "event_sequence": { "type": "integer", "minimum": 1 }
+      },
+      "required": [
+        "outbox_id",
+        "aggregate_id",
+        "aggregate_version",
+        "event_sequence"
+      ]
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "missing_human_input",
+            "human_review_required",
+            "dependency_not_ready",
+            "dependency_failed",
+            "ci_failing",
+            "tests_failing",
+            "merge_conflict",
+            "agent_run_failed",
+            "agent_idle",
+            "scheduler_down",
+            "auth_required",
+            "credential_missing",
+            "environment_unavailable",
+            "rate_limited",
+            "scope_ambiguous",
+            "acceptance_criteria_missing",
+            "planning_gap",
+            "ticket_state_inconsistent",
+            "repository_locked",
+            "repository_dirty"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["lifecycle", "ticket", "repo", "agent", "system"]
+        },
+        "blocking": { "type": "boolean" },
+        "summary": { "type": "string" },
+        "owner_kind": {
+          "type": ["string", "null"],
+          "enum": ["human", "agent", "system", "service", null]
+        },
+        "owner_id": { "type": ["string", "null"] },
+        "detected_at": { "$ref": "types.v1.json#/$defs/timestamp" },
+        "source_observation_ids": {
+          "type": "array",
+          "items": { "$ref": "types.v1.json#/$defs/uuid" },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "scope",
+        "blocking",
+        "summary",
+        "owner_kind",
+        "owner_id",
+        "detected_at",
+        "source_observation_ids"
+      ]
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "human_review",
+            "ci_gate",
+            "approval",
+            "security_review",
+            "custom"
+          ]
+        },
+        "blocking": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["opened", "resolved"] },
+        "reason": { "type": "string" },
+        "opened_at": { "$ref": "types.v1.json#/$defs/timestamp" },
+        "resolved_at": {
+          "oneOf": [
+            { "$ref": "types.v1.json#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "blocking",
+        "status",
+        "reason",
+        "opened_at",
+        "resolved_at"
+      ]
+    },
+    "frontier_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "state_transition",
+            "command",
+            "work_item",
+            "gate_resolution"
+          ]
+        },
+        "action": { "type": "string", "minLength": 1 },
+        "allowed": { "type": "boolean" },
+        "capability_required": { "type": ["string", "null"] },
+        "reason_code": { "type": "string", "minLength": 1 },
+        "expected_state_version": { "type": "integer", "minimum": 1 }
+      },
+      "required": [
+        "id",
+        "kind",
+        "action",
+        "allowed",
+        "capability_required",
+        "reason_code",
+        "expected_state_version"
+      ]
+    },
+    "obligation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "satisfied", "waived", "violated"]
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "owner_id": { "type": ["string", "null"] },
+        "due_at": {
+          "oneOf": [
+            { "$ref": "types.v1.json#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "source_observation_ids": {
+          "type": "array",
+          "items": { "$ref": "types.v1.json#/$defs/uuid" },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "status",
+        "description",
+        "owner_id",
+        "due_at",
+        "source_observation_ids"
+      ]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capability_id": { "type": "string", "minLength": 1 },
+        "actor_id": { "type": "string", "minLength": 1 },
+        "actions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "scope": { "type": "string", "minLength": 1 },
+        "issued_at": { "$ref": "types.v1.json#/$defs/timestamp" },
+        "expires_at": {
+          "oneOf": [
+            { "$ref": "types.v1.json#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "state_version": { "type": "integer", "minimum": 1 }
+      },
+      "required": [
+        "capability_id",
+        "actor_id",
+        "actions",
+        "scope",
+        "issued_at",
+        "expires_at",
+        "state_version"
+      ]
+    },
+    "capability_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capability_id": { "type": "string", "minLength": 1 },
+        "capability_version": { "type": "integer", "minimum": 1 },
+        "action": { "const": "lifecycle.intent.submit" },
+        "scope": { "type": "string", "minLength": 1 },
+        "issued_to": { "type": "string", "minLength": 1 }
+      },
+      "required": [
+        "capability_id",
+        "capability_version",
+        "action",
+        "scope",
+        "issued_to"
+      ]
+    }
+  }
+}

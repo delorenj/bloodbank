@@ -101,9 +101,10 @@ bloodbank.<kind>.v<N>.<domain>.<entity>.<action>
 | `rpy`  | `reply`         | `BLOODBANK_COMMANDS` | `bloodbank.rpy.v1.>` |
 
 Subject is 6 tokens. `type` stays 5 tokens. The subject's kind marker is a
-**transport-only** redundancy with the envelope `kind` field — consumers
-MUST treat `envelope.kind` as authoritative; the subject marker exists only
-so NATS can route without deserializing.
+**transport-only** redundancy with the envelope `kind` field. Canonical
+validation binds all three values: subject marker, envelope `kind`, and the
+unchanged five-token `type`. A caller cannot select a command schema while
+routing on a reply subject (or the reverse).
 
 The pair `(domain, entity, action)` is identical across subject and type.
 
@@ -134,7 +135,7 @@ event routes:
 | `bloodbank.v1.reporting.report.completed`       | `bloodbank.evt.v1.reporting.report.completed`         |
 | `bloodbank.v1.reporting.report.failed`          | `bloodbank.evt.v1.reporting.report.failed`            |
 
-These lifecycle events use strict, privacy-preserving telemetry. Maintenance
+These operational events use strict, privacy-preserving telemetry. Maintenance
 failures identify a structured phase and code. Setup and preflight failures
 set provider fields to `null`; provider and merge failures use schema branches
 that require only the fields valid for that phase. Completed report coverage
@@ -148,6 +149,23 @@ Failure summaries are redacted, limited to 500 characters, and marked with
 `redacted: true`. Producers MUST NOT publish stderr dumps, credentials,
 credential-bearing URLs, access tokens, or absolute filesystem paths in these
 events.
+
+Canonical standalone lifecycle authority traffic is:
+
+| CloudEvents `type`                                  | Kind      | NATS subject                                               |
+| --------------------------------------------------- | --------- | ---------------------------------------------------------- |
+| `bloodbank.v1.lifecycle.observation.recorded`       | event     | `bloodbank.evt.v1.lifecycle.observation.recorded`          |
+| `bloodbank.v1.lifecycle.snapshot.updated`           | event     | `bloodbank.evt.v1.lifecycle.snapshot.updated`              |
+| `bloodbank.v1.lifecycle.status.updated`             | event     | `bloodbank.evt.v1.lifecycle.status.updated`                |
+| `bloodbank.v1.lifecycle.blocker.detected`           | event     | `bloodbank.evt.v1.lifecycle.blocker.detected`              |
+| `bloodbank.v1.lifecycle.blocker.resolved`           | event     | `bloodbank.evt.v1.lifecycle.blocker.resolved`              |
+| `bloodbank.v1.lifecycle.intent.submit`              | command   | `bloodbank.cmd.v1.lifecycle.intent.submit`                 |
+| `bloodbank.v1.lifecycle.intent.submit`              | reply     | `bloodbank.rpy.v1.lifecycle.intent.submit`                 |
+
+The command and reply intentionally share their CloudEvent type. Their
+canonical schemas are selected by `(type, kind)` as described in §§12–13.
+Bloodbank validates and transports these contracts; only `delorenj/lifecycle`
+may publish authoritative lifecycle state. See `docs/lifecycle-contracts.md`.
 
 ### 3.1 Targeted repo maintenance v2 extension
 
@@ -237,11 +255,10 @@ Segment 3 of `type` MUST be one of:
 | `agent`        | Agent runtime lifecycle and orchestration of LLM invocations.      | active   |
 | `llm`          | Protocol-boundary events with a model provider.                    | active   |
 | `cli`          | Terminal/process-backed agent runtimes (stdin/stdout/stderr/exit). | active   |
-
 | `system`       | Bloodbank platform health (heartbeats, dapr, nats, replay).        | active   |
 | `audio`        | Audio capture lifecycle — inbox ingestion, transcription jobs.     | active   |
 | `repo`         | Repo-scoped PM facts such as decisions, intake triage, and tasks.  | active   |
-| `lifecycle`    | Finite development mission: status, roadmap, checkpoints, gates, blockers. | active   |
+| `lifecycle`    | Contracts and transport for the standalone lifecycle authority. | active   |
 | `finance`      | Household finance facts from the tiller sync — accounts, transactions, recurring/zombie subscriptions, cashflow projection. | active   |
 | `attendance`   | Timekeeping and clock-state transitions across work sessions.       | active   |
 | `curator`      | Purpose-driven curation of a watched directory — classify, enrich, rename, and route incoming files (the `folder-curator` skill). | active   |
@@ -284,12 +301,15 @@ Segment 4 of `type` MUST be one of:
 | `worktree`         | `workspace` (reserved)   | Git worktree lifecycle.                                     |
 | `branch`           | `workspace` (reserved)   | Git branch state changes.                                   |
 | `diff`             | `workspace` (reserved)   | Captured diff artifact.                                     |
-| `lifecycle`        | `lifecycle`              | Finite development mission envelope.                        |
 | `mission`          | `lifecycle`              | A single lifecycle instance (status, roadmap, checkpoints). |
 | `checkpoint`       | `lifecycle`              | A roadmap milestone that can be reached.                    |
 | `gate`             | `lifecycle`              | An intentional pause or review point on a lifecycle.        |
 | `roadmap`          | `lifecycle`              | A versioned plan of phases and checkpoints.                 |
 | `status`           | `lifecycle`              | Aggregate lifecycle status and health.                      |
+| `observation`      | `lifecycle`              | Lossless source-event observation and provenance.           |
+| `snapshot`         | `lifecycle`              | Versioned authoritative state, frontier, and obligations.   |
+| `blocker`          | `lifecycle`              | Versioned blocker activation or resolution.                 |
+| `intent`           | `lifecycle`              | Capability-checked command/reply exchange.                  |
 | `sync`             | `finance`                | One sheet→Postgres sync run (tiller).                       |
 | `account`          | `finance`                | A tracked bank/credit/manual account.                       |
 | `transaction`      | `finance`                | A posted transaction on an account.                         |
@@ -319,7 +339,8 @@ emit an entity not paired with it here.
 
 `create`, `resume`, `start`, `end`, `complete`, `fail`, `cancel`, `generate`,
 `append`, `receive`, `send`, `grant`, `deny`, `open`, `close`, `spawn`,
-`kill`, `checkout`, `invoke`, `request`, `toggle`, `clock_in`, `clock_out`.
+`kill`, `checkout`, `invoke`, `request`, `toggle`, `clock_in`, `clock_out`,
+`submit`.
 
 Pairing across kinds is by semantic intent, not lexical: command `start`
 yields event `started`; command `kill` yields event `exited`; command
@@ -400,13 +421,13 @@ In addition to everything required by `bloodbank/schemas/_common/cloudevent_base
 | Field             | Applies to            | Required? | Notes                                                                         |
 | ----------------- | --------------------- | --------- | ----------------------------------------------------------------------------- |
 | `kind`            | event, command, reply | yes       | One of `event`, `command`, `reply`. Subject kind marker MUST match.           |
-| `actor`           | event, command        | yes       | Object per §10. Replies inherit the actor of the command they answer.         |
+| `actor`           | event, command, reply | yes       | Object per §10; for replies this identifies the replying authority.           |
 | `ordering_key`    | event                 | yes       | Stable string ordering bucket. See §11.1.                                     |
 | `command_id`      | command               | yes       | Unique command identifier. Same value across retries.                         |
 | `idempotency_key` | command               | yes       | Stable key for the command's effect. See §11.2.                               |
 | `delivery`        | command               | yes       | Always `single_consumer` for v1.                                              |
 | `correlationid`   | event, command, reply | yes       | Already required by base. For commands, equals `command_id` when root-issued. |
-| `causationid`     | event, command, reply | yes       | Already required by base. For replies, equals the originating `command_id`.   |
+| `causationid`     | event, command, reply | yes       | For replies, equals the originating command CloudEvent `id`.                  |
 
 Schema validation enforces JSON Schema `date` and `date-time` formats. Invalid
 calendar dates and non-RFC 3339 timestamps fail validation; the `format`
@@ -424,6 +445,7 @@ invocation:<invocation_id>
 session:<session_id>             # agent CLI session (was cli_session)
 process:<process_id>
 transcription:<transcription_id>
+task:<repo>:<task_id>              # repo.task.* observation source
 file:<sha256(file_path)|file_id>
 sync:<run_id>                    # finance: one tiller sync run
 account:<account_id>             # finance: per-account transaction/paycheck order
@@ -458,12 +480,14 @@ deduplicates on `(idempotency_key, command_id)` before forwarding.
 ## 12. Schema directory layout
 
 Versioned Bloodbank schemas live under `bloodbank/schemas/` in this repo. The
-v1 tree remains unchanged; the v2 tree contains only registered v2 types:
+v1 tree uses conventional paths plus explicitly registered kind variants; the
+v2 tree contains only registered v2 types:
 
 ```
 bloodbank/schemas/
   _common/
     cloudevent_base.v1.json
+    lifecycle_contracts.v1.json
     types.v1.json
   bloodbank/v1/
     conversation/
@@ -501,6 +525,14 @@ bloodbank/schemas/
       report.started.v1.json
       report.completed.v1.json
       report.failed.v1.json
+    lifecycle/
+      observation.recorded.v1.json
+      snapshot.updated.v1.json
+      status.updated.v1.json
+      blocker.detected.v1.json
+      blocker.resolved.v1.json
+      intent.submit.command.v1.json
+      intent.submit.reply.v1.json
   bloodbank/v2/
     repo/
       maintenance.failed.v1.json
@@ -508,10 +540,12 @@ bloodbank/schemas/
 
 Each schema:
 
-- `$id` MUST be `https://33god.dev/schemas/bloodbank/v<N>/<domain>/<entity>.<action>.v1.json`.
+- Conventional `$id` values MUST be `https://33god.dev/schemas/bloodbank/v<N>/<domain>/<entity>.<action>.v1.json`.
+- Registered same-type command/reply variant `$id` values append
+  `.command` or `.reply` before `.v1.json`.
 - MUST `$ref` `../../../_common/cloudevent_base.v1.json`.
 - MUST set `properties.type.const` to the full 5-token type string.
-- MUST set `properties.kind.const` to `event` or `command`.
+- MUST set `properties.kind.const` to `event`, `command`, or `reply`.
 - MUST set `properties.domain.const` to match segment 3 of `type`.
 
 There is no provider-named subdirectory (for example,
@@ -531,6 +565,12 @@ the schema root in this order:
 Run `mise run validate:schemas` to confirm the tree is internally
 consistent (every `$id` unique, every `$ref` resolves).
 
+Most v1 schemas retain convention-based lookup from `type` to
+`<entity>.<action>.v1.json`. When a command and reply share a type but have
+different shapes, `services/agent-hooks/core/validate.py` requires an explicit
+registered `(type, kind)` variant and has no type-only fallback. An ambiguous
+type-only lookup or an unregistered kind is a contract violation.
+
 ---
 
 ## 13. `dataschema`, `schemaref`, and Apicurio keys
@@ -540,9 +580,18 @@ Following the new shape:
 - `dataschema` — `apicurio://holyfields/bloodbank.v1.<domain>.<entity>.<action>/versions/<n>`
 - `schemaref` — `bloodbank.v1.<domain>.<entity>.<action>.v1` (string)
 
-The Apicurio registry's artifact ID is the 5-token type string, not the
-filesystem path. Holyfields' registration script (`scripts/register-schemas.sh`
-or equivalent) uses the type as the key when uploading.
+The Apicurio registry's artifact ID is normally the 5-token type string, not
+the filesystem path. For a registered same-type command/reply pair, only the
+schema artifact adds the kind suffix while the CloudEvent type stays
+canonical:
+
+- command `dataschema` — `apicurio://holyfields/bloodbank.v1.lifecycle.intent.submit.command/versions/1`
+- command `schemaref` — `bloodbank.v1.lifecycle.intent.submit.command.v1`
+- reply `dataschema` — `apicurio://holyfields/bloodbank.v1.lifecycle.intent.submit.reply/versions/1`
+- reply `schemaref` — `bloodbank.v1.lifecycle.intent.submit.reply.v1`
+
+Holyfields' registration script (`scripts/register-schemas.sh` or equivalent)
+uses that artifact identity as the upload key.
 
 ---
 
