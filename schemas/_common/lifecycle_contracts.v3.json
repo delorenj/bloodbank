@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/_common/lifecycle_contracts.v3.json",
+  "title": "Lifecycle Obligation Occurrence Contract Types",
+  "description": "Authority-owned obligation occurrence wire type. A rule may recur, so every active occurrence has its own deterministic identity and immutable activation time.",
+  "$defs": {
+    "obligation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "obligation_instance_id": {
+          "$ref": "types.v1.json#/$defs/uuid",
+          "description": "Deterministic identity of this exact authority-owned pending occurrence. It is stable while the occurrence remains active and changes when the rule becomes pending again in a later lifecycle cycle."
+        },
+        "activated_at": {
+          "$ref": "types.v1.json#/$defs/timestamp",
+          "description": "Immutable authority decision time at which this occurrence became active."
+        },
+        "kind": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "satisfied", "waived", "violated"]
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "skill_ref": {
+          "$ref": "lifecycle_contracts.v1.json#/$defs/skill_ref"
+        },
+        "owner_id": { "type": ["string", "null"] },
+        "due_at": {
+          "oneOf": [
+            { "$ref": "types.v1.json#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "source_observation_ids": {
+          "type": "array",
+          "items": { "$ref": "types.v1.json#/$defs/uuid" },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "obligation_instance_id",
+        "activated_at",
+        "kind",
+        "status",
+        "description",
+        "skill_ref",
+        "owner_id",
+        "due_at",
+        "source_observation_ids"
+      ]
+    }
+  }
+}

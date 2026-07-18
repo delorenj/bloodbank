@@ -84,6 +84,12 @@ REGISTERED_SCHEMA_VERSIONS = {
     ("bloodbank.v1.lifecycle.snapshot.updated", "event", 2): (
         "bloodbank/v1/lifecycle/snapshot.updated.v2.json"
     ),
+    ("bloodbank.v1.lifecycle.snapshot.updated", "event", 3): (
+        "bloodbank/v1/lifecycle/snapshot.updated.v3.json"
+    ),
+    ("bloodbank.v1.lifecycle.obligation_evidence.submitted", "event", 2): (
+        "bloodbank/v1/lifecycle/obligation_evidence.submitted.v2.json"
+    ),
 }
 
 # --------------------------------------------------------------------------

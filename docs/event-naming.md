@@ -494,6 +494,7 @@ bloodbank/schemas/
     cloudevent_base.v1.json
     lifecycle_contracts.v1.json
     lifecycle_contracts.v2.json
+    lifecycle_contracts.v3.json
     types.v1.json
   bloodbank/v1/
     conversation/
@@ -534,8 +535,10 @@ bloodbank/schemas/
     lifecycle/
       observation.recorded.v1.json
       obligation_evidence.submitted.v1.json
+      obligation_evidence.submitted.v2.json
       snapshot.updated.v1.json
       snapshot.updated.v2.json
+      snapshot.updated.v3.json
       status.updated.v1.json
       blocker.detected.v1.json
       blocker.resolved.v1.json

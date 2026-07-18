@@ -33,6 +33,7 @@ CORRELATION_ID = "00000000-0000-4000-8000-000000000009"
 ROOT_CAUSATION_ID = "00000000-0000-4000-8000-000000000010"
 INVOCATION_ID = "00000000-0000-4000-8000-000000000011"
 EVIDENCE_EVENT_ID = "00000000-0000-4000-8000-000000000012"
+OBLIGATION_INSTANCE_ID = "00000000-0000-4000-8000-000000000013"
 
 ACTOR = {"type": "service", "agent_id": "delorenj.lifecycle"}
 
@@ -119,38 +120,42 @@ def event_envelope(
     )
 
 
-def obligation_evidence_envelope() -> dict:
+def obligation_evidence_envelope(*, schema_version: int = 2) -> dict:
+    data = {
+        "contract_version": schema_version,
+        "lifecycle_id": "lc-33god",
+        "repo": "33GOD",
+        "obligation_id": "obligation-review",
+        "obligation_kind": "independent_review",
+        "target_actor_id": "reviewer",
+        "invocation_id": INVOCATION_ID,
+        "skill_ref": {
+            "name": "bmad-code-review",
+            "selector": "6.10.2",
+        },
+        "completed_at": T,
+        "evidence": {
+            "kind": "skill_completion",
+            "outcome": "completed",
+            "artifact_id": "review:lc-33god:obligation-review",
+            "artifact_sha256": "b" * 64,
+            "summary": "Independent review completed with recorded findings.",
+        },
+    }
+    if schema_version == 2:
+        data["obligation_instance_id"] = OBLIGATION_INSTANCE_ID
     return build_envelope(
         ce_type="bloodbank.v1.lifecycle.obligation_evidence.submitted",
         source="urn:33god:service:momo",
         producer="momo",
         service="momo",
         actor={"type": "service", "agent_id": "momo"},
-        data={
-            "contract_version": 1,
-            "lifecycle_id": "lc-33god",
-            "repo": "33GOD",
-            "obligation_id": "obligation-review",
-            "obligation_kind": "independent_review",
-            "target_actor_id": "reviewer",
-            "invocation_id": INVOCATION_ID,
-            "skill_ref": {
-                "name": "bmad-code-review",
-                "selector": "6.10.2",
-            },
-            "completed_at": T,
-            "evidence": {
-                "kind": "skill_completion",
-                "outcome": "completed",
-                "artifact_id": "review:lc-33god:obligation-review",
-                "artifact_sha256": "b" * 64,
-                "summary": "Independent review completed with recorded findings.",
-            },
-        },
+        data=data,
         correlation_id=CORRELATION_ID,
         causation_id=INVOCATION_ID,
         event_id=EVIDENCE_EVENT_ID,
         ordering_key="lifecycle:lc-33god",
+        schema_version=schema_version,
         validate=True,
     )
 
@@ -527,8 +532,12 @@ def test_observation_snapshot_and_blocker() -> None:
     snapshot_v2_schema = load_schema_for(
         "bloodbank.v1.lifecycle.snapshot.updated", "event", 2
     )
+    snapshot_v3_schema = load_schema_for(
+        "bloodbank.v1.lifecycle.snapshot.updated", "event", 3
+    )
     assert snapshot_v1_schema["$id"].endswith("snapshot.updated.v1.json")
     assert snapshot_v2_schema["$id"].endswith("snapshot.updated.v2.json")
+    assert snapshot_v3_schema["$id"].endswith("snapshot.updated.v3.json")
 
     snapshot_v2_data = copy.deepcopy(snapshot["data"])
     snapshot_v2_data["contract_version"] = 2
@@ -558,12 +567,37 @@ def test_observation_snapshot_and_blocker() -> None:
         lambda: validate_envelope(capability_version_on_v1),
     )
 
+    snapshot_v3_data = copy.deepcopy(snapshot_v2_data)
+    snapshot_v3_data["contract_version"] = 3
+    snapshot_v3_data["obligations"][0].update(
+        {
+            "obligation_instance_id": OBLIGATION_INSTANCE_ID,
+            "activated_at": T,
+        }
+    )
+    snapshot_v3 = event_envelope(
+        "bloodbank.v1.lifecycle.snapshot.updated",
+        snapshot_v3_data,
+        schema_version=3,
+    )
+    assert snapshot_v3["schemaref"].endswith(".v3")
+    assert snapshot_v3["dataschema"].endswith("/versions/3")
+    print("  PASS snapshot v3 carries one exact authority obligation occurrence")
+
+    for missing in ("obligation_instance_id", "activated_at"):
+        invalid_occurrence = copy.deepcopy(snapshot_v3)
+        del invalid_occurrence["data"]["obligations"][0][missing]
+        expect_invalid(
+            f"snapshot v3 obligation without {missing}",
+            lambda e=invalid_occurrence: validate_envelope(e),
+        )
+
     expect_invalid(
-        "unregistered snapshot schema v3",
+        "unregistered snapshot schema v4",
         lambda: event_envelope(
             "bloodbank.v1.lifecycle.snapshot.updated",
-            snapshot_v2_data,
-            schema_version=3,
+            snapshot_v3_data,
+            schema_version=4,
         ),
     )
 
@@ -605,7 +639,20 @@ def test_obligation_completion_evidence() -> None:
     assert evidence["subject"] == (
         "bloodbank.evt.v1.lifecycle.obligation_evidence.submitted"
     )
-    print("  PASS canonical obligation completion evidence")
+    assert evidence["schemaref"].endswith(".v2")
+    assert evidence["data"]["obligation_instance_id"] == OBLIGATION_INSTANCE_ID
+    print("  PASS canonical obligation completion evidence binds exact occurrence")
+
+    legacy = obligation_evidence_envelope(schema_version=1)
+    assert legacy["schemaref"].endswith(".v1")
+    print("  PASS obligation completion evidence v1 remains schema-compatible")
+
+    missing_occurrence = copy.deepcopy(evidence)
+    del missing_occurrence["data"]["obligation_instance_id"]
+    expect_invalid(
+        "v2 completion evidence without occurrence identity",
+        lambda: validate_envelope(missing_occurrence),
+    )
 
     invocation_only = copy.deepcopy(evidence)
     invocation_only["data"]["evidence"]["kind"] = "skill_invocation"

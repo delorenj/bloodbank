@@ -6,7 +6,9 @@
 
 **CloudEvent type namespace:** v1
 
-**Current snapshot schema artifact:** v2
+**Current snapshot schema artifact:** v3
+
+**Current obligation evidence schema artifact:** v2
 
 Bloodbank owns versioned schemas, naming, validation, NATS subjects, Dapr
 transport, and producer authorization. It does not evaluate transitions,
@@ -24,8 +26,8 @@ standalone component.
 | Contract | Purpose |
 | --- | --- |
 | `lifecycle.observation.recorded` event | Lossless source identity, provenance, immutable source time, payload hash, and source payload. |
-| `lifecycle.obligation_evidence.submitted` event | Completed skill evidence for an exact obligation, target actor, and invocation. It is an authority input, never a satisfaction verdict. |
-| `lifecycle.snapshot.updated` event | Versioned authoritative state plus legal frontier, obligations, blockers, gates, versioned capabilities, provenance, freshness, and outbox identity. |
+| `lifecycle.obligation_evidence.submitted` event | Completed skill evidence for one exact authority-owned obligation occurrence, target actor, and invocation. It is an authority input, never a satisfaction verdict. |
+| `lifecycle.snapshot.updated` event | Versioned authoritative state plus legal frontier, obligation occurrences, blockers, gates, versioned capabilities, provenance, freshness, and outbox identity. |
 | `lifecycle.status.updated` event | Versioned status/health transition with prior state, provenance, freshness, and outbox identity. |
 | `lifecycle.blocker.detected` / `.resolved` events | Versioned blocker activation and resolution. |
 | `lifecycle.intent.submit` command | Actor- and capability-scoped intent with idempotency and optimistic concurrency. |
@@ -44,22 +46,31 @@ Momo/Skillex interprets it as invocation intent. Bloodbank only defines the
 wire shape; commands, models, providers, and execution policy are deliberately
 not part of `skill_ref`.
 
-Snapshot schema v2 is a deliberate incompatible artifact revision under the
+Snapshot schema v3 is a deliberate incompatible artifact revision under the
 unchanged `bloodbank.v1.lifecycle.snapshot.updated` CloudEvent type. Its
-`contract_version`, `dataschema`, and `schemaref` are all 2, and every
-capability requires the authority-owned `capability_version`. Snapshot v1
-remains valid for existing consumers but cannot carry that additional field.
-Current producers and clients use v2; clients derive the capability ID and
-version from the authoritative snapshot rather than guessing a default.
+`contract_version`, `dataschema`, and `schemaref` are all 3. It retains v2's
+required authority-owned `capability_version` and additionally requires every
+obligation to carry an RFC 4122 `obligation_instance_id` plus immutable
+`activated_at`. The instance identifies one pending occurrence of a reusable
+rule: it remains stable for that occurrence and changes if the rule becomes
+pending again in a later lifecycle cycle. Snapshot v1 and v2 remain valid for
+existing consumers but are not the current producer artifact. Current clients
+derive capability and obligation-occurrence identity from v3 rather than
+guessing either value.
 
-`lifecycle.obligation_evidence.submitted` requires the exact lifecycle,
-repository, obligation identity and kind, authority-selected target actor,
-canonical skill reference, stable invocation ID, completion time, and an
-integrity-addressed completion artifact. Its evidence kind is
+`lifecycle.obligation_evidence.submitted` v2 requires the exact lifecycle,
+repository, obligation rule identity and kind, active
+`obligation_instance_id`, authority-selected target actor, canonical skill
+reference, stable invocation ID, completion time, and an integrity-addressed
+completion artifact. Its evidence kind is
 `skill_completion` and outcome is `completed`; invocation, request, or review-
 requested records do not validate as completion. Lifecycle alone correlates
-and evaluates this input, records the resulting observation, and determines
-whether an obligation becomes satisfied or state may advance.
+and evaluates this input against the exact active occurrence and activation
+time, records the resulting observation, and determines whether an obligation
+becomes satisfied or state may advance. Evidence for a prior occurrence, or
+evidence observed before the active occurrence was activated, cannot satisfy
+it. Evidence v1 remains a compatibility artifact but cannot identify an
+occurrence and is not accepted by the current authority consumer.
 
 `status.updated` preserves the extracted reconciler's real first-publication
 shape without weakening repository identity: `state_version=1` requires
@@ -177,7 +188,7 @@ subject.
 The extraction-source pin
 `03415705a39d77f1e6d73c8a9c92ee177320df7e` contained 72 JSON schemas: 2
 common definitions and 70 wire contracts (64 event, 6 command, 0 reply).
-This closure contains 82 JSON schemas: 4 common definitions and 78 wire
+This closure contains 85 JSON schemas: 5 common definitions and 80 wire
 contracts (70 event, 7 command, 1 reply).
 
 | Domain | Source pin | Contract closure |
