@@ -29,7 +29,7 @@ export class Bloodbank implements INodeType {
     group: ['output'],
     version: 1,
     subtitle: '={{$parameter["event"]}}',
-    description: 'Publish a schema-validated event to the 33GOD bloodbank NATS bus',
+    description: 'Publish a canonical event to the 33GOD Bloodbank NATS bus',
     defaults: { name: 'Bloodbank' },
     inputs: ['main'],
     outputs: ['main'],
@@ -43,7 +43,8 @@ export class Bloodbank implements INodeType {
         options: eventOptions(),
         default: eventSchemas.length ? eventSchemas[0].type : '',
         required: true,
-        description: 'The bloodbank event to publish (generated from schemas/bloodbank/v1/**)',
+        description:
+          'The Bloodbank event to publish (generated from schemas intersected with publisher-events.json)',
       },
       {
         displayName: 'Data (JSON)',
@@ -64,6 +65,61 @@ export class Bloodbank implements INodeType {
           { displayName: 'NATS Port', name: 'natsPort', type: 'number', default: 4222 },
         ],
       },
+      {
+        displayName: 'Envelope Metadata',
+        name: 'metadata',
+        type: 'collection',
+        placeholder: 'Add metadata',
+        default: {},
+        options: [
+          {
+            displayName: 'Actor ID',
+            name: 'actorId',
+            type: 'string',
+            default: 'bloodbank.integration.n8n',
+          },
+          {
+            displayName: 'Actor Type',
+            name: 'actorType',
+            type: 'string',
+            default: 'service',
+          },
+          {
+            displayName: 'Causation ID',
+            name: 'causationId',
+            type: 'string',
+            default: '',
+            description: 'CloudEvent ID that directly caused this event; defaults to Event ID for a root event',
+          },
+          {
+            displayName: 'Correlation ID',
+            name: 'correlationId',
+            type: 'string',
+            default: '',
+          },
+          {
+            displayName: 'Event ID',
+            name: 'eventId',
+            type: 'string',
+            default: '',
+            description: 'Stable UUID to preserve across retries; generated for this publish when omitted',
+          },
+          {
+            displayName: 'Observed At',
+            name: 'observedAt',
+            type: 'string',
+            default: '',
+            description: 'RFC 3339 source observation time; current time when omitted',
+          },
+          {
+            displayName: 'Ordering Key',
+            name: 'orderingKey',
+            type: 'string',
+            default: '',
+            description: 'Stable entity ordering key; repo.task events derive task:<repo>:<task_id>',
+          },
+        ],
+      },
     ],
   };
 
@@ -78,6 +134,15 @@ export class Bloodbank implements INodeType {
         const conn = this.getNodeParameter('connection', i, {}) as {
           natsHost?: string;
           natsPort?: number;
+        };
+        const metadata = this.getNodeParameter('metadata', i, {}) as {
+          actorId?: string;
+          actorType?: string;
+          causationId?: string;
+          correlationId?: string;
+          eventId?: string;
+          observedAt?: string;
+          orderingKey?: string;
         };
 
         let data: Record<string, unknown>;
@@ -111,10 +176,25 @@ export class Bloodbank implements INodeType {
           port: conn.natsPort ? Number(conn.natsPort) : undefined,
           producer: 'n8n',
           service: 'n8n',
+          eventId: metadata.eventId?.trim() || undefined,
+          observedAt: metadata.observedAt?.trim() || undefined,
+          correlationId: metadata.correlationId?.trim() || undefined,
+          causationId: metadata.causationId?.trim() || undefined,
+          orderingKey: metadata.orderingKey?.trim() || undefined,
+          actor: {
+            type: metadata.actorType?.trim() || 'service',
+            agent_id: metadata.actorId?.trim() || 'bloodbank.integration.n8n',
+          },
         });
 
         out.push({
-          json: { published: true, type, subject: res.subject, correlationid: res.correlationid },
+          json: {
+            published: true,
+            type,
+            subject: res.subject,
+            eventId: res.eventId,
+            correlationid: res.correlationid,
+          },
           pairedItem: { item: i },
         });
       } catch (error) {

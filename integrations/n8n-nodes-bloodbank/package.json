@@ -1,7 +1,7 @@
 {
   "name": "n8n-nodes-bloodbank",
   "version": "0.1.0",
-  "description": "n8n node to publish schema-validated events to the 33GOD bloodbank NATS bus (self-contained; in-process NATS publish, event list generated from bloodbank/schemas)",
+  "description": "n8n node to publish canonical events to the 33GOD Bloodbank NATS bus (self-contained; in-process NATS publish, event list generated from Bloodbank schemas)",
   "keywords": [
     "n8n-community-node-package",
     "n8n",
@@ -28,6 +28,7 @@
   "scripts": {
     "codegen": "node codegen/generate-events.mjs",
     "build": "npm run codegen && tsc",
+    "test": "npm run build && node --test test/*.test.cjs",
     "deploy": "bash scripts/deploy.sh"
   },
   "devDependencies": {
