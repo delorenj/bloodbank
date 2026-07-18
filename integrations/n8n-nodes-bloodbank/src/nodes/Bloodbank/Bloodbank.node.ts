@@ -52,7 +52,7 @@ export class Bloodbank implements INodeType {
         type: 'json',
         default: '{}',
         description:
-          'Event payload object. Required fields per event are shown in the Event dropdown. Provide literal JSON or an expression returning an object.',
+          'Event payload object. Required fields per event are shown in the Event dropdown. The authorized repo.task family is fully field-validated from generated canonical schema metadata before transport; other events retain required-field checks.',
       },
       {
         displayName: 'Connection',
@@ -102,14 +102,16 @@ export class Bloodbank implements INodeType {
             name: 'eventId',
             type: 'string',
             default: '',
-            description: 'Stable UUID to preserve across retries; generated for this publish when omitted',
+            description:
+              'Explicit stable UUID. When omitted, repo.task events derive a deterministic UUID from source identity; other events generate a UUID for this publish.',
           },
           {
             displayName: 'Observed At',
             name: 'observedAt',
             type: 'string',
             default: '',
-            description: 'RFC 3339 source observation time; current time when omitted',
+            description:
+              'RFC 3339 source observation time. Repo.task events fall back only to their canonical payload timestamp and fail when neither source exists; other events use current time when omitted.',
           },
           {
             displayName: 'Ordering Key',

@@ -25,10 +25,13 @@
       "properties": {
         "repo": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "pattern": "^\\S+$"
         },
         "task_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S+$"
         },
         "title": {
           "type": "string",
@@ -43,6 +46,7 @@
       },
       "required": [
         "repo",
+        "task_id",
         "title"
       ],
       "additionalProperties": true

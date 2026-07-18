@@ -1478,7 +1478,7 @@ export const eventSchemas: EventSchema[] = [
       {
         "name": "task_id",
         "jsonType": "string",
-        "required": false,
+        "required": true,
         "description": ""
       },
       {
@@ -1528,7 +1528,7 @@ export const eventSchemas: EventSchema[] = [
       {
         "name": "task_id",
         "jsonType": "string",
-        "required": false,
+        "required": true,
         "description": ""
       },
       {
@@ -1566,7 +1566,7 @@ export const eventSchemas: EventSchema[] = [
       {
         "name": "task_id",
         "jsonType": "string",
-        "required": false,
+        "required": true,
         "description": ""
       },
       {
