@@ -34,6 +34,13 @@ metadata. The CloudEvent `id`, outbox ID, aggregate ID/version, and event
 sequence give consumers enough stable identity to deduplicate and rebuild
 projections.
 
+Every obligation also carries a strict `skill_ref` with exactly two fields:
+canonical Skillex `name` (lowercase kebab form) and a non-empty `selector` for
+the skill version, tag, or revision. Lifecycle supplies that reference and
+Momo/Skillex interprets it as invocation intent. Bloodbank only defines the
+wire shape; commands, models, providers, and execution policy are deliberately
+not part of `skill_ref`.
+
 `status.updated` preserves the extracted reconciler's real first-publication
 shape without weakening repository identity: `state_version=1` requires
 `previous_state_version=null` and `previous=null`, while `repo` remains a
@@ -96,12 +103,26 @@ the entire lifecycle domain. Schema existence alone is not producer
 authorization. For a task event, the node emits:
 
 - subject `bloodbank.evt.v1.repo.task.<action>`;
-- stable producer-supplied CloudEvent ID and source observation `time` when
-  provided (generated once/current time only when omitted);
+- a required, non-blank `repo` and `task_id` validated against the selected
+  canonical repo-task schema before any NATS connection is opened;
+- producer-supplied CloudEvent ID and source observation `time` when provided;
+  otherwise `time` comes only from the contract's canonical payload timestamp
+  (`updated_at` or `completed_at`), and events with neither source fail closed;
+- a deterministic default RFC 4122 UUID derived from event type, repo, task ID,
+  immutable source time, and the SHA-256 fingerprint of canonicalized payload
+  JSON, so identical retries deduplicate while materially different updates do
+  not;
 - `dataschema`, `schemaref`, actor, correlation, causation, and a deterministic
-  `task:<repo>:<task_id>` ordering key;
+  `task:<repo>:<task_id>` ordering key; default correlation is scoped by both
+  repo and task ID;
 - the original repo-task payload, with no lifecycle verdict or state derived
   by Bloodbank.
+
+The same generated schema metadata enforces required fields, JSON field types,
+enums, string bounds/patterns, and RFC 3339 date-time formats for all three
+authorized `repo.task.*` sources in the live publish path. This is intentionally
+not a claim that every other n8n-authorized event has full field-level runtime
+schema validation.
 
 `BLOODBANK_EVENTS` persists `bloodbank.evt.v1.>` with limits retention. The
 standalone lifecycle observation consumer uses the narrower transport seam:
@@ -123,10 +144,11 @@ cd integrations/n8n-nodes-bloodbank
 npm test
 ```
 
-It builds a deterministic `repo.task.recorded` envelope, validates it through
-Bloodbank's Python validator, publishes it over the raw NATS protocol to a
-fake server, checks exact subject/body identity, and verifies that the stream
-and lifecycle subscription seam cover the subject.
+It builds retry-stable repo-task envelopes, checks cross-repository correlation
+separation, proves invalid payloads never open the fake NATS transport, validates
+the wire envelope through Bloodbank's Python validator, checks exact subject/body
+identity, and verifies that the stream and lifecycle subscription seam cover the
+subject.
 
 ## Validation
 
