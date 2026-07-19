@@ -66,7 +66,7 @@ The sandbox compose project is `bloodbank`; everything attaches to the
 | `ops/smoketest/`     | End-to-end round-trip tests                                         |
 | `ops/replay/`        | Operator-facing replay workflow contract                            |
 | `ops/trace/`         | Correlation/causation walkthrough                                   |
-| `services/`          | Reference services (heartbeat producer/consumer, event-toaster, agent hooks) |
+| `services/`          | Reference services (heartbeat tick producer, event toaster, and agent hooks) |
 | `adapters/`          | Migration scaffolds for legacy producers (blocked on Holyfields)    |
 
 ## Operator CLI
