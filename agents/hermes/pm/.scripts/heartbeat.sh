@@ -273,6 +273,16 @@ state.update({"source":"hermes-continuous-ticket-sentinel","agent_id":agent_id,"
 tmp = path.with_suffix(path.suffix + ".tmp"); tmp.write_text(json.dumps(state, indent=2, sort_keys=True)+"\n"); tmp.replace(path)
 PYEOF
 
+# Coexistence WIP=1 lease (momo E2/S2.3): don't full-drive if the human-drivable
+# Momo holds it. A crashed holder's lease expires (ttl) so the board is never wedged.
+WIP_LOCK="$RUNTIME/wip-driver.lock"
+if ! python3 "$ROLE_DIR/.scripts/momo-wip-lock.py" acquire "$WIP_LOCK" "hermes:$AGENT_ID" --ttl 3600 >/dev/null 2>&1; then
+  printf '[heartbeat] WIP lease held by Momo — skipping full reconcile pass this tick\n'
+  maybe_checkpoint
+  exit 0
+fi
+trap 'python3 "$ROLE_DIR/.scripts/momo-wip-lock.py" release "$WIP_LOCK" "hermes:$AGENT_ID" >/dev/null 2>&1 || true' EXIT
+
 prompt="$(<"$PROMPT_FILE")"
 set +e
 env HERMES_HOME="$RUNTIME" "$HERMES_BIN" chat -Q --source cron --max-turns 90 -q "$prompt"
