@@ -1,0 +1,21 @@
+[Unit]
+Description=Plane → Bloodbank webhook bridge (PM board reactivity)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=HERMES_PLANE_BRIDGE_HOST=0.0.0.0
+Environment=HERMES_PLANE_BRIDGE_PORT=8477
+Environment=BLOODBANK_HOME=%h/code/33GOD/bloodbank
+Environment=HERMES_FLEET_REGISTRY_FILE=%h/.hermes/agents-registry.yaml
+# Put PLANE_WEBHOOK_SECRET=... here to enable HMAC verification:
+EnvironmentFile=-%h/.hermes/plane-webhook-bridge.env
+ExecStart=%h/.hermes/hermes-agent/.venv/bin/python %h/code/33GOD/bloodbank/services/plane-webhook-bridge/plane-webhook-bridge.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:%h/.hermes/logs/plane-webhook-bridge.log
+StandardError=append:%h/.hermes/logs/plane-webhook-bridge.log
+
+[Install]
+WantedBy=default.target
