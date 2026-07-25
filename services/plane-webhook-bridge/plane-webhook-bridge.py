@@ -81,27 +81,36 @@ def build_envelope(repo: str, action: str, data: dict) -> tuple[str, dict]:
 
 
 def resolve(payload: dict, pmap: dict[str, str]):
-    """-> (repo, action, data) or None if not a routable ticket event."""
+    """-> (repo, action, data) or None if not a routable ticket event.
+
+    Plane's `issue` webhook: `data` IS the issue object. Its `issue_comment`
+    webhook: `data` is the comment and `data['issue']` is the issue id STRING.
+    """
     event = payload.get("event")
     if event not in CARE:
         return None
     action = payload.get("action", "updated")
     data = payload.get("data") or {}
-    # issue_comment carries the issue under data.issue; issue carries it directly.
-    issue = data if event == "issue" else (data.get("issue") or data)
-    pid = str(data.get("project") or issue.get("project") or "")
+    pid = str(data.get("project") or "")
     repo = pmap.get(pid)
     if not repo:
         return None
     if ONLY and repo not in ONLY:
         return None  # pilot scoping: this repo is not in the routing allowlist
+    if event == "issue":
+        ticket_id, seq, name, state, act = (
+            data.get("id"), data.get("sequence_id"), data.get("name"), data.get("state"), action)
+    else:  # issue_comment — data['issue'] is the issue id (string) or, rarely, an object
+        iss = data.get("issue")
+        obj = iss if isinstance(iss, dict) else {}
+        ticket_id = iss if isinstance(iss, str) else obj.get("id")
+        seq, name, state, act = obj.get("sequence_id"), obj.get("name"), None, "commented"
     slim = {
-        "repo": repo, "event": event, "action": action, "project_id": pid,
-        "ticket_id": issue.get("id"), "sequence_id": issue.get("sequence_id"),
-        "name": issue.get("name"), "state": issue.get("state"),
+        "repo": repo, "event": event, "action": act, "project_id": pid,
+        "ticket_id": ticket_id, "sequence_id": seq, "name": name, "state": state,
         "updated_by": data.get("updated_by") or data.get("actor"),
     }
-    return repo, ("commented" if event == "issue_comment" else action), slim
+    return repo, act, slim
 
 
 def publish(subject: str, env: dict) -> str:
@@ -131,9 +140,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
         if SECRET:
-            sig = self.headers.get("X-Plane-Signature", "")
+            sig = self.headers.get("X-Plane-Signature", "") or self.headers.get("X-Hub-Signature-256", "")
+            sig = sig.split("=", 1)[-1] if "=" in sig else sig  # tolerate a 'sha256=' prefix
             good = hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
             if not hmac.compare_digest(sig, good):
+                sign_hdrs = {k: v for k, v in self.headers.items() if "sign" in k.lower() or "plane" in k.lower()}
+                print(f"[bridge] SIG MISMATCH recv={sig!r} want={good[:12]}… sign-headers={sign_hdrs}", file=sys.stderr)
                 self._send(401, {"error": "bad signature"}); return
         try:
             payload = json.loads(raw or b"{}")
