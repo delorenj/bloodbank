@@ -33,6 +33,9 @@ HOST = os.environ.get("HERMES_PLANE_BRIDGE_HOST", "0.0.0.0")  # 0.0.0.0 so Plane
 PORT = int(os.environ.get("HERMES_PLANE_BRIDGE_PORT", "8477"))
 SECRET = os.environ.get("PLANE_WEBHOOK_SECRET", "")
 REGISTRY = Path(os.environ.get("HERMES_FLEET_REGISTRY_FILE", os.path.expanduser("~/.hermes/agents-registry.yaml")))
+# Pilot scoping: if set (comma-sep repos), route ONLY those; ack+ignore the rest.
+# Empty = route the whole fleet.
+ONLY = {x.strip() for x in os.environ.get("HERMES_PLANE_BRIDGE_ONLY", "").split(",") if x.strip()}
 KIND_MARKER = "evt"
 
 # Plane event -> (whether we care, the entity-action verb we tack on the type).
@@ -90,6 +93,8 @@ def resolve(payload: dict, pmap: dict[str, str]):
     repo = pmap.get(pid)
     if not repo:
         return None
+    if ONLY and repo not in ONLY:
+        return None  # pilot scoping: this repo is not in the routing allowlist
     slim = {
         "repo": repo, "event": event, "action": action, "project_id": pid,
         "ticket_id": issue.get("id"), "sequence_id": issue.get("sequence_id"),
