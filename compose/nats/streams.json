@@ -1,11 +1,17 @@
 {
-  "$comment": "Bloodbank NATS JetStream topology. Stream names are locked by ADR-0001; subject filters follow the Bloodbank Event Naming Contract v1 — see bloodbank/docs/event-naming.md §3.",
+  "$comment": "Bloodbank NATS JetStream topology. Stream names are locked by ADR-0001; subject filters follow the Bloodbank Event Naming Contract — see bloodbank/docs/event-naming.md §3.",
   "project": "bloodbank",
   "subject_conventions": {
     "events": {
       "wildcard": "bloodbank.evt.v1.>",
       "pattern": "bloodbank.evt.v1.<domain>.<entity>.<action>",
       "example": "bloodbank.evt.v1.conversation.message.appended"
+    },
+    "events_v2": {
+      "subjects": [
+        "bloodbank.evt.v2.repo.maintenance.failed"
+      ],
+      "note": "v2 is intentionally scoped to the repo maintenance action-failure extension."
     },
     "commands": {
       "wildcard": "bloodbank.cmd.v1.>",
@@ -22,7 +28,8 @@
     {
       "name": "BLOODBANK_EVENTS",
       "subjects": [
-        "bloodbank.evt.v1.>"
+        "bloodbank.evt.v1.>",
+        "bloodbank.evt.v2.repo.maintenance.failed"
       ],
       "retention": "limits",
       "storage": "file",

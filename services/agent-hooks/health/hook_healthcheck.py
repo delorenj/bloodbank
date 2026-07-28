@@ -101,16 +101,25 @@ def _data_for(ce_type: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _publisher_arg(command: str, marker: str) -> str | None:
-    """Extract the event arg following `<agent>/publish.py` in a hook command."""
-    idx = command.find(marker)
-    if idx < 0:
+def _publisher_arg(command: str, markers: list[str]) -> str | None:
+    """Extract the event arg from either legacy or canonical publisher commands."""
+    after = None
+    for marker in markers:
+        idx = command.find(marker)
+        if idx >= 0:
+            after = command[idx + len(marker):]
+            break
+    if after is None:
         return None
-    after = command[idx + len(marker):]
     try:
         toks = shlex.split(after)
     except ValueError:
         toks = after.split()
+    for i, tok in enumerate(toks):
+        if tok == "--hook" and i + 1 < len(toks):
+            return toks[i + 1]
+        if tok.startswith("--hook="):
+            return tok.split("=", 1)[1]
     return toks[0] if toks else None
 
 
@@ -230,8 +239,13 @@ def _load_config(path: Path, dialect: str):
 # ---------------------------------------------------------------------------
 
 
-def _check_config(agent: str, dialect: str, path: Path, allowlist_path: Path | None) -> dict:
-    marker = f"{agent}/publish.py"
+def _check_config(
+    agent: str,
+    dialect: str,
+    path: Path,
+    allowlist_path: Path | None,
+    markers: list[str],
+) -> dict:
     result = {"config": str(path), "ok": True, "entries": [], "note": None}
     cfg = None
     try:
@@ -265,8 +279,8 @@ def _check_config(agent: str, dialect: str, path: Path, allowlist_path: Path | N
 
     seen_bb_args: set[str] = set()
     for event, command in commands:
-        if marker in command:
-            arg = _publisher_arg(command, marker)
+        if sync._has_marker(command, markers):
+            arg = _publisher_arg(command, markers)
             ok, err = _check_bloodbank(agent, arg)
             entry = {"event": event, "kind": "bloodbank", "arg": arg, "ok": ok,
                      "check": "envelope", "error": err}
@@ -331,8 +345,11 @@ def build_report(master: dict) -> dict:
             continue
         configs = _agent_configs(master, agent_name, agent)
         cfg_results = []
+        markers = sync._publisher_markers(agent_name, agent)
         for label, path, alw in configs:
-            cfg_results.append((label, _check_config(agent_name, dialect, path, alw)))
+            cfg_results.append(
+                (label, _check_config(agent_name, dialect, path, alw, markers))
+            )
 
         present = [r for _, r in cfg_results if r.get("note") != "config file absent"]
         absent = [r for _, r in cfg_results if r.get("note") == "config file absent"]

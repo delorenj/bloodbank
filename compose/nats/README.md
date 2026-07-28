@@ -5,13 +5,13 @@ Machine-readable counterpart: `streams.json` in this directory.
 Authoritative naming contract: **`bloodbank/docs/event-naming.md`**. Any
 conflict between this file and the contract is a defect here — fix this
 file. ADR-0001 (metarepo, TBD) locks the stream names and `bloodbank-pubsub`
-component name; everything else flows from the v1 contract.
+component name; everything else flows from the versioned Bloodbank contract.
 
 ## Streams
 
 | Stream                | Subjects                                              | Retention   | Storage | Max age | Discard |
 |-----------------------|-------------------------------------------------------|-------------|---------|---------|---------|
-| `BLOODBANK_EVENTS`    | `bloodbank.evt.v1.>`                                  | `limits`    | `file`  | `7d`    | `old`   |
+| `BLOODBANK_EVENTS`    | `bloodbank.evt.v1.>`, exact repo-maintenance v2 failure subject | `limits`    | `file`  | `7d`    | `old`   |
 | `BLOODBANK_COMMANDS`  | `bloodbank.cmd.v1.>`, `bloodbank.rpy.v1.>`            | `workqueue` | `file`  | `1d`    | `old`   |
 
 - **Events** (`limits` retention) are durable CloudEvents facts. They are
@@ -44,6 +44,16 @@ Past-tense action. Examples:
 - `bloodbank.evt.v1.conversation.message.appended`
 - `bloodbank.evt.v1.cli.session.started`
 - `bloodbank.evt.v1.system.heartbeat.received`
+
+The targeted action-failure extension uses the exact subject
+`bloodbank.evt.v2.repo.maintenance.failed`. The stream doesn't bind a broad
+v2 wildcard; all other events remain v1.
+
+A consumer subscribed to `bloodbank.evt.v1.>` does not receive this v2 event.
+Consumers that need action failures MUST add a second subscription to the
+exact v2 subject. Durable JetStream consumers use that exact filter; catch-all
+services such as event-toaster remain v1-only until they explicitly add the
+second subscription.
 
 ### Commands: `bloodbank.cmd.v1.<domain>.<entity>.<action>`
 

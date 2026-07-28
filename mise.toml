@@ -7,7 +7,7 @@
 _.file = [".env"]
 COMPOSE_PROJECT = "bloodbank"
 COMPOSE_FILE = "compose/docker-compose.yml"
-
+_.path = [".mise/scripts", "agents/hermes/pm", "agents/hermes/pm/hermes"]
 [tasks.up]
 description = "Boot core sandbox (NATS + nats-init only)"
 run = "docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE up -d nats nats-init"
@@ -165,6 +165,10 @@ run = "bash ops/smoketest/smoketest-heartbeat.sh"
 description = "Stdlib-only contract verifier (§14 sequence × claude/copilot/codex + negative probes)"
 run = "bash ops/smoketest/smoketest-bloodbank-naming.sh"
 
+[tasks."smoketest:maintenance-reporting-contracts"]
+description = "Full-envelope schema tests for maintenance and reporting lifecycle events"
+run = "python3 ops/smoketest/smoketest-maintenance-reporting-contracts.py"
+
 [tasks."smoketest:schema-contract-consistency"]
 description = "Assert every schema in bloodbank/schemas/bloodbank/v1/** declares a type the validator accepts (allowlist drift detector)"
 run = "bash ops/smoketest/smoketest-schema-contract-consistency.sh"
@@ -207,7 +211,7 @@ run = "bash ops/smoketest/smoketest-agent-hooks-ssot.sh"
 
 [tasks."smoketest:schemas"]
 description = "Schema tree validation + drift detector + contract verifier + agent-hooks SSOT (no Docker)"
-run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming && mise run smoketest:agent-hooks-ssot"
+run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming && mise run smoketest:maintenance-reporting-contracts && mise run smoketest:agent-hooks-ssot"
 
 [tasks."smoketest:repo-health-cleanup"]
 description = "Local smoke test for cleanup helper + strict worktree mode"
@@ -311,3 +315,49 @@ docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
   --profile candystore \
   ps
 """
+
+# This block will handle the linking of
+# agent files to the main AGENTS.md file.
+#
+# TODO: Ensure this works for all levels of nesting.
+# i.e. All linked agent files MUST be siblings at
+# any given level of nesting.
+[[hooks.enter]]
+script = "'{{config_root}}/.mise/scripts/link-agentfiles.sh'"
+[[hooks.enter]]
+script = "op inject -i .env.op > .env"
+
+[[watch_files]]
+patterns = ["AGENTS.md"]
+task = "link-agentfiles"
+
+[tasks.link-agentfiles]
+description = "Symlink all agent files to AGENTS.md"
+run = "'{{config_root}}/.mise/scripts/link-agentfiles.sh'"
+
+# >>> mise-versioning >>>  (managed block — do not edit by hand; re-run init to update)
+[tasks."version"]
+description = "Print the current version (vX.Y.Z)"
+run = "'{{config_root}}/.mise/scripts/versioning.sh' current"
+
+[tasks."version:bump"]
+description = "Bump patch version: vX.Y.Z -> vX.Y.(Z+1)"
+alias = "version:bump-patch"
+run = "'{{config_root}}/.mise/scripts/versioning.sh' bump patch"
+
+[tasks."version:bump-minor"]
+description = "Bump minor version: vX.Y.Z -> vX.(Y+1).0"
+run = "'{{config_root}}/.mise/scripts/versioning.sh' bump minor"
+
+[tasks."version:bump-major"]
+description = "Bump major version: vX.Y.Z -> v(X+1).0.0"
+run = "'{{config_root}}/.mise/scripts/versioning.sh' bump major"
+
+[tasks."version:check"]
+description = "Verify every versioned file is in parity"
+run = "'{{config_root}}/.mise/scripts/versioning.sh' check"
+
+[tasks."version:sync"]
+description = "Force every versioned file up to the highest version"
+run = "'{{config_root}}/.mise/scripts/versioning.sh' sync"
+# <<< mise-versioning <<<

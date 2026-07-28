@@ -2,7 +2,7 @@
 #
 # Schema ↔ validator consistency check.
 #
-# For every *.v1.json under bloodbank/schemas/bloodbank/v1/**, build a
+# For every *.v1.json under bloodbank/schemas/bloodbank/v*/**, build a
 # minimal envelope using the schema's declared (type, kind) and run it
 # through core.validate.assert_contract. Any schema whose declared type
 # is rejected by the stdlib contract surface (allowlist drift, banned-token
@@ -49,7 +49,7 @@ except Exception as exc:  # noqa: BLE001
     sys.exit(2)
 
 
-ROOT = Path("schemas/bloodbank/v1")
+ROOT = Path("schemas/bloodbank")
 schemas = sorted(ROOT.rglob("*.v1.json"))
 if not schemas:
     print("smoketest-schema-contract-consistency: no schemas found", file=sys.stderr)

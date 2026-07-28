@@ -140,11 +140,17 @@ alongside each service, using publishers generated from the local
   of truth for `type`, subject, `kind`, allowlists, banned tokens, and where
   provider identity lives. Any conflict between that doc and code/config is
   a defect in the code/config.
-- CloudEvents `type`: `bloodbank.v1.<domain>.<entity>.<action>` (5 tokens).
+- CloudEvents `type`: `bloodbank.v<N>.<domain>.<entity>.<action>` (5 tokens).
   Regex: `^bloodbank\.v[0-9]+\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`.
-- NATS subject: `bloodbank.<kind>.v1.<domain>.<entity>.<action>` (6 tokens),
+- NATS subject: `bloodbank.<kind>.v<N>.<domain>.<entity>.<action>` (6 tokens),
   where `<kind>` ∈ `{evt, cmd, rpy}`. Stream filters: `bloodbank.evt.v1.>`,
   `bloodbank.cmd.v1.>`, `bloodbank.rpy.v1.>`.
+- v1 remains the default. The only registered v2 type is
+  `bloodbank.v2.repo.maintenance.failed`, persisted on the exact subject
+  `bloodbank.evt.v2.repo.maintenance.failed` for action-phase failures.
+- Every non-v1 type requires an explicit entry in
+  `services/agent-hooks/core/validate.py`; a matching type shape isn't enough
+  to register it.
 - Legacy `event.>` / `command.>` / `reply.>` subject prefixes and 3-token
   types (`agent.session.started`, `copilot.tool.pre`, etc.) are **deprecated**;
   removal is tracked by the §16 migration tickets in `docs/event-naming.md`.

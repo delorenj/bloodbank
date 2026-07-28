@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py session-start",
+            "command": "$HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook session-start",
             "timeout": 3
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py prompt-submitted",
+            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook prompt-submitted",
             "timeout": 3
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py tool-request",
+            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook tool-request",
             "timeout": 3
           }
         ]
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py tool-action",
+            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook tool-action",
             "timeout": 3
           }
         ]
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py subagent-stopped",
+            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook subagent-stopped",
             "timeout": 3
           }
         ]
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python $HOOKS/claude/publish.py session-end",
+            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook session-end",
             "timeout": 3
           }
         ]

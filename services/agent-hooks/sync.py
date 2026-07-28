@@ -47,6 +47,8 @@ from typing import Any
 SERVICE_DIR = Path(__file__).resolve().parent
 MASTER_PATH = SERVICE_DIR / "hooks.master.json"
 LOCK_PATH = SERVICE_DIR / "hooks.mappings.lock.json"
+HOOKS_DIR = Path.home() / ".agents" / "hooks"
+BLOODBANK_HOOK_LINK = HOOKS_DIR / "bloodbank"
 
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
@@ -220,7 +222,11 @@ def detect_ambiguities(master: dict, lock: dict) -> list[dict]:
 
 
 def _runner(agent: dict) -> str:
-    return agent["runner"].replace("{service_dir}", str(SERVICE_DIR))
+    return (
+        agent["runner"]
+        .replace("{service_dir}", str(SERVICE_DIR))
+        .replace("{hooks_dir}", str(HOOKS_DIR))
+    )
 
 
 def render_event_map(agent: dict, lifecycle: dict, lock: dict) -> dict:
@@ -481,7 +487,71 @@ def _expand(p: str) -> Path:
     return Path(os.path.expanduser(p))
 
 
-def _merge_hooks(live: dict, generated_hooks: dict, marker: str) -> dict:
+def _ensure_bloodbank_hook_link() -> int:
+    """Ensure ~/.agents/hooks/bloodbank resolves to this service directory."""
+    try:
+        HOOKS_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"hooks-sync: WARN cannot create {HOOKS_DIR}: {exc}")
+        return 0
+
+    if BLOODBANK_HOOK_LINK.is_symlink():
+        try:
+            current = BLOODBANK_HOOK_LINK.resolve(strict=True)
+        except OSError:
+            current = Path(os.readlink(BLOODBANK_HOOK_LINK))
+            if not current.is_absolute():
+                current = (BLOODBANK_HOOK_LINK.parent / current).resolve()
+        if current == SERVICE_DIR:
+            print(f"hooks-sync: bloodbank hook link up to date ({BLOODBANK_HOOK_LINK})")
+            return 0
+        print(
+            "hooks-sync: WARN "
+            f"{BLOODBANK_HOOK_LINK} points to {current}, expected {SERVICE_DIR}; skipping"
+        )
+        return 0
+
+    if BLOODBANK_HOOK_LINK.exists():
+        try:
+            current = BLOODBANK_HOOK_LINK.resolve()
+        except OSError:
+            current = BLOODBANK_HOOK_LINK
+        if current == SERVICE_DIR:
+            print(f"hooks-sync: bloodbank hook path up to date ({BLOODBANK_HOOK_LINK})")
+            return 0
+        print(
+            "hooks-sync: WARN "
+            f"{BLOODBANK_HOOK_LINK} exists and is not the Bloodbank hook link; skipping"
+        )
+        return 0
+
+    try:
+        BLOODBANK_HOOK_LINK.symlink_to(SERVICE_DIR, target_is_directory=True)
+    except OSError as exc:
+        print(f"hooks-sync: WARN cannot link {BLOODBANK_HOOK_LINK}: {exc}")
+        return 0
+    print(f"hooks-sync: linked {BLOODBANK_HOOK_LINK} -> {SERVICE_DIR}")
+    return 1
+
+
+def _publisher_markers(name: str, agent: dict) -> list[str]:
+    """Return canonical + legacy command substrings that identify our hook."""
+    raw: list[Any] = [agent.get("publisher", f"{name}/publish.py")]
+    raw.extend(agent.get("legacy_publishers", []))
+    raw.append(f"{name}/publish.py")
+    markers: list[str] = []
+    for marker in raw:
+        if isinstance(marker, str) and marker and marker not in markers:
+            markers.append(marker)
+    return markers
+
+
+def _has_marker(command: object, markers: list[str]) -> bool:
+    text = str(command or "")
+    return any(marker in text for marker in markers)
+
+
+def _merge_hooks(live: dict, generated_hooks: dict, markers: list[str]) -> dict:
     """Update our publisher hook at INNER-hook granularity.
 
     The bloodbank publisher hook may be its own group OR nested among foreign
@@ -497,7 +567,7 @@ def _merge_hooks(live: dict, generated_hooks: dict, marker: str) -> dict:
             h
             for g in gen_groups
             for h in g.get("hooks", [])
-            if marker in str(h.get("command", ""))
+            if _has_marker(h.get("command", ""), markers)
         ]
         if not gen_bb:
             continue
@@ -506,7 +576,7 @@ def _merge_hooks(live: dict, generated_hooks: dict, marker: str) -> dict:
             (g, h)
             for g in groups
             for h in g.get("hooks", [])
-            if marker in str(h.get("command", ""))
+            if _has_marker(h.get("command", ""), markers)
         ]
         if live_bb:
             _, lh = live_bb[0]
@@ -562,7 +632,13 @@ def _splice_top_level_block(raw: str, key: str, block_yaml: str) -> str:
     return "".join(lines[:start]) + block_yaml + "".join(lines[end:])
 
 
-def _install_hermes_one(label: str, cfg_path: Path, alw_path: Path, gen_hooks: dict, marker: str) -> tuple[int, str]:
+def _install_hermes_one(
+    label: str,
+    cfg_path: Path,
+    alw_path: Path,
+    gen_hooks: dict,
+    markers: list[str],
+) -> tuple[int, str]:
     """Merge the hooks: block into one agent's config.yaml + seed its allowlist.
 
     Returns (files_changed, status) where status is 'changed' | 'ok' | a warn string.
@@ -595,7 +671,12 @@ def _install_hermes_one(label: str, cfg_path: Path, alw_path: Path, gen_hooks: d
             existing = []
         elif not isinstance(existing, list):
             return 0, f"WARN hooks.{event}: not a list"
-        kept = [e for e in existing if marker not in str((e or {}).get("command", "")) if isinstance(e, dict)]
+        kept = [
+            e
+            for e in existing
+            if isinstance(e, dict)
+            and not _has_marker((e or {}).get("command", ""), markers)
+        ]
         kept += [e for e in existing if not isinstance(e, dict)]  # preserve foreign non-dict entries verbatim
         kept.extend(entries)
         block[event] = kept
@@ -656,7 +737,7 @@ def _install_hermes_fleet(name: str, agent: dict) -> int:
         print(f"hooks-sync: WARN {name}: generated {src} missing; run --apply first")
         return 0
     gen_hooks = _load_json(src).get("hooks", {})
-    marker = agent.get("publisher", "hermes/publish.py")
+    markers = _publisher_markers(name, agent)
     runtime_subdir = agent.get("runtime_subdir", "runtime")
     alw_name = agent.get("allowlist_filename", "shell-hooks-allowlist.json")
 
@@ -689,7 +770,13 @@ def _install_hermes_fleet(name: str, agent: dict) -> int:
             skipped += 1
             continue
         try:
-            c, status = _install_hermes_one(aid, runtime / "config.yaml", runtime / alw_name, gen_hooks, marker)
+            c, status = _install_hermes_one(
+                aid,
+                runtime / "config.yaml",
+                runtime / alw_name,
+                gen_hooks,
+                markers,
+            )
         except Exception as exc:  # one bad/locked agent must not abort the fleet
             warned += 1
             print(f"hooks-sync:   {aid}: WARN install error: {exc!r} ({runtime})")
@@ -721,7 +808,7 @@ def cmd_install(master: dict) -> int:
                       in the registry (see _install_hermes_fleet).
     watcher/runtime → skipped (no hook-config surface).
     """
-    changed = 0
+    changed = _ensure_bloodbank_hook_link()
     for name, agent in master["agents"].items():
         dialect = agent.get("dialect")
         cfg = agent.get("config_target")
@@ -753,7 +840,7 @@ def cmd_install(master: dict) -> int:
             continue
 
         if dialect in ("claude_settings", "codex"):
-            marker = agent.get("publisher", f"{name}/publish.py")
+            markers = _publisher_markers(name, agent)
             gen_hooks = _load_json(src).get("hooks", {})
             if dest.exists():
                 try:
@@ -764,7 +851,7 @@ def cmd_install(master: dict) -> int:
             else:
                 liveobj = {}
             original = copy.deepcopy(liveobj)
-            merged = _merge_hooks(liveobj, gen_hooks, marker)
+            merged = _merge_hooks(liveobj, gen_hooks, markers)
             if dest.exists() and _norm(merged) == _norm(original):
                 print(f"hooks-sync: {name} {dest} up to date")
                 continue
