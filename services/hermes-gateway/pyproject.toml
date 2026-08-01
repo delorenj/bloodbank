@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bloodbank-hermes-gateway"
+version = "0.1.0"
+description = "Bloodbank-owned shared gateway plugin for Hermes Agent"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "nats-py==2.15.0",
+  "PyYAML==6.0.3",
+]
+
+[project.entry-points."hermes_agent.plugins"]
+bloodbank-platform = "bloodbank_hermes_gateway"
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<10",
+  "pytest-asyncio>=0.24,<2",
+  "jsonschema>=4.23,<5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["bloodbank_hermes_gateway"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
