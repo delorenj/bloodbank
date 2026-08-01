@@ -320,7 +320,10 @@ class BloodbankAdapter(BasePlatformAdapter):
                 messages = await self._subscription.fetch(
                     capacity, timeout=self.fetch_timeout_seconds
                 )
-            except NatsTimeoutError:
+            # nats-py may surface an idle pull as either its own timeout class
+            # or asyncio's timeout depending on which fetch path completed.
+            # Both mean "no command available", not a broker failure.
+            except (NatsTimeoutError, asyncio.TimeoutError):
                 continue
             except asyncio.CancelledError:
                 raise

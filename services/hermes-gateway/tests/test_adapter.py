@@ -135,6 +135,31 @@ async def test_connect_binds_one_bounded_durable_pull_consumer(
 
 
 @pytest.mark.asyncio
+async def test_consume_loop_treats_asyncio_timeout_as_idle_poll(tmp_path, monkeypatch):
+    adapter = make_adapter(tmp_path)
+    adapter._running = True
+    polls = 0
+
+    class Subscription:
+        async def fetch(self, *_args, **_kwargs):
+            nonlocal polls
+            polls += 1
+            if polls == 1:
+                raise asyncio.TimeoutError
+            adapter._running = False
+            return []
+
+    nats_errors = types.ModuleType("nats.errors")
+    nats_errors.TimeoutError = type("NatsTimeoutError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "nats.errors", nats_errors)
+    adapter._subscription = Subscription()
+
+    await asyncio.wait_for(adapter._consume_loop(), timeout=1)
+
+    assert polls == 2
+
+
+@pytest.mark.asyncio
 async def test_ack_waits_for_hermes_and_sends_progress(tmp_path, valid_command):
     adapter = make_adapter(tmp_path)
     started = asyncio.Event()
