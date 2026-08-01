@@ -41,6 +41,7 @@ gateway:
         target_profiles:
           bloodbank-pm: bloodbank-pm
         fleet_registry: ~/.hermes/agents-registry.yaml
+        execution_state_file: ~/.hermes/bloodbank-hermes-gateway-state.sqlite3
         allow_direct_profile_targets: false
         durable_name: bloodbank-hermes-gateway-v1
         max_inflight: 4
@@ -53,6 +54,9 @@ Resolution precedence is the explicit `target_profiles` mapping, followed by
 where the external target exactly equals an existing profile is disabled by
 default and is available only with `allow_direct_profile_targets: true`.
 Unknown targets never fall back to the default profile.
+If the registry is missing, unreadable, or invalid, routing is unavailable and
+the command is negatively acknowledged for retry. An unknown target is
+terminally rejected only after a valid registry was loaded successfully.
 
 `BLOODBANK_NATS_URL` overrides `extra.nats_url`. `BLOODBANK_NATS_CREDS` may
 point at a credentials file; credentials belong in runtime secret injection,
@@ -66,8 +70,23 @@ not tracked YAML.
 - In-progress acknowledgements extend `ack_wait_seconds` during long turns.
 - Lifecycle publications use deterministic event IDs and `Nats-Msg-Id`, so
   broker-level retries deduplicate within the stream's duplicate window.
+- A mode-`0600` SQLite execution journal persists the command digest, selected
+  profile, and exact lifecycle payloads. `pending` means dispatch may be
+  attempted but no Hermes completion outcome has been durably recorded;
+  `completed` means the outcome and terminal events were committed before
+  publication. Redelivery of a completed record republishes those stored
+  events and acknowledges the command without invoking Hermes again.
 - The command's correlation, causation, command, idempotency, target, thread,
   and turn identifiers are carried into schema-conformant lifecycle events.
+
+This is not an exactly-once transport claim. JetStream delivery and lifecycle
+publication remain at-least-once. The local guarantee is at-most-once Hermes
+execution for a command whose `completed` record is durable. A restart while a
+record is still `pending` retries execution because the completion boundary is
+unknown; a process crash after an external side effect but before Hermes'
+processing-complete callback can therefore repeat that pending command. Do not
+delete the execution-state database unless intentionally discarding this
+deduplication history.
 
 `multiplex_secondary_adapters: false` is required for the dedicated Bloodbank
 gateway topology: profile runtime routing remains enabled, while this process

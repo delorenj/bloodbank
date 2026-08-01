@@ -181,7 +181,7 @@ class ProfileResolver:
 
     def _fleet_mapping(self) -> dict[str, str]:
         if not self.fleet_registry.exists():
-            return {}
+            raise RegistryInvalid("fleet registry is missing")
         try:
             parsed = yaml.safe_load(self.fleet_registry.read_text(encoding="utf-8")) or {}
         except (OSError, yaml.YAMLError) as exc:

@@ -38,6 +38,7 @@ from .contract import (
     started_events,
     terminal_events,
 )
+from .execution_state import ExecutionStateStore, envelope_digest
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ class PendingInvocation:
     invocation: Invocation
     broker_message: Any
     completion: asyncio.Future[None]
+    envelope_digest: str
 
 
 class BloodbankAdapter(BasePlatformAdapter):
@@ -153,6 +155,17 @@ class BloodbankAdapter(BasePlatformAdapter):
             validate_profile_name=validate_profile_name,
             profile_exists=profile_exists,
         )
+        execution_state_path = Path(
+            os.path.expanduser(
+                str(
+                    extra.get(
+                        "execution_state_file",
+                        "~/.hermes/bloodbank-hermes-gateway-state.sqlite3",
+                    )
+                )
+            )
+        )
+        self.execution_state = ExecutionStateStore(execution_state_path)
 
         self._nc: Any = None
         self._js: Any = None
@@ -160,6 +173,7 @@ class BloodbankAdapter(BasePlatformAdapter):
         self._consumer_task: asyncio.Task[None] | None = None
         self._inflight_tasks: set[asyncio.Task[None]] = set()
         self._records: dict[str, PendingInvocation] = {}
+        self._execution_claim_lock = asyncio.Lock()
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self._conversation_lock_refs: dict[str, int] = {}
 
@@ -363,17 +377,54 @@ class BloodbankAdapter(BasePlatformAdapter):
         record: PendingInvocation | None = None
         try:
             envelope = decode_command(message.data, max_bytes=self.max_command_bytes)
-            profile = await asyncio.to_thread(
-                self.profile_resolver.resolve, envelope["data"]["target_agent_id"]
-            )
-            invocation = Invocation.from_envelope(envelope, profile)
-            if invocation.invocation_id in self._records:
-                await message.nak(delay=self.nak_delay_seconds)
+            command_id = envelope["command_id"]
+            digest = envelope_digest(envelope)
+            # Serialize the short durable-claim section so a concurrent local
+            # redelivery cannot observe the same pending row and dispatch a
+            # second Hermes turn. Different commands still execute concurrently.
+            async with self._execution_claim_lock:
+                if command_id in self._records:
+                    await message.nak(delay=self.nak_delay_seconds)
+                    return
+
+                persisted = await asyncio.to_thread(self.execution_state.get, command_id)
+                if persisted is not None and persisted.envelope_digest != digest:
+                    raise CommandInvalid(
+                        "command_id collides with a different command envelope"
+                    )
+                if persisted is None:
+                    profile = await asyncio.to_thread(
+                        self.profile_resolver.resolve,
+                        envelope["data"]["target_agent_id"],
+                    )
+                    invocation = Invocation.from_envelope(envelope, profile)
+                    persisted = await asyncio.to_thread(
+                        self.execution_state.claim_pending,
+                        command_id=command_id,
+                        digest=digest,
+                        profile=profile,
+                        started_events=started_events(invocation),
+                    )
+                    if persisted.envelope_digest != digest:
+                        raise CommandInvalid(
+                            "command_id collides with a different command envelope"
+                        )
+
+                if persisted.state != "completed":
+                    invocation = Invocation.from_envelope(envelope, persisted.profile)
+                    completion = asyncio.get_running_loop().create_future()
+                    record = PendingInvocation(invocation, message, completion, digest)
+                    self._records[invocation.invocation_id] = record
+
+            if persisted.state == "completed":
+                progress_task = asyncio.create_task(self._ack_progress(message))
+                await self._publish_many(persisted.started_events)
+                await self._publish_many(persisted.terminal_events)
+                await message.ack()
                 return
 
-            completion = asyncio.get_running_loop().create_future()
-            record = PendingInvocation(invocation, message, completion)
-            self._records[invocation.invocation_id] = record
+            assert record is not None
+            invocation = record.invocation
             progress_task = asyncio.create_task(self._ack_progress(message))
 
             lock_key = f"{invocation.profile}:{invocation.thread_id}"
@@ -383,7 +434,7 @@ class BloodbankAdapter(BasePlatformAdapter):
             )
             try:
                 async with lock:
-                    await self._publish_many(started_events(invocation))
+                    await self._publish_many(persisted.started_events)
                     if self._message_handler is None:
                         raise RuntimeError("Hermes message handler is not installed")
 
@@ -489,9 +540,15 @@ class BloodbankAdapter(BasePlatformAdapter):
             else "failure"
         )
         try:
-            await self._publish_many(
-                terminal_events(record.invocation, outcome=terminal_outcome)
+            events = terminal_events(record.invocation, outcome=terminal_outcome)
+            await asyncio.to_thread(
+                self.execution_state.mark_completed,
+                command_id=record.invocation.invocation_id,
+                digest=record.envelope_digest,
+                outcome=terminal_outcome,
+                terminal_events=events,
             )
+            await self._publish_many(events)
         except Exception as exc:
             record.completion.set_exception(exc)
             raise

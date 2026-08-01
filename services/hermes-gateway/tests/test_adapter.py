@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import stat
 import sys
 import types
 from types import SimpleNamespace
@@ -12,14 +13,17 @@ from bloodbank_hermes_gateway.adapter import BloodbankAdapter
 
 
 class FakeMessage:
-    def __init__(self, envelope):
+    def __init__(self, envelope, *, fail_ack=False):
         self.data = json.dumps(envelope).encode()
+        self.fail_ack = fail_ack
         self.acked = 0
         self.termed = 0
         self.nacked = 0
         self.progress = 0
 
     async def ack(self):
+        if self.fail_ack:
+            raise RuntimeError("ack transport unavailable")
         self.acked += 1
 
     async def term(self):
@@ -50,6 +54,7 @@ def make_adapter(tmp_path):
         extra={
             "target_profiles": {"bloodbank-pm": "bloodbank-pm"},
             "fleet_registry": str(tmp_path / "missing-registry.yaml"),
+            "execution_state_file": str(tmp_path / "execution-state.sqlite3"),
             "max_inflight": 2,
             "ack_wait_seconds": 10,
             "ack_progress_seconds": 1,
@@ -71,6 +76,27 @@ def test_stale_durable_contract_is_rejected(tmp_path):
     )
     with pytest.raises(RuntimeError, match="existing Bloodbank durable"):
         adapter._assert_consumer_contract(stale)
+
+
+def test_execution_state_is_private_and_refuses_symlink(tmp_path):
+    adapter = make_adapter(tmp_path)
+    state_path = tmp_path / "execution-state.sqlite3"
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+
+    target = tmp_path / "foreign-state.sqlite3"
+    target.write_bytes(b"")
+    link = tmp_path / "state-link.sqlite3"
+    link.symlink_to(target)
+    config = SimpleNamespace(
+        enabled=True,
+        extra={
+            "target_profiles": {"bloodbank-pm": "bloodbank-pm"},
+            "fleet_registry": str(tmp_path / "registry.yaml"),
+            "execution_state_file": str(link),
+        },
+    )
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        BloodbankAdapter(config)
 
 
 @pytest.mark.asyncio
@@ -247,6 +273,9 @@ async def test_invalid_and_unknown_targets_are_terminal(tmp_path, valid_command)
     assert malformed_message.termed == 1
     assert malformed_message.acked == 0
 
+    (tmp_path / "missing-registry.yaml").write_text(
+        "schema_version: 1\nagents: {}\n", encoding="utf-8"
+    )
     unknown = json.loads(json.dumps(valid_command))
     unknown["command_id"] = "f482fce5-8d0f-43cc-9f93-ab94624637a8"
     unknown["data"]["target_agent_id"] = "unknown-agent"
@@ -254,6 +283,20 @@ async def test_invalid_and_unknown_targets_are_terminal(tmp_path, valid_command)
     await adapter._handle_broker_message(unknown_message)
     assert unknown_message.termed == 1
     assert unknown_message.acked == 0
+
+
+@pytest.mark.asyncio
+async def test_registry_outage_is_retryable_not_terminal(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    unavailable = json.loads(json.dumps(valid_command))
+    unavailable["data"]["target_agent_id"] = "registry-only-agent"
+    message = FakeMessage(unavailable)
+
+    await adapter._handle_broker_message(message)
+
+    assert message.nacked == 1
+    assert message.termed == 0
+    assert message.acked == 0
 
 
 @pytest.mark.asyncio
@@ -278,3 +321,147 @@ async def test_terminal_publish_failure_naks_instead_of_acking(tmp_path, valid_c
     await adapter._handle_broker_message(message)
     assert message.acked == 0
     assert message.nacked == 1
+
+
+@pytest.mark.asyncio
+async def test_completed_command_replays_after_terminal_publish_failure_without_execution(
+    tmp_path, valid_command
+):
+    first = make_adapter(tmp_path)
+    executions = 0
+    publish_count = 0
+
+    async def failing_publish(subject, payload, **kwargs):
+        nonlocal publish_count
+        del subject, payload, kwargs
+        publish_count += 1
+        if publish_count >= 3:
+            raise RuntimeError("broker unavailable after Hermes completed")
+
+    first._js.publish = failing_publish
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+        return "done"
+
+    first.set_message_handler(handler)
+    original = FakeMessage(valid_command)
+    await first._handle_broker_message(original)
+
+    assert executions == 1
+    assert original.nacked == 1
+    completed = first.execution_state.get(valid_command["command_id"])
+    assert completed is not None
+    assert completed.state == "completed"
+    assert completed.outcome == "success"
+
+    restarted = make_adapter(tmp_path)
+
+    async def must_not_execute(_event):
+        raise AssertionError("completed command executed twice")
+
+    restarted.set_message_handler(must_not_execute)
+    redelivery = FakeMessage(valid_command)
+    await restarted._handle_broker_message(redelivery)
+
+    assert executions == 1
+    assert redelivery.acked == 1
+    assert redelivery.nacked == 0
+    assert tuple(restarted._js.events) == (
+        *completed.started_events,
+        *completed.terminal_events,
+    )
+    assert [event["type"] for event in restarted._js.events] == [
+        "bloodbank.v1.conversation.turn.started",
+        "bloodbank.v1.agent.invocation.started",
+        "bloodbank.v1.agent.invocation.completed",
+        "bloodbank.v1.conversation.turn.completed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_completed_command_replays_after_ack_failure_without_execution(
+    tmp_path, valid_command
+):
+    first = make_adapter(tmp_path)
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+        return "done"
+
+    first.set_message_handler(handler)
+    original = FakeMessage(valid_command, fail_ack=True)
+    await first._handle_broker_message(original)
+
+    assert executions == 1
+    assert original.nacked == 1
+    completed = first.execution_state.get(valid_command["command_id"])
+    assert completed is not None and completed.state == "completed"
+
+    restarted = make_adapter(tmp_path)
+    restarted.set_message_handler(handler)
+    redelivery = FakeMessage(valid_command)
+    await restarted._handle_broker_message(redelivery)
+
+    assert executions == 1
+    assert redelivery.acked == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_redelivery_never_dispatches_second_hermes_turn(
+    tmp_path, valid_command
+):
+    adapter = make_adapter(tmp_path)
+    executions = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+        started.set()
+        await release.wait()
+        return "done"
+
+    adapter.set_message_handler(handler)
+    first = FakeMessage(valid_command)
+    duplicate = FakeMessage(valid_command)
+    first_task = asyncio.create_task(adapter._handle_broker_message(first))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await adapter._handle_broker_message(duplicate)
+
+    assert executions == 1
+    assert duplicate.nacked == 1
+    assert duplicate.acked == 0
+
+    release.set()
+    await asyncio.wait_for(first_task, timeout=1)
+    assert first.acked == 1
+
+
+@pytest.mark.asyncio
+async def test_command_id_collision_is_terminal_and_never_reexecutes(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+        return "done"
+
+    adapter.set_message_handler(handler)
+    first = FakeMessage(valid_command)
+    await adapter._handle_broker_message(first)
+    assert executions == 1
+
+    collision = json.loads(json.dumps(valid_command))
+    collision["data"]["prompt"] = "Different command with a reused command_id."
+    second = FakeMessage(collision)
+    await adapter._handle_broker_message(second)
+
+    assert executions == 1
+    assert second.termed == 1
+    assert second.acked == 0

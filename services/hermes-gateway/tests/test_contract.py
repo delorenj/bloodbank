@@ -9,6 +9,7 @@ from bloodbank_hermes_gateway.contract import (
     CommandInvalid,
     Invocation,
     ProfileResolver,
+    RegistryInvalid,
     RouteInvalid,
     decode_command,
     started_events,
@@ -63,6 +64,9 @@ def test_profile_routing_precedence_and_fleet_registry(tmp_path):
 
 
 def test_unknown_and_direct_profile_routes_fail_closed(tmp_path):
+    (tmp_path / "agents-registry.yaml").write_text(
+        "schema_version: 1\nagents: {}\n", encoding="utf-8"
+    )
     resolver = _resolver(tmp_path)
     with pytest.raises(RouteInvalid, match="no configured profile route"):
         resolver.resolve("research")
@@ -73,6 +77,16 @@ def test_unknown_and_direct_profile_routes_fail_closed(tmp_path):
         direct.resolve("Research")
     with pytest.raises(RouteInvalid):
         direct.resolve("missing-profile")
+
+
+def test_missing_or_invalid_registry_is_transient(tmp_path):
+    resolver = _resolver(tmp_path)
+    with pytest.raises(RegistryInvalid, match="missing"):
+        resolver.resolve("research")
+
+    (tmp_path / "agents-registry.yaml").write_text("agents: [invalid\n", encoding="utf-8")
+    with pytest.raises(RegistryInvalid, match="unreadable or invalid"):
+        resolver.resolve("research")
 
 
 @pytest.mark.parametrize("outcome,invocation_type,turn_outcome", [
