@@ -304,15 +304,13 @@ class BloodbankAdapter(BasePlatformAdapter):
             await asyncio.wait_for(
                 nc.drain(), timeout=min(self.publish_timeout_seconds, 3.0)
             )
-        except (Exception, asyncio.CancelledError):
+        except Exception:
             try:
                 await nc.close()
             except Exception:
                 pass
 
     async def _consume_loop(self) -> None:
-        from nats.errors import TimeoutError as NatsTimeoutError
-
         while self._running:
             capacity = self.max_inflight - len(self._inflight_tasks)
             if capacity <= 0:
@@ -328,7 +326,7 @@ class BloodbankAdapter(BasePlatformAdapter):
             # nats-py may surface an idle pull as either its own timeout class
             # or asyncio's timeout depending on which fetch path completed.
             # Both mean "no command available", not a broker failure.
-            except (NatsTimeoutError, asyncio.TimeoutError):
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 raise

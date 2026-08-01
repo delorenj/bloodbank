@@ -145,7 +145,7 @@ async def test_consume_loop_treats_asyncio_timeout_as_idle_poll(tmp_path, monkey
             nonlocal polls
             polls += 1
             if polls == 1:
-                raise asyncio.TimeoutError
+                raise TimeoutError
             adapter._running = False
             return []
 
