@@ -298,8 +298,13 @@ class BloodbankAdapter(BasePlatformAdapter):
         if nc is None:
             return
         try:
-            await nc.drain()
-        except Exception:
+            # A pull subscription can keep nats-py's drain pending longer than
+            # Hermes' adapter shutdown budget. Bound it and fall back to close
+            # so routine service restarts do not look like forced failures.
+            await asyncio.wait_for(
+                nc.drain(), timeout=min(self.publish_timeout_seconds, 3.0)
+            )
+        except (Exception, asyncio.CancelledError):
             try:
                 await nc.close()
             except Exception:

@@ -160,6 +160,27 @@ async def test_consume_loop_treats_asyncio_timeout_as_idle_poll(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_close_nats_bounds_drain_and_falls_back_to_close(tmp_path, monkeypatch):
+    adapter = make_adapter(tmp_path)
+    adapter.publish_timeout_seconds = 0.01
+    closed = asyncio.Event()
+
+    class Connection:
+        async def drain(self):
+            await asyncio.Event().wait()
+
+        async def close(self):
+            closed.set()
+
+    adapter._nc = Connection()
+
+    await asyncio.wait_for(adapter._close_nats(), timeout=1)
+
+    assert closed.is_set()
+    assert adapter._nc is None
+
+
+@pytest.mark.asyncio
 async def test_ack_waits_for_hermes_and_sends_progress(tmp_path, valid_command):
     adapter = make_adapter(tmp_path)
     started = asyncio.Event()
