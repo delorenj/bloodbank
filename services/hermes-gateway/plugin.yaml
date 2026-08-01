@@ -15,4 +15,3 @@ optional_env:
     description: "Path to a NATS credentials file"
     prompt: "NATS credentials file"
     password: true
-

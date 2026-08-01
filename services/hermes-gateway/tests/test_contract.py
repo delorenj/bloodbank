@@ -98,4 +98,3 @@ def test_lifecycle_events_use_existing_schema_contracts(
 
     assert events[2]["type"] == invocation_type
     assert events[3]["data"]["outcome"] == turn_outcome
-
