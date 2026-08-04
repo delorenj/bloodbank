@@ -12,18 +12,16 @@ if [[ -f "$FLEET_ENV" ]]; then
   source "$FLEET_ENV"
 fi
 
-HERMES_BIN="${HERMES_BIN:-${HERMES_FLEET_BIN:-/home/delorenj/code/hermes-agent/.venv/bin/hermes}}"
-HERMES_OAUTH_FILE="${HERMES_OAUTH_FILE:-${HERMES_FLEET_OAUTH_FILE:-$HOME/.hermes/auth.json}}"
+HERMES_BIN="${HERMES_BIN:-${HERMES_FLEET_BIN:-$HOME/.hermes/hermes-agent/.venv/bin/hermes}}"
 CODEX_HOME="${CODEX_HOME:-${HERMES_FLEET_CODEX_HOME:-$HOME/.codex}}"
 
 FLEET_HOME="${HERMES_FLEET_HOME:-$HOME/.hermes}"
 PROFILE_NAME="${HERMES_PROFILE_NAME:-bloodbank-pm}"
-HERMES_HOME="$RUNTIME_HOME"
-
+HERMES_HOME="$FLEET_HOME/profiles/$PROFILE_NAME"
 if [[ ! -d "$RUNTIME_HOME" ]]; then
   echo "hermes: runtime submodule not initialized at $RUNTIME_HOME" >&2
   echo "  fix: git submodule update --init --recursive" >&2
   exit 1
 fi
 
-exec env HERMES_HOME="$HERMES_HOME" HERMES_FLEET_ENV="$FLEET_ENV"   HERMES_OAUTH_FILE="$HERMES_OAUTH_FILE" CODEX_HOME="$CODEX_HOME"   "$HERMES_BIN" "$@"
+exec env HERMES_HOME="$HERMES_HOME" HERMES_FLEET_ENV="$FLEET_ENV" CODEX_HOME="$CODEX_HOME"   "$HERMES_BIN" "$@"

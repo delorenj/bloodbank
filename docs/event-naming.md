@@ -278,6 +278,7 @@ Segment 4 of `type` MUST be one of:
 | `intake`           | `repo`                   | Incoming repo request triaged; repo slug lives in data.      |
 | `task`             | `repo`                   | Repo work item created; repo slug lives in data.             |
 | `maintenance`      | `repo`                   | Automated repository maintenance run and merge-gate outcome. |
+| `skill`            | `repo`                   | Repo-scoped agent skill mutation from an automated tuning cycle; repo slug and skill name live in data. |
 | `file`             | `audio`, `curator`       | An on-disk artifact observed by a watcher — an audio inbox file, or a file arriving in a curated directory. |
 | `transcription`    | `audio`                  | A speech-to-text job over a single audio file.              |
 | `approval_request` | `approval` (reserved)    | Human approval prompt issued.                               |
