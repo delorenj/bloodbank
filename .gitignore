@@ -114,3 +114,6 @@ claudemap-maps.json
 .env
 .env.*
 !.env.op
+
+# Local git worktrees — never tracked
+.worktrees/
