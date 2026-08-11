@@ -268,6 +268,8 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
             }
             if b.get("matcher") is not None:
                 entry["matcher"] = b["matcher"]
+            if b.get("fail_closed") is not None:
+                entry["fail_closed"] = b["fail_closed"]
             hooks.setdefault(b["native"], []).append(entry)
         return {"hooks": hooks}
     if dialect == "copilot":

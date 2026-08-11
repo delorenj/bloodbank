@@ -42,6 +42,7 @@ class HermesAdapter(ClientAdapter):
     default_map = {
         "on_session_start": ("bloodbank.v1.agent.session.started", "session"),
         "on_session_end": ("bloodbank.v1.agent.session.ended", "session"),
+        "pre_llm_call": ("bloodbank.v1.conversation.turn.started", "thread"),
         "pre_tool_call": ("bloodbank.v1.agent.tool.requested", "invocation"),
         "post_tool_call": ("bloodbank.v1.agent.tool.completed", "invocation"),
         "subagent_stop": ("bloodbank.v1.agent.invocation.completed", "invocation"),
@@ -99,6 +100,12 @@ class HermesAdapter(ClientAdapter):
         flat = _flatten(payload) if isinstance(payload, dict) else {}
         correlation = self.get_correlation_id(session, payload)
         raw = {"hook": hook_name, "payload": payload}
+
+        if ce_type == "bloodbank.v1.conversation.turn.started":
+            return {
+                "turn_id": correlation,
+                **raw,
+            }
 
         if ce_type == "bloodbank.v1.agent.session.started":
             return {

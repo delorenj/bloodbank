@@ -9,6 +9,10 @@
       "bloodbank.v1.agent.session.ended",
       "session"
     ],
+    "pre_llm_call": [
+      "bloodbank.v1.conversation.turn.started",
+      "thread"
+    ],
     "pre_tool_call": [
       "bloodbank.v1.agent.tool.requested",
       "invocation"

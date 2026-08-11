@@ -12,10 +12,17 @@
         "timeout": 5
       }
     ],
+    "pre_llm_call": [
+      {
+        "command": "python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client hermes --hook pre_llm_call",
+        "timeout": 5
+      }
+    ],
     "pre_tool_call": [
       {
         "command": "python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client hermes --hook pre_tool_call",
-        "timeout": 5
+        "timeout": 5,
+        "fail_closed": false
       }
     ],
     "post_tool_call": [
