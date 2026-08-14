@@ -34,6 +34,10 @@ agent-hooks/
 │   ├── publish.py            # entry point for Codex CLI hooks
 │   ├── hooks.json            # GENERATED — merge into ~/.codex/hooks.json
 │   └── event_map.generated.json  # GENERATED
+├── antigravity/
+│   ├── publish.py            # entry point for Antigravity CLI hooks
+│   ├── hooks.json            # GENERATED — 'bloodbank' bundle → ~/.gemini/config/hooks.json
+│   └── event_map.generated.json  # GENERATED
 ├── openclaw/
 │   └── watch.py          # tail OpenClaw session logs → Bloodbank (watcher; no config)
 └── README.md
@@ -49,7 +53,8 @@ propagated outward:
 ```
 hooks.master.json ──sync.py──┬─► claude/settings.hooks.json   (+ event_map.generated.json)
        (SSOT)                 ├─► copilot/hooks.json           (+ event_map.generated.json)
-                              └─► codex/hooks.json             (+ event_map.generated.json)
+                              ├─► codex/hooks.json             (+ event_map.generated.json)
+                              └─► antigravity/hooks.json       (+ event_map.generated.json)
                                         ▲
                   hooks.mappings.lock.json (remembered resolutions)
 ```
@@ -83,13 +88,14 @@ then installs each agent's config into its live `live_target`:
 | copilot | `~/.copilot/hooks/bloodbank.json` | symlink → repo `copilot/hooks.json` |
 | codex | `~/.codex/hooks.json` | surgical JSON merge |
 | hermes | **fleet-wide** — every agent in `~/.hermes/agents-registry.yaml`: `<role_dir>/runtime/config.yaml` `hooks:` block + `runtime/shell-hooks-allowlist.json` | YAML merge + allowlist seed per agent |
+| antigravity | `~/.gemini/config/hooks.json` | replace only the `bloodbank` named bundle (foreign bundles preserved) |
 | openclaw | — | skipped (`watcher` — log tailer, no hook-config) |
 
 For hermes, `deploy` reads the fleet registry and installs into **every** provisioned agent (uninitialized runtimes are skipped; a missing `config.yaml` is created). Newly-provisioned agents appear in the registry, so the next `mise run deploy` covers them.
 
 ### Health checks (deployed-config validation → Holocene)
 
-`health/hook_healthcheck.py` validates that every config this service deploys (claude/codex/copilot
+`health/hook_healthcheck.py` validates that every config this service deploys (claude/codex/copilot/antigravity
 + the hermes fleet) actually produces **error-free hooks**, then publishes the result to the Holocene
 control-plane dashboard.
 
@@ -292,6 +298,44 @@ into `<role_dir>/runtime/config.yaml` and pre-approves the commands in
 `agent.session.started`). Hermes has no clean user-prompt event, so
 `conversation.turn.started` is not mapped.
 
+## Antigravity CLI
+
+Antigravity (the Gemini CLI fork) reads **named hook bundles** from
+`~/.gemini/config/hooks.json` — each top-level key is a bundle mapping a native
+event to handlers. Flat events (`PreInvocation`/`PostInvocation`/`Stop`) take
+handler objects directly; tool events take `{matcher, hooks[]}` groups. Every
+hook must answer with a JSON object on stdout (`{}` passive, `{"decision":""}`
+for `Stop`), so the generated commands append the right `printf`.
+
+| Antigravity hook | v1 CloudEvents `type`                     |
+|------------------|-------------------------------------------|
+| `PreInvocation`  | `bloodbank.v1.agent.invocation.started`   |
+| `PostInvocation` | `bloodbank.v1.agent.invocation.completed` |
+| `PostToolUse`    | `bloodbank.v1.agent.tool.completed`       |
+| `Stop`           | `bloodbank.v1.agent.session.ended`        |
+
+Deliberate gaps (platform constraints, not oversights):
+
+- **`PreToolUse` is unbound** — its hooks gate tool permissions (a `decision`
+  is required), and an observational hook can block or auto-allow user tools.
+  Orca's own antigravity installer skips it for the same reason.
+- **No `prompt_submit`** — no antigravity payload carries the user prompt.
+- **`PostToolUse` has no tool identity** — the payload is `{stepIdx, error?}`
+  only, so `tool_name` publishes as `unknown` (the `stepIdx`-seeded
+  `tool_call_id` still keeps the causation chain intact).
+
+Payloads are camelCase protojson (`conversationId`, `workspacePaths`,
+`invocationNum`, `terminationReason`, …); hooks run with cwd at the hooks.json
+directory, so the adapter takes the workspace from `workspacePaths[0]`.
+Session state lives at `~/.gemini/antigravity-cli/bloodbank-session.json`.
+
+`actor` constant: `cli=antigravity`, `provider=google`, `model=<payload modelName or null>`.
+
+`mise run deploy` replaces **only** the `bloodbank` bundle in the live file —
+foreign bundles (`orca-status`, `skill-check-reminder`, …) are preserved, and
+Orca's installer likewise only rewrites its own `orca-status` bundle, so the
+two managers never fight.
+
 ## OpenClaw
 
 `openclaw/watch.py` tails OpenClaw session logs and trajectory files,
@@ -334,7 +378,8 @@ Copilot, and Codex actors plus a set of negative-case probes.
 ## Adding a new CLI
 
 1. Add an entry under `agents.<cli>` in **`hooks.master.json`**: pick a
-   `dialect` (`claude_settings` | `copilot` | `codex` | `watcher`), set
+   `dialect` (`claude_settings` | `copilot` | `codex` | `hermes_config` |
+   `antigravity_bundle` | `watcher`), set
    `runner` (use `{service_dir}` for an absolute publisher path), `actor`,
    `config_target` / `event_map_target`, and the `bindings` mapping each
    native hook name → a lifecycle `role` + canonical `lifecycle` key.

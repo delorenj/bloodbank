@@ -1,0 +1,37 @@
+{
+  "bloodbank": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client antigravity --hook PreInvocation ; printf '{}\\n'",
+        "timeout": 5
+      }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client antigravity --hook PostInvocation ; printf '{}\\n'",
+        "timeout": 5
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client antigravity --hook PostToolUse ; printf '{}\\n'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client antigravity --hook Stop ; printf '{\"decision\":\"\"}\\n'",
+        "timeout": 5
+      }
+    ]
+  }
+}

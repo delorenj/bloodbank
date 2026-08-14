@@ -52,6 +52,7 @@ import claude.publish as _cl  # noqa: E402
 import copilot.publish as _cp  # noqa: E402
 import codex.publish as _cx  # noqa: E402
 import hermes.publish as _hm  # noqa: E402
+import antigravity.publish as _ag  # noqa: E402
 
 REDIS_KEY = "holocene:tooling:stat:agent-hook-tests"
 TTL_SECONDS = int(os.environ.get("AGENT_HOOK_TESTS_TTL", 60 * 60 * 24 * 7))
@@ -68,6 +69,8 @@ IDENT: dict[str, dict[str, Any]] = {
                   actor=_cx.CODEX_ACTOR, map=_cx.HOOK_MAP, label="Codex"),
     "hermes": dict(source=_hm.HERMES_SOURCE, producer=_hm.HERMES_PRODUCER, service=_hm.HERMES_SERVICE,
                    actor=_hm.HERMES_ACTOR, map=_hm.HOOK_MAP, label="Hermes"),
+    "antigravity": dict(source=_ag.ANTIGRAVITY_SOURCE, producer=_ag.ANTIGRAVITY_PRODUCER, service=_ag.ANTIGRAVITY_SERVICE,
+                        actor=_ag.ANTIGRAVITY_ACTOR, map=_ag.HOOK_MAP, label="Antigravity"),
 }
 
 HOOKS_ENV = os.environ.get("HOOKS", str(Path.home() / ".agents" / "hooks"))
@@ -224,6 +227,32 @@ def _commands_from_hermes(cfg: dict) -> list[tuple[str, str]]:
     return out
 
 
+def _commands_from_bundles(cfg: dict) -> list[tuple[str, str]]:
+    """antigravity_bundle: every top-level group maps event -> handlers, where
+    flat events carry {type, command} directly and tool events wrap handlers in
+    {matcher, hooks[]}. All bundles are walked (ours + foreign like orca-status)
+    so foreign commands get the same static check claude's live file gets."""
+    out = []
+    for group in cfg.values():
+        if not isinstance(group, dict):
+            continue
+        for event, entries in group.items():
+            if not isinstance(entries, list):
+                continue
+            for e in entries:
+                if not isinstance(e, dict):
+                    continue
+                cmd = e.get("command")
+                if cmd:
+                    out.append((event, cmd))
+                    continue
+                for h in e.get("hooks", []) or []:
+                    cmd = (h or {}).get("command")
+                    if cmd:
+                        out.append((event, cmd))
+    return out
+
+
 def _load_config(path: Path, dialect: str):
     if not path.exists():
         return None
@@ -265,6 +294,8 @@ def _check_config(
         commands = _commands_from_copilot(cfg)
     elif dialect == "hermes_config":
         commands = _commands_from_hermes(cfg)
+    elif dialect == "antigravity_bundle":
+        commands = _commands_from_bundles(cfg)
     else:
         commands = []
 

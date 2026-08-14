@@ -190,6 +190,32 @@
         { "native": "subagent_stop", "role": "subagent_stop", "arg": "subagent_stop", "lifecycle": "agent.invocation.completed" }
       ]
     },
+    "antigravity": {
+      "label": "Antigravity CLI",
+      "dialect": "antigravity_bundle",
+      "config_target": "antigravity/hooks.json",
+      "live_target": "~/.gemini/config/hooks.json",
+      "bundle_name": "bloodbank",
+      "publisher": "bloodbank/publish.py",
+      "legacy_publishers": ["antigravity/publish.py"],
+      "event_map_target": "antigravity/event_map.generated.json",
+      "runner": "python3 {hooks_dir}/bloodbank/publish.py --client antigravity --hook",
+      "default_timeout": 5,
+      "note": "Antigravity CLI (Gemini fork) reads NAMED hook bundles from ~/.gemini/config/hooks.json: each top-level key is a bundle mapping native event -> handlers. Flat events (PreInvocation/PostInvocation/Stop) take handler objects directly; tool events (PreToolUse/PostToolUse) take {matcher, hooks[]} groups. Every hook must print a JSON response: {} for passive events, {\"decision\":\"\"} for Stop — the renderer appends the right printf. Install replaces ONLY the 'bloodbank' bundle, preserving foreign bundles (orca-status, skill-check-reminder, ...). PreToolUse is deliberately UNBOUND: its hooks gate tool permissions (decision required) and an observational hook can block or auto-allow user tools — the same reason Orca skips it. No antigravity payload carries the user prompt, so prompt_submit has no native surface; PostToolUse carries no toolCall (only stepIdx/error), so tool_name is 'unknown'.",
+      "actor": {
+        "type": "agent_cli",
+        "agent_id": "bloodbank.agent.antigravity",
+        "cli": "antigravity",
+        "provider": "google",
+        "model": null
+      },
+      "bindings": [
+        { "native": "PreInvocation", "role": "invocation_start", "arg": "PreInvocation", "lifecycle": "agent.invocation.started", "payload": "stdin" },
+        { "native": "PostInvocation", "role": "subagent_stop", "arg": "PostInvocation", "lifecycle": "agent.invocation.completed", "payload": "stdin" },
+        { "native": "PostToolUse", "role": "post_tool", "arg": "PostToolUse", "lifecycle": "agent.tool.completed", "payload": "stdin", "matcher": "*" },
+        { "native": "Stop", "role": "session_end", "arg": "Stop", "lifecycle": "agent.session.ended", "payload": "stdin" }
+      ]
+    },
     "openclaw": {
       "label": "OpenClaw",
       "dialect": "watcher",

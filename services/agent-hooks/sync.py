@@ -300,6 +300,32 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
             ]
             hooks[b["native"]] = [entry]
         return {"hooks": hooks}
+    if dialect == "antigravity_bundle":
+        # Named-bundle hooks.json (~/.gemini/config/hooks.json): the top-level key
+        # is the bundle name; flat events take handler objects directly, tool
+        # events take {matcher, hooks[]} groups. Antigravity requires every hook
+        # to answer with a JSON object on stdout: {} for passive events,
+        # {"decision":""} for Stop (its stop-gate contract).
+        bundle = agent.get("bundle_name", "bloodbank")
+        timeout = agent.get("default_timeout", 5)
+        tool_events = {"PreToolUse", "PostToolUse"}
+        hooks = {}
+        for b in agent["bindings"]:
+            cmd = _command(agent, b, codex_empty_echo=False)
+            # NB the space before ';' — health/hook_healthcheck.py tokenizes
+            # with shlex, which keeps 'Stop;' fused and breaks arg resolution.
+            if b["native"] == "Stop":
+                cmd += " ; printf '{\"decision\":\"\"}\\n'"
+            else:
+                cmd += " ; printf '{}\\n'"
+            handler = {"type": "command", "command": cmd, "timeout": timeout}
+            if b["native"] in tool_events:
+                hooks[b["native"]] = [
+                    {"matcher": b.get("matcher", "*"), "hooks": [handler]}
+                ]
+            else:
+                hooks[b["native"]] = [handler]
+        return {bundle: hooks}
     _die(f"unknown dialect {dialect!r} for agent")
     return None  # unreachable
 
@@ -808,6 +834,8 @@ def cmd_install(master: dict) -> int:
                       backing up the live file only when content actually changes.
     hermes_config   → fleet-wide: merge hooks: + seed allowlist into every agent
                       in the registry (see _install_hermes_fleet).
+    antigravity_bundle → replace only our named bundle in the live named-bundle
+                      hooks.json, preserving foreign bundles.
     watcher/runtime → skipped (no hook-config surface).
     """
     changed = _ensure_bloodbank_hook_link()
@@ -866,6 +894,40 @@ def cmd_install(master: dict) -> int:
                 f.write("\n")
             changed += 1
             print(f"hooks-sync: {name} installed into {dest}")
+            continue
+
+        if dialect == "antigravity_bundle":
+            # Replace ONLY our named bundle wholesale (it is entirely ours);
+            # foreign bundles (orca-status, skill-check-reminder, …) are
+            # preserved. Orca's own installer likewise only rewrites its
+            # 'orca-status' key, so the two managers do not fight.
+            bundle = agent.get("bundle_name", "bloodbank")
+            gen_bundle = _load_json(src).get(bundle, {})
+            if dest.exists():
+                try:
+                    liveobj = _load_json(dest)
+                except (OSError, json.JSONDecodeError):
+                    print(f"hooks-sync: WARN {name}: {dest} unreadable JSON; skipping")
+                    continue
+                if not isinstance(liveobj, dict):
+                    print(f"hooks-sync: WARN {name}: {dest} not a JSON object; skipping")
+                    continue
+            else:
+                liveobj = {}
+            if dest.exists() and _norm(liveobj.get(bundle)) == _norm(gen_bundle):
+                print(f"hooks-sync: {name} {dest} up to date")
+                continue
+            merged = copy.deepcopy(liveobj)
+            merged[bundle] = gen_bundle
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                bak = _backup(dest)
+                print(f"hooks-sync: {name} backed up {dest} -> {bak.name}")
+            with dest.open("w") as f:
+                json.dump(merged, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            changed += 1
+            print(f"hooks-sync: {name} installed bundle {bundle!r} into {dest}")
             continue
 
         print(f"hooks-sync: {name}: unknown install dialect {dialect!r} (skip)")

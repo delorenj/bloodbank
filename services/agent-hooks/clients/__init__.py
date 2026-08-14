@@ -10,12 +10,14 @@ Stdlib-only.
 from __future__ import annotations
 
 from .base import ClientAdapter
+from .antigravity import AntigravityAdapter
 from .claude import ClaudeAdapter
 from .codex import CodexAdapter
 from .copilot import CopilotAdapter
 from .hermes import HermesAdapter
 
 REGISTRY: dict[str, type[ClientAdapter]] = {
+    "antigravity": AntigravityAdapter,
     "claude": ClaudeAdapter,
     "codex": CodexAdapter,
     "copilot": CopilotAdapter,

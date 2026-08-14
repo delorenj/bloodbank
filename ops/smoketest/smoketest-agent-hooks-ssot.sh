@@ -46,12 +46,14 @@ import claude.publish as cl
 import copilot.publish as cp
 import codex.publish as cx
 import hermes.publish as hm
+import antigravity.publish as ag
 
 IDENT = {
     "claude": dict(source=cl.CLAUDE_SOURCE, producer=cl.CLAUDE_PRODUCER, service=cl.CLAUDE_SERVICE, actor=cl.CLAUDE_ACTOR),
     "copilot": dict(source=cp.COPILOT_SOURCE, producer=cp.COPILOT_PRODUCER, service=cp.COPILOT_SERVICE, actor=cp.COPILOT_ACTOR),
     "codex": dict(source=cx.CODEX_SOURCE, producer=cx.CODEX_PRODUCER, service=cx.CODEX_SERVICE, actor=cx.CODEX_ACTOR),
     "hermes": dict(source=hm.HERMES_SOURCE, producer=hm.HERMES_PRODUCER, service=hm.HERMES_SERVICE, actor=hm.HERMES_ACTOR),
+    "antigravity": dict(source=ag.ANTIGRAVITY_SOURCE, producer=ag.ANTIGRAVITY_PRODUCER, service=ag.ANTIGRAVITY_SERVICE, actor=ag.ANTIGRAVITY_ACTOR),
 }
 
 UUID = "00000000-0000-0000-0000-000000000001"
