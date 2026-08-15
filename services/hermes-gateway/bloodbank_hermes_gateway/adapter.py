@@ -38,10 +38,11 @@ from .contract import (
     started_events,
     terminal_events,
 )
-from .execution_state import ExecutionStateStore, envelope_digest
+from .execution_state import ExecutionRecord, ExecutionStateStore, envelope_digest
 
 logger = logging.getLogger(__name__)
 ROUTE_REJECTION_REASON = "route_policy_invalid_before_dispatch"
+ROUTE_REJECTION_MESSAGE = "Hermes route became ineligible before dispatch"
 
 
 def _bounded_int(
@@ -380,6 +381,8 @@ class BloodbankAdapter(BasePlatformAdapter):
     async def _handle_broker_message(self, message: Any) -> None:
         progress_task: asyncio.Task[None] | None = None
         record: PendingInvocation | None = None
+        persisted: ExecutionRecord | None = None
+        started_publish_complete = False
         try:
             envelope = decode_command(message.data, max_bytes=self.max_command_bytes)
             command_id = envelope["command_id"]
@@ -417,7 +420,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                             "command_id collides with a different command envelope"
                         )
 
-                if persisted.state == "pending":
+                if persisted.state in {"pending", "started"}:
                     invocation = Invocation.from_envelope(envelope, persisted.profile)
                     completion = asyncio.get_running_loop().create_future()
                     record = PendingInvocation(invocation, message, completion, digest)
@@ -429,7 +432,18 @@ class BloodbankAdapter(BasePlatformAdapter):
                 await self._publish_many(persisted.terminal_events)
                 await message.ack()
                 return
-            if persisted.state == "rejected":
+            if persisted.state == "rejected_pre_start":
+                await message.term()
+                return
+            if persisted.state in {"rejected_closing", "rejected_closed"}:
+                progress_task = asyncio.create_task(self._ack_progress(message))
+                invocation = Invocation.from_envelope(envelope, persisted.profile)
+                await self._persist_and_publish_route_rejection(
+                    invocation=invocation,
+                    digest=digest,
+                    persisted=persisted,
+                    replay_started=True,
+                )
                 await message.term()
                 return
 
@@ -445,7 +459,18 @@ class BloodbankAdapter(BasePlatformAdapter):
             try:
                 async with lock:
                     await self._assert_dispatch_route(invocation)
+                    if persisted.state == "pending":
+                        persisted = await asyncio.to_thread(
+                            self.execution_state.mark_started,
+                            command_id=invocation.invocation_id,
+                            digest=record.envelope_digest,
+                        )
+                    if persisted.state != "started":
+                        raise RuntimeError(
+                            "execution journal is not dispatchable after route check"
+                        )
                     await self._publish_many(persisted.started_events)
+                    started_publish_complete = True
                     if self._message_handler is None:
                         raise RuntimeError("Hermes message handler is not installed")
 
@@ -489,17 +514,17 @@ class BloodbankAdapter(BasePlatformAdapter):
 
             await message.ack()
         except RouteInvalid as exc:
-            if record is not None:
+            if record is not None and persisted is not None:
                 try:
-                    await asyncio.to_thread(
-                        self.execution_state.mark_rejected,
-                        command_id=record.invocation.invocation_id,
+                    await self._persist_and_publish_route_rejection(
+                        invocation=record.invocation,
                         digest=record.envelope_digest,
-                        reason=ROUTE_REJECTION_REASON,
+                        persisted=persisted,
+                        replay_started=not started_publish_complete,
                     )
                 except Exception as journal_error:
                     logger.error(
-                        "Bloodbank route rejection could not be persisted "
+                        "Bloodbank route rejection closure could not be completed "
                         "error_type=%s",
                         type(journal_error).__name__,
                     )
@@ -546,6 +571,60 @@ class BloodbankAdapter(BasePlatformAdapter):
                 f"target_agent_id {invocation.target_agent_id!r} changed profile "
                 "after durable claim"
             )
+
+    async def _persist_and_publish_route_rejection(
+        self,
+        *,
+        invocation: Invocation,
+        digest: str,
+        persisted: ExecutionRecord,
+        replay_started: bool,
+    ) -> ExecutionRecord:
+        """Persist rejection evidence and close any lifecycle that may have opened."""
+
+        if persisted.state == "pending":
+            return await asyncio.to_thread(
+                self.execution_state.reject_pre_start,
+                command_id=invocation.invocation_id,
+                digest=digest,
+                reason=ROUTE_REJECTION_REASON,
+            )
+
+        if persisted.state == "started":
+            persisted = await asyncio.to_thread(
+                self.execution_state.begin_rejection,
+                command_id=invocation.invocation_id,
+                digest=digest,
+                reason=ROUTE_REJECTION_REASON,
+            )
+        if persisted.state == "rejected_closing":
+            if persisted.rejected_at is None:
+                raise RuntimeError("rejection intent is missing its stable timestamp")
+            events = terminal_events(
+                invocation,
+                outcome="failure",
+                failure_code=ROUTE_REJECTION_REASON,
+                failure_message=ROUTE_REJECTION_MESSAGE,
+                occurred_at=persisted.rejected_at,
+            )
+            persisted = await asyncio.to_thread(
+                self.execution_state.finalize_rejection,
+                command_id=invocation.invocation_id,
+                digest=digest,
+                terminal_events=events,
+            )
+        if persisted.state != "rejected_closed":
+            raise RuntimeError(
+                f"execution journal rejection state {persisted.state!r} is invalid"
+            )
+
+        # A previous publication may have failed between the two started
+        # events. Replaying both stable envelopes is safe because each publish
+        # carries the deterministic event ID as Nats-Msg-Id.
+        if replay_started:
+            await self._publish_many(persisted.started_events)
+        await self._publish_many(persisted.terminal_events)
+        return persisted
 
     async def _ack_progress(self, message: Any) -> None:
         while True:

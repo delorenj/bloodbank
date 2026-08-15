@@ -12,6 +12,17 @@ publishes both finish. Malformed or unroutable poison messages receive a
 JetStream terminal acknowledgement; transient registry, broker, publication,
 or Hermes failures receive a delayed negative acknowledgement.
 
+## Hard rollout gate
+
+The DNET-4 review snapshot reports **zero currently eligible entries** in the
+live fleet registry. Do not deploy or restart this gateway code first: strict
+default-deny would make every registry-derived target unroutable. PJangler and
+the Hermes template must first project the accepted `metadata.bloodbank`
+contract, an explicitly approved backfill must enable the intended agents, and
+a read-only audit must show the expected nonzero eligible set. Only then may an
+operator deploy/restart the fleet gateway and run a bounded live command proof.
+This repository change performs none of those rollout actions.
+
 ## Installation
 
 Install this directory into the Python environment used by the dedicated
@@ -49,8 +60,15 @@ gateway:
 ```
 
 Resolution precedence is the explicit `target_profiles` mapping, followed by
-the fleet registry. A registry-derived route is eligible only when all of these
-conditions hold exactly:
+the fleet registry. The registry document itself must be a YAML mapping with
+integer `schema_version: 1` and an explicit `agents` mapping; `agents: {}` is a
+valid, empty registry. Empty documents, missing `agents`, unsupported versions,
+non-string/blank agent keys, and non-mapping agent records invalidate the whole
+snapshot. They are transient failures and are never normalized, skipped, or
+allowed to fall through to direct-profile routing.
+
+A registry-derived route is eligible only when all of these conditions hold
+exactly:
 
 - `agents.<agent_id>.profile_name` is a nonblank string;
 - `agents.<agent_id>.bloodbank` is a mapping;
@@ -62,10 +80,10 @@ Missing, false, malformed, or mismatched route policy is default-deny. The
 gateway does not infer eligibility from Telegram configuration, systemd units,
 lifecycle state, or profile existence. It reloads and rechecks the registry
 after durable claim and again immediately before Hermes dispatch, including
-restart delivery of an existing `pending` row. A policy-disabled route from a
-valid registry is poison and receives a terminal acknowledgement; a missing,
-unreadable, or structurally invalid registry remains transient and is negatively
-acknowledged for retry.
+restart delivery of an existing `pending` or `started` row. A policy-disabled
+route from a valid registry is poison and receives a terminal acknowledgement;
+a missing, unreadable, or structurally invalid registry remains transient and
+is negatively acknowledged for retry.
 
 `target_profiles` is an intentional high-trust operator override: a target in
 that static mapping does not consult registry Bloodbank metadata. Keep the map
@@ -88,25 +106,35 @@ not tracked YAML.
 - Lifecycle publications use deterministic event IDs and `Nats-Msg-Id`, so
   broker-level retries deduplicate within the stream's duplicate window.
 - A mode-`0600` SQLite execution journal persists the command digest, selected
-  profile, and exact lifecycle payloads. `pending` means dispatch may be
-  attempted but no Hermes completion outcome has been durably recorded;
-  `completed` means the outcome and terminal events were committed before
-  publication. `rejected` means a post-claim route check failed and is an
-  immutable terminal decision. Redelivery of a completed record republishes
-  stored events without invoking Hermes; redelivery of a rejected record is
-  terminally acknowledged and can never execute, even if the route is later
-  re-enabled.
+  profile, and exact lifecycle payloads. `pending` means no started-event
+  publication has been attempted; `started` is recorded before publication and
+  means one or both started events may have escaped. `completed` means the
+  Hermes outcome and terminal events were committed before publication.
+  Rejection states distinguish an eventless pre-start decision from a
+  post-start closure in progress or durably closed.
+- If eligibility flips after started publication may have begun, rejection
+  intent and a stable timestamp are committed first. The canonical
+  `agent.invocation.failed` and `conversation.turn.completed` envelopes are
+  then generated deterministically, persisted, and published before `TERM`.
+  Persistence or publication failure yields `NAK`; restart/redelivery replays
+  the exact stored started-plus-terminal closure with stable event IDs and
+  `Nats-Msg-Id`, without invoking Hermes. A pre-start rejection remains
+  eventless only when the journal proves publication was never attempted.
+- Redelivery of a completed record republishes stored events without invoking
+  Hermes. Every durable rejection state is immutable and can never execute,
+  even if its route is later re-enabled.
 - The command's correlation, causation, command, idempotency, target, thread,
   and turn identifiers are carried into schema-conformant lifecycle events.
 
 This is not an exactly-once transport claim. JetStream delivery and lifecycle
 publication remain at-least-once. The local guarantee is at-most-once Hermes
 execution for a command whose `completed` record is durable. A restart while a
-record is still `pending` rechecks current routing eligibility before retrying
-execution because the completion boundary is unknown; a process crash after an
-external side effect but before Hermes' processing-complete callback can
-therefore repeat an eligible pending command. Do not delete the execution-state
-database unless intentionally discarding this deduplication history.
+record is `pending` or `started` rechecks current routing eligibility before
+retrying execution because the completion boundary is unknown; a process crash
+after an external side effect but before Hermes' processing-complete callback
+can therefore repeat an eligible started command. Do not delete the
+execution-state database unless intentionally discarding this deduplication
+history.
 
 `multiplex_secondary_adapters: false` is required for the dedicated Bloodbank
 gateway topology: profile runtime routing remains enabled, while this process

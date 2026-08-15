@@ -54,7 +54,7 @@ class FakeJetStream:
         self.events.append(envelope)
 
 
-def make_adapter(tmp_path, *, target_profiles=None):
+def make_adapter(tmp_path, *, target_profiles=None, allow_direct=False):
     if target_profiles is None:
         target_profiles = {"bloodbank-pm": "bloodbank-pm"}
     config = SimpleNamespace(
@@ -66,6 +66,7 @@ def make_adapter(tmp_path, *, target_profiles=None):
             "max_inflight": 2,
             "ack_wait_seconds": 10,
             "ack_progress_seconds": 1,
+            "allow_direct_profile_targets": allow_direct,
         },
     )
     adapter = BloodbankAdapter(config)
@@ -324,6 +325,46 @@ async def test_registry_outage_is_retryable_not_terminal(tmp_path, valid_command
     assert message.acked == 0
 
 
+@pytest.mark.parametrize(
+    "registry_text",
+    [
+        "",
+        "schema_version: 1\n",
+        "schema_version: 2\nagents: {}\n",
+        "schema_version: 1\nagents:\n  123: {}\n",
+        "schema_version: 1\nagents:\n  bloodbank-pm: []\n",
+    ],
+    ids=(
+        "empty-file",
+        "missing-agents",
+        "unsupported-version",
+        "non-string-agent-key",
+        "malformed-agent-metadata",
+    ),
+)
+@pytest.mark.asyncio
+async def test_invalid_registry_is_transient_and_cannot_use_direct_fallback(
+    tmp_path, valid_command, registry_text
+):
+    (tmp_path / "missing-registry.yaml").write_text(registry_text, encoding="utf-8")
+    adapter = make_adapter(tmp_path, target_profiles={}, allow_direct=True)
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+
+    assert executions == 0
+    assert message.nacked == 1
+    assert message.termed == 0
+    assert message.acked == 0
+    assert adapter.execution_state.get(valid_command["command_id"]) is None
+
+
 @pytest.mark.asyncio
 async def test_active_registry_route_dispatches_and_completes(tmp_path, valid_command):
     write_registry(tmp_path)
@@ -398,13 +439,14 @@ async def test_route_disabled_between_claim_and_dispatch_is_durably_rejected(
     assert adapter._js.events == []
     rejected = adapter.execution_state.get(valid_command["command_id"])
     assert rejected is not None
-    assert rejected.state == "rejected"
+    assert rejected.state == "rejected_pre_start"
     assert rejected.rejection_reason == ROUTE_REJECTION_REASON
+    assert rejected.terminal_events == ()
 
 
 @pytest.mark.asyncio
-async def test_route_disabled_during_pre_dispatch_publish_cannot_execute(
-    tmp_path, valid_command
+async def test_route_disabled_after_started_publish_closes_and_replays_exactly(
+    tmp_path, valid_command, repo_root
 ):
     write_registry(tmp_path)
     adapter = make_adapter(tmp_path, target_profiles={})
@@ -433,9 +475,214 @@ async def test_route_disabled_during_pre_dispatch_publish_cannot_execute(
     assert [event["type"] for event in adapter._js.events] == [
         "bloodbank.v1.conversation.turn.started",
         "bloodbank.v1.agent.invocation.started",
+        "bloodbank.v1.agent.invocation.failed",
+        "bloodbank.v1.conversation.turn.completed",
     ]
     rejected = adapter.execution_state.get(valid_command["command_id"])
-    assert rejected is not None and rejected.state == "rejected"
+    assert rejected is not None and rejected.state == "rejected_closed"
+    assert tuple(adapter._js.events[-2:]) == rejected.terminal_events
+    assert rejected.terminal_events[0]["data"]["error_code"] == ROUTE_REJECTION_REASON
+    assert (
+        rejected.terminal_events[0]["causationid"] == rejected.started_events[1]["id"]
+    )
+    assert (
+        rejected.terminal_events[1]["causationid"] == rejected.terminal_events[0]["id"]
+    )
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    for event in rejected.terminal_events:
+        validate_envelope(event)
+
+    write_registry(tmp_path, enabled=True)
+    restarted = make_adapter(tmp_path, target_profiles={})
+
+    async def must_not_execute(_event):
+        raise AssertionError("a rejected command executed after restart")
+
+    restarted.set_message_handler(must_not_execute)
+    exact_redelivery = FakeMessage(valid_command)
+    await restarted._handle_broker_message(exact_redelivery)
+
+    assert exact_redelivery.termed == 1
+    assert exact_redelivery.nacked == 0
+    assert tuple(restarted._js.events) == (
+        *rejected.started_events,
+        *rejected.terminal_events,
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_started_publish_is_closed_on_disabled_redelivery(
+    tmp_path, valid_command
+):
+    write_registry(tmp_path)
+    first = make_adapter(tmp_path, target_profiles={})
+    published = []
+    publish_count = 0
+    executions = 0
+
+    async def fail_second_start(subject, payload, **kwargs):
+        nonlocal publish_count
+        del subject, kwargs
+        publish_count += 1
+        if publish_count == 2:
+            raise RuntimeError("second started event was not acknowledged")
+        published.append(json.loads(payload))
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+
+    first._js.publish = fail_second_start
+    first.set_message_handler(handler)
+    first_delivery = FakeMessage(valid_command)
+    await first._handle_broker_message(first_delivery)
+
+    assert executions == 0
+    assert first_delivery.nacked == 1
+    assert first_delivery.termed == 0
+    assert [event["type"] for event in published] == [
+        "bloodbank.v1.conversation.turn.started"
+    ]
+    opened = first.execution_state.get(valid_command["command_id"])
+    assert opened is not None and opened.state == "started"
+
+    write_registry(tmp_path, enabled=False)
+    restarted = make_adapter(tmp_path, target_profiles={})
+    restarted.set_message_handler(handler)
+    redelivery = FakeMessage(valid_command)
+    await restarted._handle_broker_message(redelivery)
+
+    assert executions == 0
+    assert redelivery.termed == 1
+    assert redelivery.nacked == 0
+    assert [event["type"] for event in restarted._js.events] == [
+        "bloodbank.v1.conversation.turn.started",
+        "bloodbank.v1.agent.invocation.started",
+        "bloodbank.v1.agent.invocation.failed",
+        "bloodbank.v1.conversation.turn.completed",
+    ]
+    closed = restarted.execution_state.get(valid_command["command_id"])
+    assert closed is not None and closed.state == "rejected_closed"
+
+
+@pytest.mark.asyncio
+async def test_rejection_persistence_failure_naks_then_restart_closes_without_execution(
+    tmp_path, valid_command
+):
+    write_registry(tmp_path)
+    first = make_adapter(tmp_path, target_profiles={})
+    original_publish_many = first._publish_many
+    original_finalize = first.execution_state.finalize_rejection
+    publish_calls = 0
+    finalize_calls = 0
+    executions = 0
+
+    async def publish_then_disable(events):
+        nonlocal publish_calls
+        await original_publish_many(events)
+        publish_calls += 1
+        if publish_calls == 1:
+            write_registry(tmp_path, enabled=False)
+
+    def fail_first_finalize(**kwargs):
+        nonlocal finalize_calls
+        finalize_calls += 1
+        if finalize_calls == 1:
+            raise RuntimeError("journal write unavailable")
+        return original_finalize(**kwargs)
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+
+    first._publish_many = publish_then_disable
+    first.execution_state.finalize_rejection = fail_first_finalize
+    first.set_message_handler(handler)
+    first_delivery = FakeMessage(valid_command)
+    await first._handle_broker_message(first_delivery)
+
+    assert executions == 0
+    assert first_delivery.nacked == 1
+    assert first_delivery.termed == 0
+    closing = first.execution_state.get(valid_command["command_id"])
+    assert closing is not None and closing.state == "rejected_closing"
+    assert closing.terminal_events == ()
+
+    write_registry(tmp_path, enabled=True)
+    restarted = make_adapter(tmp_path, target_profiles={})
+    restarted.set_message_handler(handler)
+    redelivery = FakeMessage(valid_command)
+    await restarted._handle_broker_message(redelivery)
+
+    assert executions == 0
+    assert redelivery.termed == 1
+    assert redelivery.nacked == 0
+    closed = restarted.execution_state.get(valid_command["command_id"])
+    assert closed is not None and closed.state == "rejected_closed"
+    assert {event["time"] for event in closed.terminal_events} == {closing.rejected_at}
+
+
+@pytest.mark.asyncio
+async def test_partial_terminal_publish_naks_and_exact_restart_replays_closure(
+    tmp_path, valid_command
+):
+    write_registry(tmp_path)
+    first = make_adapter(tmp_path, target_profiles={})
+    original_publish_many = first._publish_many
+    published = []
+    publish_calls = 0
+    executions = 0
+
+    async def fail_turn_terminal(subject, payload, **kwargs):
+        del subject, kwargs
+        envelope = json.loads(payload)
+        if envelope["type"] == "bloodbank.v1.conversation.turn.completed":
+            raise RuntimeError("terminal turn event was not acknowledged")
+        published.append(envelope)
+
+    async def publish_then_disable(events):
+        nonlocal publish_calls
+        await original_publish_many(events)
+        publish_calls += 1
+        if publish_calls == 1:
+            write_registry(tmp_path, enabled=False)
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+
+    first._js.publish = fail_turn_terminal
+    first._publish_many = publish_then_disable
+    first.set_message_handler(handler)
+    first_delivery = FakeMessage(valid_command)
+    await first._handle_broker_message(first_delivery)
+
+    assert executions == 0
+    assert first_delivery.nacked == 1
+    assert first_delivery.termed == 0
+    assert [event["type"] for event in published] == [
+        "bloodbank.v1.conversation.turn.started",
+        "bloodbank.v1.agent.invocation.started",
+        "bloodbank.v1.agent.invocation.failed",
+    ]
+    closed = first.execution_state.get(valid_command["command_id"])
+    assert closed is not None and closed.state == "rejected_closed"
+
+    write_registry(tmp_path, enabled=True)
+    restarted = make_adapter(tmp_path, target_profiles={})
+    restarted.set_message_handler(handler)
+    redelivery = FakeMessage(valid_command)
+    await restarted._handle_broker_message(redelivery)
+
+    assert executions == 0
+    assert redelivery.termed == 1
+    assert redelivery.nacked == 0
+    assert tuple(restarted._js.events) == (
+        *closed.started_events,
+        *closed.terminal_events,
+    )
 
 
 @pytest.mark.asyncio
@@ -468,7 +715,7 @@ async def test_pending_restart_rechecks_policy_and_rejected_redelivery_cannot_by
     assert executions == 0
     assert disabled_redelivery.termed == 1
     rejected = restarted.execution_state.get(valid_command["command_id"])
-    assert rejected is not None and rejected.state == "rejected"
+    assert rejected is not None and rejected.state == "rejected_pre_start"
 
     write_registry(tmp_path, enabled=True)
     reenabled = make_adapter(tmp_path, target_profiles={})
@@ -479,6 +726,8 @@ async def test_pending_restart_rechecks_policy_and_rejected_redelivery_cannot_by
     assert executions == 0
     assert later_redelivery.termed == 1
     assert later_redelivery.acked == 0
+    assert later_redelivery.nacked == 0
+    assert reenabled._js.events == []
 
 
 @pytest.mark.asyncio
@@ -547,7 +796,7 @@ async def test_explicit_static_route_intentionally_bypasses_registry_policy(
     assert message.acked == 1
 
 
-def test_execution_journal_migrates_pending_rows_to_rejection_capable_schema(tmp_path):
+def test_execution_journal_migrates_legacy_pending_as_possibly_started(tmp_path):
     path = tmp_path / "legacy-state.sqlite3"
     command_id = "e7e00a9e-d38e-47df-8c01-917a6243e6af"
     with sqlite3.connect(path) as db:
@@ -578,17 +827,92 @@ def test_execution_journal_migrates_pending_rows_to_rejection_capable_schema(tmp
 
     store = ExecutionStateStore(path)
     migrated = store.get(command_id)
-    assert migrated is not None and migrated.state == "pending"
-    rejected = store.mark_rejected(
+    assert migrated is not None and migrated.state == "started"
+    rejected = store.begin_rejection(
         command_id=command_id,
         digest="legacy-digest",
         reason=ROUTE_REJECTION_REASON,
     )
 
-    assert rejected.state == "rejected"
+    assert rejected.state == "rejected_closing"
     assert rejected.rejection_reason == ROUTE_REJECTION_REASON
+    assert rejected.rejected_at is not None
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+
+
+@pytest.mark.asyncio
+async def test_v2_rejected_row_migrates_to_closure_without_execution(
+    tmp_path, valid_command
+):
+    path = tmp_path / "execution-state.sqlite3"
+    invocation = Invocation.from_envelope(valid_command, "bloodbank-pm")
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            """
+            CREATE TABLE executions (
+                command_id TEXT PRIMARY KEY,
+                envelope_digest TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('pending', 'completed', 'rejected')),
+                outcome TEXT CHECK (outcome IN ('success', 'failure', 'cancelled')),
+                started_events TEXT NOT NULL,
+                terminal_events TEXT,
+                rejection_reason TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CHECK (
+                    (state = 'pending' AND outcome IS NULL
+                     AND terminal_events IS NULL AND rejection_reason IS NULL)
+                    OR
+                    (state = 'completed' AND outcome IS NOT NULL
+                     AND terminal_events IS NOT NULL AND rejection_reason IS NULL)
+                    OR
+                    (state = 'rejected' AND outcome IS NULL
+                     AND terminal_events IS NULL AND rejection_reason IS NOT NULL)
+                )
+            );
+            PRAGMA user_version = 2;
+            """
+        )
+        db.execute(
+            """INSERT INTO executions VALUES (
+                   ?, ?, ?, 'rejected', NULL, ?, NULL, ?, ?, ?
+               )""",
+            (
+                valid_command["command_id"],
+                envelope_digest(valid_command),
+                "bloodbank-pm",
+                json.dumps(started_events(invocation)),
+                ROUTE_REJECTION_REASON,
+                "2026-08-15T12:00:00Z",
+                "2026-08-15T12:00:00Z",
+            ),
+        )
+
+    write_registry(tmp_path, enabled=True)
+    adapter = make_adapter(tmp_path, target_profiles={})
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+
+    adapter.set_message_handler(handler)
+    redelivery = FakeMessage(valid_command)
+    await adapter._handle_broker_message(redelivery)
+
+    assert executions == 0
+    assert redelivery.termed == 1
+    assert redelivery.nacked == 0
+    assert [event["type"] for event in adapter._js.events] == [
+        "bloodbank.v1.conversation.turn.started",
+        "bloodbank.v1.agent.invocation.started",
+        "bloodbank.v1.agent.invocation.failed",
+        "bloodbank.v1.conversation.turn.completed",
+    ]
+    migrated = adapter.execution_state.get(valid_command["command_id"])
+    assert migrated is not None and migrated.state == "rejected_closed"
 
 
 @pytest.mark.asyncio

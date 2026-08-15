@@ -183,23 +183,28 @@ class ProfileResolver:
         if not self.fleet_registry.exists():
             raise RegistryInvalid("fleet registry is missing")
         try:
-            parsed = (
-                yaml.safe_load(self.fleet_registry.read_text(encoding="utf-8")) or {}
-            )
+            parsed = yaml.safe_load(self.fleet_registry.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as exc:
             raise RegistryInvalid("fleet registry is unreadable or invalid") from exc
-        if not isinstance(parsed, dict) or not isinstance(
-            parsed.get("agents", {}), dict
-        ):
+        if not isinstance(parsed, dict):
+            raise RegistryInvalid("fleet registry root must be a mapping")
+        schema_version = parsed.get("schema_version")
+        if type(schema_version) is not int or schema_version != 1:
+            raise RegistryInvalid("fleet registry schema_version must be exactly 1")
+        if "agents" not in parsed or not isinstance(parsed["agents"], dict):
             raise RegistryInvalid("fleet registry agents must be a mapping")
         mapping: dict[str, str] = {}
         registered_targets: set[str] = set()
-        for agent_id, metadata in parsed.get("agents", {}).items():
-            if not isinstance(agent_id, str):
-                continue
+        for agent_id, metadata in parsed["agents"].items():
+            if not isinstance(agent_id, str) or not agent_id.strip():
+                raise RegistryInvalid(
+                    "fleet registry agent identifiers must be non-empty strings"
+                )
             registered_targets.add(agent_id)
             if not isinstance(metadata, dict):
-                continue
+                raise RegistryInvalid(
+                    f"fleet registry metadata for {agent_id!r} must be a mapping"
+                )
             profile = metadata.get("profile_name")
             bloodbank = metadata.get("bloodbank")
             if (
@@ -292,6 +297,7 @@ def lifecycle_event(
     *,
     causation_id: str,
     data: dict[str, Any],
+    occurred_at: str | None = None,
 ) -> dict[str, Any]:
     domain = event_type.split(".")[2]
     event_id = invocation.event_id(event_type)
@@ -301,7 +307,7 @@ def lifecycle_event(
         "source": "urn:33god:service:bloodbank-hermes-gateway",
         "type": event_type,
         "subject": _subject_for(event_type),
-        "time": _now(),
+        "time": _timestamp(occurred_at) if occurred_at is not None else _now(),
         "datacontenttype": "application/json",
         "dataschema": f"apicurio://holyfields/{event_type}/versions/1",
         "correlationid": invocation.envelope["correlationid"],
@@ -358,6 +364,9 @@ def terminal_events(
     invocation: Invocation,
     *,
     outcome: str,
+    failure_code: str | None = None,
+    failure_message: str | None = None,
+    occurred_at: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     started_id = invocation.event_id(INVOCATION_STARTED)
     if outcome == "success":
@@ -365,6 +374,7 @@ def terminal_events(
             invocation,
             INVOCATION_COMPLETED,
             causation_id=started_id,
+            occurred_at=occurred_at,
             data={
                 "invocation_id": invocation.invocation_id,
                 "thread_id": invocation.thread_id,
@@ -378,17 +388,21 @@ def terminal_events(
             invocation,
             INVOCATION_FAILED,
             causation_id=started_id,
+            occurred_at=occurred_at,
             data={
                 "invocation_id": invocation.invocation_id,
                 "thread_id": invocation.thread_id,
                 "turn_id": invocation.turn_id,
-                "error_code": "processing_cancelled"
-                if cancelled
-                else "processing_failed",
+                "error_code": (
+                    "processing_cancelled"
+                    if cancelled
+                    else failure_code or "processing_failed"
+                ),
                 "error_message": (
                     "Hermes processing was cancelled"
                     if cancelled
-                    else "Hermes processing did not complete successfully"
+                    else failure_message
+                    or "Hermes processing did not complete successfully"
                 ),
             },
         )
@@ -398,6 +412,7 @@ def terminal_events(
         invocation,
         TURN_COMPLETED,
         causation_id=terminal["id"],
+        occurred_at=occurred_at,
         data={
             "thread_id": invocation.thread_id,
             "turn_id": invocation.turn_id,

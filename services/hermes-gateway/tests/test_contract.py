@@ -232,6 +232,53 @@ def test_missing_or_invalid_registry_is_transient(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "registry_text,target,known,error",
+    [
+        ("", "research", {"research"}, "root must be a mapping"),
+        (
+            "schema_version: 1\n",
+            "research",
+            {"research"},
+            "agents must be a mapping",
+        ),
+        (
+            "schema_version: 2\nagents: {}\n",
+            "research",
+            {"research"},
+            "schema_version must be exactly 1",
+        ),
+        (
+            "schema_version: 1\nagents:\n  123: {}\n",
+            "123",
+            {"123"},
+            "identifiers must be non-empty strings",
+        ),
+        (
+            "schema_version: 1\nagents:\n  research: []\n",
+            "research",
+            {"research"},
+            "metadata for 'research' must be a mapping",
+        ),
+    ],
+    ids=(
+        "empty-file",
+        "missing-agents",
+        "unsupported-version",
+        "numeric-key-direct-bypass",
+        "malformed-metadata",
+    ),
+)
+def test_structurally_invalid_registry_is_transient_before_direct_fallback(
+    tmp_path, registry_text, target, known, error
+):
+    (tmp_path / "agents-registry.yaml").write_text(registry_text, encoding="utf-8")
+    resolver = _resolver(tmp_path, direct=True, known=known)
+
+    with pytest.raises(RegistryInvalid, match=error):
+        resolver.resolve(target)
+
+
+@pytest.mark.parametrize(
     "outcome,invocation_type,turn_outcome",
     [
         ("success", "bloodbank.v1.agent.invocation.completed", "completed"),

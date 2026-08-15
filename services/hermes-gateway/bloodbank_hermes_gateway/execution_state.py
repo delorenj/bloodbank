@@ -52,10 +52,11 @@ class ExecutionRecord:
     started_events: tuple[dict[str, Any], ...]
     terminal_events: tuple[dict[str, Any], ...]
     rejection_reason: str | None
+    rejected_at: str | None
 
 
 class ExecutionStateStore:
-    """SQLite-backed pending/completed/rejected state with atomic transitions."""
+    """SQLite-backed command state with crash-safe lifecycle transitions."""
 
     def __init__(self, path: Path) -> None:
         self.path = path.expanduser()
@@ -76,8 +77,14 @@ class ExecutionStateStore:
             }
             if not columns:
                 self._create_schema(db)
-            elif "rejection_reason" not in columns:
-                self._migrate_pending_completed_schema(db)
+            else:
+                version = int(db.execute("PRAGMA user_version").fetchone()[0])
+                if version > 3:
+                    raise RuntimeError(
+                        f"execution journal schema version {version} is unsupported"
+                    )
+                if version != 3 or "rejected_at" not in columns:
+                    self._migrate_to_current_schema(db, columns)
         os.chmod(self.path, 0o600)
 
     @staticmethod
@@ -88,54 +95,131 @@ class ExecutionStateStore:
                 command_id TEXT PRIMARY KEY,
                 envelope_digest TEXT NOT NULL,
                 profile TEXT NOT NULL,
-                state TEXT NOT NULL CHECK (state IN ('pending', 'completed', 'rejected')),
+                state TEXT NOT NULL CHECK (
+                    state IN (
+                        'pending', 'started', 'completed',
+                        'rejected_pre_start', 'rejected_closing', 'rejected_closed'
+                    )
+                ),
                 outcome TEXT CHECK (outcome IN ('success', 'failure', 'cancelled')),
                 started_events TEXT NOT NULL,
                 terminal_events TEXT,
                 rejection_reason TEXT,
+                rejected_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 CHECK (
                     (
                         state = 'pending' AND outcome IS NULL
                         AND terminal_events IS NULL AND rejection_reason IS NULL
+                        AND rejected_at IS NULL
+                    )
+                    OR
+                    (
+                        state = 'started' AND outcome IS NULL
+                        AND terminal_events IS NULL AND rejection_reason IS NULL
+                        AND rejected_at IS NULL
                     )
                     OR
                     (
                         state = 'completed' AND outcome IS NOT NULL
                         AND terminal_events IS NOT NULL AND rejection_reason IS NULL
+                        AND rejected_at IS NULL
                     )
                     OR
                     (
-                        state = 'rejected' AND outcome IS NULL
+                        state = 'rejected_pre_start' AND outcome IS NULL
                         AND terminal_events IS NULL AND rejection_reason IS NOT NULL
+                        AND rejected_at IS NOT NULL
+                    )
+                    OR
+                    (
+                        state = 'rejected_closing' AND outcome IS NULL
+                        AND terminal_events IS NULL AND rejection_reason IS NOT NULL
+                        AND rejected_at IS NOT NULL
+                    )
+                    OR
+                    (
+                        state = 'rejected_closed' AND outcome IS NULL
+                        AND terminal_events IS NOT NULL AND rejection_reason IS NOT NULL
+                        AND rejected_at IS NOT NULL
                     )
                 )
             )
             """
         )
-        db.execute("PRAGMA user_version = 2")
+        db.execute("PRAGMA user_version = 3")
 
     @classmethod
-    def _migrate_pending_completed_schema(cls, db: sqlite3.Connection) -> None:
-        """Upgrade the original journal without losing pending/completed evidence."""
+    def _migrate_to_current_schema(
+        cls, db: sqlite3.Connection, columns: set[str]
+    ) -> None:
+        """Upgrade v1/v2 journals without assuming pending starts never escaped."""
 
         db.execute("BEGIN IMMEDIATE")
         try:
+            rejection_column = (
+                "rejection_reason" if "rejection_reason" in columns else "NULL"
+            )
+            rows = db.execute(
+                f"""SELECT command_id, envelope_digest, profile, state, outcome,
+                           started_events, terminal_events, {rejection_column},
+                           created_at, updated_at
+                    FROM executions"""  # noqa: S608 - column is selected from a constant
+            ).fetchall()
             db.execute("ALTER TABLE executions RENAME TO executions_v1")
             cls._create_schema(db)
-            db.execute(
-                """
-                INSERT INTO executions(
-                    command_id, envelope_digest, profile, state, outcome,
-                    started_events, terminal_events, rejection_reason,
-                    created_at, updated_at
+            migrated_at = _now()
+            for row in rows:
+                old_state = str(row[3])
+                if old_state == "completed":
+                    state = "completed"
+                    outcome = row[4]
+                    terminal = row[6]
+                    rejection_reason = None
+                    rejected_at = None
+                elif old_state == "rejected":
+                    # v2 could not distinguish a pre-start rejection from one
+                    # after lifecycle publication. Preserve the terminal policy
+                    # decision and conservatively require closure on redelivery.
+                    state = "rejected_closing"
+                    outcome = None
+                    terminal = None
+                    rejection_reason = row[7] or "route_policy_invalid_before_dispatch"
+                    rejected_at = migrated_at
+                elif old_state == "pending":
+                    # v1/v2 published starts without a durable phase marker.
+                    # Treat them as possibly escaped so a later rejection closes
+                    # the lifecycle instead of recreating the historical orphan.
+                    state = "started"
+                    outcome = None
+                    terminal = None
+                    rejection_reason = None
+                    rejected_at = None
+                else:
+                    raise RuntimeError(
+                        f"execution journal contains unsupported state {old_state!r}"
+                    )
+                db.execute(
+                    """INSERT INTO executions(
+                           command_id, envelope_digest, profile, state, outcome,
+                           started_events, terminal_events, rejection_reason,
+                           rejected_at, created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        row[0],
+                        row[1],
+                        row[2],
+                        state,
+                        outcome,
+                        row[5],
+                        terminal,
+                        rejection_reason,
+                        rejected_at,
+                        row[8],
+                        row[9],
+                    ),
                 )
-                SELECT command_id, envelope_digest, profile, state, outcome,
-                       started_events, terminal_events, NULL, created_at, updated_at
-                FROM executions_v1
-                """
-            )
             db.execute("DROP TABLE executions_v1")
             db.commit()
         except Exception:
@@ -161,17 +245,34 @@ class ExecutionStateStore:
             started_events=_decode_events(row[5]),
             terminal_events=_decode_events(row[6]),
             rejection_reason=str(row[7]) if row[7] is not None else None,
+            rejected_at=str(row[8]) if row[8] is not None else None,
         )
+
+    @classmethod
+    def _select(cls, db: sqlite3.Connection, command_id: str) -> ExecutionRecord | None:
+        row = db.execute(
+            """SELECT command_id, envelope_digest, profile, state, outcome,
+                      started_events, terminal_events, rejection_reason, rejected_at
+               FROM executions WHERE command_id = ?""",
+            (command_id,),
+        ).fetchone()
+        return cls._record(row)
+
+    @staticmethod
+    def _require_digest(current: ExecutionRecord, digest: str) -> None:
+        if current.envelope_digest != digest:
+            raise RuntimeError("command_id collides with a different command envelope")
+
+    @staticmethod
+    def _reason(reason: str) -> str:
+        normalized = reason.strip()
+        if not normalized:
+            raise ValueError("execution rejection reason must be non-empty")
+        return normalized
 
     def get(self, command_id: str) -> ExecutionRecord | None:
         with self._connect() as db:
-            row = db.execute(
-                """SELECT command_id, envelope_digest, profile, state, outcome,
-                          started_events, terminal_events, rejection_reason
-                   FROM executions WHERE command_id = ?""",
-                (command_id,),
-            ).fetchone()
-        return self._record(row)
+            return self._select(db, command_id)
 
     def claim_pending(
         self,
@@ -191,16 +292,42 @@ class ExecutionStateStore:
                    VALUES (?, ?, ?, 'pending', NULL, ?, NULL, ?, ?)""",
                 (command_id, digest, profile, _events_json(started_events), now, now),
             )
-            row = db.execute(
-                """SELECT command_id, envelope_digest, profile, state, outcome,
-                          started_events, terminal_events, rejection_reason
-                   FROM executions WHERE command_id = ?""",
-                (command_id,),
-            ).fetchone()
+            record = self._select(db, command_id)
             db.commit()
-        record = self._record(row)
         if record is None:
             raise RuntimeError("execution journal failed to persist pending command")
+        return record
+
+    def mark_started(self, *, command_id: str, digest: str) -> ExecutionRecord:
+        """Record that started-event publication may begin before publishing."""
+
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None:
+                db.rollback()
+                raise RuntimeError("execution journal has no pending command to start")
+            try:
+                self._require_digest(current, digest)
+            except RuntimeError:
+                db.rollback()
+                raise
+            if current.state == "started":
+                db.commit()
+                return current
+            if current.state != "pending":
+                db.rollback()
+                raise RuntimeError("finalized execution journal state is immutable")
+            db.execute(
+                """UPDATE executions SET state = 'started', updated_at = ?
+                   WHERE command_id = ? AND state = 'pending'""",
+                (now, command_id),
+            )
+            record = self._select(db, command_id)
+            db.commit()
+        if record is None or record.state != "started":
+            raise RuntimeError("execution journal failed to persist started command")
         return record
 
     def mark_completed(
@@ -217,13 +344,7 @@ class ExecutionStateStore:
         encoded_terminal = _events_json(terminal_events)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                """SELECT command_id, envelope_digest, profile, state, outcome,
-                          started_events, terminal_events, rejection_reason
-                   FROM executions WHERE command_id = ?""",
-                (command_id,),
-            ).fetchone()
-            current = self._record(row)
+            current = self._select(db, command_id)
             if current is None:
                 db.rollback()
                 raise RuntimeError(
@@ -245,78 +366,160 @@ class ExecutionStateStore:
                     )
                 db.commit()
                 return current
-            if current.state == "rejected":
+            if current.state != "started":
                 db.rollback()
-                raise RuntimeError("rejected execution journal result is immutable")
+                raise RuntimeError("execution must be started before completion")
             db.execute(
                 """UPDATE executions
                    SET state = 'completed', outcome = ?, terminal_events = ?, updated_at = ?
-                   WHERE command_id = ? AND state = 'pending'""",
+                   WHERE command_id = ? AND state = 'started'""",
                 (outcome, encoded_terminal, now, command_id),
             )
-            row = db.execute(
-                """SELECT command_id, envelope_digest, profile, state, outcome,
-                          started_events, terminal_events, rejection_reason
-                   FROM executions WHERE command_id = ?""",
-                (command_id,),
-            ).fetchone()
+            record = self._select(db, command_id)
             db.commit()
-        record = self._record(row)
         if record is None or record.state != "completed":
             raise RuntimeError("execution journal failed to persist completed command")
         return record
 
-    def mark_rejected(
+    def reject_pre_start(
         self,
         *,
         command_id: str,
         digest: str,
         reason: str,
     ) -> ExecutionRecord:
-        normalized_reason = reason.strip()
-        if not normalized_reason:
-            raise ValueError("execution rejection reason must be non-empty")
+        """Persist an eventless rejection before any start publish was attempted."""
+
+        normalized_reason = self._reason(reason)
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                """SELECT command_id, envelope_digest, profile, state, outcome,
-                          started_events, terminal_events, rejection_reason
-                   FROM executions WHERE command_id = ?""",
-                (command_id,),
-            ).fetchone()
-            current = self._record(row)
+            current = self._select(db, command_id)
             if current is None:
                 db.rollback()
                 raise RuntimeError("execution journal has no pending command to reject")
-            if current.envelope_digest != digest:
+            try:
+                self._require_digest(current, digest)
+            except RuntimeError:
                 db.rollback()
-                raise RuntimeError(
-                    "command_id collides with a different command envelope"
-                )
-            if current.state == "completed":
-                db.rollback()
-                raise RuntimeError("completed execution journal result is immutable")
-            if current.state == "rejected":
+                raise
+            if current.state == "rejected_pre_start":
                 if current.rejection_reason != normalized_reason:
                     db.rollback()
                     raise RuntimeError("rejected execution journal result is immutable")
                 db.commit()
                 return current
+            if current.state != "pending":
+                db.rollback()
+                raise RuntimeError(
+                    "started execution requires terminal rejection closure"
+                )
             db.execute(
                 """UPDATE executions
-                   SET state = 'rejected', rejection_reason = ?, updated_at = ?
+                   SET state = 'rejected_pre_start', rejection_reason = ?,
+                       rejected_at = ?, updated_at = ?
                    WHERE command_id = ? AND state = 'pending'""",
-                (normalized_reason, now, command_id),
+                (normalized_reason, now, now, command_id),
             )
-            row = db.execute(
-                """SELECT command_id, envelope_digest, profile, state, outcome,
-                          started_events, terminal_events, rejection_reason
-                   FROM executions WHERE command_id = ?""",
-                (command_id,),
-            ).fetchone()
+            record = self._select(db, command_id)
             db.commit()
-        record = self._record(row)
-        if record is None or record.state != "rejected":
-            raise RuntimeError("execution journal failed to persist rejected command")
+        if record is None or record.state != "rejected_pre_start":
+            raise RuntimeError(
+                "execution journal failed to persist pre-start rejection"
+            )
+        return record
+
+    def begin_rejection(
+        self,
+        *,
+        command_id: str,
+        digest: str,
+        reason: str,
+    ) -> ExecutionRecord:
+        """Persist immutable rejection intent for a lifecycle that may be open."""
+
+        normalized_reason = self._reason(reason)
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None:
+                db.rollback()
+                raise RuntimeError("execution journal has no started command to reject")
+            try:
+                self._require_digest(current, digest)
+            except RuntimeError:
+                db.rollback()
+                raise
+            if current.state in {"rejected_closing", "rejected_closed"}:
+                if current.rejection_reason != normalized_reason:
+                    db.rollback()
+                    raise RuntimeError("rejected execution journal result is immutable")
+                db.commit()
+                return current
+            if current.state != "started":
+                db.rollback()
+                raise RuntimeError(
+                    "only a started execution can begin terminal rejection"
+                )
+            db.execute(
+                """UPDATE executions
+                   SET state = 'rejected_closing', rejection_reason = ?,
+                       rejected_at = ?, updated_at = ?
+                   WHERE command_id = ? AND state = 'started'""",
+                (normalized_reason, now, now, command_id),
+            )
+            record = self._select(db, command_id)
+            db.commit()
+        if record is None or record.state != "rejected_closing":
+            raise RuntimeError("execution journal failed to persist rejection intent")
+        return record
+
+    def finalize_rejection(
+        self,
+        *,
+        command_id: str,
+        digest: str,
+        terminal_events: tuple[dict[str, Any], ...],
+    ) -> ExecutionRecord:
+        """Atomically store the exact terminal closure before it is published."""
+
+        if len(terminal_events) != 2:
+            raise ValueError(
+                "terminal rejection closure must contain exactly two events"
+            )
+        encoded_terminal = _events_json(terminal_events)
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None:
+                db.rollback()
+                raise RuntimeError("execution journal has no rejection intent to close")
+            try:
+                self._require_digest(current, digest)
+            except RuntimeError:
+                db.rollback()
+                raise
+            if current.state == "rejected_closed":
+                if current.terminal_events != terminal_events:
+                    db.rollback()
+                    raise RuntimeError("rejected execution journal result is immutable")
+                db.commit()
+                return current
+            if current.state != "rejected_closing":
+                db.rollback()
+                raise RuntimeError(
+                    "execution rejection intent is not ready for closure"
+                )
+            db.execute(
+                """UPDATE executions
+                   SET state = 'rejected_closed', terminal_events = ?, updated_at = ?
+                   WHERE command_id = ? AND state = 'rejected_closing'""",
+                (encoded_terminal, now, command_id),
+            )
+            record = self._select(db, command_id)
+            db.commit()
+        if record is None or record.state != "rejected_closed":
+            raise RuntimeError("execution journal failed to persist rejection closure")
         return record

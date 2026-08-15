@@ -187,15 +187,25 @@ Routers and consumers MUST dispatch this command by `data.target_agent_id`
 rather than encoding the target agent in the subject path.
 
 The fleet-shared Hermes consumer treats registry routing as an explicit
-eligibility contract. A registry record is routable only when `profile_name` is
-nonblank and `bloodbank` is a mapping whose `enabled` value is the boolean
-`true`, `gateway_scope` is exactly `fleet`, and `target_agent_id` exactly equals
-the registry `agent_id`. Missing, malformed, false, or mismatched metadata is a
-terminal default-deny route result. Missing, unreadable, or structurally invalid
-registry input is transient. Eligibility is re-read after durable claim and
-immediately before dispatch, so a persisted pending command cannot retain stale
-routing authority. Explicit adapter `target_profiles` entries are separate,
-operator-owned static overrides and do not inherit registry eligibility.
+eligibility contract. The registry root must be a mapping with exact integer
+`schema_version: 1` and an explicit `agents` mapping. Empty/missing documents,
+unsupported versions, non-string agent keys, and non-mapping agent records are
+transient registry failures; consumers must not skip ambiguous records and then
+fall through to direct-profile routing. A structurally valid registry record is
+routable only when `profile_name` is nonblank and `bloodbank` is a mapping whose
+`enabled` value is the boolean `true`, `gateway_scope` is exactly `fleet`, and
+`target_agent_id` exactly equals the registry `agent_id`. Missing, malformed,
+false, or mismatched route policy is a terminal default-deny result.
+
+Eligibility is re-read after durable claim and immediately before dispatch. If
+it becomes invalid after either started event may have escaped, the consumer
+must durably store and publish the existing canonical
+`agent.invocation.failed` -> `conversation.turn.completed` closure before
+terminally acknowledging the command. Failed closure persistence/publication is
+retryable, and exact redelivery replays the stored envelopes without executing
+the agent. Only a journal-proven pre-start rejection may be eventless. Explicit
+adapter `target_profiles` entries are separate, operator-owned static overrides
+and do not inherit registry eligibility.
 
 The legacy `event.>` / `command.>` / `reply.>` subject prefixes are
 **deprecated** and will be removed when the migration completes (§16).
