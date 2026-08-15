@@ -203,6 +203,33 @@ def test_direct_profile_fallback_cannot_bypass_disabled_registry_record(tmp_path
         _resolver(tmp_path, direct=True).resolve("research")
 
 
+@pytest.mark.parametrize(
+    "registry_agent_id",
+    [" bloodbank-pm ", "Bloodbank-pm"],
+    ids=("padded", "case-variant"),
+)
+def test_noncanonical_registry_id_invalidates_before_direct_fallback(
+    tmp_path, registry_agent_id
+):
+    registry = {
+        "schema_version": 1,
+        "agents": {
+            registry_agent_id: {
+                "profile_name": "bloodbank-pm",
+                "bloodbank": {
+                    "enabled": False,
+                    "gateway_scope": "fleet",
+                    "target_agent_id": registry_agent_id,
+                },
+            }
+        },
+    }
+    (tmp_path / "agents-registry.yaml").write_text(yaml.safe_dump(registry))
+
+    with pytest.raises(RegistryInvalid, match="canonical lowercase slugs"):
+        _resolver(tmp_path, direct=True).resolve("bloodbank-pm")
+
+
 def test_unknown_and_direct_profile_routes_fail_closed(tmp_path):
     (tmp_path / "agents-registry.yaml").write_text(
         "schema_version: 1\nagents: {}\n", encoding="utf-8"

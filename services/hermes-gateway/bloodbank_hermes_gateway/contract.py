@@ -32,6 +32,11 @@ _UUID_NAMESPACE = uuid.UUID("633de934-f359-50f8-978f-3ef4ebbdac69")
 _RFC3339 = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
+# Keep registry identities aligned with the fleet's canonical slug shape:
+# lowercase ASCII alphanumerics and dashes, with no leading/trailing dash.
+# Registry keys are evidence, not user input, so noncanonical spellings must
+# invalidate the snapshot rather than be silently normalized into an identity.
+_CANONICAL_AGENT_ID = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
 
 
 class CommandInvalid(ValueError):
@@ -199,6 +204,14 @@ class ProfileResolver:
             if not isinstance(agent_id, str) or not agent_id.strip():
                 raise RegistryInvalid(
                     "fleet registry agent identifiers must be non-empty strings"
+                )
+            normalized_agent_id = agent_id.strip().lower()
+            if (
+                agent_id != normalized_agent_id
+                or _CANONICAL_AGENT_ID.fullmatch(agent_id) is None
+            ):
+                raise RegistryInvalid(
+                    "fleet registry agent identifiers must be canonical lowercase slugs"
                 )
             registered_targets.add(agent_id)
             if not isinstance(metadata, dict):

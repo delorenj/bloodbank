@@ -333,6 +333,24 @@ async def test_registry_outage_is_retryable_not_terminal(tmp_path, valid_command
         "schema_version: 2\nagents: {}\n",
         "schema_version: 1\nagents:\n  123: {}\n",
         "schema_version: 1\nagents:\n  bloodbank-pm: []\n",
+        (
+            "schema_version: 1\nagents:\n"
+            "  ' bloodbank-pm ':\n"
+            "    profile_name: bloodbank-pm\n"
+            "    bloodbank:\n"
+            "      enabled: false\n"
+            "      gateway_scope: fleet\n"
+            "      target_agent_id: ' bloodbank-pm '\n"
+        ),
+        (
+            "schema_version: 1\nagents:\n"
+            "  Bloodbank-pm:\n"
+            "    profile_name: bloodbank-pm\n"
+            "    bloodbank:\n"
+            "      enabled: false\n"
+            "      gateway_scope: fleet\n"
+            "      target_agent_id: Bloodbank-pm\n"
+        ),
     ],
     ids=(
         "empty-file",
@@ -340,6 +358,8 @@ async def test_registry_outage_is_retryable_not_terminal(tmp_path, valid_command
         "unsupported-version",
         "non-string-agent-key",
         "malformed-agent-metadata",
+        "padded-disabled-agent-key",
+        "case-variant-disabled-agent-key",
     ),
 )
 @pytest.mark.asyncio

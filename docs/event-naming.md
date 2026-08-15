@@ -191,7 +191,10 @@ eligibility contract. The registry root must be a mapping with exact integer
 `schema_version: 1` and an explicit `agents` mapping. Empty/missing documents,
 unsupported versions, non-string agent keys, and non-mapping agent records are
 transient registry failures; consumers must not skip ambiguous records and then
-fall through to direct-profile routing. A structurally valid registry record is
+fall through to direct-profile routing. Agent keys must be canonical lowercase
+slugs matching `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`; whitespace-padded,
+case-variant, or otherwise invalid keys make the entire snapshot transiently
+invalid and are never normalized. A structurally valid registry record is
 routable only when `profile_name` is nonblank and `bloodbank` is a mapping whose
 `enabled` value is the boolean `true`, `gateway_scope` is exactly `fleet`, and
 `target_agent_id` exactly equals the registry `agent_id`. Missing, malformed,

@@ -64,8 +64,11 @@ the fleet registry. The registry document itself must be a YAML mapping with
 integer `schema_version: 1` and an explicit `agents` mapping; `agents: {}` is a
 valid, empty registry. Empty documents, missing `agents`, unsupported versions,
 non-string/blank agent keys, and non-mapping agent records invalidate the whole
-snapshot. They are transient failures and are never normalized, skipped, or
-allowed to fall through to direct-profile routing.
+snapshot. Agent keys must already match the canonical lowercase slug grammar
+`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`; padded, case-variant, or otherwise invalid
+keys invalidate the snapshot rather than being normalized. Structural and
+identity failures are transient and are never skipped or allowed to fall
+through to direct-profile routing.
 
 A registry-derived route is eligible only when all of these conditions hold
 exactly:
