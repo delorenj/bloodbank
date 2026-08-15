@@ -246,6 +246,7 @@ Segment 3 of `type` MUST be one of:
 | `attendance`   | Timekeeping and clock-state transitions across work sessions.       | active   |
 | `curator`      | Purpose-driven curation of a watched directory — classify, enrich, rename, and route incoming files (the `folder-curator` skill). | active   |
 | `reporting`    | Company reporting runs, archives, and delivery outcomes.             | active   |
+| `portfolio`    | Company-level intake, delegation receipts, approvals, escalations, and capacity facts. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration.                                 | reserved |
@@ -300,6 +301,12 @@ Segment 4 of `type` MUST be one of:
 | `projection`       | `finance`                | The liquid cashflow projection (breaches, troughs).         |
 | `clock`            | `attendance`             | A time-clock integration session or state transition.       |
 | `report`           | `reporting`              | One company report run, archive, and delivery lifecycle.     |
+| `work`             | `portfolio`              | A Director-delegated unit; child boards remain lifecycle authority. |
+| `receipt`          | `portfolio`              | Retry-safe terminal receipt for one delegated work attempt.  |
+| `approval`         | `portfolio`              | Human or policy decision boundary for delegated work.        |
+| `escalation`       | `portfolio`              | Exception raised to and resolved by the Director.            |
+| `capacity`         | `portfolio`              | Snapshot of global pipeline or derivative delegation slots.  |
+| `lease`            | `portfolio`              | Time-bounded ownership of one global delegation slot.        |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -315,6 +322,7 @@ emit an entity not paired with it here.
 `closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`,
 `recorded`, `triaged`, `updated`, `reached`, `resolved`, `detected`,
 `flagged`, `routed`, `breached`, `clocked_in`, `clocked_out`.
+`delegated`, `raised`, `released`, `expired`.
 
 ### 8.2 Command actions (imperative present)
 
@@ -502,6 +510,20 @@ bloodbank/schemas/
       report.started.v1.json
       report.completed.v1.json
       report.failed.v1.json
+    portfolio/
+      intake.received.v1.json
+      intake.triaged.v1.json
+      work.delegated.v1.json
+      work.updated.v1.json
+      receipt.recorded.v1.json
+      approval.requested.v1.json
+      approval.resolved.v1.json
+      escalation.raised.v1.json
+      escalation.resolved.v1.json
+      capacity.recorded.v1.json
+      lease.granted.v1.json
+      lease.released.v1.json
+      lease.expired.v1.json
   bloodbank/v2/
     repo/
       maintenance.failed.v1.json

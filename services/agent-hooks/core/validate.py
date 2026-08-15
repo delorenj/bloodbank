@@ -23,6 +23,7 @@ no aliases" in docs/event-naming.md §15.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -65,7 +66,7 @@ REGISTERED_NON_V1_SCHEMAS = {
 ALLOWED_DOMAINS = frozenset({
     # active
     "conversation", "agent", "llm", "cli", "system", "audio", "repo", "lifecycle",
-    "finance", "attendance", "curator", "reporting",
+    "finance", "attendance", "curator", "reporting", "portfolio",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "workflow", "memory",
 })
@@ -84,6 +85,7 @@ ALLOWED_ENTITIES = frozenset({
     "mission", "checkpoint", "gate", "roadmap", "status",
     "sync", "account", "transaction", "subscription", "zombie_charge", "paycheck", "projection",
     "clock", "report",
+    "work", "receipt", "approval", "escalation", "capacity", "lease",
 })
 
 EVENT_ACTIONS = frozenset({
@@ -93,6 +95,7 @@ EVENT_ACTIONS = frozenset({
     "requested", "invoked", "recorded", "triaged",
     "updated", "reached", "resolved",
     "detected", "flagged", "routed", "breached", "clocked_in", "clocked_out",
+    "delegated", "raised", "released", "expired",
 })
 
 COMMAND_ACTIONS = frozenset({
@@ -238,6 +241,131 @@ REQUIRED_BASE_FIELDS = (
 REQUIRED_EVENT_FIELDS = ("actor", "ordering_key")
 REQUIRED_COMMAND_FIELDS = ("actor", "command_id", "idempotency_key", "delivery")
 
+PORTFOLIO_TERMINAL_RECEIPT_TYPE = "bloodbank.v1.portfolio.receipt.recorded"
+PORTFOLIO_COMMON_DATA_FIELDS = (
+    "schema_version",
+    "portfolio_id",
+    "target_agent_id",
+    "idempotency_key",
+    "occurred_at",
+)
+
+
+def portfolio_terminal_receipt_digest(data: dict) -> str:
+    """Return the canonical outcome digest for a portfolio terminal receipt.
+
+    The digest covers the terminal identity and result, but not transport
+    metadata. Producers persist this value before publish and reuse the same
+    envelope on retry. Consumers can therefore distinguish an exact replay
+    from a conflicting second outcome for the same work attempt.
+    """
+    if not isinstance(data, dict):
+        raise ContractViolation("portfolio terminal receipt data must be an object")
+    fields = (
+        "portfolio_id",
+        "work_id",
+        "delegation_id",
+        "target_agent_id",
+        "attempt",
+        "terminal_status",
+        "result",
+    )
+    missing = [field for field in fields if field not in data]
+    if missing:
+        raise ContractViolation(
+            f"portfolio terminal receipt missing digest fields: {missing}"
+        )
+    canonical = json.dumps(
+        {field: data[field] for field in fields},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def assert_portfolio_invariants(envelope: dict) -> None:
+    """Enforce cross-field invariants shared by portfolio event schemas."""
+    if envelope.get("domain") != "portfolio":
+        return
+
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        raise ContractViolation("portfolio event data must be an object")
+    missing = [field for field in PORTFOLIO_COMMON_DATA_FIELDS if field not in data]
+    if missing:
+        raise ContractViolation(f"portfolio event data missing required fields: {missing}")
+    if data.get("schema_version") != 1:
+        raise ContractViolation("portfolio data.schema_version must be 1")
+    for field in ("portfolio_id", "target_agent_id", "idempotency_key", "occurred_at"):
+        if not isinstance(data.get(field), str) or not data[field].strip():
+            raise ContractViolation(f"portfolio data.{field} must be a non-empty string")
+    if envelope.get("idempotency_key") != data["idempotency_key"]:
+        raise ContractViolation(
+            "portfolio envelope.idempotency_key must equal data.idempotency_key"
+        )
+    if "causationid" not in envelope:
+        raise ContractViolation("portfolio events must carry causationid (null only for roots)")
+
+    ce_type = envelope.get("type")
+    if ce_type == PORTFOLIO_TERMINAL_RECEIPT_TYPE:
+        receipt_id = data.get("receipt_id")
+        if envelope.get("id") != receipt_id:
+            raise ContractViolation(
+                "portfolio terminal receipt id must equal data.receipt_id"
+            )
+        if envelope.get("causationid") != data.get("terminal_event_id"):
+            raise ContractViolation(
+                "portfolio terminal receipt causationid must equal data.terminal_event_id"
+            )
+        expected_key = (
+            f"portfolio.work.terminal:{data.get('work_id')}:attempt:{data.get('attempt')}"
+        )
+        if data["idempotency_key"] != expected_key:
+            raise ContractViolation(
+                "portfolio terminal receipt idempotency_key must be "
+                "portfolio.work.terminal:<work_id>:attempt:<attempt>"
+            )
+        expected_digest = portfolio_terminal_receipt_digest(data)
+        if data.get("outcome_digest") != expected_digest:
+            raise ContractViolation(
+                "portfolio terminal receipt outcome_digest does not match canonical outcome"
+            )
+
+    if ce_type == "bloodbank.v1.portfolio.capacity.recorded":
+        total = data.get("capacity_total")
+        in_use = data.get("capacity_in_use")
+        available = data.get("capacity_available")
+        if not all(isinstance(value, int) and not isinstance(value, bool) for value in (total, in_use, available)):
+            raise ContractViolation("portfolio capacity values must be integers")
+        if in_use + available != total:
+            raise ContractViolation(
+                "portfolio capacity_in_use + capacity_available must equal capacity_total"
+            )
+
+
+def assert_terminal_receipt_retry(prior: dict, candidate: dict) -> None:
+    """Assert that *candidate* is an exact retry of a terminal receipt.
+
+    Consumers should key first-write-wins storage by ``idempotency_key``. An
+    exact replay is an acknowledge/no-op; a different envelope for the same
+    key is a terminal contract conflict and must never overwrite the receipt.
+    """
+    assert_contract(prior)
+    assert_contract(candidate)
+    if prior.get("type") != PORTFOLIO_TERMINAL_RECEIPT_TYPE:
+        raise ContractViolation("prior envelope is not a portfolio terminal receipt")
+    if candidate.get("type") != PORTFOLIO_TERMINAL_RECEIPT_TYPE:
+        raise ContractViolation("candidate envelope is not a portfolio terminal receipt")
+    if prior.get("idempotency_key") != candidate.get("idempotency_key"):
+        raise ContractViolation("terminal receipt retry uses a different idempotency_key")
+    if json.dumps(prior, sort_keys=True, separators=(",", ":")) != json.dumps(
+        candidate, sort_keys=True, separators=(",", ":")
+    ):
+        raise ContractViolation(
+            "conflicting terminal receipt for an existing idempotency_key"
+        )
+
 
 def assert_contract(envelope: dict) -> None:
     """Run all stdlib-only contract checks on an envelope. Raises ContractViolation on first failure."""
@@ -297,8 +425,10 @@ def assert_contract(envelope: dict) -> None:
     # §11.2 command delivery
     if kind == "command" and envelope.get("delivery") != "single_consumer":
         raise ContractViolation(
-            f"command.delivery must be 'single_consumer' for v1 (§11)"
+            "command.delivery must be 'single_consumer' for v1 (§11)"
         )
+
+    assert_portfolio_invariants(envelope)
 
 
 # --------------------------------------------------------------------------
@@ -481,10 +611,13 @@ __all__ = [
     "assert_action_tense",
     "assert_banned_tokens",
     "assert_contract",
+    "assert_portfolio_invariants",
     "assert_subject_matches",
+    "assert_terminal_receipt_retry",
     "assert_type_shape",
     "assert_registered_version",
     "load_schema_for",
+    "portfolio_terminal_receipt_digest",
     "subject_for",
     "validate_envelope",
 ]

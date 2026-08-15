@@ -1,0 +1,224 @@
+{
+  "bloodbank.v1.portfolio.intake.received": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "delonet-director",
+    "idempotency_key": "portfolio.intake:intake-001:received",
+    "occurred_at": "2026-08-15T10:00:00Z",
+    "intake_id": "intake-001",
+    "channel": "telegram",
+    "request_summary": "Create the company portfolio orchestration spine.",
+    "requester": "operator:jarad",
+    "project": null
+  },
+  "bloodbank.v1.portfolio.intake.triaged": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "bloodbank-pm",
+    "idempotency_key": "portfolio.intake:intake-001:triaged",
+    "occurred_at": "2026-08-15T10:01:00Z",
+    "intake_id": "intake-001",
+    "work_id": "DNET-3",
+    "triage_status": "accepted",
+    "priority": "high",
+    "decision_summary": "Route the canonical event-contract unit to Bloodbank.",
+    "project": {
+      "project_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+      "repo": "bloodbank",
+      "ticket_ref": "BB-29"
+    }
+  },
+  "bloodbank.v1.portfolio.work.delegated": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "bloodbank-pm",
+    "idempotency_key": "portfolio.work:DNET-3:delegation:delegation-bb-29",
+    "occurred_at": "2026-08-15T10:02:00Z",
+    "intake_id": "intake-001",
+    "work_id": "DNET-3",
+    "delegation_id": "delegation-bb-29",
+    "parent_work_id": null,
+    "slot_class": "pipeline",
+    "slot_lease_id": "lease-pipeline-001",
+    "attempt": 1,
+    "objective": "Publish the minimal portfolio contract family.",
+    "project": {
+      "project_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+      "repo": "bloodbank",
+      "ticket_ref": "BB-29"
+    }
+  },
+  "bloodbank.v1.portfolio.work.updated": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "bloodbank-pm",
+    "idempotency_key": "portfolio.work:DNET-3:status:in_progress:1",
+    "occurred_at": "2026-08-15T10:03:00Z",
+    "work_id": "DNET-3",
+    "delegation_id": "delegation-bb-29",
+    "attempt": 1,
+    "status": "in_progress",
+    "status_summary": "Schemas and contract validation are in progress.",
+    "progress_percent": 50,
+    "project": {
+      "project_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+      "repo": "bloodbank",
+      "ticket_ref": "BB-29"
+    }
+  },
+  "bloodbank.v1.portfolio.receipt.recorded": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "bloodbank-pm",
+    "idempotency_key": "portfolio.work.terminal:DNET-3:attempt:1",
+    "occurred_at": "2026-08-15T10:30:00Z",
+    "receipt_id": "55555555-5555-4555-8555-555555555555",
+    "work_id": "DNET-3",
+    "delegation_id": "delegation-bb-29",
+    "attempt": 1,
+    "terminal_event_id": "44444444-4444-4444-8444-444444444444",
+    "terminal_status": "completed",
+    "outcome_digest": "e388f72e6cfcd5725639eb07ef5759fd4b288a0c5df5c8efc8ee17d3e7eda9a0",
+    "result": {
+      "summary": "Portfolio contracts validated and published.",
+      "retryable": false,
+      "artifact_refs": ["git:pending"]
+    },
+    "project": {
+      "project_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+      "repo": "bloodbank",
+      "ticket_ref": "BB-29"
+    }
+  },
+  "bloodbank.v1.portfolio.approval.requested": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "delonet-director",
+    "idempotency_key": "portfolio.approval:approval-001:requested",
+    "occurred_at": "2026-08-15T10:04:00Z",
+    "approval_id": "approval-001",
+    "work_id": "DNET-3",
+    "delegation_id": "delegation-bb-29",
+    "requested_by_agent_id": "bloodbank-pm",
+    "gate_type": "release",
+    "prompt": "Approve publication of the new contract family.",
+    "options": ["approve", "deny"],
+    "decision_deadline": null,
+    "project": {
+      "project_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+      "repo": "bloodbank",
+      "ticket_ref": "BB-29"
+    }
+  },
+  "bloodbank.v1.portfolio.approval.resolved": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "bloodbank-pm",
+    "idempotency_key": "portfolio.approval:approval-001:resolved",
+    "occurred_at": "2026-08-15T10:05:00Z",
+    "approval_id": "approval-001",
+    "work_id": "DNET-3",
+    "delegation_id": "delegation-bb-29",
+    "decision": "approved",
+    "resolved_by": "operator:jarad",
+    "resolution_summary": "Approved for canonical publication.",
+    "project": {
+      "project_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+      "repo": "bloodbank",
+      "ticket_ref": "BB-29"
+    }
+  },
+  "bloodbank.v1.portfolio.escalation.raised": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "delonet-director",
+    "idempotency_key": "portfolio.escalation:escalation-001:raised",
+    "occurred_at": "2026-08-15T10:06:00Z",
+    "escalation_id": "escalation-001",
+    "work_id": "DNET-3",
+    "delegation_id": "delegation-bb-29",
+    "severity": "warning",
+    "reason_code": "binding_drift",
+    "summary": "The fleet registry contains a stale Plane project binding.",
+    "requires_approval": false,
+    "project": {
+      "project_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+      "repo": "bloodbank",
+      "ticket_ref": "BB-29"
+    }
+  },
+  "bloodbank.v1.portfolio.escalation.resolved": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "bloodbank-pm",
+    "idempotency_key": "portfolio.escalation:escalation-001:resolved",
+    "occurred_at": "2026-08-15T10:07:00Z",
+    "escalation_id": "escalation-001",
+    "work_id": "DNET-3",
+    "delegation_id": "delegation-bb-29",
+    "resolution": "resumed",
+    "resolved_by": "delonet-director",
+    "resolution_summary": "Canonical bindings were repaired and verified.",
+    "project": {
+      "project_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+      "repo": "bloodbank",
+      "ticket_ref": "BB-29"
+    }
+  },
+  "bloodbank.v1.portfolio.capacity.recorded": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "delonet-director",
+    "idempotency_key": "portfolio.capacity:derivative:snapshot-001",
+    "occurred_at": "2026-08-15T10:08:00Z",
+    "snapshot_id": "snapshot-001",
+    "slot_class": "derivative",
+    "capacity_total": 2,
+    "capacity_in_use": 1,
+    "capacity_available": 1,
+    "active_lease_ids": ["lease-derivative-001"]
+  },
+  "bloodbank.v1.portfolio.lease.granted": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "bloodbank-pm",
+    "idempotency_key": "portfolio.lease:lease-pipeline-001:epoch:1:granted",
+    "occurred_at": "2026-08-15T10:02:00Z",
+    "lease_id": "lease-pipeline-001",
+    "work_id": "DNET-3",
+    "delegation_id": "delegation-bb-29",
+    "slot_class": "pipeline",
+    "lease_epoch": 1,
+    "granted_at": "2026-08-15T10:02:00Z",
+    "expires_at": "2026-08-15T11:02:00Z",
+    "capacity_snapshot_id": "snapshot-001"
+  },
+  "bloodbank.v1.portfolio.lease.released": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "bloodbank-pm",
+    "idempotency_key": "portfolio.lease:lease-pipeline-001:epoch:1:released",
+    "occurred_at": "2026-08-15T10:30:00Z",
+    "lease_id": "lease-pipeline-001",
+    "work_id": "DNET-3",
+    "delegation_id": "delegation-bb-29",
+    "slot_class": "pipeline",
+    "lease_epoch": 1,
+    "released_at": "2026-08-15T10:30:00Z",
+    "release_reason": "completed"
+  },
+  "bloodbank.v1.portfolio.lease.expired": {
+    "schema_version": 1,
+    "portfolio_id": "delonet",
+    "target_agent_id": "bloodbank-pm",
+    "idempotency_key": "portfolio.lease:lease-pipeline-002:epoch:1:expired",
+    "occurred_at": "2026-08-15T12:00:00Z",
+    "lease_id": "lease-pipeline-002",
+    "work_id": "DNET-4",
+    "delegation_id": "delegation-bb-30",
+    "slot_class": "pipeline",
+    "lease_epoch": 1,
+    "expired_at": "2026-08-15T12:00:00Z",
+    "expiration_reason": "deadline"
+  }
+}

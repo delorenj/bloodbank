@@ -1,0 +1,331 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/_common/portfolio_data.v1.json",
+  "title": "DeLoNET Portfolio Orchestration Payloads (v1)",
+  "description": "Shared payload definitions for immutable Director and child-PM portfolio facts. This is a coordination contract, not a second lifecycle state machine.",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "nullable_identifier": {
+      "oneOf": [
+        { "$ref": "#/$defs/identifier" },
+        { "type": "null" }
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "$ref": "#/$defs/identifier" },
+        "repo": { "$ref": "#/$defs/identifier" },
+        "ticket_ref": { "$ref": "#/$defs/nullable_identifier" }
+      },
+      "required": ["project_id", "repo", "ticket_ref"]
+    },
+    "base": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": 1 },
+        "portfolio_id": { "$ref": "#/$defs/identifier" },
+        "target_agent_id": { "$ref": "#/$defs/identifier" },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "occurred_at": { "$ref": "types.v1.json#/$defs/timestamp" }
+      },
+      "required": [
+        "schema_version",
+        "portfolio_id",
+        "target_agent_id",
+        "idempotency_key",
+        "occurred_at"
+      ]
+    },
+    "intake_received": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "intake_id": { "$ref": "#/$defs/identifier" },
+        "channel": {
+          "enum": ["telegram", "api", "cli", "webhook", "plane", "other"]
+        },
+        "request_summary": { "$ref": "#/$defs/summary" },
+        "requester": { "type": ["string", "null"], "maxLength": 200 },
+        "project": {
+          "oneOf": [{ "$ref": "#/$defs/project" }, { "type": "null" }]
+        }
+      },
+      "required": ["intake_id", "channel", "request_summary", "requester", "project"],
+      "unevaluatedProperties": false
+    },
+    "intake_triaged": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "intake_id": { "$ref": "#/$defs/identifier" },
+        "work_id": { "$ref": "#/$defs/nullable_identifier" },
+        "triage_status": {
+          "enum": ["accepted", "needs_clarification", "deferred", "rejected"]
+        },
+        "priority": { "enum": ["critical", "high", "normal", "low"] },
+        "decision_summary": { "$ref": "#/$defs/summary" },
+        "project": {
+          "oneOf": [{ "$ref": "#/$defs/project" }, { "type": "null" }]
+        }
+      },
+      "required": [
+        "intake_id", "work_id", "triage_status", "priority",
+        "decision_summary", "project"
+      ],
+      "unevaluatedProperties": false
+    },
+    "work_delegated": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "intake_id": { "$ref": "#/$defs/identifier" },
+        "work_id": { "$ref": "#/$defs/identifier" },
+        "delegation_id": { "$ref": "#/$defs/identifier" },
+        "parent_work_id": { "$ref": "#/$defs/nullable_identifier" },
+        "slot_class": { "enum": ["pipeline", "derivative"] },
+        "slot_lease_id": { "$ref": "#/$defs/identifier" },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "objective": { "$ref": "#/$defs/summary" },
+        "project": { "$ref": "#/$defs/project" }
+      },
+      "required": [
+        "intake_id", "work_id", "delegation_id", "parent_work_id",
+        "slot_class", "slot_lease_id", "attempt", "objective", "project"
+      ],
+      "unevaluatedProperties": false
+    },
+    "work_updated": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "work_id": { "$ref": "#/$defs/identifier" },
+        "delegation_id": { "$ref": "#/$defs/identifier" },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "status": {
+          "enum": [
+            "queued", "accepted", "in_progress", "blocked",
+            "awaiting_approval", "retrying", "completed", "failed", "canceled"
+          ]
+        },
+        "status_summary": { "$ref": "#/$defs/summary" },
+        "progress_percent": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+        "project": { "$ref": "#/$defs/project" }
+      },
+      "required": [
+        "work_id", "delegation_id", "attempt", "status",
+        "status_summary", "progress_percent", "project"
+      ],
+      "unevaluatedProperties": false
+    },
+    "receipt_recorded": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "receipt_id": { "$ref": "types.v1.json#/$defs/uuid" },
+        "work_id": { "$ref": "#/$defs/identifier" },
+        "delegation_id": { "$ref": "#/$defs/identifier" },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "terminal_event_id": { "$ref": "types.v1.json#/$defs/uuid" },
+        "terminal_status": { "enum": ["completed", "failed", "canceled"] },
+        "outcome_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "summary": { "$ref": "#/$defs/summary" },
+            "retryable": { "type": "boolean" },
+            "artifact_refs": {
+              "type": "array",
+              "maxItems": 50,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+            }
+          },
+          "required": ["summary", "retryable", "artifact_refs"]
+        },
+        "project": { "$ref": "#/$defs/project" }
+      },
+      "required": [
+        "receipt_id", "work_id", "delegation_id", "attempt",
+        "terminal_event_id", "terminal_status", "outcome_digest", "result", "project"
+      ],
+      "unevaluatedProperties": false
+    },
+    "approval_requested": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "approval_id": { "$ref": "#/$defs/identifier" },
+        "work_id": { "$ref": "#/$defs/identifier" },
+        "delegation_id": { "$ref": "#/$defs/identifier" },
+        "requested_by_agent_id": { "$ref": "#/$defs/identifier" },
+        "gate_type": { "enum": ["human", "security", "release", "budget", "scope", "other"] },
+        "prompt": { "$ref": "#/$defs/summary" },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "decision_deadline": {
+          "oneOf": [{ "$ref": "types.v1.json#/$defs/timestamp" }, { "type": "null" }]
+        },
+        "project": { "$ref": "#/$defs/project" }
+      },
+      "required": [
+        "approval_id", "work_id", "delegation_id", "requested_by_agent_id",
+        "gate_type", "prompt", "options", "decision_deadline", "project"
+      ],
+      "unevaluatedProperties": false
+    },
+    "approval_resolved": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "approval_id": { "$ref": "#/$defs/identifier" },
+        "work_id": { "$ref": "#/$defs/identifier" },
+        "delegation_id": { "$ref": "#/$defs/identifier" },
+        "decision": { "enum": ["approved", "denied", "canceled"] },
+        "resolved_by": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "resolution_summary": { "$ref": "#/$defs/summary" },
+        "project": { "$ref": "#/$defs/project" }
+      },
+      "required": [
+        "approval_id", "work_id", "delegation_id", "decision",
+        "resolved_by", "resolution_summary", "project"
+      ],
+      "unevaluatedProperties": false
+    },
+    "escalation_raised": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "escalation_id": { "$ref": "#/$defs/identifier" },
+        "work_id": { "$ref": "#/$defs/identifier" },
+        "delegation_id": { "$ref": "#/$defs/identifier" },
+        "severity": { "enum": ["notice", "warning", "critical"] },
+        "reason_code": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+        "summary": { "$ref": "#/$defs/summary" },
+        "requires_approval": { "type": "boolean" },
+        "project": { "$ref": "#/$defs/project" }
+      },
+      "required": [
+        "escalation_id", "work_id", "delegation_id", "severity",
+        "reason_code", "summary", "requires_approval", "project"
+      ],
+      "unevaluatedProperties": false
+    },
+    "escalation_resolved": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "escalation_id": { "$ref": "#/$defs/identifier" },
+        "work_id": { "$ref": "#/$defs/identifier" },
+        "delegation_id": { "$ref": "#/$defs/identifier" },
+        "resolution": { "enum": ["resumed", "reassigned", "deferred", "canceled", "completed"] },
+        "resolved_by": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "resolution_summary": { "$ref": "#/$defs/summary" },
+        "project": { "$ref": "#/$defs/project" }
+      },
+      "required": [
+        "escalation_id", "work_id", "delegation_id", "resolution",
+        "resolved_by", "resolution_summary", "project"
+      ],
+      "unevaluatedProperties": false
+    },
+    "capacity_recorded": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "snapshot_id": { "$ref": "#/$defs/identifier" },
+        "slot_class": { "enum": ["pipeline", "derivative"] },
+        "capacity_total": { "type": "integer", "minimum": 0 },
+        "capacity_in_use": { "type": "integer", "minimum": 0 },
+        "capacity_available": { "type": "integer", "minimum": 0 },
+        "active_lease_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      },
+      "required": [
+        "snapshot_id", "slot_class", "capacity_total", "capacity_in_use",
+        "capacity_available", "active_lease_ids"
+      ],
+      "unevaluatedProperties": false
+    },
+    "lease_granted": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "lease_id": { "$ref": "#/$defs/identifier" },
+        "work_id": { "$ref": "#/$defs/identifier" },
+        "delegation_id": { "$ref": "#/$defs/identifier" },
+        "slot_class": { "enum": ["pipeline", "derivative"] },
+        "lease_epoch": { "type": "integer", "minimum": 1 },
+        "granted_at": { "$ref": "types.v1.json#/$defs/timestamp" },
+        "expires_at": { "$ref": "types.v1.json#/$defs/timestamp" },
+        "capacity_snapshot_id": { "$ref": "#/$defs/identifier" }
+      },
+      "required": [
+        "lease_id", "work_id", "delegation_id", "slot_class",
+        "lease_epoch", "granted_at", "expires_at", "capacity_snapshot_id"
+      ],
+      "unevaluatedProperties": false
+    },
+    "lease_released": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "lease_id": { "$ref": "#/$defs/identifier" },
+        "work_id": { "$ref": "#/$defs/identifier" },
+        "delegation_id": { "$ref": "#/$defs/identifier" },
+        "slot_class": { "enum": ["pipeline", "derivative"] },
+        "lease_epoch": { "type": "integer", "minimum": 1 },
+        "released_at": { "$ref": "types.v1.json#/$defs/timestamp" },
+        "release_reason": { "enum": ["completed", "failed", "canceled", "reassigned", "operator"] }
+      },
+      "required": [
+        "lease_id", "work_id", "delegation_id", "slot_class",
+        "lease_epoch", "released_at", "release_reason"
+      ],
+      "unevaluatedProperties": false
+    },
+    "lease_expired": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "lease_id": { "$ref": "#/$defs/identifier" },
+        "work_id": { "$ref": "#/$defs/identifier" },
+        "delegation_id": { "$ref": "#/$defs/identifier" },
+        "slot_class": { "enum": ["pipeline", "derivative"] },
+        "lease_epoch": { "type": "integer", "minimum": 1 },
+        "expired_at": { "$ref": "types.v1.json#/$defs/timestamp" },
+        "expiration_reason": { "enum": ["deadline", "heartbeat_lost", "scheduler_recovery"] }
+      },
+      "required": [
+        "lease_id", "work_id", "delegation_id", "slot_class",
+        "lease_epoch", "expired_at", "expiration_reason"
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

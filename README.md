@@ -31,6 +31,9 @@ workflows (bootstrap, smoketest, replay, trace).
   `../candystore` repository and is run by the `candystore` compose profile.
   See [`docs/candystore-integration.md`](docs/candystore-integration.md) for the
   ownership boundary and runtime wiring.
+- **Portfolio coordination:** Director and child-PM event contracts live under
+  `schemas/bloodbank/v1/portfolio/`; producer, consumer, retry, and compatibility
+  rules are in [`docs/portfolio-orchestration-contracts.md`](docs/portfolio-orchestration-contracts.md).
 
 ADR-0001 in the metarepo ratifies these decisions (TBD; not yet committed).
 

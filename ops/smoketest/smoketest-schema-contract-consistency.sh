@@ -82,6 +82,14 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
         env["command_id"] = str(uuid.uuid4())
         env["idempotency_key"] = "test:1"
         env["delivery"] = "single_consumer"
+    if domain == "portfolio":
+        fixtures = json.loads(Path("ops/fixtures/portfolio-contracts.v1.json").read_text())
+        payload = fixtures[ce_type]
+        env["data"] = payload
+        env["idempotency_key"] = payload["idempotency_key"]
+        if ce_type == "bloodbank.v1.portfolio.receipt.recorded":
+            env["id"] = payload["receipt_id"]
+            env["causationid"] = payload["terminal_event_id"]
     return env
 
 

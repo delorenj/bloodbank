@@ -28,8 +28,8 @@ email:
 # Plane project (1:1 with this agent).
 plane:
   workspace: "33god"
-  # identifier is set by .scripts/40-plane.sh after creation
-  identifier: "BLOPM"
+  project_id: "10d06f8d-c110-4ce5-beaa-0914534b090a"
+  identifier: "BB"
 # Bloodbank wiring (consumed + produced subjects).
 bloodbank:
   subscribe:
