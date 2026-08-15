@@ -87,9 +87,10 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
         payload = fixtures[ce_type]
         env["data"] = payload
         env["idempotency_key"] = payload["idempotency_key"]
+        env["correlationid"] = payload["correlation_id"]
+        env["causationid"] = payload["causation_id"]
         if ce_type == "bloodbank.v1.portfolio.receipt.recorded":
             env["id"] = payload["receipt_id"]
-            env["causationid"] = payload["terminal_event_id"]
     return env
 
 

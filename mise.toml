@@ -173,6 +173,10 @@ run = "python3 ops/smoketest/smoketest-maintenance-reporting-contracts.py"
 description = "Full-envelope schema and retry-invariant tests for portfolio orchestration events"
 run = "python3 ops/smoketest/smoketest-portfolio-contracts.py"
 
+[tasks."smoketest:portfolio-transport"]
+description = "Live portfolio test publisher -> Bloodbank JetStream -> canonical consumer validator"
+run = "bash ops/smoketest/smoketest-portfolio-transport.sh"
+
 [tasks."smoketest:plane-binding"]
 description = "Verify Bloodbank Plane identifiers agree across tracked project and PM bindings"
 run = "python3 ops/smoketest/smoketest-plane-binding.py"

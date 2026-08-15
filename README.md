@@ -53,6 +53,8 @@ mise run smoketest:command
 mise run smoketest:dapr
 mise run smoketest:dapr-subscribe
 mise run smoketest:heartbeat
+mise run smoketest:portfolio-contracts
+mise run smoketest:portfolio-transport  # requires the already-running NATS stack
 ```
 
 The sandbox compose project is `bloodbank`; everything attaches to the

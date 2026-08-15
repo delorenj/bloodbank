@@ -246,9 +246,12 @@ PORTFOLIO_COMMON_DATA_FIELDS = (
     "schema_version",
     "portfolio_id",
     "target_agent_id",
+    "correlation_id",
+    "causation_id",
     "idempotency_key",
     "occurred_at",
 )
+PORTFOLIO_ROOT_TYPE = "bloodbank.v1.portfolio.intake.received"
 
 
 def portfolio_terminal_receipt_digest(data: dict) -> str:
@@ -304,10 +307,25 @@ def assert_portfolio_invariants(envelope: dict) -> None:
         raise ContractViolation(
             "portfolio envelope.idempotency_key must equal data.idempotency_key"
         )
-    if "causationid" not in envelope:
-        raise ContractViolation("portfolio events must carry causationid (null only for roots)")
-
     ce_type = envelope.get("type")
+    if envelope.get("correlationid") != data["correlation_id"]:
+        raise ContractViolation(
+            "portfolio envelope.correlationid must equal data.correlation_id"
+        )
+    if envelope.get("causationid") != data["causation_id"]:
+        raise ContractViolation(
+            "portfolio envelope.causationid must equal data.causation_id"
+        )
+    if ce_type == PORTFOLIO_ROOT_TYPE:
+        if envelope.get("causationid") is not None:
+            raise ContractViolation(
+                "portfolio intake.received is a root and causation must be null"
+            )
+    elif envelope.get("causationid") is None:
+        raise ContractViolation(
+            "non-root portfolio events require a non-null causation chain"
+        )
+
     if ce_type == PORTFOLIO_TERMINAL_RECEIPT_TYPE:
         receipt_id = data.get("receipt_id")
         if envelope.get("id") != receipt_id:
@@ -351,8 +369,11 @@ def assert_terminal_receipt_retry(prior: dict, candidate: dict) -> None:
     exact replay is an acknowledge/no-op; a different envelope for the same
     key is a terminal contract conflict and must never overwrite the receipt.
     """
-    assert_contract(prior)
-    assert_contract(candidate)
+    # Exact byte/value equality is insufficient: two identically malformed
+    # messages are not a valid retry. Validate both complete envelopes against
+    # the canonical JSON Schemas before applying first-write-wins comparison.
+    validate_envelope(prior)
+    validate_envelope(candidate)
     if prior.get("type") != PORTFOLIO_TERMINAL_RECEIPT_TYPE:
         raise ContractViolation("prior envelope is not a portfolio terminal receipt")
     if candidate.get("type") != PORTFOLIO_TERMINAL_RECEIPT_TYPE:

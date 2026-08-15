@@ -12,6 +12,8 @@ Naming Contract v1 envelopes — see `docs/event-naming.md`.
 | `smoketest-dapr.sh`                  | Dapr `bloodbank-pubsub` loads; publish HTTP API works; Dapr→NATS routing hits the v1 subject              | `nats` + `nats-init` + `dapr-placement` + `daprd-smoketest`                                |
 | `smoketest-dapr-subscribe.sh`        | Dapr delivers a published v1 envelope back to an app callback (the full publish→subscribe loop)           | `nats` + `nats-init` + `dapr-placement` + `echo-sub` + `daprd-subscribe`                   |
 | `smoketest-heartbeat.sh`             | `heartbeat-tick` emits `bloodbank.v1.system.heartbeat.received` and `heartbeat-recorder` records them    | `heartbeat` compose profile                                                                |
+| `smoketest-portfolio-contracts.py`   | Portfolio payload lineage, root/non-root causation, schema validity, and terminal retry invariants       | python3 + jsonschema                                                                        |
+| `smoketest-portfolio-transport.sh`   | Test publisher → live `BLOODBANK_EVENTS` JetStream → canonical full consumer validator                   | already-running `bloodbank-nats`, provisioned stream, Docker                                |
 
 ## Contract-only verifier — `smoketest-bloodbank-naming.sh`
 
@@ -28,6 +30,30 @@ mise run smoketest:bloodbank-naming
 ```
 
 Use this as a CI gate before any transport-level smoke runs.
+
+## Portfolio contract and transport proof
+
+The deterministic contract suite validates every tracked portfolio fixture,
+including payload/envelope correlation and causation equality, null causation
+for the sole root `intake.received`, non-null causation for every other type,
+and rejection of schema-invalid terminal retries:
+
+```bash
+mise run smoketest:portfolio-contracts
+```
+
+When the Bloodbank NATS stack and `BLOODBANK_EVENTS` stream are already
+available, the live-binding harness publishes one benign, uniquely identified
+root event and validates the exact delivered envelope:
+
+```bash
+mise run smoketest:portfolio-transport
+```
+
+The harness will not provision or restart runtime components. A missing broker,
+stream, or Docker network is an explicit residual runtime gate. Passing it
+proves the direct Bloodbank NATS binding and validator, not a production
+Director publisher, Candystore projection, or Dapr subscription.
 
 ## Scope — `smoketest.sh` (NATS-direct)
 

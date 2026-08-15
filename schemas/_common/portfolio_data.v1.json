@@ -37,6 +37,13 @@
         "schema_version": { "const": 1 },
         "portfolio_id": { "$ref": "#/$defs/identifier" },
         "target_agent_id": { "$ref": "#/$defs/identifier" },
+        "correlation_id": { "$ref": "types.v1.json#/$defs/uuid" },
+        "causation_id": {
+          "oneOf": [
+            { "$ref": "types.v1.json#/$defs/uuid" },
+            { "type": "null" }
+          ]
+        },
         "idempotency_key": {
           "type": "string",
           "minLength": 1,
@@ -49,12 +56,28 @@
         "schema_version",
         "portfolio_id",
         "target_agent_id",
+        "correlation_id",
+        "causation_id",
         "idempotency_key",
         "occurred_at"
       ]
     },
-    "intake_received": {
+    "root_base": {
       "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "causation_id": { "type": "null" }
+      }
+    },
+    "non_root_base": {
+      "allOf": [{ "$ref": "#/$defs/base" }],
+      "type": "object",
+      "properties": {
+        "causation_id": { "$ref": "types.v1.json#/$defs/uuid" }
+      }
+    },
+    "intake_received": {
+      "allOf": [{ "$ref": "#/$defs/root_base" }],
       "type": "object",
       "properties": {
         "intake_id": { "$ref": "#/$defs/identifier" },
@@ -71,7 +94,7 @@
       "unevaluatedProperties": false
     },
     "intake_triaged": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "intake_id": { "$ref": "#/$defs/identifier" },
@@ -92,7 +115,7 @@
       "unevaluatedProperties": false
     },
     "work_delegated": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "intake_id": { "$ref": "#/$defs/identifier" },
@@ -112,7 +135,7 @@
       "unevaluatedProperties": false
     },
     "work_updated": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "work_id": { "$ref": "#/$defs/identifier" },
@@ -135,7 +158,7 @@
       "unevaluatedProperties": false
     },
     "receipt_recorded": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "receipt_id": { "$ref": "types.v1.json#/$defs/uuid" },
@@ -169,7 +192,7 @@
       "unevaluatedProperties": false
     },
     "approval_requested": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "approval_id": { "$ref": "#/$defs/identifier" },
@@ -197,7 +220,7 @@
       "unevaluatedProperties": false
     },
     "approval_resolved": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "approval_id": { "$ref": "#/$defs/identifier" },
@@ -215,7 +238,7 @@
       "unevaluatedProperties": false
     },
     "escalation_raised": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "escalation_id": { "$ref": "#/$defs/identifier" },
@@ -234,7 +257,7 @@
       "unevaluatedProperties": false
     },
     "escalation_resolved": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "escalation_id": { "$ref": "#/$defs/identifier" },
@@ -252,7 +275,7 @@
       "unevaluatedProperties": false
     },
     "capacity_recorded": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "snapshot_id": { "$ref": "#/$defs/identifier" },
@@ -273,7 +296,7 @@
       "unevaluatedProperties": false
     },
     "lease_granted": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "lease_id": { "$ref": "#/$defs/identifier" },
@@ -292,7 +315,7 @@
       "unevaluatedProperties": false
     },
     "lease_released": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "lease_id": { "$ref": "#/$defs/identifier" },
@@ -310,7 +333,7 @@
       "unevaluatedProperties": false
     },
     "lease_expired": {
-      "allOf": [{ "$ref": "#/$defs/base" }],
+      "allOf": [{ "$ref": "#/$defs/non_root_base" }],
       "type": "object",
       "properties": {
         "lease_id": { "$ref": "#/$defs/identifier" },

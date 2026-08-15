@@ -462,6 +462,19 @@ agent.tool.invoke      : invocation:<invocation_id>:tool_call:<id>
 A retry of the same command MUST present the same `idempotency_key`. Bloodbank
 deduplicates on `(idempotency_key, command_id)` before forwarding.
 
+### 11.3 Portfolio payload lineage
+
+Every `portfolio` payload repeats the envelope lineage as
+`data.correlation_id` and `data.causation_id`. The values MUST equal
+`correlationid` and `causationid` exactly; publishers and consumers reject a
+cross-layer mismatch instead of repairing it.
+
+`bloodbank.v1.portfolio.intake.received` is the only portfolio root contract.
+Its envelope `causationid` and payload `data.causation_id` are both null. Every
+other portfolio event has a non-null causation UUID identifying its immediate
+parent event or command. The correlation UUID remains unchanged for the full
+intake-to-terminal chain.
+
 ---
 
 ## 12. Schema directory layout

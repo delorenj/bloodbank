@@ -7,11 +7,17 @@ import copy
 import json
 import sys
 import unittest
-import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services" / "agent-hooks"))
+sys.path.insert(0, str(ROOT / "ops" / "smoketest"))
+
+from portfolio_contract import (  # noqa: E402
+    PAYLOADS,
+    RECEIPT_TYPE,
+    build_envelope as envelope,
+)
 
 from core.validate import (  # noqa: E402
     ContractViolation,
@@ -24,9 +30,6 @@ from core.validate import (  # noqa: E402
 )
 
 
-FIXTURE_PATH = ROOT / "ops" / "fixtures" / "portfolio-contracts.v1.json"
-PAYLOADS = json.loads(FIXTURE_PATH.read_text())
-RECEIPT_TYPE = "bloodbank.v1.portfolio.receipt.recorded"
 EXPECTED_TYPES = {
     "bloodbank.v1.portfolio.intake.received",
     "bloodbank.v1.portfolio.intake.triaged",
@@ -42,38 +45,6 @@ EXPECTED_TYPES = {
     "bloodbank.v1.portfolio.lease.released",
     "bloodbank.v1.portfolio.lease.expired",
 }
-DEFAULT_CAUSATION_ID = "22222222-2222-4222-8222-222222222222"
-CORRELATION_ID = "11111111-1111-4111-8111-111111111111"
-
-
-def envelope(ce_type: str) -> dict:
-    data = copy.deepcopy(PAYLOADS[ce_type])
-    event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, ce_type + data["idempotency_key"]))
-    causation_id = DEFAULT_CAUSATION_ID
-    if ce_type == RECEIPT_TYPE:
-        event_id = data["receipt_id"]
-        causation_id = data["terminal_event_id"]
-    return {
-        "specversion": "1.0",
-        "id": event_id,
-        "source": "urn:33god:agent:delonet-director",
-        "type": ce_type,
-        "subject": subject_for(ce_type, "event"),
-        "time": data["occurred_at"],
-        "datacontenttype": "application/json",
-        "dataschema": f"apicurio://holyfields/{ce_type}/versions/1",
-        "correlationid": CORRELATION_ID,
-        "causationid": causation_id,
-        "producer": "delonet-director",
-        "service": "delonet-director",
-        "domain": "portfolio",
-        "schemaref": f"{ce_type}.v1",
-        "kind": "event",
-        "actor": {"type": "agent_api", "agent_id": "delonet-director"},
-        "ordering_key": f"portfolio:{data['portfolio_id']}",
-        "idempotency_key": data["idempotency_key"],
-        "data": data,
-    }
 
 
 class PortfolioContractTests(unittest.TestCase):
@@ -82,7 +53,9 @@ class PortfolioContractTests(unittest.TestCase):
     def test_fixture_and_schema_family_is_exact(self) -> None:
         self.assertEqual(set(PAYLOADS), EXPECTED_TYPES)
         schema_types = set()
-        for path in sorted((ROOT / "schemas" / "bloodbank" / "v1" / "portfolio").glob("*.v1.json")):
+        for path in sorted(
+            (ROOT / "schemas" / "bloodbank" / "v1" / "portfolio").glob("*.v1.json")
+        ):
             schema = json.loads(path.read_text())
             ce_type = schema["properties"]["type"]["const"]
             schema_types.add(ce_type)
@@ -96,9 +69,61 @@ class PortfolioContractTests(unittest.TestCase):
         for ce_type in sorted(EXPECTED_TYPES):
             with self.subTest(ce_type=ce_type):
                 built = envelope(ce_type)
-                self.assertEqual(built["data"]["target_agent_id"], PAYLOADS[ce_type]["target_agent_id"])
-                self.assertEqual(built["idempotency_key"], built["data"]["idempotency_key"])
+                self.assertEqual(
+                    built["data"]["target_agent_id"],
+                    PAYLOADS[ce_type]["target_agent_id"],
+                )
+                self.assertEqual(
+                    built["idempotency_key"], built["data"]["idempotency_key"]
+                )
+                self.assertEqual(
+                    built["correlationid"], built["data"]["correlation_id"]
+                )
+                self.assertEqual(built["causationid"], built["data"]["causation_id"])
                 validate_envelope(built)
+
+    def test_root_and_non_root_causation_semantics(self) -> None:
+        root = envelope("bloodbank.v1.portfolio.intake.received")
+        self.assertIsNone(root["causationid"])
+        self.assertIsNone(root["data"]["causation_id"])
+        validate_envelope(root)
+
+        for ce_type in sorted(
+            EXPECTED_TYPES - {"bloodbank.v1.portfolio.intake.received"}
+        ):
+            with self.subTest(ce_type=ce_type):
+                built = envelope(ce_type)
+                self.assertIsNotNone(built["causationid"])
+                validate_envelope(built)
+
+    def test_payload_lineage_must_match_envelope(self) -> None:
+        built = envelope("bloodbank.v1.portfolio.work.delegated")
+        mismatched_correlation = copy.deepcopy(built)
+        mismatched_correlation["data"]["correlation_id"] = (
+            "33333333-3333-4333-8333-333333333333"
+        )
+        with self.assertRaises(ContractViolation):
+            assert_contract(mismatched_correlation)
+
+        mismatched_causation = copy.deepcopy(built)
+        mismatched_causation["data"]["causation_id"] = (
+            "33333333-3333-4333-8333-333333333333"
+        )
+        with self.assertRaises(ContractViolation):
+            assert_contract(mismatched_causation)
+
+    def test_only_intake_received_may_be_a_root(self) -> None:
+        invalid_root = envelope("bloodbank.v1.portfolio.intake.received")
+        invalid_root["causationid"] = "22222222-2222-4222-8222-222222222222"
+        invalid_root["data"]["causation_id"] = invalid_root["causationid"]
+        with self.assertRaises(self.failure_types):
+            validate_envelope(invalid_root)
+
+        invalid_non_root = envelope("bloodbank.v1.portfolio.intake.triaged")
+        invalid_non_root["causationid"] = None
+        invalid_non_root["data"]["causation_id"] = None
+        with self.assertRaises(self.failure_types):
+            validate_envelope(invalid_non_root)
 
     def test_identifiers_never_shape_type_or_subject(self) -> None:
         for ce_type in sorted(EXPECTED_TYPES):
@@ -137,6 +162,12 @@ class PortfolioContractTests(unittest.TestCase):
         validate_envelope(original)
         assert_terminal_receipt_retry(original, copy.deepcopy(original))
 
+    def test_terminal_receipt_exact_retry_rejects_schema_invalid_copies(self) -> None:
+        invalid = envelope(RECEIPT_TYPE)
+        invalid["data"].pop("project")
+        with self.assertRaises(EnvelopeInvalid):
+            assert_terminal_receipt_retry(invalid, copy.deepcopy(invalid))
+
     def test_terminal_receipt_mutation_cannot_reuse_stale_digest(self) -> None:
         mutated = envelope(RECEIPT_TYPE)
         mutated["data"]["result"]["summary"] = "A different terminal outcome."
@@ -149,7 +180,9 @@ class PortfolioContractTests(unittest.TestCase):
         conflict["data"]["terminal_status"] = "failed"
         conflict["data"]["result"]["summary"] = "A conflicting terminal outcome."
         conflict["data"]["result"]["retryable"] = True
-        conflict["data"]["outcome_digest"] = portfolio_terminal_receipt_digest(conflict["data"])
+        conflict["data"]["outcome_digest"] = portfolio_terminal_receipt_digest(
+            conflict["data"]
+        )
         assert_contract(conflict)
         with self.assertRaises(ContractViolation):
             assert_terminal_receipt_retry(original, conflict)
@@ -161,7 +194,7 @@ class PortfolioContractTests(unittest.TestCase):
             assert_contract(invalid_id)
 
         invalid_causation = envelope(RECEIPT_TYPE)
-        invalid_causation["causationid"] = DEFAULT_CAUSATION_ID
+        invalid_causation["causationid"] = "22222222-2222-4222-8222-222222222222"
         with self.assertRaises(ContractViolation):
             assert_contract(invalid_causation)
 
