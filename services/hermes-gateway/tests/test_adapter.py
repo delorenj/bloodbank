@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import stat
 import sys
 import types
@@ -9,7 +10,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from bloodbank_hermes_gateway.adapter import BloodbankAdapter
+from bloodbank_hermes_gateway.adapter import ROUTE_REJECTION_REASON, BloodbankAdapter
+from bloodbank_hermes_gateway.contract import Invocation, started_events
+from bloodbank_hermes_gateway.execution_state import (
+    ExecutionStateStore,
+    envelope_digest,
+)
 
 
 class FakeMessage:
@@ -48,11 +54,13 @@ class FakeJetStream:
         self.events.append(envelope)
 
 
-def make_adapter(tmp_path):
+def make_adapter(tmp_path, *, target_profiles=None):
+    if target_profiles is None:
+        target_profiles = {"bloodbank-pm": "bloodbank-pm"}
     config = SimpleNamespace(
         enabled=True,
         extra={
-            "target_profiles": {"bloodbank-pm": "bloodbank-pm"},
+            "target_profiles": target_profiles,
             "fleet_registry": str(tmp_path / "missing-registry.yaml"),
             "execution_state_file": str(tmp_path / "execution-state.sqlite3"),
             "max_inflight": 2,
@@ -64,6 +72,25 @@ def make_adapter(tmp_path):
     adapter._js = FakeJetStream()
     adapter.ack_progress_seconds = 0.01
     return adapter
+
+
+def write_registry(tmp_path, *, enabled=True, scope="fleet", target="bloodbank-pm"):
+    registry = {
+        "schema_version": 1,
+        "agents": {
+            "bloodbank-pm": {
+                "profile_name": "bloodbank-pm",
+                "bloodbank": {
+                    "enabled": enabled,
+                    "gateway_scope": scope,
+                    "target_agent_id": target,
+                },
+            }
+        },
+    }
+    (tmp_path / "missing-registry.yaml").write_text(
+        json.dumps(registry), encoding="utf-8"
+    )
 
 
 def test_stale_durable_contract_is_rejected(tmp_path):
@@ -79,7 +106,7 @@ def test_stale_durable_contract_is_rejected(tmp_path):
 
 
 def test_execution_state_is_private_and_refuses_symlink(tmp_path):
-    adapter = make_adapter(tmp_path)
+    make_adapter(tmp_path)
     state_path = tmp_path / "execution-state.sqlite3"
     assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
 
@@ -100,9 +127,7 @@ def test_execution_state_is_private_and_refuses_symlink(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_connect_binds_one_bounded_durable_pull_consumer(
-    tmp_path, monkeypatch
-):
+async def test_connect_binds_one_bounded_durable_pull_consumer(tmp_path, monkeypatch):
     adapter = make_adapter(tmp_path)
     calls = []
     never = asyncio.Event()
@@ -300,6 +325,273 @@ async def test_registry_outage_is_retryable_not_terminal(tmp_path, valid_command
 
 
 @pytest.mark.asyncio
+async def test_active_registry_route_dispatches_and_completes(tmp_path, valid_command):
+    write_registry(tmp_path)
+    adapter = make_adapter(tmp_path, target_profiles={})
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+        return "done"
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+
+    assert executions == 1
+    assert message.acked == 1
+    assert message.termed == 0
+    record = adapter.execution_state.get(valid_command["command_id"])
+    assert record is not None and record.state == "completed"
+
+
+@pytest.mark.asyncio
+async def test_policy_disabled_registry_route_is_terminal_before_claim(
+    tmp_path, valid_command
+):
+    write_registry(tmp_path, enabled=False)
+    adapter = make_adapter(tmp_path, target_profiles={})
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+
+    assert executions == 0
+    assert message.termed == 1
+    assert message.nacked == 0
+    assert adapter.execution_state.get(valid_command["command_id"]) is None
+
+
+@pytest.mark.asyncio
+async def test_route_disabled_between_claim_and_dispatch_is_durably_rejected(
+    tmp_path, valid_command
+):
+    write_registry(tmp_path)
+    adapter = make_adapter(tmp_path, target_profiles={})
+    original_claim = adapter.execution_state.claim_pending
+    executions = 0
+
+    def claim_then_disable(**kwargs):
+        record = original_claim(**kwargs)
+        write_registry(tmp_path, enabled=False)
+        return record
+
+    adapter.execution_state.claim_pending = claim_then_disable
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+
+    assert executions == 0
+    assert message.termed == 1
+    assert message.nacked == 0
+    assert adapter._js.events == []
+    rejected = adapter.execution_state.get(valid_command["command_id"])
+    assert rejected is not None
+    assert rejected.state == "rejected"
+    assert rejected.rejection_reason == ROUTE_REJECTION_REASON
+
+
+@pytest.mark.asyncio
+async def test_route_disabled_during_pre_dispatch_publish_cannot_execute(
+    tmp_path, valid_command
+):
+    write_registry(tmp_path)
+    adapter = make_adapter(tmp_path, target_profiles={})
+    original_publish_many = adapter._publish_many
+    publish_calls = 0
+    executions = 0
+
+    async def publish_then_disable(events):
+        nonlocal publish_calls
+        await original_publish_many(events)
+        publish_calls += 1
+        if publish_calls == 1:
+            write_registry(tmp_path, enabled=False)
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+
+    adapter._publish_many = publish_then_disable
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+
+    assert executions == 0
+    assert message.termed == 1
+    assert [event["type"] for event in adapter._js.events] == [
+        "bloodbank.v1.conversation.turn.started",
+        "bloodbank.v1.agent.invocation.started",
+    ]
+    rejected = adapter.execution_state.get(valid_command["command_id"])
+    assert rejected is not None and rejected.state == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_pending_restart_rechecks_policy_and_rejected_redelivery_cannot_bypass(
+    tmp_path, valid_command
+):
+    write_registry(tmp_path)
+    first = make_adapter(tmp_path, target_profiles={})
+    profile = first.profile_resolver.resolve(valid_command["data"]["target_agent_id"])
+    invocation = Invocation.from_envelope(valid_command, profile)
+    first.execution_state.claim_pending(
+        command_id=valid_command["command_id"],
+        digest=envelope_digest(valid_command),
+        profile=profile,
+        started_events=started_events(invocation),
+    )
+    write_registry(tmp_path, enabled=False)
+
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+
+    restarted = make_adapter(tmp_path, target_profiles={})
+    restarted.set_message_handler(handler)
+    disabled_redelivery = FakeMessage(valid_command)
+    await restarted._handle_broker_message(disabled_redelivery)
+
+    assert executions == 0
+    assert disabled_redelivery.termed == 1
+    rejected = restarted.execution_state.get(valid_command["command_id"])
+    assert rejected is not None and rejected.state == "rejected"
+
+    write_registry(tmp_path, enabled=True)
+    reenabled = make_adapter(tmp_path, target_profiles={})
+    reenabled.set_message_handler(handler)
+    later_redelivery = FakeMessage(valid_command)
+    await reenabled._handle_broker_message(later_redelivery)
+
+    assert executions == 0
+    assert later_redelivery.termed == 1
+    assert later_redelivery.acked == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_restart_with_unreadable_registry_remains_retryable(
+    tmp_path, valid_command
+):
+    write_registry(tmp_path)
+    first = make_adapter(tmp_path, target_profiles={})
+    profile = first.profile_resolver.resolve(valid_command["data"]["target_agent_id"])
+    invocation = Invocation.from_envelope(valid_command, profile)
+    first.execution_state.claim_pending(
+        command_id=valid_command["command_id"],
+        digest=envelope_digest(valid_command),
+        profile=profile,
+        started_events=started_events(invocation),
+    )
+    (tmp_path / "missing-registry.yaml").write_text(
+        "agents: [invalid\n", encoding="utf-8"
+    )
+
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+        return "done"
+
+    unavailable = make_adapter(tmp_path, target_profiles={})
+    unavailable.set_message_handler(handler)
+    transient_redelivery = FakeMessage(valid_command)
+    await unavailable._handle_broker_message(transient_redelivery)
+
+    assert executions == 0
+    assert transient_redelivery.nacked == 1
+    pending = unavailable.execution_state.get(valid_command["command_id"])
+    assert pending is not None and pending.state == "pending"
+
+    write_registry(tmp_path)
+    recovered = make_adapter(tmp_path, target_profiles={})
+    recovered.set_message_handler(handler)
+    recovered_redelivery = FakeMessage(valid_command)
+    await recovered._handle_broker_message(recovered_redelivery)
+
+    assert executions == 1
+    assert recovered_redelivery.acked == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_static_route_intentionally_bypasses_registry_policy(
+    tmp_path, valid_command
+):
+    write_registry(tmp_path, enabled=False)
+    adapter = make_adapter(tmp_path)
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+        return "done"
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+
+    assert executions == 1
+    assert message.acked == 1
+
+
+def test_execution_journal_migrates_pending_rows_to_rejection_capable_schema(tmp_path):
+    path = tmp_path / "legacy-state.sqlite3"
+    command_id = "e7e00a9e-d38e-47df-8c01-917a6243e6af"
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            """
+            CREATE TABLE executions (
+                command_id TEXT PRIMARY KEY,
+                envelope_digest TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('pending', 'completed')),
+                outcome TEXT CHECK (outcome IN ('success', 'failure', 'cancelled')),
+                started_events TEXT NOT NULL,
+                terminal_events TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CHECK (
+                    (state = 'pending' AND outcome IS NULL AND terminal_events IS NULL)
+                    OR
+                    (state = 'completed' AND outcome IS NOT NULL AND terminal_events IS NOT NULL)
+                )
+            );
+            """
+        )
+        db.execute(
+            """INSERT INTO executions VALUES (?, ?, ?, 'pending', NULL, ?, NULL, ?, ?)""",
+            (command_id, "legacy-digest", "bloodbank-pm", "[]", "then", "then"),
+        )
+
+    store = ExecutionStateStore(path)
+    migrated = store.get(command_id)
+    assert migrated is not None and migrated.state == "pending"
+    rejected = store.mark_rejected(
+        command_id=command_id,
+        digest="legacy-digest",
+        reason=ROUTE_REJECTION_REASON,
+    )
+
+    assert rejected.state == "rejected"
+    assert rejected.rejection_reason == ROUTE_REJECTION_REASON
+    with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+@pytest.mark.asyncio
 async def test_terminal_publish_failure_naks_instead_of_acking(tmp_path, valid_command):
     adapter = make_adapter(tmp_path)
     publish_count = 0
@@ -443,7 +735,9 @@ async def test_concurrent_redelivery_never_dispatches_second_hermes_turn(
 
 
 @pytest.mark.asyncio
-async def test_command_id_collision_is_terminal_and_never_reexecutes(tmp_path, valid_command):
+async def test_command_id_collision_is_terminal_and_never_reexecutes(
+    tmp_path, valid_command
+):
     adapter = make_adapter(tmp_path)
     executions = 0
 

@@ -41,9 +41,12 @@ from .contract import (
 from .execution_state import ExecutionStateStore, envelope_digest
 
 logger = logging.getLogger(__name__)
+ROUTE_REJECTION_REASON = "route_policy_invalid_before_dispatch"
 
 
-def _bounded_int(extra: dict[str, Any], key: str, default: int, minimum: int, maximum: int) -> int:
+def _bounded_int(
+    extra: dict[str, Any], key: str, default: int, minimum: int, maximum: int
+) -> int:
     raw = extra.get(key, default)
     try:
         value = int(raw)
@@ -139,7 +142,9 @@ class BloodbankAdapter(BasePlatformAdapter):
             not isinstance(key, str) or not isinstance(value, str)
             for key, value in target_profiles.items()
         ):
-            raise ValueError("bloodbank.extra.target_profiles must map strings to strings")
+            raise ValueError(
+                "bloodbank.extra.target_profiles must map strings to strings"
+            )
         registry_path = Path(
             os.path.expanduser(
                 str(extra.get("fleet_registry", "~/.hermes/agents-registry.yaml"))
@@ -387,7 +392,9 @@ class BloodbankAdapter(BasePlatformAdapter):
                     await message.nak(delay=self.nak_delay_seconds)
                     return
 
-                persisted = await asyncio.to_thread(self.execution_state.get, command_id)
+                persisted = await asyncio.to_thread(
+                    self.execution_state.get, command_id
+                )
                 if persisted is not None and persisted.envelope_digest != digest:
                     raise CommandInvalid(
                         "command_id collides with a different command envelope"
@@ -410,7 +417,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                             "command_id collides with a different command envelope"
                         )
 
-                if persisted.state != "completed":
+                if persisted.state == "pending":
                     invocation = Invocation.from_envelope(envelope, persisted.profile)
                     completion = asyncio.get_running_loop().create_future()
                     record = PendingInvocation(invocation, message, completion, digest)
@@ -421,6 +428,9 @@ class BloodbankAdapter(BasePlatformAdapter):
                 await self._publish_many(persisted.started_events)
                 await self._publish_many(persisted.terminal_events)
                 await message.ack()
+                return
+            if persisted.state == "rejected":
+                await message.term()
                 return
 
             assert record is not None
@@ -434,6 +444,7 @@ class BloodbankAdapter(BasePlatformAdapter):
             )
             try:
                 async with lock:
+                    await self._assert_dispatch_route(invocation)
                     await self._publish_many(persisted.started_events)
                     if self._message_handler is None:
                         raise RuntimeError("Hermes message handler is not installed")
@@ -462,6 +473,10 @@ class BloodbankAdapter(BasePlatformAdapter):
                         message_id=invocation.envelope["command_id"],
                         internal=True,
                     )
+                    # Re-read the registry after all pre-dispatch awaits. A
+                    # claimed or restarted pending command must not execute on
+                    # a route disabled while lifecycle publication was in flight.
+                    await self._assert_dispatch_route(invocation)
                     await super().handle_message(event)
                     await completion
             finally:
@@ -473,7 +488,26 @@ class BloodbankAdapter(BasePlatformAdapter):
                     self._conversation_lock_refs[lock_key] = remaining
 
             await message.ack()
-        except (CommandInvalid, RouteInvalid) as exc:
+        except RouteInvalid as exc:
+            if record is not None:
+                try:
+                    await asyncio.to_thread(
+                        self.execution_state.mark_rejected,
+                        command_id=record.invocation.invocation_id,
+                        digest=record.envelope_digest,
+                        reason=ROUTE_REJECTION_REASON,
+                    )
+                except Exception as journal_error:
+                    logger.error(
+                        "Bloodbank route rejection could not be persisted "
+                        "error_type=%s",
+                        type(journal_error).__name__,
+                    )
+                    await message.nak(delay=self.nak_delay_seconds)
+                    return
+            logger.warning("Terminally rejecting Bloodbank command: %s", exc)
+            await message.term()
+        except CommandInvalid as exc:
             logger.warning("Terminally rejecting Bloodbank command: %s", exc)
             await message.term()
         except RegistryInvalid as exc:
@@ -502,6 +536,17 @@ class BloodbankAdapter(BasePlatformAdapter):
             if record is not None:
                 self._records.pop(record.invocation.invocation_id, None)
 
+    async def _assert_dispatch_route(self, invocation: Invocation) -> None:
+        resolved_profile = await asyncio.to_thread(
+            self.profile_resolver.resolve,
+            invocation.target_agent_id,
+        )
+        if resolved_profile != invocation.profile:
+            raise RouteInvalid(
+                f"target_agent_id {invocation.target_agent_id!r} changed profile "
+                "after durable claim"
+            )
+
     async def _ack_progress(self, message: Any) -> None:
         while True:
             await asyncio.sleep(self.ack_progress_seconds)
@@ -510,7 +555,9 @@ class BloodbankAdapter(BasePlatformAdapter):
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.warning("Bloodbank in-progress acknowledgement failed", exc_info=True)
+                logger.warning(
+                    "Bloodbank in-progress acknowledgement failed", exc_info=True
+                )
 
     async def _publish_many(self, events: tuple[dict[str, Any], ...]) -> None:
         for envelope in events:
@@ -587,8 +634,10 @@ def validate_config(config: Any) -> bool:
         if not isinstance(target_profiles, dict):
             return False
         if any(
-            not isinstance(key, str) or not key.strip()
-            or not isinstance(value, str) or not value.strip()
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(value, str)
+            or not value.strip()
             for key, value in target_profiles.items()
         ):
             return False

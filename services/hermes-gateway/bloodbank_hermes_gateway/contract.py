@@ -179,29 +179,50 @@ class ProfileResolver:
         self.validate_profile_name = validate_profile_name
         self.profile_exists = profile_exists
 
-    def _fleet_mapping(self) -> dict[str, str]:
+    def _fleet_mapping(self) -> tuple[dict[str, str], frozenset[str]]:
         if not self.fleet_registry.exists():
             raise RegistryInvalid("fleet registry is missing")
         try:
-            parsed = yaml.safe_load(self.fleet_registry.read_text(encoding="utf-8")) or {}
+            parsed = (
+                yaml.safe_load(self.fleet_registry.read_text(encoding="utf-8")) or {}
+            )
         except (OSError, yaml.YAMLError) as exc:
             raise RegistryInvalid("fleet registry is unreadable or invalid") from exc
-        if not isinstance(parsed, dict) or not isinstance(parsed.get("agents", {}), dict):
+        if not isinstance(parsed, dict) or not isinstance(
+            parsed.get("agents", {}), dict
+        ):
             raise RegistryInvalid("fleet registry agents must be a mapping")
         mapping: dict[str, str] = {}
+        registered_targets: set[str] = set()
         for agent_id, metadata in parsed.get("agents", {}).items():
-            if not isinstance(agent_id, str) or not isinstance(metadata, dict):
+            if not isinstance(agent_id, str):
+                continue
+            registered_targets.add(agent_id)
+            if not isinstance(metadata, dict):
                 continue
             profile = metadata.get("profile_name")
-            if isinstance(profile, str) and profile.strip():
+            bloodbank = metadata.get("bloodbank")
+            if (
+                isinstance(profile, str)
+                and profile.strip()
+                and isinstance(bloodbank, dict)
+                and bloodbank.get("enabled") is True
+                and bloodbank.get("gateway_scope") == "fleet"
+                and bloodbank.get("target_agent_id") == agent_id
+            ):
                 mapping[agent_id] = profile.strip()
-        return mapping
+        return mapping, frozenset(registered_targets)
 
     def resolve(self, target_agent_id: str) -> str:
         target = _nonempty_string(target_agent_id, "data.target_agent_id")
         mapped = self.target_profiles.get(target)
         if mapped is None:
-            mapped = self._fleet_mapping().get(target)
+            fleet_mapping, registered_targets = self._fleet_mapping()
+            mapped = fleet_mapping.get(target)
+            if mapped is None and target in registered_targets:
+                raise RouteInvalid(
+                    f"target_agent_id {target!r} is registry-defined but not eligible"
+                )
 
         if mapped is None and self.allow_direct_profile_targets:
             normalized_direct = self.normalize_profile_name(target)
@@ -209,7 +230,9 @@ class ProfileResolver:
                 mapped = target
 
         if mapped is None:
-            raise RouteInvalid(f"target_agent_id {target!r} has no configured profile route")
+            raise RouteInvalid(
+                f"target_agent_id {target!r} has no configured profile route"
+            )
         if not isinstance(mapped, str) or not mapped.strip():
             raise RouteInvalid(f"target_agent_id {target!r} maps to an invalid profile")
 
@@ -217,7 +240,9 @@ class ProfileResolver:
         try:
             self.validate_profile_name(normalized)
         except Exception as exc:
-            raise RouteInvalid(f"target_agent_id {target!r} maps to an invalid profile") from exc
+            raise RouteInvalid(
+                f"target_agent_id {target!r} maps to an invalid profile"
+            ) from exc
         if not self.profile_exists(normalized):
             raise RouteInvalid(f"target_agent_id {target!r} maps to a missing profile")
         return normalized
@@ -357,7 +382,9 @@ def terminal_events(
                 "invocation_id": invocation.invocation_id,
                 "thread_id": invocation.thread_id,
                 "turn_id": invocation.turn_id,
-                "error_code": "processing_cancelled" if cancelled else "processing_failed",
+                "error_code": "processing_cancelled"
+                if cancelled
+                else "processing_failed",
                 "error_message": (
                     "Hermes processing was cancelled"
                     if cancelled

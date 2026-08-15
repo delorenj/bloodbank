@@ -48,8 +48,22 @@ def test_profile_routing_precedence_and_fleet_registry(tmp_path):
     registry = {
         "schema_version": 1,
         "agents": {
-            "fleet-agent": {"profile_name": "operations"},
-            "overridden": {"profile_name": "operations"},
+            "fleet-agent": {
+                "profile_name": "operations",
+                "bloodbank": {
+                    "enabled": True,
+                    "gateway_scope": "fleet",
+                    "target_agent_id": "fleet-agent",
+                },
+            },
+            "overridden": {
+                "profile_name": "operations",
+                "bloodbank": {
+                    "enabled": True,
+                    "gateway_scope": "fleet",
+                    "target_agent_id": "overridden",
+                },
+            },
         },
     }
     (tmp_path / "agents-registry.yaml").write_text(yaml.safe_dump(registry))
@@ -61,6 +75,132 @@ def test_profile_routing_precedence_and_fleet_registry(tmp_path):
     assert resolver.resolve("explicit") == "research"
     assert resolver.resolve("fleet-agent") == "operations"
     assert resolver.resolve("overridden") == "research"
+
+
+def test_active_registry_route_requires_exact_bloodbank_policy(tmp_path):
+    registry = {
+        "schema_version": 1,
+        "agents": {
+            "fleet-agent": {
+                "profile_name": "operations",
+                "bloodbank": {
+                    "enabled": True,
+                    "gateway_scope": "fleet",
+                    "target_agent_id": "fleet-agent",
+                },
+            }
+        },
+    }
+    (tmp_path / "agents-registry.yaml").write_text(yaml.safe_dump(registry))
+
+    assert _resolver(tmp_path).resolve("fleet-agent") == "operations"
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"profile_name": "operations"},
+        {
+            "profile_name": "operations",
+            "telegram": {"enabled": True},
+            "systemd": {"active": True},
+            "lifecycle": "active",
+        },
+        {"profile_name": "operations", "bloodbank": None},
+        {"profile_name": "operations", "bloodbank": "enabled"},
+        {
+            "profile_name": "operations",
+            "bloodbank": {
+                "gateway_scope": "fleet",
+                "target_agent_id": "fleet-agent",
+            },
+        },
+        {
+            "profile_name": "operations",
+            "bloodbank": {
+                "enabled": False,
+                "gateway_scope": "fleet",
+                "target_agent_id": "fleet-agent",
+            },
+        },
+        {
+            "profile_name": "operations",
+            "bloodbank": {
+                "enabled": "true",
+                "gateway_scope": "fleet",
+                "target_agent_id": "fleet-agent",
+            },
+        },
+        {
+            "profile_name": "operations",
+            "bloodbank": {
+                "enabled": True,
+                "gateway_scope": "profile",
+                "target_agent_id": "fleet-agent",
+            },
+        },
+        {
+            "profile_name": "operations",
+            "bloodbank": {
+                "enabled": True,
+                "gateway_scope": "fleet",
+                "target_agent_id": "other-agent",
+            },
+        },
+        {
+            "profile_name": " ",
+            "bloodbank": {
+                "enabled": True,
+                "gateway_scope": "fleet",
+                "target_agent_id": "fleet-agent",
+            },
+        },
+    ],
+    ids=(
+        "missing-bloodbank",
+        "unrelated-runtime-signals",
+        "null-bloodbank",
+        "malformed-bloodbank",
+        "missing-enabled",
+        "false-enabled",
+        "non-boolean-enabled",
+        "wrong-scope",
+        "mismatched-target",
+        "blank-profile",
+    ),
+)
+def test_registry_route_policy_is_strict_default_deny(tmp_path, record):
+    registry = {"schema_version": 1, "agents": {"fleet-agent": record}}
+    (tmp_path / "agents-registry.yaml").write_text(yaml.safe_dump(registry))
+
+    with pytest.raises(RouteInvalid, match="registry-defined but not eligible"):
+        _resolver(tmp_path).resolve("fleet-agent")
+
+
+def test_static_target_profile_is_an_explicit_registry_independent_override(tmp_path):
+    resolver = _resolver(tmp_path, target_profiles={"fleet-agent": "research"})
+
+    assert resolver.resolve("fleet-agent") == "research"
+
+
+def test_direct_profile_fallback_cannot_bypass_disabled_registry_record(tmp_path):
+    registry = {
+        "schema_version": 1,
+        "agents": {
+            "research": {
+                "profile_name": "research",
+                "bloodbank": {
+                    "enabled": False,
+                    "gateway_scope": "fleet",
+                    "target_agent_id": "research",
+                },
+            }
+        },
+    }
+    (tmp_path / "agents-registry.yaml").write_text(yaml.safe_dump(registry))
+
+    with pytest.raises(RouteInvalid, match="registry-defined but not eligible"):
+        _resolver(tmp_path, direct=True).resolve("research")
 
 
 def test_unknown_and_direct_profile_routes_fail_closed(tmp_path):
@@ -84,23 +224,32 @@ def test_missing_or_invalid_registry_is_transient(tmp_path):
     with pytest.raises(RegistryInvalid, match="missing"):
         resolver.resolve("research")
 
-    (tmp_path / "agents-registry.yaml").write_text("agents: [invalid\n", encoding="utf-8")
+    (tmp_path / "agents-registry.yaml").write_text(
+        "agents: [invalid\n", encoding="utf-8"
+    )
     with pytest.raises(RegistryInvalid, match="unreadable or invalid"):
         resolver.resolve("research")
 
 
-@pytest.mark.parametrize("outcome,invocation_type,turn_outcome", [
-    ("success", "bloodbank.v1.agent.invocation.completed", "completed"),
-    ("failure", "bloodbank.v1.agent.invocation.failed", "failed"),
-    ("cancelled", "bloodbank.v1.agent.invocation.failed", "canceled"),
-])
+@pytest.mark.parametrize(
+    "outcome,invocation_type,turn_outcome",
+    [
+        ("success", "bloodbank.v1.agent.invocation.completed", "completed"),
+        ("failure", "bloodbank.v1.agent.invocation.failed", "failed"),
+        ("cancelled", "bloodbank.v1.agent.invocation.failed", "canceled"),
+    ],
+)
 def test_lifecycle_events_use_existing_schema_contracts(
     valid_command, repo_root, outcome, invocation_type, turn_outcome
 ):
     invocation = Invocation.from_envelope(valid_command, "bloodbank-pm")
-    events = (*started_events(invocation), *terminal_events(invocation, outcome=outcome))
+    events = (
+        *started_events(invocation),
+        *terminal_events(invocation, outcome=outcome),
+    )
 
     import sys
+
     sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
     from core.validate import validate_envelope
 

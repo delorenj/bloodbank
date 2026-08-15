@@ -38,8 +38,7 @@ gateway:
       enabled: true
       typing_indicator: false
       extra:
-        target_profiles:
-          bloodbank-pm: bloodbank-pm
+        target_profiles: {}
         fleet_registry: ~/.hermes/agents-registry.yaml
         execution_state_file: ~/.hermes/bloodbank-hermes-gateway-state.sqlite3
         allow_direct_profile_targets: false
@@ -50,13 +49,31 @@ gateway:
 ```
 
 Resolution precedence is the explicit `target_profiles` mapping, followed by
-`agents.<target_agent_id>.profile_name` in the fleet registry. Direct routing
-where the external target exactly equals an existing profile is disabled by
-default and is available only with `allow_direct_profile_targets: true`.
-Unknown targets never fall back to the default profile.
-If the registry is missing, unreadable, or invalid, routing is unavailable and
-the command is negatively acknowledged for retry. An unknown target is
-terminally rejected only after a valid registry was loaded successfully.
+the fleet registry. A registry-derived route is eligible only when all of these
+conditions hold exactly:
+
+- `agents.<agent_id>.profile_name` is a nonblank string;
+- `agents.<agent_id>.bloodbank` is a mapping;
+- `bloodbank.enabled is true` as a YAML boolean, not a truthy substitute;
+- `bloodbank.gateway_scope == "fleet"`;
+- `bloodbank.target_agent_id == <agent_id>`.
+
+Missing, false, malformed, or mismatched route policy is default-deny. The
+gateway does not infer eligibility from Telegram configuration, systemd units,
+lifecycle state, or profile existence. It reloads and rechecks the registry
+after durable claim and again immediately before Hermes dispatch, including
+restart delivery of an existing `pending` row. A policy-disabled route from a
+valid registry is poison and receives a terminal acknowledgement; a missing,
+unreadable, or structurally invalid registry remains transient and is negatively
+acknowledged for retry.
+
+`target_profiles` is an intentional high-trust operator override: a target in
+that static mapping does not consult registry Bloodbank metadata. Keep the map
+empty when registry policy should govern the route. Direct routing where the
+external target exactly equals an existing profile is disabled by default and
+is available only with `allow_direct_profile_targets: true` and only when that
+target is absent from a valid registry; it cannot bypass an ineligible registry
+record. Unknown targets never fall back to the default profile.
 
 `BLOODBANK_NATS_URL` overrides `extra.nats_url`. `BLOODBANK_NATS_CREDS` may
 point at a credentials file; credentials belong in runtime secret injection,
@@ -74,19 +91,22 @@ not tracked YAML.
   profile, and exact lifecycle payloads. `pending` means dispatch may be
   attempted but no Hermes completion outcome has been durably recorded;
   `completed` means the outcome and terminal events were committed before
-  publication. Redelivery of a completed record republishes those stored
-  events and acknowledges the command without invoking Hermes again.
+  publication. `rejected` means a post-claim route check failed and is an
+  immutable terminal decision. Redelivery of a completed record republishes
+  stored events without invoking Hermes; redelivery of a rejected record is
+  terminally acknowledged and can never execute, even if the route is later
+  re-enabled.
 - The command's correlation, causation, command, idempotency, target, thread,
   and turn identifiers are carried into schema-conformant lifecycle events.
 
 This is not an exactly-once transport claim. JetStream delivery and lifecycle
 publication remain at-least-once. The local guarantee is at-most-once Hermes
 execution for a command whose `completed` record is durable. A restart while a
-record is still `pending` retries execution because the completion boundary is
-unknown; a process crash after an external side effect but before Hermes'
-processing-complete callback can therefore repeat that pending command. Do not
-delete the execution-state database unless intentionally discarding this
-deduplication history.
+record is still `pending` rechecks current routing eligibility before retrying
+execution because the completion boundary is unknown; a process crash after an
+external side effect but before Hermes' processing-complete callback can
+therefore repeat an eligible pending command. Do not delete the execution-state
+database unless intentionally discarding this deduplication history.
 
 `multiplex_secondary_adapters: false` is required for the dedicated Bloodbank
 gateway topology: profile runtime routing remains enabled, while this process

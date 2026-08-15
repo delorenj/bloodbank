@@ -186,6 +186,17 @@ Canonical PM->agent dispatch contract:
 Routers and consumers MUST dispatch this command by `data.target_agent_id`
 rather than encoding the target agent in the subject path.
 
+The fleet-shared Hermes consumer treats registry routing as an explicit
+eligibility contract. A registry record is routable only when `profile_name` is
+nonblank and `bloodbank` is a mapping whose `enabled` value is the boolean
+`true`, `gateway_scope` is exactly `fleet`, and `target_agent_id` exactly equals
+the registry `agent_id`. Missing, malformed, false, or mismatched metadata is a
+terminal default-deny route result. Missing, unreadable, or structurally invalid
+registry input is transient. Eligibility is re-read after durable claim and
+immediately before dispatch, so a persisted pending command cannot retain stale
+routing authority. Explicit adapter `target_profiles` entries are separate,
+operator-owned static overrides and do not inherit registry eligibility.
+
 The legacy `event.>` / `command.>` / `reply.>` subject prefixes are
 **deprecated** and will be removed when the migration completes (§16).
 

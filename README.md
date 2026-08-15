@@ -34,6 +34,10 @@ workflows (bootstrap, smoketest, replay, trace).
 - **Portfolio coordination:** Director and child-PM event contracts live under
   `schemas/bloodbank/v1/portfolio/`; producer, consumer, retry, and compatibility
   rules are in [`docs/portfolio-orchestration-contracts.md`](docs/portfolio-orchestration-contracts.md).
+- **Fleet command dispatch:** the Bloodbank-owned Hermes gateway consumes the
+  canonical invocation command once for the fleet and default-denies registry
+  routes unless their Bloodbank metadata is explicitly active and identity
+  bound. See [`services/hermes-gateway/README.md`](services/hermes-gateway/README.md).
 
 ADR-0001 in the metarepo ratifies these decisions (TBD; not yet committed).
 
