@@ -7,8 +7,8 @@
     "type": "plane",
     "workspace": "33god",
     "identifier": "BB",
-    "board_id": "",
-    "state": "planned"
+    "board_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+    "state": "linked"
   },
   "agents": {
     "bloodbank-pm": {
