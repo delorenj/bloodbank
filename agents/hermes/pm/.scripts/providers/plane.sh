@@ -29,6 +29,19 @@ fi
 die() { echo "plane: $*" >&2; exit 1; }
 need_key() { [ -n "${PLANE_API_KEY:-}" ] || die "PLANE_API_KEY is not set"; }
 
+# Resolve an approved secret reference only after selecting the exact provider
+# key. The resolved value exists only in this provider process.
+resolve_secret_value() {
+  value="${1:-}"
+  case "$value" in
+    op://*)
+      command -v op >/dev/null 2>&1 || die "1Password CLI is required for the configured Plane credential"
+      op read "$value" || die "failed to resolve the configured Plane credential"
+      ;;
+    *) printf "%s" "$value" ;;
+  esac
+}
+
 workspace_key() {
   key="$(printf '%s' "${1:-default}" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9]/_/g')"
   [ -n "$key" ] || key="DEFAULT"
@@ -116,6 +129,8 @@ print(pick.get("id",""))'
 }
 
 # All Plane ops require the API key; fail fast and clean before any pipe.
+PLANE_API_KEY="$(resolve_secret_value "${PLANE_API_KEY:-}")"
+export PLANE_API_KEY
 need_key
 
 case "$OP" in
