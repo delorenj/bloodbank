@@ -117,3 +117,16 @@ claudemap-maps.json
 
 # Local git worktrees — never tracked
 .worktrees/
+
+# PJAN-82: generated skill projections are never tracked
+# sync-skills.py, provision-packs.py and bmad-method rewrite these on every
+# run. No trailing slash: some CLIs get a real directory here, some a symlink.
+.claude/skills
+.codex/skills
+.gemini/skills
+.copilot/skills
+.opencode/skills
+.kimi-code/skills
+.crush/skills
+.cursor/skills
+.agents/skills
