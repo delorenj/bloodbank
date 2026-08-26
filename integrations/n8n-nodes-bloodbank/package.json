@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-bloodbank",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Schema-backed n8n publisher, consumer trigger, and Plane webhook ingress for the 33GOD Bloodbank NATS bus",
   "keywords": [
     "n8n-community-node-package",

@@ -25,6 +25,52 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+export function parseWebhookSecretReferences(value: unknown): Record<string, string> {
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = value.trim() ? JSON.parse(value) : {};
+    } catch {
+      throw new Error('Webhook Secret References must be a JSON object');
+    }
+  }
+  const references = record(parsed);
+  if (!references) {
+    throw new Error('Webhook Secret References must be a JSON object');
+  }
+  const normalized: Record<string, string> = {};
+  for (const [webhookId, reference] of Object.entries(references)) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(webhookId)) {
+      throw new Error('Webhook Secret References contains a malformed webhook id');
+    }
+    if (typeof reference !== 'string' || !/^(op|env):\/\//.test(reference.trim())) {
+      throw new Error('Webhook Secret References values must use op:// or env:// references');
+    }
+    normalized[webhookId.toLowerCase()] = reference.trim();
+  }
+  return normalized;
+}
+
+export function secretReferenceForWebhook(
+  payload: Record<string, unknown>,
+  references: Record<string, string>,
+  legacyReference = '',
+): string {
+  const configuredWebhookIds = Object.keys(references);
+  if (!configuredWebhookIds.length) {
+    if (!legacyReference.trim()) {
+      throw new Error('No trusted Plane webhook secrets are configured');
+    }
+    return legacyReference.trim();
+  }
+  const webhookId = typeof payload.webhook_id === 'string' ? payload.webhook_id.toLowerCase() : '';
+  const reference = references[webhookId];
+  if (!reference) {
+    throw new Error('Plane webhook id is not in the trusted secret allowlist');
+  }
+  return reference;
+}
+
 function expandHome(path: string): string {
   if (path === '~') return homedir();
   if (path.startsWith('~/')) return `${homedir()}/${path.slice(2)}`;
@@ -96,13 +142,23 @@ export class PlaneBloodbank implements INodeType {
         description: 'Verify the raw webhook body before publishing anything',
       },
       {
-        displayName: 'Webhook Secret Reference',
-        name: 'secretReference',
-        type: 'string',
-        default: 'op://DeLoSecrets/PlaneWebhook/credential',
+        displayName: 'Webhook Secret References',
+        name: 'webhookSecretReferences',
+        type: 'json',
+        default: '{}',
         required: true,
         displayOptions: { show: { verifySignature: [true] } },
-        description: 'An op:// or env:// reference. Raw credential values are rejected.',
+        description:
+          'JSON object mapping trusted Plane webhook IDs to op:// or env:// secret references. Raw credential values are rejected.',
+      },
+      {
+        displayName: 'Legacy Single Secret Reference',
+        name: 'secretReference',
+        type: 'string',
+        default: '',
+        displayOptions: { show: { verifySignature: [true] } },
+        description:
+          'Backward-compatible fallback used only when the webhook secret map is empty. New workflows must use the allowlist map.',
       },
       {
         displayName: 'Hermes Registry File',
@@ -157,7 +213,15 @@ export class PlaneBloodbank implements INodeType {
             throw new Error('Webhook must enable Raw Body so its HMAC can be verified');
           }
           const rawBody = await this.helpers.getBinaryDataBuffer(index, 'data');
-          const secret = await resolveSecret(String(this.getNodeParameter('secretReference', index)));
+          const references = parseWebhookSecretReferences(
+            this.getNodeParameter('webhookSecretReferences', index, {}),
+          );
+          const reference = secretReferenceForWebhook(
+            payload,
+            references,
+            String(this.getNodeParameter('secretReference', index, '')),
+          );
+          const secret = await resolveSecret(reference);
           verifyHmac(rawBody, headers, secret);
         }
 

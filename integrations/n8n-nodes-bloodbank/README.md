@@ -32,9 +32,15 @@ Import the versioned workflow:
     n8n update:workflow --id=iMw484J1ZCqKME2C --active=true
 
 The Webhook node must retain Raw Body. Plane to Bloodbank rejects unsigned or
-invalid requests before publishing. Its signing secret parameter accepts only
-op:// or env:// references; raw values are rejected. The committed workflow
-uses op://DeLoSecrets/PlaneWebhook/credential.
+invalid requests before publishing. `Webhook Secret References` is a JSON
+allowlist mapping each trusted Plane `webhook_id` to an `op://` or `env://`
+reference; raw values are rejected. Selecting the secret by webhook ID lets one
+HTTPS ingress serve multiple Plane workspaces without treating a workspace name
+as a trust boundary. Unknown webhook IDs fail before Bloodbank publication.
+
+The committed workflow trusts the production 33GOD and AutomaticAI workspace
+webhook IDs. Their independent signing keys live in the DeLoSecrets items
+`PlaneWebhook-33GOD` and `PlaneWebhook-AutomaticAI`.
 
 Routing metadata comes from ~/.hermes/agents-registry.yaml. Plane project IDs
 map to repo slug, workspace, and project identifier without embedding host

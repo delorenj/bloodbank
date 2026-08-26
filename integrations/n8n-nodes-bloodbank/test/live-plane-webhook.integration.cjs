@@ -10,9 +10,13 @@ const execFileAsync = promisify(execFile);
 const NATS_SERVER = process.env.BLOODBANK_NATS_URL || 'nats://localhost:4222';
 const WEBHOOK_URL = process.env.N8N_PLANE_WEBHOOK_URL || 'http://localhost:5678/webhook/plane';
 const SECRET_REFERENCE =
-  process.env.PLANE_WEBHOOK_SECRET_REFERENCE || 'op://DeLoSecrets/PlaneWebhook/credential';
+  process.env.PLANE_WEBHOOK_SECRET_REFERENCE ||
+  'op://DeLoSecrets/PlaneWebhook-33GOD/credential';
+const WEBHOOK_ID =
+  process.env.PLANE_TEST_WEBHOOK_ID || '24bc401a-00fa-46cd-bfff-65e14ca1707a';
 const BOARD_ID = process.env.PLANE_TEST_BOARD_ID || '15258893-0206-4e8f-aea6-340eb217988c';
 const PROJECT_SLUG = process.env.PLANE_TEST_PROJECT_SLUG || '33god';
+const WORKSPACE_SLUG = process.env.PLANE_TEST_WORKSPACE_SLUG || '33god';
 
 function deadline(promise, milliseconds = 10000) {
   return Promise.race([
@@ -28,6 +32,7 @@ test('signed Plane webhook traverses active n8n ingress and publishes canonical 
   const ticketId = randomUUID();
   const observedAt = new Date().toISOString();
   const payload = {
+    webhook_id: WEBHOOK_ID,
     event: 'issue',
     action: 'created',
     data: {
@@ -87,7 +92,7 @@ test('signed Plane webhook traverses active n8n ingress and publishes canonical 
     assert.equal(envelope.source, 'urn:33god:integration:n8n:plane-webhook');
     assert.equal(envelope.producer, 'n8n-plane-webhook');
     assert.equal(envelope.actor.provider, 'plane');
-    assert.equal(envelope.workspace, '33god');
+    assert.equal(envelope.workspace, WORKSPACE_SLUG);
     assert.equal(envelope.board_id, BOARD_ID);
     assert.equal(envelope.slug, PROJECT_SLUG);
     assert.equal(envelope.provider_event_type, 'plane.ticket.created');
@@ -103,6 +108,7 @@ test('signed Plane webhook traverses active n8n ingress and publishes canonical 
 test('invalid Plane signature is rejected before Bloodbank publication', async () => {
   const ticketId = randomUUID();
   const payload = {
+    webhook_id: WEBHOOK_ID,
     event: 'issue',
     action: 'created',
     data: {

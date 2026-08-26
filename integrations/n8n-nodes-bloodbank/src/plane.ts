@@ -189,6 +189,19 @@ function workspaceFromEntity(value: unknown): string | undefined {
   return firstText(workspace.slug, workspace.name, workspace.id);
 }
 
+function normalizeAction(value: unknown): string {
+  const action = (firstText(value) ?? 'updated').toLowerCase();
+  const aliases: Record<string, string> = {
+    create: 'created',
+    created: 'created',
+    update: 'updated',
+    updated: 'updated',
+    delete: 'deleted',
+    deleted: 'deleted',
+  };
+  return aliases[action] ?? action;
+}
+
 /** Normalize one Plane webhook into exactly one provider-neutral Bloodbank fact.
  *
  * Plane names remain available as data.provider_event_type and as n8n trigger
@@ -201,7 +214,7 @@ export function normalizePlaneWebhook(
 ): NormalizedPlaneEvent | null {
   const payload = record(payloadValue);
   const event = firstText(payload.event)?.toLowerCase();
-  const action = (firstText(payload.action) ?? 'updated').toLowerCase();
+  const action = normalizeAction(payload.action);
   const data = record(payload.data);
   if (!event || !Object.keys(data).length) return null;
 

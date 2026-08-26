@@ -27,7 +27,7 @@
       {
         "parameters": {
           "verifySignature": true,
-          "secretReference": "op://DeLoSecrets/PlaneWebhook/credential",
+          "webhookSecretReferences": "{\"24bc401a-00fa-46cd-bfff-65e14ca1707a\":\"op://DeLoSecrets/PlaneWebhook-33GOD/credential\",\"4eb4732b-6005-4c9d-ac6f-7e643470768e\":\"op://DeLoSecrets/PlaneWebhook-AutomaticAI/credential\"}",
           "registryFile": "~/.hermes/agents-registry.yaml",
           "connection": {
             "natsHost": "localhost",
@@ -66,7 +66,7 @@
     },
     "staticData": null,
     "pinData": {},
-    "versionId": "0edafacd-1a4a-41be-99d8-d0caf971e23f",
+    "versionId": "d64e7946-2611-461f-8caa-989ca655f976",
     "triggerCount": 1,
     "tags": []
   }
