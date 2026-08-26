@@ -1,0 +1,132 @@
+# hook-hub handler registry — THE ONE FILE YOU EDIT.
+#
+# Every agent CLI reaches this registry through the same `bb-hook` re-trigger, so
+# a handler bound to a lifecycle role here fires for claude, codex, copilot,
+# hermes and antigravity alike. Adding a concern is one row, not six edits across
+# five config dialects.
+#
+# Fields
+#   id           unique, stable; appears in the hub log and the reply's `handled`
+#   mode         "sync"  -> stdout is returned to the CLI and injected into the
+#                           prompt; shares one budget (HOOK_HUB_SYNC_BUDGET)
+#                "async" -> launched and forgotten; stdout discarded
+#   on           lifecycle roles, from hooks.master.json — the portable binding:
+#                session_start, prompt_submit, pre_tool, post_tool,
+#                subagent_stop, session_end, invocation_start, invocation_failed
+#   on_native    native event names, for signals with no contract-legal event
+#                type (Notification, PermissionRequest, TeammateIdle). These
+#                dispatch to handlers but are never published to the bus.
+#   command      argv list; ~ is expanded. No shell, so no pipes or $VARS.
+#   timeout_ms   hard kill deadline for this handler
+#   match_tool   regex against payload tool_name (post_tool / pre_tool only)
+#   require_env  skip silently unless every listed var is set and non-empty.
+#                This is what makes a zellij handler correct in a bare terminal
+#                instead of noisy.
+#   order        sync execution order (low first); async order is unspecified
+#   enabled      false parks a row without deleting it
+#
+# Handlers inherit the hub's environment plus the caller's captured context
+# (ZELLIJ_*, TERM) and run with cwd set to the agent's working directory.
+# BB_HOOK_CLI / BB_HOOK_NATIVE / BB_HOOK_ROLE are exported for handlers that
+# want to know who triggered them. BB_HOOK_HUB=off is exported too, so a handler
+# that re-enters an agent CLI cannot recurse back into the hub.
+#
+# Everything below is commented out. Rows are enabled one at a time during the
+# cutover, and in the SAME commit that removes the concern's old native wiring —
+# never both live at once. See docs/hook-hub-plan.md.
+
+# ---------------------------------------------------------------- hindsight
+# The only synchronous handler: its stdout becomes prompt context. Calls
+# api.hs.delo.sh, so it is also the slowest thing on the critical path.
+#[[handler]]
+#id         = "hindsight-recall"
+#mode       = "sync"
+#on         = ["prompt_submit"]
+#command    = ["~/.agents/hooks/hindsight/hindsight-recall.sh"]
+#timeout_ms = 2500
+#order      = 10
+
+#[[handler]]
+#id         = "hindsight-retain"
+#mode       = "async"
+#on         = ["post_tool"]
+#match_tool = "^(Write|Edit|MultiEdit)$"
+#command    = ["~/.agents/hooks/hindsight/hindsight-retain.sh"]
+#timeout_ms = 10000
+
+#[[handler]]
+#id         = "hindsight-session-end"
+#mode       = "async"
+#on         = ["session_end"]
+#command    = ["~/.agents/hooks/hindsight/hindsight-session-end.sh"]
+#timeout_ms = 8000
+
+# ---------------------------------------------------------------- attention
+# Notification / PermissionRequest / TeammateIdle have no legal type under the
+# locked naming contract (docs/event-naming.md §6–§8), and only local ephemeral
+# consumers, so they bind on_native and are never published.
+#[[handler]]
+#id         = "claude-notify"
+#mode       = "async"
+#on_native  = ["Notification", "PermissionRequest"]
+#command    = ["~/.local/bin/claude-notify"]
+#timeout_ms = 5000
+
+#[[handler]]
+#id          = "zellij-notify-mark"
+#mode        = "async"
+#on_native   = ["Notification"]
+#command     = ["~/.config/zellij/scripts/zellij-notify", "attention"]
+#require_env = ["ZELLIJ_SESSION_NAME", "ZELLIJ_PANE_ID"]
+#timeout_ms  = 1000
+
+#[[handler]]
+#id          = "zellij-notify-clear"
+#mode        = "async"
+#on          = ["prompt_submit"]
+#command     = ["~/.config/zellij/scripts/zellij-notify", "--clear"]
+#require_env = ["ZELLIJ_SESSION_NAME", "ZELLIJ_PANE_ID"]
+#timeout_ms  = 1000
+
+# NOTE: deckard attention alerts are ALREADY fanned out by the agent-hooks
+# publisher (core/publisher.py::_fanout_alert -> deckard.evt.v1.attention, added
+# 2026-08-26). Do not add a deckard row here until that path is retired, or the
+# amber key fires twice.
+
+# ---------------------------------------------------------------- session
+#[[handler]]
+#id         = "project-notebook-start"
+#mode       = "async"
+#on         = ["session_start"]
+#command    = ["~/.agents/skills/project-notebook/hooks/session-start.sh"]
+#timeout_ms = 3000
+
+#[[handler]]
+#id         = "project-notebook-end"
+#mode       = "async"
+#on         = ["session_end"]
+#command    = ["~/.agents/skills/project-notebook/hooks/session-end.sh"]
+#timeout_ms = 1000
+
+# Already self-detaches a 900s worker; the hub's pool makes that unnecessary but
+# harmless. Keep the timeout generous enough to cover the launcher, not the work.
+#[[handler]]
+#id         = "merge-forward"
+#mode       = "async"
+#on         = ["session_end"]
+#command    = ["~/.agents/hooks/merge-forward/session-end.sh", "--client", "hub"]
+#timeout_ms = 5000
+
+# ---------------------------------------------------------------- smoke test
+# Enabled by default: proves the socket, the binding table and the dispatch path
+# without touching anything real. Safe to leave on; it only writes to the log.
+[[handler]]
+id         = "hub-selftest"
+mode       = "sync"
+on         = ["session_start", "prompt_submit", "pre_tool", "post_tool",
+              "session_end", "subagent_stop"]
+on_native  = ["Notification", "PermissionRequest", "TeammateIdle"]
+command    = ["/usr/bin/env", "true"]
+timeout_ms = 500
+order      = 999
+enabled    = true

@@ -1,0 +1,16 @@
+# Socket activation is the point: the first hook of the day starts the daemon,
+# so there is no window after login where hooks silently do nothing. %t is the
+# user's XDG_RUNTIME_DIR (/run/user/1000), which is already 0700 and tmpfs, so
+# the socket needs no auth token and cannot survive a reboot as a stale file.
+[Unit]
+Description=33GOD hook-hub socket
+Documentation=file:%h/code/33GOD/bloodbank/services/hook-hub/README.md
+
+[Socket]
+ListenStream=%t/33god/hook-hub.sock
+SocketMode=0600
+DirectoryMode=0700
+Accept=no
+
+[Install]
+WantedBy=sockets.target

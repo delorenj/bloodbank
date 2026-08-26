@@ -1,0 +1,22 @@
+# Started on demand by hook-hub.socket; stays resident afterwards so handler
+# dispatch never pays interpreter startup. Plain python3 on purpose -- `mise x`
+# adds ~11ms and this is on the path of every tool call.
+[Unit]
+Description=33GOD hook-hub - one dispatcher for every agent CLI's hooks
+Documentation=file:%h/code/33GOD/bloodbank/services/hook-hub/README.md
+Requires=hook-hub.socket
+After=hook-hub.socket
+# A crash loop must not become a fork bomb on top of a broken registry.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/hook-hub/hub.py
+Restart=on-failure
+RestartSec=2
+# The hub only ever reads its config and spawns handlers the user already runs.
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

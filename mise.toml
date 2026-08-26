@@ -22,7 +22,7 @@ script = "python3 '{{config_root}}/.mise/scripts/provision-packs.py' --root '{{c
 [[hooks.enter]]
 script = "python3 '{{config_root}}/.mise/scripts/sync-skills.py' --scope project --root '{{config_root}}'"
 [[hooks.enter]]
-script = "op inject -i .env.op > .env"
+script = "'{{config_root}}/.mise/scripts/materialize-env.sh'"
 
 [tasks.up]
 description = "Boot core sandbox (NATS + nats-init only)"
@@ -395,3 +395,64 @@ run = "'{{config_root}}/.mise/scripts/versioning.sh' check"
 description = "Force every versioned file up to the highest version"
 run = "'{{config_root}}/.mise/scripts/versioning.sh' sync"
 # <<< mise-versioning <<<
+
+[tasks."hub:test"]
+description = "hook-hub behavioral tests (no daemon or NATS required)"
+run = "python3 -m pytest services/hook-hub/tests/test_hub.py -q"
+
+[tasks."hub:install"]
+description = "Link hook-hub systemd --user units and enable socket activation (idle until bb-hook is wired)"
+run = """
+set -euo pipefail
+UNITS="$HOME/.config/systemd/user"
+mkdir -p "$UNITS"
+for u in hook-hub.socket hook-hub.service; do
+  ln -sfn "$PWD/services/hook-hub/systemd/$u" "$UNITS/$u"
+  echo "linked $u"
+done
+systemctl --user daemon-reload
+systemctl --user enable --now hook-hub.socket
+systemctl --user --no-pager status hook-hub.socket | head -5
+"""
+
+[tasks."hub:uninstall"]
+description = "Stop hook-hub and remove its systemd --user units"
+run = """
+set -uo pipefail
+systemctl --user disable --now hook-hub.socket hook-hub.service 2>/dev/null || true
+rm -f "$HOME/.config/systemd/user/hook-hub.socket" "$HOME/.config/systemd/user/hook-hub.service"
+systemctl --user daemon-reload
+echo "hook-hub units removed"
+"""
+
+[tasks."hub:status"]
+description = "Is the hook-hub socket listening, and is the daemon up?"
+run = """
+set -uo pipefail
+systemctl --user --no-pager status hook-hub.socket hook-hub.service 2>&1 | head -20 || true
+echo "--- socket ---"
+ls -l "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/33god/hook-hub.sock" 2>/dev/null || echo "(no socket)"
+"""
+
+[tasks."hub:logs"]
+description = "Tail the hook-hub dispatch log"
+run = 'tail -f "${XDG_STATE_HOME:-$HOME/.local/state}/33god/hook-hub/hub.log"'
+
+[tasks."hub:smoke"]
+description = "Live hook-hub round trip on a throwaway socket (starts and stops its own daemon)"
+run = """
+set -uo pipefail
+SOCK=$(mktemp -u /tmp/hook-hub-smoke.XXXXXX.sock)
+LOG=$(mktemp /tmp/hook-hub-smoke.XXXXXX.log)
+BB_HOOK_SOCKET=$SOCK HOOK_HUB_LOG=$LOG python3 services/hook-hub/hub.py &
+HUB=$!
+trap 'kill $HUB 2>/dev/null || true; rm -f "$SOCK" "$LOG"' EXIT
+for _ in $(seq 60); do [ -S "$SOCK" ] && break; sleep 0.05; done
+[ -S "$SOCK" ] || { echo "FAIL: hub never listened"; exit 1; }
+for ev in SessionStart UserPromptSubmit PreToolUse PostToolUse Notification Stop; do
+  printf '{"tool_name":"Bash"}' | BB_HOOK_SOCKET=$SOCK \\
+    services/hook-hub/client/bb-hook claude "$ev" >/dev/null || { echo "FAIL: $ev"; exit 1; }
+  echo "ok  claude/$ev"
+done
+echo "--- hub log ---"; cat "$LOG"
+"""

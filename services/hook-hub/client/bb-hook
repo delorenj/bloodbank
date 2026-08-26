@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""bb-hook — the one re-trigger every agent CLI calls.
+
+    bb-hook <cli> <native-event> [--trailer passive|stop] [extra...]
+
+One frozen line per native event per CLI replaces the per-concern hook stacking
+that used to be fanned out into every agent's native config. This process does
+almost nothing: it reads the hook payload, hands it to the hook-hub daemon over
+a unix socket, and relays whatever verdict comes back.
+
+THE ONLY HARD REQUIREMENT IS THAT IT NEVER WEDGES AN AGENT. Every failure path
+-- no socket, no daemon, a hung handler, a malformed reply, a payload that never
+reaches EOF -- prints nothing and exits 0, leaving the CLI to behave exactly as
+if no hook were installed. Two consequences shape the whole file:
+
+  * stdin is read through select() against a deadline, never a bare read().
+    A harness that opens stdin and never closes it must not hold us forever.
+    (This is not hypothetical: an unbounded read here is precisely how a hook
+    hangs an agent silently.)
+  * every deadline is absolute, measured from process start, so a slow stdin
+    cannot lend its remaining budget to a slow socket.
+
+Stdlib-only, no third-party imports, and safe under a stripped environment --
+every default must be correct with no configuration present.
+"""
+from __future__ import annotations
+
+import json
+import os
+import select
+import socket
+import sys
+import time
+
+START = time.monotonic()
+
+MAX_PAYLOAD_BYTES = 1 << 20          # 1 MiB, matching forward_envelope
+STDIN_BUDGET = 0.5                   # payload is already buffered by the CLI
+TOTAL_BUDGET = float(os.environ.get("BB_HOOK_DEADLINE", "3.0"))
+
+# Only what host-side handlers actually need for attribution. Never os.environ
+# wholesale -- that would ship the user's secrets into an event payload.
+ENV_ALLOWLIST = (
+    "ZELLIJ_SESSION_NAME",
+    "ZELLIJ_PANE_ID",
+    "TERM",
+    "TERM_PROGRAM",
+    "SSH_TTY",
+)
+
+TRAILERS = {"passive": "{}", "stop": '{"decision":""}'}
+
+
+def socket_path() -> str:
+    explicit = os.environ.get("BB_HOOK_SOCKET")
+    if explicit:
+        return explicit
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    return os.path.join(runtime, "33god", "hook-hub.sock")
+
+
+def left(budget: float = TOTAL_BUDGET) -> float:
+    """Seconds remaining against an absolute budget from process start."""
+    return budget - (time.monotonic() - START)
+
+
+def read_payload() -> object:
+    """Read the hook JSON from stdin, bounded by time AND size.
+
+    Returns {} rather than raising on every abnormal input: no stdin, a tty, a
+    truncated write, invalid JSON. A hook that cannot parse its payload still
+    has a job to do (the event itself is the signal), so this degrades instead
+    of failing.
+    """
+    try:
+        if sys.stdin is None or sys.stdin.closed or sys.stdin.isatty():
+            return {}
+        fd = sys.stdin.fileno()
+    except (ValueError, OSError):
+        return {}
+
+    deadline = min(STDIN_BUDGET, max(left(), 0.0))
+    chunks: list[bytes] = []
+    total = 0
+    end = time.monotonic() + deadline
+    while True:
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            ready, _, _ = select.select([fd], [], [], remaining)
+        except (OSError, ValueError):
+            break
+        if not ready:
+            break                       # writer is idle; take what we have
+        try:
+            block = os.read(fd, 65536)
+        except OSError:
+            break
+        if not block:
+            break                       # clean EOF
+        chunks.append(block)
+        total += len(block)
+        if total >= MAX_PAYLOAD_BYTES:
+            break
+
+    raw = b"".join(chunks)[:MAX_PAYLOAD_BYTES]
+    if not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return {"raw": raw.decode("utf-8", "replace")}
+    return parsed if isinstance(parsed, dict) else {"raw": parsed}
+
+
+def exchange(request: bytes) -> dict:
+    """Send one request, read one reply. {} on any failure."""
+    remaining = left()
+    if remaining <= 0:
+        return {}
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(remaining)
+        sock.connect(socket_path())
+        sock.sendall(request)
+        sock.shutdown(socket.SHUT_WR)   # EOF tells the hub the request is whole
+        buf = bytearray()
+        while True:
+            if left() <= 0:
+                return {}
+            sock.settimeout(max(left(), 0.01))
+            block = sock.recv(65536)
+            if not block:
+                break
+            buf.extend(block)
+            if b"\n" in block:
+                break
+            if len(buf) > MAX_PAYLOAD_BYTES:
+                return {}
+        line = bytes(buf).split(b"\n", 1)[0]
+        if not line.strip():
+            return {}
+        reply = json.loads(line)
+        return reply if isinstance(reply, dict) else {}
+    except (OSError, ValueError):
+        return {}
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+
+
+def main(argv: list[str]) -> int:
+    trailer = None
+    rest: list[str] = []
+    i = 1
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--trailer" and i + 1 < len(argv):
+            trailer = TRAILERS.get(argv[i + 1])
+            i += 2
+        elif arg.startswith("--trailer="):
+            trailer = TRAILERS.get(arg.split("=", 1)[1])
+            i += 1
+        else:
+            rest.append(arg)
+            i += 1
+
+    def finish(code: int = 0) -> int:
+        # Antigravity refuses any hook that does not answer with a JSON object,
+        # so the trailer is emitted on every path including the failure ones.
+        if trailer is not None:
+            print(trailer)
+        return code
+
+    if os.environ.get("BB_HOOK_HUB") == "off":
+        return finish()
+    if len(rest) < 2:
+        print(
+            "usage: bb-hook <cli> <native-event> [--trailer passive|stop]",
+            file=sys.stderr,
+        )
+        return finish(0)
+
+    cli, native = rest[0], rest[1]
+    payload = read_payload()
+
+    request = {
+        "v": 1,
+        "cli": cli,
+        "native": native,
+        "cwd": os.environ.get("PWD") or _getcwd(),
+        "pid": os.getpid(),
+        "env": {k: os.environ[k] for k in ENV_ALLOWLIST if os.environ.get(k)},
+        "payload": payload,
+        "extra": rest[2:],
+    }
+    try:
+        line = json.dumps(request, separators=(",", ":")).encode("utf-8") + b"\n"
+    except (TypeError, ValueError):
+        return finish(0)
+
+    reply = exchange(line)
+
+    # In trailer mode the CLI parses our stdout as JSON, so handler output must
+    # not be relayed -- those dialects have no context-injection surface anyway.
+    if trailer is not None:
+        return finish()
+
+    out = reply.get("stdout")
+    if isinstance(out, str) and out:
+        sys.stdout.write(out if out.endswith("\n") else out + "\n")
+    err = reply.get("stderr")
+    if isinstance(err, str) and err:
+        sys.stderr.write(err if err.endswith("\n") else err + "\n")
+
+    code = reply.get("exit_code")
+    return code if isinstance(code, int) and 0 <= code <= 125 else 0
+
+
+def _getcwd() -> str:
+    try:
+        return os.getcwd()
+    except OSError:      # cwd deleted under us
+        return ""
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv))
+    except KeyboardInterrupt:
+        sys.exit(0)
+    except Exception:
+        # Absolute last resort: a crash in the re-trigger must still be a no-op.
+        sys.exit(0)
