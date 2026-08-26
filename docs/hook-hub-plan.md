@@ -3,6 +3,34 @@
 > Approved 2026-08-26. Companion diagram: `hook-hub-topology.excalidraw`
 > (open at https://draw.delo.sh via drag-drop or File -> Open).
 
+## Status
+
+| phase | state |
+|---|---|
+| 0 — hub daemon, `bb-hook` client, registry, systemd units, tests | **DONE** (`a7f72a3`), installed and socket-activated |
+| 1 — `Notification` cutover | not started — needs a live-config greenlight |
+| 2–6 | not started |
+
+**Concurrent work landed mid-flight.** `3f680d5 feat(agent-hooks): fan out exact
+attention alerts` (2026-08-26 08:50, another agent on this repo) independently
+implemented two things this plan called for: the `publish: false` binding flag,
+and moving deckard off its own hook — `core/publisher.py::_fanout_alert` now
+publishes `deckard.evt.v1.attention` from the agent-hooks publisher, using
+`ZELLIJ_PANE_ID`/`ZELLIJ_SESSION_NAME` from the hook environment.
+
+Two consequences:
+
+- The dispatch⊃publish decision below is now *implemented*, not just proposed —
+  `role: "attention"` bindings carry `publish: false` and never reach the bus.
+- **Phase 1 shrinks.** Deckard no longer needs a hub handler; wiring one would
+  fire the amber key twice. Phase 1 is now `claude-notify` + `zellij-notify`
+  only, and `handlers.toml` carries an explicit warning against a deckard row.
+
+Phase 0 was deliberately scoped to new files only, so it could land without
+conflicting with that concurrent work. Phases 1+ touch `hooks.master.json` and
+`sync.py`, which are exactly the files the other agent is editing — coordinate
+before starting them.
+
 ## Context
 
 You maintain agent hooks by **fan-out**: every behavioral concern gets hand-wired
