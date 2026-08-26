@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
 import io
 import json
@@ -185,6 +186,172 @@ class AttentionFanoutTests(unittest.TestCase):
         ]
         self.assertIn("foreign-notification-hook", commands)
         self.assertTrue(any("bloodbank/publish.py" in command for command in commands))
+
+    def test_legacy_deckard_recognition_is_path_and_event_exact(self) -> None:
+        canonical = (
+            "/home/test/.local/share/deckard/hooks/"
+            "deckard-attention-hook.sh Notification"
+        )
+        self.assertTrue(SYNC._is_legacy_deckard_attention(canonical, "Notification"))
+        self.assertTrue(
+            SYNC._is_legacy_deckard_attention(
+                "'/tmp/data home/deckard/hooks/deckard-attention-hook.sh' "
+                "PermissionRequest",
+                "PermissionRequest",
+            )
+        )
+        for command, event in (
+            (canonical, "PermissionRequest"),
+            (
+                "/opt/foreign/deckard-attention-hook.sh Notification",
+                "Notification",
+            ),
+            (canonical + " --foreign", "Notification"),
+            ("echo deckard/hooks/deckard-attention-hook.sh Notification", "Notification"),
+            ("'unterminated", "Notification"),
+        ):
+            with self.subTest(command=command, event=event):
+                self.assertFalse(SYNC._is_legacy_deckard_attention(command, event))
+
+    def test_install_replaces_only_legacy_attention_hooks_and_is_idempotent(self) -> None:
+        master = SYNC.load_master()
+        lock = SYNC.load_lock()
+        claude = copy.deepcopy(master["agents"]["claude"])
+        attention_events = SYNC._attention_replacement_events(claude)
+        self.assertEqual(
+            attention_events,
+            {"Notification", "PermissionRequest", "TeammateIdle"},
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            service = root / "agent-hooks"
+            generated_path = service / "claude" / "settings.hooks.json"
+            generated_path.parent.mkdir(parents=True)
+            live_path = root / "claude" / "settings.json"
+            live_path.parent.mkdir(parents=True)
+
+            claude["config_target"] = "claude/settings.hooks.json"
+            claude["live_target"] = str(live_path)
+            generated = SYNC.render_config(claude, master["lifecycle"], lock)
+            self.assertIsNotNone(generated)
+            generated_path.write_text(json.dumps(generated, indent=2) + "\n")
+
+            legacy_script = (
+                "/home/test/.local/share/deckard/hooks/"
+                "deckard-attention-hook.sh"
+            )
+            live_hooks: dict[str, list[dict]] = {}
+            foreign_commands: dict[str, list[str]] = {}
+            for event in sorted(attention_events):
+                foreign = [
+                    f"foreign-{event}",
+                    f"/opt/foreign/deckard-attention-hook.sh {event}",
+                    f"{legacy_script} DifferentEvent",
+                ]
+                foreign_commands[event] = foreign
+                live_hooks[event] = [
+                    {
+                        "matcher": "legacy-only",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": f"{legacy_script} {event}",
+                                "timeout": 3,
+                            }
+                        ],
+                    },
+                    {
+                        "matcher": "mixed",
+                        "condition": {"preserve": True},
+                        "hooks": [
+                            {"type": "command", "command": foreign[0]},
+                            {
+                                "type": "command",
+                                "command": f"{legacy_script} {event}",
+                                "timeout": 9,
+                            },
+                            {"type": "command", "command": foreign[1]},
+                            {"type": "command", "command": foreign[2]},
+                        ],
+                    },
+                ]
+
+            # Even a command at the canonical path is foreign to this cutover
+            # unless the registry says that native event is being replaced.
+            live_hooks["Stop"] = [
+                {
+                    "matcher": "keep-stop",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"{legacy_script} Stop",
+                        },
+                        {"type": "command", "command": "foreign-stop"},
+                    ],
+                }
+            ]
+            live = {
+                "theme": "foreign-theme",
+                "hooks": live_hooks,
+                "foreign_top": {"preserve": [1, 2, 3]},
+            }
+            live_path.write_text(json.dumps(live, indent=2) + "\n")
+
+            install_master = {"agents": {"claude": claude}}
+            with (
+                mock.patch.object(SYNC, "SERVICE_DIR", service),
+                mock.patch.object(SYNC, "_ensure_bloodbank_hook_link", return_value=0),
+            ):
+                self.assertEqual(SYNC.cmd_install(install_master), 0)
+                first_bytes = live_path.read_bytes()
+                first_inode = live_path.stat().st_ino
+                first_backups = sorted(live_path.parent.glob("settings.json.bak-*"))
+                self.assertEqual(len(first_backups), 1)
+
+                changed = json.loads(first_bytes)
+                self.assertEqual(changed["theme"], live["theme"])
+                self.assertEqual(changed["foreign_top"], live["foreign_top"])
+                markers = SYNC._publisher_markers("claude", claude)
+                for event in attention_events:
+                    groups = changed["hooks"][event]
+                    commands = [
+                        hook.get("command", "")
+                        for group in groups
+                        for hook in group.get("hooks", [])
+                    ]
+                    self.assertFalse(
+                        any(
+                            SYNC._is_legacy_deckard_attention(command, event)
+                            for command in commands
+                        ),
+                        f"legacy {event} publisher survived: {commands}",
+                    )
+                    self.assertEqual(
+                        sum(SYNC._has_marker(command, markers) for command in commands),
+                        1,
+                        f"normalized {event} publisher was not unique: {commands}",
+                    )
+                    for foreign in foreign_commands[event]:
+                        self.assertIn(foreign, commands)
+                    mixed = next(group for group in groups if group.get("matcher") == "mixed")
+                    self.assertEqual(mixed["condition"], {"preserve": True})
+
+                stop_commands = [
+                    hook["command"]
+                    for group in changed["hooks"]["Stop"]
+                    for hook in group.get("hooks", [])
+                ]
+                self.assertIn(f"{legacy_script} Stop", stop_commands)
+                self.assertIn("foreign-stop", stop_commands)
+
+                self.assertEqual(SYNC.cmd_install(install_master), 0)
+                self.assertEqual(live_path.read_bytes(), first_bytes)
+                self.assertEqual(live_path.stat().st_ino, first_inode)
+                self.assertEqual(
+                    sorted(live_path.parent.glob("settings.json.bak-*")),
+                    first_backups,
+                )
 
     def test_only_registry_declared_alerts_are_projected(self) -> None:
         master = SYNC.load_master()

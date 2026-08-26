@@ -38,6 +38,7 @@ import argparse
 import copy
 import json
 import os
+import shlex
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -63,6 +64,8 @@ from core.validate import (  # noqa: E402
 GENERATED_HEADER = {
     "_do_not_edit": "GENERATED from hooks.master.json by sync.py — run `mise run hooks:sync`.",
 }
+
+LEGACY_DECKARD_ATTENTION_SUFFIX = "deckard/hooks/deckard-attention-hook.sh"
 
 
 # --------------------------------------------------------------------------
@@ -592,7 +595,45 @@ def _has_marker(command: object, markers: list[str]) -> bool:
     return any(marker in text for marker in markers)
 
 
-def _merge_hooks(live: dict, generated_hooks: dict, markers: list[str]) -> dict:
+def _attention_replacement_events(agent: dict) -> set[str]:
+    """Native events whose generated publisher replaces Deckard's old hook."""
+    return {
+        str(binding["native"])
+        for binding in agent.get("bindings", [])
+        if binding.get("publish", True) is False
+        and binding.get("alert") == "attention"
+        and isinstance(binding.get("native"), str)
+    }
+
+
+def _is_legacy_deckard_attention(command: object, event: str) -> bool:
+    """Recognize only the command shape written by `deckard install-hooks`.
+
+    The data-home prefix may vary, but Deckard always installs beneath
+    ``deckard/hooks`` and passes the native event as the final argument. A
+    basename-only match would claim an unrelated foreign script with the same
+    filename, while a substring match could claim arbitrary shell pipelines.
+    """
+    if not isinstance(command, str):
+        return False
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return False
+    if len(argv) != 2 or argv[-1] != event:
+        return False
+    script = argv[-2].replace("\\", "/")
+    return script == LEGACY_DECKARD_ATTENTION_SUFFIX or script.endswith(
+        "/" + LEGACY_DECKARD_ATTENTION_SUFFIX
+    )
+
+
+def _merge_hooks(
+    live: dict,
+    generated_hooks: dict,
+    markers: list[str],
+    attention_replacements: set[str] | None = None,
+) -> dict:
     """Update our publisher hook at INNER-hook granularity.
 
     The bloodbank publisher hook may be its own group OR nested among foreign
@@ -600,9 +641,12 @@ def _merge_hooks(live: dict, generated_hooks: dict, markers: list[str]) -> dict:
     group holds hindsight + git-checkpoint + publish + notify). We update ONLY
     our inner hook's ``command``/``timeout`` in place — never touching foreign
     hooks, groups, or matchers. If our hook is absent for an event, append the
-    generated group(s) that carry it.
+    generated group(s) that carry it. For registry-declared attention
+    replacements, first remove only the exact legacy command shape written by
+    ``deckard install-hooks`` so the two unique-id publishers cannot coexist.
     """
     hooks = live.setdefault("hooks", {})
+    attention_replacements = attention_replacements or set()
     for event, gen_groups in generated_hooks.items():
         gen_bb = [
             h
@@ -613,6 +657,18 @@ def _merge_hooks(live: dict, generated_hooks: dict, markers: list[str]) -> dict:
         if not gen_bb:
             continue
         groups = hooks.setdefault(event, [])
+        if event in attention_replacements:
+            for group in groups:
+                group["hooks"] = [
+                    hook
+                    for hook in group.get("hooks", [])
+                    if not _is_legacy_deckard_attention(
+                        hook.get("command") if isinstance(hook, dict) else None,
+                        event,
+                    )
+                ]
+            groups = [group for group in groups if group.get("hooks")]
+            hooks[event] = groups
         live_bb = [
             (g, h)
             for g in groups
@@ -894,7 +950,12 @@ def cmd_install(master: dict) -> int:
             else:
                 liveobj = {}
             original = copy.deepcopy(liveobj)
-            merged = _merge_hooks(liveobj, gen_hooks, markers)
+            merged = _merge_hooks(
+                liveobj,
+                gen_hooks,
+                markers,
+                _attention_replacement_events(agent),
+            )
             if dest.exists() and _norm(merged) == _norm(original):
                 print(f"hooks-sync: {name} {dest} up to date")
                 continue
