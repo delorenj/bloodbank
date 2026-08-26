@@ -181,9 +181,26 @@ event's id, giving downstream consumers a linkable chain.
 Provider/CLI/model identity goes into `actor.cli`, `actor.provider`,
 `actor.model` — and is **banned from `type`** (§9).
 
+### Exact Deckard attention fan-out
+
+Registry bindings with `"publish": false, "alert": "attention"` bypass the
+lifecycle schema path and shape one private exact-attribution envelope:
+`deckard.v1.agent.attention` on `deckard.evt.v1.attention`. The payload must
+carry inherited `ZELLIJ_SESSION_NAME` + `ZELLIJ_PANE_ID`, normalized
+`data.alert_kind=attention`, and a fresh UUID per native invocation. Optional
+diagnostics are scalar-only and truncated; serialized envelopes are capped at
+64 KiB. Alert hook bindings have explicit runner timeouts of at most two
+seconds, while lifecycle bindings keep their existing defaults.
+
+During hook-hub phase 0, Deckard attention deliberately remains in
+`services/agent-hooks`. Hook-hub is dispatch-only in that phase and Deckard is
+not registered as a hub handler. `deckard install-hooks` remains a standalone
+Claude fallback; the canonical Bloodbank installer replaces recognized legacy
+Deckard publishers in place and preserves foreign hook siblings and matchers.
+
 ## Transport
 
-NATS-direct on `127.0.0.1:4222` via a ~40-line stdlib socket client. No
+NATS-direct on `127.0.0.1:4222` via a bounded stdlib socket client. No
 nats-py, no virtualenv, no Dapr sidecar on the publish path. Justified by
 the fire-and-forget shape of CLI hooks. Override via:
 
@@ -192,12 +209,17 @@ the fire-and-forget shape of CLI hooks. Override via:
 | `BLOODBANK_NATS_HOST`    | `127.0.0.1` | NATS host                                                               |
 | `BLOODBANK_NATS_PORT`    | `4222`      | NATS port                                                               |
 | `BLOODBANK_NATS_TIMEOUT` | `3.0`       | Connect/publish timeout (s)                                             |
+| `DECKARD_NATS`           | unset       | Compatibility `host:port` fallback when Bloodbank host/port are unset   |
 | `BLOODBANK_ENABLED`      | `true`      | `false` disables publishing entirely                                    |
 | `BLOODBANK_DEBUG`        | unset       | `true` logs each publish to stderr                                      |
 | `BLOODBANK_HOOK_VERBOSE` | unset       | when set, log `published <subject>` to stderr                           |
 | `BLOODBANK_HOOK_STRICT`  | unset       | `1` exits non-zero on publish failure (default: fail open)              |
 | `BLOODBANK_HOOK_VALIDATE`| unset       | `1` runs JSON Schema validation against the matching `bloodbank/schemas/` schema  |
 | `BLOODBANK_SCHEMAS_DIR`  | unset       | overrides the schema-tree lookup; defaults to repo-local `bloodbank/schemas/`     |
+
+The timeout is one whole-operation deadline from DNS resolution through the
+required NATS `PONG`; EOF or deadline without `PONG` is a publish failure. Hook
+entrypoints still fail open.
 
 ## Claude Code
 

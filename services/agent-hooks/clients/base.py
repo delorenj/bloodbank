@@ -8,13 +8,93 @@ publishers.
 from __future__ import annotations
 
 import json
+import math
 import os
+import select
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 from core.session import SessionState, _now_iso
+
+MAX_STDIN_BYTES = 64 * 1024
+STDIN_READ_TIMEOUT = 0.5
+MAX_DIAGNOSTIC_BYTES = 512
+
+
+def read_stdin_text(
+    stream: Any | None = None,
+    *,
+    max_bytes: int = MAX_STDIN_BYTES,
+    timeout: float = STDIN_READ_TIMEOUT,
+) -> str:
+    """Read hook stdin with one byte/time budget.
+
+    Real hook pipes are read from the file descriptor so a harness that never
+    closes stdin cannot hold the agent. In-memory streams used by adapters/tests
+    still get a bounded ``read(n)`` fallback.
+    """
+    stream = sys.stdin if stream is None else stream
+    try:
+        if stream.isatty():
+            return ""
+    except (AttributeError, OSError):
+        pass
+
+    try:
+        fd = stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        raw = stream.read(max_bytes + 1)
+        if isinstance(raw, bytes):
+            data = raw[:max_bytes]
+        else:
+            data = str(raw).encode("utf-8", errors="replace")[:max_bytes]
+        return data.decode("utf-8", errors="replace")
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    chunks: list[bytes] = []
+    size = 0
+    while size < max_bytes:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            readable, _, _ = select.select([fd], [], [], remaining)
+        except (OSError, ValueError):
+            break
+        if not readable:
+            break
+        try:
+            chunk = os.read(fd, min(8192, max_bytes - size))
+        except OSError:
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def bounded_scalar(value: Any) -> str | int | float | bool | None:
+    """Return a JSON scalar with bounded string representation, or ``None``."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if -(1 << 63) <= value < (1 << 63):
+            return value
+        value = str(value)
+    elif isinstance(value, float):
+        return value if math.isfinite(value) else None
+    elif not isinstance(value, str):
+        return None
+    encoded = value.encode("utf-8", errors="replace")
+    if len(encoded) <= MAX_DIAGNOSTIC_BYTES:
+        return value
+    return encoded[:MAX_DIAGNOSTIC_BYTES].decode("utf-8", errors="ignore") + "…"
 
 
 class ClientAdapter:
@@ -47,7 +127,7 @@ class ClientAdapter:
         """Read the hook payload (stdin by default; subclasses may extend)."""
         if sys.stdin.isatty():
             return {}
-        raw = sys.stdin.read()
+        raw = read_stdin_text()
         if not raw.strip():
             return {}
         try:
@@ -117,7 +197,7 @@ class ClientAdapter:
         raw = payload if isinstance(payload, dict) else {}
         data: dict[str, Any] = {
             "alert_kind": "attention",
-            "source_event": hook_name,
+            "source_event": bounded_scalar(hook_name),
             "zellij_pane_id": int(os.environ["ZELLIJ_PANE_ID"]),
             "zellij_session_name": os.environ["ZELLIJ_SESSION_NAME"],
         }
@@ -130,13 +210,10 @@ class ClientAdapter:
             or raw.get("working_directory")
             or raw.get("workingDirectory"),
         }
-        data.update(
-            {
-                key: value
-                for key, value in optional.items()
-                if value not in (None, "")
-            }
-        )
+        for key, value in optional.items():
+            bounded = bounded_scalar(value)
+            if bounded not in (None, ""):
+                data[key] = bounded
         return data
 
     def attention_event_id(self, payload: Any) -> str:

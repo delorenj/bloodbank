@@ -29,12 +29,68 @@ from core.event_map import resolve_alert_map, resolve_map
 from core.nats_publish import publish as nats_publish
 from core.session import SessionState
 
-from clients.base import ClientAdapter
+from clients.base import MAX_DIAGNOSTIC_BYTES, ClientAdapter, bounded_scalar
 
 DECKARD_ATTENTION_SUBJECT = "deckard.evt.v1.attention"
 DECKARD_ATTENTION_TYPE = "deckard.v1.agent.attention"
 # Leave headroom beneath every supported hook runner's three-second ceiling.
 DECKARD_PUBLISH_TIMEOUT = 0.75
+MAX_ATTENTION_ENVELOPE_BYTES = 64 * 1024
+MAX_ATTENTION_SESSION_BYTES = 1024
+
+
+def _bounded_actor(actor: Any) -> dict[str, Any]:
+    if not isinstance(actor, dict):
+        raise ValueError("attention actor must be an object")
+    out: dict[str, Any] = {}
+    for key, value in list(actor.items())[:16]:
+        if not isinstance(key, str):
+            continue
+        bounded = bounded_scalar(value)
+        if bounded is not None:
+            out[key[:MAX_DIAGNOSTIC_BYTES]] = bounded
+    return out
+
+
+def build_attention_envelope(
+    adapter: ClientAdapter, hook_name: str, payload: Any
+) -> dict[str, Any]:
+    pane = os.environ.get("ZELLIJ_PANE_ID", "")
+    session = os.environ.get("ZELLIJ_SESSION_NAME", "")
+    pane_number = int(pane)
+    if (
+        not session
+        or len(session.encode("utf-8")) > MAX_ATTENTION_SESSION_BYTES
+        or pane_number < 0
+        or pane_number > 0xFFFF_FFFF
+    ):
+        raise ValueError("missing/oversized session or pane outside u32")
+    envelope = {
+        "specversion": "1.0",
+        "id": adapter.attention_event_id(payload),
+        "source": adapter.source,
+        "type": DECKARD_ATTENTION_TYPE,
+        "subject": DECKARD_ATTENTION_SUBJECT,
+        "time": now_iso(),
+        "datacontenttype": "application/json",
+        "actor": _bounded_actor(adapter.get_actor(payload)),
+        "data": adapter.shape_attention_alert(hook_name, payload),
+    }
+    return envelope
+
+
+def serialize_attention_envelope(envelope: dict[str, Any]) -> bytes:
+    body = json.dumps(
+        envelope,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(body) > MAX_ATTENTION_ENVELOPE_BYTES:
+        raise ValueError(
+            f"attention envelope exceeds {MAX_ATTENTION_ENVELOPE_BYTES} bytes"
+        )
+    return body
 
 
 def run(adapter: ClientAdapter, argv: list[str]) -> int:
@@ -104,7 +160,7 @@ def run(adapter: ClientAdapter, argv: list[str]) -> int:
     body = json.dumps(envelope).encode("utf-8")
     try:
         nats_publish(subject, body, client_name=adapter.nats_client_name)
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         adapter.log(f"publish failed ({subject}): {exc}")
         adapter.after_publish_attempt(session, ce_type, payload, argv, published=False)
         return 1 if os.environ.get("BLOODBANK_HOOK_STRICT") == "1" else 0
@@ -126,25 +182,9 @@ def _fanout_alert(
     if os.environ.get("BLOODBANK_ENABLED", "true") != "true":
         return 0
 
-    pane = os.environ.get("ZELLIJ_PANE_ID", "")
-    session = os.environ.get("ZELLIJ_SESSION_NAME", "")
     try:
-        pane_number = int(pane)
-        if not session or pane_number < 0 or pane_number > 0xFFFF_FFFF:
-            raise ValueError("missing session or pane outside u32")
-        data = adapter.shape_attention_alert(hook_name, payload)
-        envelope = {
-            "specversion": "1.0",
-            "id": adapter.attention_event_id(payload),
-            "source": adapter.source,
-            "type": DECKARD_ATTENTION_TYPE,
-            "subject": DECKARD_ATTENTION_SUBJECT,
-            "time": now_iso(),
-            "datacontenttype": "application/json",
-            "actor": adapter.get_actor(payload),
-            "data": data,
-        }
-        body = json.dumps(envelope).encode("utf-8")
+        envelope = build_attention_envelope(adapter, hook_name, payload)
+        body = serialize_attention_envelope(envelope)
         nats_publish(
             DECKARD_ATTENTION_SUBJECT,
             body,

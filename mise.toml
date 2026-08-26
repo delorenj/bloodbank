@@ -207,7 +207,7 @@ run = "python3 services/agent-hooks/sync.py --check"
 
 [tasks."validate:agent-hooks"]
 description = "Validate the agent-hooks SSOT and generated publisher maps"
-run = "mise run hooks:check"
+run = "mise run hooks:check && python3 -m unittest discover -s services/agent-hooks/tests -p 'test_attention*.py'"
 
 [tasks."hooks:sync"]
 description = "Propagate services/agent-hooks/hooks.master.json (SSOT) to every agent's native hook config + event map"

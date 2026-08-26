@@ -54,6 +54,9 @@ jobs:
         # Fails if the operator CLI has a syntax error.
         run: python -m compileall cli
 
+      - name: Validate agent attention hooks
+        run: python -m unittest discover -s services/agent-hooks/tests -p 'test_attention*.py'
+
       - name: Platform bootstrap check
         # Pure file-presence validator; no Docker, no network.
         run: bash ops/bootstrap/check-platform.sh

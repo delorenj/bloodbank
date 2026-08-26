@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -16,12 +17,16 @@ AGENT_HOOKS_DIR = Path(__file__).resolve().parents[1]
 if str(AGENT_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_HOOKS_DIR))
 
+from clients import get_adapter
 from clients.base import ClientAdapter
 from core.publisher import (
     DECKARD_ATTENTION_SUBJECT,
     DECKARD_ATTENTION_TYPE,
     DECKARD_PUBLISH_TIMEOUT,
+    MAX_ATTENTION_ENVELOPE_BYTES,
+    build_attention_envelope,
     run,
+    serialize_attention_envelope,
 )
 
 
@@ -103,6 +108,60 @@ class AttentionFanoutTests(unittest.TestCase):
         self.assertEqual(envelope["data"]["message"], "agent is waiting")
         self.assertEqual(envelope["data"]["tool_name"], "Bash")
         self.assertEqual(publish.call_args.kwargs["timeout"], DECKARD_PUBLISH_TIMEOUT)
+
+    def test_contract_literals_and_two_native_invocations_have_unique_uuid_ids(self) -> None:
+        self.assertEqual(DECKARD_ATTENTION_SUBJECT, "deckard.evt.v1.attention")
+        self.assertEqual(DECKARD_ATTENTION_TYPE, "deckard.v1.agent.attention")
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "BLOODBANK_ENABLED": "true",
+                    "ZELLIJ_PANE_ID": "41",
+                    "ZELLIJ_SESSION_NAME": "Workspace",
+                },
+                clear=False,
+            ),
+            mock.patch("core.publisher.nats_publish") as publish,
+            mock.patch("sys.stdin", io.StringIO('{"message":"waiting"}')),
+        ):
+            adapter = get_adapter("claude")
+            self.assertEqual(run(adapter, ["publish.py", "Notification"]), 0)
+            self.assertEqual(run(adapter, ["publish.py", "Notification"]), 0)
+
+        ids = [json.loads(call.args[1])["id"] for call in publish.call_args_list]
+        self.assertEqual(len(ids), 2)
+        self.assertNotEqual(ids[0], ids[1])
+        for event_id in ids:
+            self.assertTrue(event_id)
+            self.assertEqual(str(uuid.UUID(event_id)), event_id)
+
+    def test_attention_diagnostics_are_scalar_truncated_and_envelope_is_small(self) -> None:
+        payload = {
+            "message": "four-byte-🙂" * 10_000,
+            "permission_mode": {"not": "scalar"},
+            "toolName": ["not", "scalar"],
+            "cwd": b"not-json",
+        }
+        with mock.patch.dict(
+            os.environ,
+            {"ZELLIJ_PANE_ID": "41", "ZELLIJ_SESSION_NAME": "Workspace"},
+            clear=False,
+        ):
+            envelope = build_attention_envelope(
+                self.adapter, "nativeSignal", payload
+            )
+            body = serialize_attention_envelope(envelope)
+
+        self.assertLess(len(body), MAX_ATTENTION_ENVELOPE_BYTES)
+        self.assertLess(len(body), 16 * 1024, "diagnostics consumed the safety headroom")
+        diagnostics = envelope["data"]
+        self.assertLessEqual(len(diagnostics["message"].encode("utf-8")), 515)
+        self.assertNotIn("permission_mode", diagnostics)
+        self.assertNotIn("tool_name", diagnostics)
+        self.assertNotIn("working_directory", diagnostics)
+        for value in diagnostics.values():
+            self.assertIsInstance(value, (str, int, float, bool, type(None)))
 
     def test_missing_exact_session_or_pane_refuses_without_publishing(self) -> None:
         for env in (
@@ -187,6 +246,63 @@ class AttentionFanoutTests(unittest.TestCase):
         self.assertIn("foreign-notification-hook", commands)
         self.assertTrue(any("bloodbank/publish.py" in command for command in commands))
 
+    def test_alert_timeouts_are_per_binding_without_shortening_lifecycle_hooks(self) -> None:
+        master = SYNC.load_master()
+        lock = SYNC.load_lock()
+        expected = {
+            "claude": ("Notification", "timeout", 2, "SessionStart", 3),
+            "codex": ("PermissionRequest", "timeout", 2000, "SessionStart", 3000),
+            "copilot": ("permissionRequest", "timeoutSec", 2, "sessionStart", 5),
+        }
+        for agent_name, (alert, field, alert_timeout, lifecycle, default) in expected.items():
+            config = SYNC.render_config(
+                master["agents"][agent_name], master["lifecycle"], lock
+            )
+            alert_hook = config["hooks"][alert][0]
+            lifecycle_hook = config["hooks"][lifecycle][0]
+            if agent_name != "copilot":
+                alert_hook = alert_hook["hooks"][0]
+                lifecycle_hook = lifecycle_hook["hooks"][0]
+            self.assertEqual(alert_hook[field], alert_timeout, agent_name)
+            self.assertEqual(lifecycle_hook[field], default, agent_name)
+
+    def test_sync_rejects_lifecycle_alert_overlap(self) -> None:
+        master = copy.deepcopy(SYNC.load_master())
+        binding = next(
+            item
+            for item in master["agents"]["claude"]["bindings"]
+            if item.get("alert") == "attention"
+        )
+        binding["lifecycle"] = "agent.session.ended"
+        ambiguities = SYNC.detect_ambiguities(master, SYNC.load_lock())
+        self.assertTrue(
+            any(item["kind"] == "lifecycle-alert-overlap" for item in ambiguities)
+        )
+
+    def test_sync_rejects_separate_lifecycle_and_alert_binding_overlap(self) -> None:
+        master = copy.deepcopy(SYNC.load_master())
+        alert = next(
+            item
+            for item in master["agents"]["claude"]["bindings"]
+            if item.get("alert") == "attention"
+        )
+        lifecycle = next(
+            item
+            for item in master["agents"]["claude"]["bindings"]
+            if item.get("lifecycle")
+        )
+        lifecycle["native"] = alert["native"]
+        lifecycle["arg"] = alert["arg"]
+
+        ambiguities = SYNC.detect_ambiguities(master, SYNC.load_lock())
+        overlap_details = [
+            item["detail"]
+            for item in ambiguities
+            if item["kind"] == "lifecycle-alert-overlap"
+        ]
+        self.assertTrue(any("reuse native" in detail for detail in overlap_details))
+        self.assertTrue(any("reuse arg" in detail for detail in overlap_details))
+
     def test_legacy_deckard_recognition_is_path_and_event_exact(self) -> None:
         canonical = (
             "/home/test/.local/share/deckard/hooks/"
@@ -258,6 +374,8 @@ class AttentionFanoutTests(unittest.TestCase):
                                 "type": "command",
                                 "command": f"{legacy_script} {event}",
                                 "timeout": 3,
+                                "condition": {"interactive": True},
+                                "foreign_meta": "keep",
                             }
                         ],
                     },
@@ -334,6 +452,28 @@ class AttentionFanoutTests(unittest.TestCase):
                     )
                     for foreign in foreign_commands[event]:
                         self.assertIn(foreign, commands)
+                    canonical_group = next(
+                        group
+                        for group in groups
+                        if any(
+                            SYNC._has_marker(hook.get("command", ""), markers)
+                            for hook in group.get("hooks", [])
+                        )
+                    )
+                    self.assertEqual(
+                        canonical_group.get("matcher"),
+                        "legacy-only",
+                        "first legacy publisher was not replaced in place",
+                    )
+                    canonical_hook = next(
+                        hook
+                        for hook in canonical_group["hooks"]
+                        if SYNC._has_marker(hook.get("command", ""), markers)
+                    )
+                    self.assertEqual(
+                        canonical_hook.get("condition"), {"interactive": True}
+                    )
+                    self.assertEqual(canonical_hook.get("foreign_meta"), "keep")
                     mixed = next(group for group in groups if group.get("matcher") == "mixed")
                     self.assertEqual(mixed["condition"], {"preserve": True})
 

@@ -85,7 +85,7 @@
           {
             "type": "command",
             "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook PermissionRequest",
-            "timeout": 3000
+            "timeout": 2000
           }
         ]
       }

@@ -32,14 +32,24 @@ fi
 
 echo "agent-hooks-ssot: 2/2 per-binding envelope contract + schema validation"
 python3 - "$SERVICE_DIR" <<'PY'
+import os
 import sys
+import uuid
 from pathlib import Path
 
 service_dir = Path(sys.argv[1]).resolve()
 sys.path.insert(0, str(service_dir))
 
 import sync  # SSOT loader + effective_type
+from clients import get_adapter
 from core.envelope import build_envelope
+from core.publisher import (
+    DECKARD_ATTENTION_SUBJECT,
+    DECKARD_ATTENTION_TYPE,
+    MAX_ATTENTION_ENVELOPE_BYTES,
+    build_attention_envelope,
+    serialize_attention_envelope,
+)
 from core.validate import load_schema_for
 
 import claude.publish as cl
@@ -94,8 +104,30 @@ for agent_name, agent in master["agents"].items():
     for b in agent.get("bindings", []):
         if b.get("publish", True) is False:
             if b.get("alert") == "attention":
-                checked += 1
-                print(f"  PASS [{agent_name}] {b['native']:<20} -> deckard attention")
+                try:
+                    os.environ["ZELLIJ_PANE_ID"] = "41"
+                    os.environ["ZELLIJ_SESSION_NAME"] = "agent-hooks-smoketest"
+                    envelope = build_attention_envelope(
+                        get_adapter(agent_name),
+                        b["arg"],
+                        {"message": "waiting", "cwd": "/tmp/agent-hooks-smoketest"},
+                    )
+                    body = serialize_attention_envelope(envelope)
+                    assert DECKARD_ATTENTION_SUBJECT == "deckard.evt.v1.attention"
+                    assert DECKARD_ATTENTION_TYPE == "deckard.v1.agent.attention"
+                    assert envelope["subject"] == DECKARD_ATTENTION_SUBJECT
+                    assert envelope["type"] == DECKARD_ATTENTION_TYPE
+                    assert envelope["data"]["alert_kind"] == "attention"
+                    assert envelope["data"]["source_event"] == b["arg"]
+                    assert envelope["data"]["zellij_pane_id"] == 41
+                    assert envelope["data"]["zellij_session_name"] == "agent-hooks-smoketest"
+                    assert str(uuid.UUID(envelope["id"])) == envelope["id"]
+                    assert 0 < len(body) < MAX_ATTENTION_ENVELOPE_BYTES
+                    checked += 1
+                    print(f"  PASS [{agent_name}] {b['native']:<20} -> normalized exact deckard attention")
+                except Exception as exc:  # noqa: BLE001
+                    fails += 1
+                    print(f"  FAIL [{agent_name}] {b['native']:<20} -> deckard attention: {exc!r}")
             else:
                 fails += 1
                 print(f"  FAIL [{agent_name}] {b['native']:<20} -> invalid alert metadata")

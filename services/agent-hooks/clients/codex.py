@@ -24,7 +24,7 @@ from core.session import (
     git_status_word,
 )
 
-from .base import ClientAdapter
+from .base import ClientAdapter, read_stdin_text
 
 _CODEX_STATE_DIR = Path.home() / ".codex"
 
@@ -72,7 +72,7 @@ class CodexAdapter(ClientAdapter):
 
     def read_payload(self, argv: list[str]) -> Any:
         if not sys.stdin.isatty():
-            raw = sys.stdin.read()
+            raw = read_stdin_text()
             if raw.strip():
                 return _parse_json(raw)
         if len(argv) > 2:

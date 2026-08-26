@@ -146,6 +146,61 @@ def detect_ambiguities(master: dict, lock: dict) -> list[dict]:
     agents = master["agents"]
     ambiguities: list[dict] = []
 
+    # Alert fan-out and lifecycle publication are mutually exclusive. A native
+    # binding cannot enter both the schema-driven Bloodbank lifecycle path and
+    # the private exact-attention path.
+    for agent_name, agent in agents.items():
+        lifecycle_natives: set[str] = set()
+        lifecycle_args: set[str] = set()
+        alert_natives: set[str] = set()
+        alert_args: set[str] = set()
+        for binding in agent.get("bindings", []):
+            has_alert = bool(binding.get("alert"))
+            has_lifecycle = bool(binding.get("lifecycle"))
+            publishes = binding.get("publish", True) is not False
+            if has_alert and (has_lifecycle or publishes):
+                native = binding.get("native", "<unknown>")
+                ambiguities.append(
+                    {
+                        "id": f"binding:{agent_name}:{native}:lifecycle-alert-overlap",
+                        "kind": "lifecycle-alert-overlap",
+                        "detail": (
+                            f"{agent_name} binding {native!r} declares alert fan-out "
+                            "and lifecycle publication; choose exactly one"
+                        ),
+                        "candidates": [],
+                    }
+                )
+            native = binding.get("native")
+            arg = binding.get("arg")
+            if has_alert:
+                if isinstance(native, str):
+                    alert_natives.add(native)
+                if isinstance(arg, str):
+                    alert_args.add(arg)
+            elif has_lifecycle or publishes:
+                if isinstance(native, str):
+                    lifecycle_natives.add(native)
+                if isinstance(arg, str):
+                    lifecycle_args.add(arg)
+
+        for field, overlap in (
+            ("native", alert_natives & lifecycle_natives),
+            ("arg", alert_args & lifecycle_args),
+        ):
+            for value in sorted(overlap):
+                ambiguities.append(
+                    {
+                        "id": f"binding:{agent_name}:{field}:{value}:lifecycle-alert-overlap",
+                        "kind": "lifecycle-alert-overlap",
+                        "detail": (
+                            f"{agent_name} lifecycle and alert bindings reuse "
+                            f"{field} {value!r}; choose exactly one route"
+                        ),
+                        "candidates": [],
+                    }
+                )
+
     # (1) Contract-illegality of any catalog type that is actually emitted.
     for key, life in lifecycle.items():
         if life.get("emitted") is False:
@@ -278,7 +333,7 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
         for b in agent["bindings"]:
             entry: dict[str, Any] = {
                 "command": f"{_runner(agent)} {b['arg']}",
-                "timeout": agent.get("default_timeout", 5),
+                "timeout": b.get("timeout", agent.get("default_timeout", 5)),
             }
             if b.get("matcher") is not None:
                 entry["matcher"] = b["matcher"]
@@ -293,7 +348,9 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
                 {
                     "type": "command",
                     "bash": f"exec {_runner(agent)} {b['arg']}",
-                    "timeoutSec": agent.get("default_timeout_sec", 5),
+                    "timeoutSec": b.get(
+                        "timeoutSec", agent.get("default_timeout_sec", 5)
+                    ),
                 }
             ]
         return {"version": 1, "hooks": hooks}
@@ -309,7 +366,7 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
                 {
                     "type": "command",
                     "command": _command(agent, b, codex_empty_echo=codex_empty_echo),
-                    "timeout": timeout,
+                    "timeout": b.get("timeout", timeout),
                 }
             ]
             hooks[b["native"]] = [entry]
@@ -332,7 +389,11 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
                 cmd += " ; printf '{\"decision\":\"\"}\\n'"
             else:
                 cmd += " ; printf '{}\\n'"
-            handler = {"type": "command", "command": cmd, "timeout": timeout}
+            handler = {
+                "type": "command",
+                "command": cmd,
+                "timeout": b.get("timeout", timeout),
+            }
             if b["native"] in tool_events:
                 hooks[b["native"]] = [
                     {"matcher": b.get("matcher", "*"), "hooks": [handler]}
@@ -657,7 +718,34 @@ def _merge_hooks(
         if not gen_bb:
             continue
         groups = hooks.setdefault(event, [])
+        live_bb = [
+            (g, h)
+            for g in groups
+            for h in g.get("hooks", [])
+            if _has_marker(h.get("command", ""), markers)
+        ]
         if event in attention_replacements:
+            legacy = [
+                (group, hook)
+                for group in groups
+                for hook in group.get("hooks", [])
+                if isinstance(hook, dict)
+                and _is_legacy_deckard_attention(hook.get("command"), event)
+            ]
+            if not live_bb and legacy:
+                # Preserve the first legacy publisher's group position,
+                # matcher, condition, and siblings by replacing only its inner
+                # hook. Remaining exact legacy publishers are duplicates.
+                first_group, first_hook = legacy[0]
+                preserved = {
+                    key: copy.deepcopy(value)
+                    for key, value in first_hook.items()
+                    if key not in {"type", "command", "timeout"}
+                }
+                first_hook.clear()
+                first_hook.update(preserved)
+                first_hook.update(copy.deepcopy(gen_bb[0]))
+                live_bb = [(first_group, first_hook)]
             for group in groups:
                 group["hooks"] = [
                     hook
@@ -669,12 +757,6 @@ def _merge_hooks(
                 ]
             groups = [group for group in groups if group.get("hooks")]
             hooks[event] = groups
-        live_bb = [
-            (g, h)
-            for g in groups
-            for h in g.get("hooks", [])
-            if _has_marker(h.get("command", ""), markers)
-        ]
         if live_bb:
             _, lh = live_bb[0]
             gh = gen_bb[0]

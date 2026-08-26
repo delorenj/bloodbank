@@ -105,9 +105,9 @@
         { "native": "PostToolUse", "role": "post_tool", "arg": "tool-action", "lifecycle": "agent.tool.completed", "payload": "stdin", "matcher": ".*" },
         { "native": "SubagentStop", "role": "subagent_stop", "arg": "subagent-stopped", "lifecycle": "agent.invocation.completed", "payload": "stdin" },
         { "native": "Stop", "role": "session_end", "arg": "session-end", "lifecycle": "agent.session.ended", "payload": "stdin" },
-        { "native": "Notification", "role": "attention", "arg": "Notification", "publish": false, "alert": "attention", "payload": "stdin" },
-        { "native": "PermissionRequest", "role": "attention", "arg": "PermissionRequest", "publish": false, "alert": "attention", "payload": "stdin" },
-        { "native": "TeammateIdle", "role": "attention", "arg": "TeammateIdle", "publish": false, "alert": "attention", "payload": "stdin" }
+        { "native": "Notification", "role": "attention", "arg": "Notification", "publish": false, "alert": "attention", "payload": "stdin", "timeout": 2 },
+        { "native": "PermissionRequest", "role": "attention", "arg": "PermissionRequest", "publish": false, "alert": "attention", "payload": "stdin", "timeout": 2 },
+        { "native": "TeammateIdle", "role": "attention", "arg": "TeammateIdle", "publish": false, "alert": "attention", "payload": "stdin", "timeout": 2 }
       ]
     },
     "copilot": {
@@ -135,7 +135,7 @@
         { "native": "postToolUse", "role": "post_tool", "arg": "postToolUse", "lifecycle": "agent.tool.completed", "payload": "stdin" },
         { "native": "errorOccurred", "role": "invocation_failed", "arg": "errorOccurred", "lifecycle": "agent.invocation.failed", "payload": "stdin" },
         { "native": "agentStop", "role": "subagent_stop", "arg": "agentStop", "lifecycle": "agent.invocation.completed", "payload": "stdin" },
-        { "native": "permissionRequest", "role": "attention", "arg": "permissionRequest", "publish": false, "alert": "attention", "payload": "stdin" }
+        { "native": "permissionRequest", "role": "attention", "arg": "permissionRequest", "publish": false, "alert": "attention", "payload": "stdin", "timeoutSec": 2 }
       ]
     },
     "codex": {
@@ -163,7 +163,7 @@
         { "native": "PostToolUse", "role": "post_tool", "arg": "PostToolUse", "lifecycle": "agent.tool.completed", "payload": "stdin", "matcher": ".*" },
         { "native": "SubagentStart", "role": "invocation_start", "arg": "SubagentStart", "lifecycle": "agent.invocation.started", "payload": "stdin" },
         { "native": "SubagentStop", "role": "subagent_stop", "arg": "SubagentStop", "lifecycle": "agent.invocation.completed", "payload": "stdin" },
-        { "native": "PermissionRequest", "role": "attention", "arg": "PermissionRequest", "publish": false, "alert": "attention", "payload": "stdin" }
+        { "native": "PermissionRequest", "role": "attention", "arg": "PermissionRequest", "publish": false, "alert": "attention", "payload": "stdin", "timeout": 2000 }
       ]
     },
     "hermes": {
