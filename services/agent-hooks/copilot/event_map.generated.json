@@ -29,5 +29,8 @@
       "bloodbank.v1.agent.invocation.completed",
       "invocation"
     ]
+  },
+  "alerts": {
+    "permissionRequest": "attention"
   }
 }

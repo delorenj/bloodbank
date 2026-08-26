@@ -20,9 +20,16 @@ def _config() -> tuple[str, int, float]:
     return host, port, timeout
 
 
-def publish(subject: str, body: bytes, *, client_name: str = "bloodbank-agent-hook") -> None:
+def publish(
+    subject: str,
+    body: bytes,
+    *,
+    client_name: str = "bloodbank-agent-hook",
+    timeout: float | None = None,
+) -> None:
     """Publish to NATS at ``subject``. Raises OSError or RuntimeError on failure."""
-    host, port, timeout = _config()
+    host, port, configured_timeout = _config()
+    timeout = configured_timeout if timeout is None else timeout
     with socket.create_connection((host, port), timeout=timeout) as sock:
         sock.settimeout(timeout)
         f = sock.makefile("rwb", buffering=0)

@@ -169,6 +169,8 @@ def detect_ambiguities(master: dict, lock: dict) -> list[dict]:
         if agent.get("dialect") in ("watcher", "runtime"):
             continue
         for b in agent.get("bindings", []):
+            if b.get("publish", True) is False:
+                continue
             role = b.get("role")
             life = lifecycle.get(b.get("lifecycle", ""))
             if not role or not life:
@@ -193,6 +195,8 @@ def detect_ambiguities(master: dict, lock: dict) -> list[dict]:
         if agent.get("dialect") in ("watcher", "runtime"):
             continue
         for b in agent.get("bindings", []):
+            if b.get("publish", True) is False:
+                continue
             try:
                 ce_type, _ = effective_type(b, lifecycle, lock)
             except KeyError:
@@ -232,10 +236,17 @@ def _runner(agent: dict) -> str:
 def render_event_map(agent: dict, lifecycle: dict, lock: dict) -> dict:
     out: dict[str, Any] = dict(GENERATED_HEADER)
     table: dict[str, list[str]] = {}
+    alerts: dict[str, str] = {}
     for b in agent.get("bindings", []):
+        if b.get("publish", True) is False:
+            if b.get("alert"):
+                alerts[b["arg"]] = b["alert"]
+            continue
         ce_type, bucket = effective_type(b, lifecycle, lock)
         table[b["arg"]] = [ce_type, bucket]
     out["map"] = table
+    if alerts:
+        out["alerts"] = alerts
     return out
 
 
@@ -495,6 +506,8 @@ def _check_publisher_fallbacks(master: dict, lock: dict) -> list[str]:
             continue
         want = {}
         for b in agent.get("bindings", []):
+            if b.get("publish", True) is False:
+                continue
             try:
                 want[b["arg"]] = effective_type(b, lifecycle, lock)
             except KeyError:

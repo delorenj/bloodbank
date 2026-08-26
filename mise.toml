@@ -205,6 +205,10 @@ run = "bash ops/smoketest/smoketest-schema-contract-consistency.sh"
 description = "agent-hooks SSOT drift/ambiguity gate (read-only): hooks.master.json vs generated configs + publisher maps"
 run = "python3 services/agent-hooks/sync.py --check"
 
+[tasks."validate:agent-hooks"]
+description = "Validate the agent-hooks SSOT and generated publisher maps"
+run = "mise run hooks:check"
+
 [tasks."hooks:sync"]
 description = "Propagate services/agent-hooks/hooks.master.json (SSOT) to every agent's native hook config + event map"
 run = "python3 services/agent-hooks/sync.py --apply"

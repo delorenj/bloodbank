@@ -1,4 +1,4 @@
-"""Load a publisher's hook-arg → (ce_type, ordering_bucket) map from the SSOT.
+"""Load publisher and Deckard-alert hook maps generated from the SSOT.
 
 The authoritative map is GENERATED from ``hooks.master.json`` by ``sync.py``
 into ``<service_dir>/<agent>/event_map.generated.json``. Publishers call
@@ -26,15 +26,20 @@ from typing import Mapping
 Pair = tuple[str, str]
 
 
-def load_generated(agent_dir: Path) -> dict[str, Pair] | None:
-    """Return the generated arg→(type,bucket) map, or None if unavailable."""
+def _load_table(agent_dir: Path, key: str) -> dict | None:
     path = Path(agent_dir) / "event_map.generated.json"
     try:
         raw = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
-    table = raw.get("map") if isinstance(raw, dict) else None
-    if not isinstance(table, dict):
+    table = raw.get(key) if isinstance(raw, dict) else None
+    return table if isinstance(table, dict) else None
+
+
+def load_generated(agent_dir: Path) -> dict[str, Pair] | None:
+    """Return the generated arg→(type,bucket) map, or None if unavailable."""
+    table = _load_table(agent_dir, "map")
+    if table is None:
         return None
     out: dict[str, Pair] = {}
     for key, val in table.items():
@@ -50,3 +55,21 @@ def resolve_map(agent_dir: Path, default_map: Mapping[str, Pair]) -> dict[str, P
     if generated:
         merged.update(generated)
     return merged
+
+
+def resolve_alert_map(agent_dir: Path) -> dict[str, str]:
+    """Return the generated hook-arg→normalized-alert-kind map.
+
+    Alerts intentionally have no embedded fallback: unlike Bloodbank lifecycle
+    aliases, they must be registry-declared before they can move Deckard's
+    display. A missing or corrupt projection therefore fails open by publishing
+    nothing instead of broadening the alert surface.
+    """
+    table = _load_table(agent_dir, "alerts")
+    if table is None:
+        return {}
+    return {
+        str(arg): str(kind)
+        for arg, kind in table.items()
+        if isinstance(kind, str) and kind
+    }

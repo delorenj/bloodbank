@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +107,41 @@ class ClientAdapter:
     ) -> dict[str, Any]:
         """Project the raw hook payload into the v1 schema's data shape."""
         return {"hook": hook_name, "payload": payload}
+
+    def shape_attention_alert(self, hook_name: str, payload: Any) -> dict[str, Any]:
+        """Normalize one registry-declared native alert for Deckard.
+
+        Session and pane come only from zellij's inherited environment. Payload
+        fields remain optional diagnostics and are never attribution inputs.
+        """
+        raw = payload if isinstance(payload, dict) else {}
+        data: dict[str, Any] = {
+            "alert_kind": "attention",
+            "source_event": hook_name,
+            "zellij_pane_id": int(os.environ["ZELLIJ_PANE_ID"]),
+            "zellij_session_name": os.environ["ZELLIJ_SESSION_NAME"],
+        }
+        optional = {
+            "message": raw.get("message"),
+            "permission_mode": raw.get("permission_mode")
+            or raw.get("permissionMode"),
+            "tool_name": raw.get("tool_name") or raw.get("toolName"),
+            "working_directory": raw.get("cwd")
+            or raw.get("working_directory")
+            or raw.get("workingDirectory"),
+        }
+        data.update(
+            {
+                key: value
+                for key, value in optional.items()
+                if value not in (None, "")
+            }
+        )
+        return data
+
+    def attention_event_id(self, payload: Any) -> str:
+        """Return a unique envelope id; native hook ids are not cross-client stable."""
+        return str(uuid.uuid4())
 
     def before_publish(
         self, session: SessionState, ce_type: str, payload: Any, argv: list[str]

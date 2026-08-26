@@ -92,6 +92,14 @@ for agent_name, agent in master["agents"].items():
         continue
     ident = IDENT[agent_name]
     for b in agent.get("bindings", []):
+        if b.get("publish", True) is False:
+            if b.get("alert") == "attention":
+                checked += 1
+                print(f"  PASS [{agent_name}] {b['native']:<20} -> deckard attention")
+            else:
+                fails += 1
+                print(f"  FAIL [{agent_name}] {b['native']:<20} -> invalid alert metadata")
+            continue
         ce_type, bucket = sync.effective_type(b, lifecycle, lock)
         try:
             data = _data_for(ce_type)

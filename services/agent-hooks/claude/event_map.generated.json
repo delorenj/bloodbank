@@ -25,5 +25,10 @@
       "bloodbank.v1.agent.session.ended",
       "session"
     ]
+  },
+  "alerts": {
+    "Notification": "attention",
+    "PermissionRequest": "attention",
+    "TeammateIdle": "attention"
   }
 }

@@ -49,6 +49,13 @@
         "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook agentStop",
         "timeoutSec": 5
       }
+    ],
+    "permissionRequest": [
+      {
+        "type": "command",
+        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook permissionRequest",
+        "timeoutSec": 5
+      }
     ]
   }
 }

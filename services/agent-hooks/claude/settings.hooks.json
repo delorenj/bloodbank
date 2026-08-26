@@ -67,6 +67,39 @@
           }
         ]
       }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook Notification",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook PermissionRequest",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook TeammateIdle",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }
