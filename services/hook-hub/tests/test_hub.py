@@ -409,3 +409,94 @@ class TestEnvCapture(unittest.TestCase):
     def test_empty_values_are_omitted(self):
         got = self._captured({"ZELLIJ_PANE_ID": "", "ZELLIJ_SESSION_NAME": "W"})
         self.assertEqual(set(got), {"ZELLIJ_SESSION_NAME"})
+
+
+class TestProcessReaping(unittest.TestCase):
+    """A timed-out handler must not leave descendants running.
+
+    This is the leak observed live on this host: claude-notify exits, its `play`
+    child blocks on the audio device, and 8 of them accumulated for up to 1d11h
+    adopted by systemd --user. The hub runs claude-notify, so without a group
+    kill it would reproduce that leak inside the daemon.
+    """
+
+    def setUp(self):
+        import tempfile
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def test_timed_out_handler_takes_its_children_with_it(self):
+        marker = self.tmp / "grandchild.pid"
+        # A handler that spawns a long-lived grandchild, then hangs itself.
+        script = self.tmp / "spawner.sh"
+        script.write_text(
+            "#!/bin/sh\n"
+            f"sleep 300 & echo $! > {marker}\n"
+            "sleep 300\n"
+        )
+        script.chmod(0o755)
+        reg = f"""
+[[handler]]
+id = "spawner"
+mode = "sync"
+on = ["prompt_submit"]
+command = ["{script}"]
+timeout_ms = 600
+"""
+        with HubHarness(self.tmp, reg) as h:
+            h.request("claude", "UserPromptSubmit", timeout=20)
+            deadline = time.monotonic() + 5
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(marker.exists(), "grandchild never recorded its pid")
+            pid = int(marker.read_text().strip())
+
+            # The hub killed the handler at 600ms; the grandchild must be gone too.
+            for _ in range(60):
+                if not Path(f"/proc/{pid}").exists():
+                    break
+                time.sleep(0.1)
+            self.assertFalse(
+                Path(f"/proc/{pid}").exists(),
+                f"grandchild pid {pid} survived the handler timeout -- "
+                "killpg is not reaping the process group",
+            )
+
+    def test_detached_worker_is_deliberately_spared(self):
+        """setsid'd work must OUTLIVE the hook -- hindsight/merge-forward rely on it."""
+        marker = self.tmp / "detached.pid"
+        script = self.tmp / "detacher.sh"
+        script.write_text(
+            "#!/bin/sh\n"
+            f"setsid sh -c 'sleep 300 & echo $! > {marker}' </dev/null >/dev/null 2>&1 &\n"
+            "sleep 300\n"
+        )
+        script.chmod(0o755)
+        reg = f"""
+[[handler]]
+id = "detacher"
+mode = "sync"
+on = ["prompt_submit"]
+command = ["{script}"]
+timeout_ms = 600
+"""
+        with HubHarness(self.tmp, reg) as h:
+            h.request("claude", "UserPromptSubmit", timeout=20)
+            deadline = time.monotonic() + 5
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(marker.exists(), "detached worker never started")
+            pid = int(marker.read_text().strip())
+            time.sleep(1.0)
+            self.assertTrue(
+                Path(f"/proc/{pid}").exists(),
+                "a deliberately setsid'd worker was killed; session-end handlers "
+                "depend on outliving the hook",
+            )
+            try:
+                os.kill(pid, 9)      # test cleanup
+            except OSError:
+                pass

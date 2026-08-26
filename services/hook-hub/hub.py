@@ -215,7 +215,12 @@ async def run_handler(h: Handler, req: dict[str, Any], role: str | None,
             stderr=asyncio.subprocess.PIPE,
             env=_child_env(req, role),
             cwd=_child_cwd(req),
-            start_new_session=True,      # a handler's children die with it
+            # New session => the handler is a process-group leader, so the
+            # timeout path can reap its whole tree with killpg. It does NOT
+            # make children die with the parent -- that is the opposite, and
+            # assuming it is how 8 `play` processes ended up stuck on this box
+            # for 1d11h, adopted by systemd --user after claude-notify exited.
+            start_new_session=True,
         )
     except (OSError, ValueError) as exc:
         log(f"handler {h.id}: spawn failed: {exc}")
@@ -241,10 +246,38 @@ async def run_handler(h: Handler, req: dict[str, Any], role: str | None,
 
 
 def _kill(proc: Any) -> None:
+    """Reap the handler AND everything it spawned.
+
+    `proc.kill()` alone signals only the direct child, so a handler that forks a
+    player, a curl, or an ssh and then exits leaves that grandchild running
+    forever -- exactly the leak observed on this host, where claude-notify's
+    `play` children pile up blocked in futex_do_wait and get adopted by
+    systemd --user.
+
+    Because handlers start in a new session (see run_handler), the child is its
+    own process-group leader and killpg reaps the whole tree. SIGTERM first so a
+    handler can clean up, SIGKILL right after for anything ignoring it.
+
+    Handlers that deliberately `setsid` their own worker (hindsight-session-end,
+    merge-forward) put it in a FURTHER new session, so it correctly escapes this
+    -- their detached work is meant to outlive the hook.
+    """
     try:
-        proc.kill()
+        pgid = os.getpgid(proc.pid)
     except (ProcessLookupError, OSError):
-        pass
+        pgid = None
+
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if pgid is not None:
+            try:
+                os.killpg(pgid, sig)
+                continue
+            except (ProcessLookupError, PermissionError, OSError):
+                pgid = None          # fall through to the single-process path
+        try:
+            proc.send_signal(sig) if sig is signal.SIGTERM else proc.kill()
+        except (ProcessLookupError, OSError):
+            return
 
 
 # --------------------------------------------------------------------------
