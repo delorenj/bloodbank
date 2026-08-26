@@ -1,199 +1,170 @@
 #!/usr/bin/env python3
-"""plane-webhook-bridge — turn self-hosted Plane webhooks into repo-scoped
-Bloodbank events so each PM reacts to changes on ITS board in real time.
+"""Compatibility relay for the historical Plane webhook URL.
 
-Flow:  Plane (self-hosted) --webhook--> this bridge --NATS--> the PM's consumer
-       (subscribes bloodbank.evt.v1.repo.<repo>.>) --> inbox --> gateway turn.
+Plane should target n8n's /webhook/plane endpoint directly. Existing Plane
+installations may still target this service on port 8477, so the relay verifies
+the original HMAC and forwards the byte-identical body and signature headers to
+n8n. All normalization and Bloodbank publication therefore have one provenance
+and one implementation: the versioned n8n Plane to Bloodbank workflow.
 
-Routing (the ground-truth contract): a repo-scoped event's CloudEvents `type`
-is `bloodbank.v1.repo.<repo>.ticket_<action>` (the repo name is the ENTITY
-token), so the NATS subject `bloodbank.evt.v1.repo.<repo>.ticket_<action>`
-matches exactly what each PM's bloodbank-consumer already listens on. The Plane
-`project` id -> repo mapping comes from ~/.hermes/agents-registry.yaml
-(agents.<id>.plane.project_id / .repo).
-
-One fleet-wide service (systemd user unit). Configure ONE Plane workspace
-webhook pointing at it; it fans every project's events to the right PM.
-
-Env: HERMES_PLANE_BRIDGE_PORT (default 8477), PLANE_WEBHOOK_SECRET (optional
-HMAC verify), HERMES_FLEET_REGISTRY_FILE, BLOODBANK_HOME.
-
-Run:      plane-webhook-bridge.py            # serve
-Test:     plane-webhook-bridge.py --selftest # synthetic payload, no NATS/Plane
+No event envelope is constructed here.
 """
 from __future__ import annotations
-import hashlib, hmac, json, os, sys, uuid
-from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
-HOST = os.environ.get("HERMES_PLANE_BRIDGE_HOST", "0.0.0.0")  # 0.0.0.0 so Plane's
-#   docker containers reach it via host.docker.internal:PORT. HMAC (below) is the
-#   guard; set to 127.0.0.1 to restrict to same-host.
+import hashlib
+import hmac
+import json
+import os
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+
+HOST = os.environ.get("HERMES_PLANE_BRIDGE_HOST", "0.0.0.0")
 PORT = int(os.environ.get("HERMES_PLANE_BRIDGE_PORT", "8477"))
 SECRET = os.environ.get("PLANE_WEBHOOK_SECRET", "")
-REGISTRY = Path(os.environ.get("HERMES_FLEET_REGISTRY_FILE", os.path.expanduser("~/.hermes/agents-registry.yaml")))
-# Pilot scoping: if set (comma-sep repos), route ONLY those; ack+ignore the rest.
-# Empty = route the whole fleet.
-ONLY = {x.strip() for x in os.environ.get("HERMES_PLANE_BRIDGE_ONLY", "").split(",") if x.strip()}
-KIND_MARKER = "evt"
-
-# Plane event -> (whether we care, the entity-action verb we tack on the type).
-# Only issue/comment changes drive PM reactivity; cycles/modules/pages ignored.
-CARE = {"issue", "issue_comment"}
+N8N_WEBHOOK_URL = os.environ.get(
+    "N8N_PLANE_WEBHOOK_URL",
+    "http://localhost:5678/webhook/plane",
+)
+TIMEOUT_SECONDS = float(os.environ.get("N8N_PLANE_WEBHOOK_TIMEOUT_SECONDS", "10"))
 
 
-def load_project_map() -> dict[str, str]:
-    """plane project_id -> repo, from the agents registry (best-effort, reloaded per request)."""
-    try:
-        import yaml
-        reg = yaml.safe_load(REGISTRY.read_text())
-    except Exception:
-        return {}
-    agents = reg.get("agents", reg) if isinstance(reg, dict) else {}
-    out = {}
-    for _id, a in (agents.items() if isinstance(agents, dict) else []):
-        if not isinstance(a, dict):
-            continue
-        p = a.get("plane") or {}
-        pid, repo = p.get("project_id"), a.get("repo")
-        if pid and repo:
-            out[str(pid)] = str(repo)
+def validate_target(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("N8N_PLANE_WEBHOOK_URL must be an http(s) URL with a hostname")
+    if parsed.username or parsed.password:
+        raise ValueError("N8N_PLANE_WEBHOOK_URL must not contain credentials")
+
+
+def verify_signature(raw: bytes, headers) -> bool:
+    if not SECRET:
+        return True
+    supplied = (
+        headers.get("X-Plane-Signature", "")
+        or headers.get("X-Hub-Signature-256", "")
+    )
+    if supplied.lower().startswith("sha256="):
+        supplied = supplied.split("=", 1)[1]
+    expected = hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(supplied.lower(), expected)
+
+
+def relay_headers(headers) -> dict[str, str]:
+    out = {"Content-Type": headers.get("Content-Type", "application/json")}
+    for name in ("X-Plane-Signature", "X-Hub-Signature-256", "User-Agent"):
+        value = headers.get(name)
+        if value:
+            out[name] = value
     return out
 
 
-def build_envelope(repo: str, action: str, data: dict) -> tuple[str, dict]:
-    """(subject, envelope). type=bloodbank.v1.repo.<repo>.ticket_<action> (5 tokens)."""
-    ce_type = f"bloodbank.v1.repo.{repo}.ticket_{action}"
-    subject = f"bloodbank.{KIND_MARKER}.v1.repo.{repo}.ticket_{action}"
-    env = {
-        "specversion": "1.0", "type": ce_type, "id": str(uuid.uuid4()),
-        "source": "plane://webhook-bridge", "subject": subject,
-        "time": datetime.now(timezone.utc).isoformat(),
-        "datacontenttype": "application/json", "kind": "event", "domain": "repo",
-        "producer": "service:plane-webhook-bridge", "service": "plane-webhook-bridge",
-        "actor": {"type": "service", "agent_id": "plane-webhook-bridge"},
-        "ordering_key": f"repo:{repo}",
-        "correlationid": str(uuid.uuid4()), "causationid": str(uuid.uuid4()),
-        "data": data,
-    }
-    return subject, env
-
-
-def resolve(payload: dict, pmap: dict[str, str]):
-    """-> (repo, action, data) or None if not a routable ticket event.
-
-    Plane's `issue` webhook: `data` IS the issue object. Its `issue_comment`
-    webhook: `data` is the comment and `data['issue']` is the issue id STRING.
-    """
-    event = payload.get("event")
-    if event not in CARE:
-        return None
-    action = payload.get("action", "updated")
-    data = payload.get("data") or {}
-    pid = str(data.get("project") or "")
-    repo = pmap.get(pid)
-    if not repo:
-        return None
-    if ONLY and repo not in ONLY:
-        return None  # pilot scoping: this repo is not in the routing allowlist
-    if event == "issue":
-        ticket_id, seq, name, state, act = (
-            data.get("id"), data.get("sequence_id"), data.get("name"), data.get("state"), action)
-    else:  # issue_comment — data['issue'] is the issue id (string) or, rarely, an object
-        iss = data.get("issue")
-        obj = iss if isinstance(iss, dict) else {}
-        ticket_id = iss if isinstance(iss, str) else obj.get("id")
-        seq, name, state, act = obj.get("sequence_id"), obj.get("name"), None, "commented"
-    slim = {
-        "repo": repo, "event": event, "action": act, "project_id": pid,
-        "ticket_id": ticket_id, "sequence_id": seq, "name": name, "state": state,
-        "updated_by": data.get("updated_by") or data.get("actor"),
-    }
-    return repo, act, slim
-
-
-def publish(subject: str, env: dict) -> str:
-    bb = os.environ.get("BLOODBANK_HOME", os.path.expanduser("~/code/33GOD/bloodbank"))
-    core = os.path.join(bb, "services", "agent-hooks", "core")
-    sys.path.insert(0, core)
-    from nats_publish import publish as nats_publish  # type: ignore
-    nats_publish(subject, json.dumps(env).encode(), client_name="plane-webhook-bridge")
-    return subject
+def forward(raw: bytes, headers) -> tuple[int, bytes, str]:
+    request = Request(
+        N8N_WEBHOOK_URL,
+        data=raw,
+        headers=relay_headers(headers),
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            return (
+                response.status,
+                response.read(),
+                response.headers.get("Content-Type", "application/json"),
+            )
+    except HTTPError as error:
+        return (
+            error.code,
+            error.read(),
+            error.headers.get("Content-Type", "application/json"),
+        )
+    except URLError as error:
+        raise RuntimeError(f"n8n webhook unavailable: {error.reason}") from error
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _send(self, code, obj):
-        body = json.dumps(obj).encode()
-        self.send_response(code); self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    def _send(self, code: int, body: bytes, content_type: str = "application/json"):
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
-    def log_message(self, *a):  # quiet default logging
+    def _json(self, code: int, body: dict):
+        self._send(code, json.dumps(body).encode())
+
+    def log_message(self, *_args):
         pass
 
     def do_GET(self):
         if self.path == "/health":
-            self._send(200, {"ok": True, "projects": len(load_project_map())})
-        else:
-            self._send(404, {"error": "not found"})
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "mode": "n8n-compatibility-relay",
+                    "hmac": bool(SECRET),
+                    "target_host": urlparse(N8N_WEBHOOK_URL).hostname,
+                },
+            )
+            return
+        self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path not in {"/", "/plane-webhook"}:
+            self._json(404, {"error": "not found"})
+            return
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
-        if SECRET:
-            sig = self.headers.get("X-Plane-Signature", "") or self.headers.get("X-Hub-Signature-256", "")
-            sig = sig.split("=", 1)[-1] if "=" in sig else sig  # tolerate a 'sha256=' prefix
-            good = hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(sig, good):
-                sign_hdrs = {k: v for k, v in self.headers.items() if "sign" in k.lower() or "plane" in k.lower()}
-                print(f"[bridge] SIG MISMATCH recv={sig!r} want={good[:12]}… sign-headers={sign_hdrs}", file=sys.stderr)
-                self._send(401, {"error": "bad signature"}); return
+        if not verify_signature(raw, self.headers):
+            self._json(401, {"error": "bad signature"})
+            return
         try:
-            payload = json.loads(raw or b"{}")
-        except Exception:
-            self._send(400, {"error": "bad json"}); return
-        r = resolve(payload, load_project_map())
-        if not r:
-            self._send(200, {"ok": True, "routed": False}); return  # ack, ignore
-        repo, action, data = r
-        subject, env = build_envelope(repo, action, data)
-        try:
-            publish(subject, env)
-        except Exception as e:
-            print(f"[bridge] publish failed for {subject}: {e}", file=sys.stderr)
-            self._send(502, {"error": "publish failed", "subject": subject}); return
-        print(f"[bridge] {payload.get('event')}/{action} -> {subject} (ticket {data.get('sequence_id')})")
-        self._send(200, {"ok": True, "routed": True, "subject": subject})
+            code, body, content_type = forward(raw, self.headers)
+        except Exception as error:  # noqa: BLE001 - HTTP boundary
+            print(f"[plane-relay] forward failed: {error}", file=sys.stderr)
+            self._json(502, {"error": "n8n webhook unavailable"})
+            return
+        print(f"[plane-relay] {len(raw)} bytes -> n8n ({code})")
+        self._send(code, body, content_type)
 
 
-def selftest():
-    pmap = load_project_map()
-    sample = next(iter(pmap.items()), (None, None))
-    pid, repo = sample
-    print(f"registry projects: {len(pmap)}; sample {pid} -> {repo}")
-    payload = {"event": "issue", "action": "updated",
-               "data": {"project": pid, "id": "abc123", "sequence_id": 42,
-                        "name": "Fix the thing", "state": "started"}}
-    r = resolve(payload, pmap)
-    if not r:
-        print("SELFTEST: no route (registry empty or no plane project mapping)"); return 1
-    repo, action, data = r
-    subject, env = build_envelope(repo, action, data)
-    print(f"SELFTEST: issue.updated on project {pid} -> repo {repo}")
-    print(f"  subject: {subject}")
-    print(f"  consumer listens: bloodbank.evt.v1.repo.{repo}.>  -> MATCH: "
-          f"{subject.startswith(f'bloodbank.evt.v1.repo.{repo}.')}")
-    print(f"  type:    {env['type']}  (5 tokens: {len(env['type'].split('.')) == 5})")
-    print(f"  data:    {json.dumps(data)}")
+def selftest() -> int:
+    try:
+        validate_target(N8N_WEBHOOK_URL)
+    except ValueError as error:
+        print(f"SELFTEST: FAIL -- {error}", file=sys.stderr)
+        return 1
+    if not SECRET:
+        print("SELFTEST: FAIL -- PLANE_WEBHOOK_SECRET is not resolved", file=sys.stderr)
+        return 1
+    sample = b'{"event":"issue","action":"created","data":{"id":"ticket"}}'
+    signature = hmac.new(SECRET.encode(), sample, hashlib.sha256).hexdigest()
+    if not verify_signature(sample, {"X-Plane-Signature": signature}):
+        print("SELFTEST: FAIL -- HMAC verification failed", file=sys.stderr)
+        return 1
+    print(
+        "SELFTEST: PASS -- compatibility relay targets "
+        f"{urlparse(N8N_WEBHOOK_URL).hostname}; HMAC enabled"
+    )
     return 0
 
 
-def main():
+def main() -> int:
+    validate_target(N8N_WEBHOOK_URL)
     if "--selftest" in sys.argv:
         return selftest()
-    srv = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"[bridge] listening on {HOST}:{PORT} ; {len(load_project_map())} plane projects mapped"
-          f"{' ; HMAC on' if SECRET else ' ; HMAC OFF (set PLANE_WEBHOOK_SECRET)'}")
-    srv.serve_forever()
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(
+        f"[plane-relay] listening on {HOST}:{PORT}; forwarding to "
+        f"{urlparse(N8N_WEBHOOK_URL).hostname}; "
+        f"{'HMAC on' if SECRET else 'HMAC OFF'}"
+    )
+    server.serve_forever()
+    return 0
 
 
 if __name__ == "__main__":

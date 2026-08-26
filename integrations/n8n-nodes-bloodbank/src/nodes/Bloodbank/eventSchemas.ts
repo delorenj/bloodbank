@@ -10,15 +10,17 @@ export interface EventDataField {
 
 export interface EventSchema {
   type: string;
+  kind: 'event' | 'command';
   domain: string;
   title: string;
   description: string;
   dataFields: EventDataField[];
 }
 
-export const eventSchemas: EventSchema[] = [
+const schemas: EventSchema[] = [
   {
     "type": "bloodbank.v1.agent.invocation.completed",
+    "kind": "event",
     "domain": "agent",
     "title": "Agent Invocation Completed Event",
     "description": "An agent invocation completed successfully. See bloodbank/docs/event-naming.md.",
@@ -45,6 +47,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.agent.invocation.failed",
+    "kind": "event",
     "domain": "agent",
     "title": "Agent Invocation Failed Event",
     "description": "An agent invocation terminated with a non-recoverable error. See bloodbank/docs/event-naming.md.",
@@ -70,7 +73,47 @@ export const eventSchemas: EventSchema[] = [
     ]
   },
   {
+    "type": "bloodbank.v1.agent.invocation.start",
+    "kind": "command",
+    "domain": "agent",
+    "title": "Agent Invocation Start Command",
+    "description": "Canonical PM->agent invocation command. Producers publish this envelope on bloodbank.cmd.v1.agent.invocation.start and routers/consumers dispatch using data.target_agent_id.",
+    "dataFields": [
+      {
+        "name": "target_agent_id",
+        "jsonType": "string",
+        "required": true,
+        "description": "Routing key identifying which agent should execute the invocation."
+      },
+      {
+        "name": "thread_id",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional existing thread identifier for continuation."
+      },
+      {
+        "name": "turn_id",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional caller-assigned turn identifier."
+      },
+      {
+        "name": "prompt",
+        "jsonType": "string",
+        "required": false,
+        "description": "Prompt/content for the target agent to execute."
+      },
+      {
+        "name": "context",
+        "jsonType": "object",
+        "required": false,
+        "description": "Optional structured context for the target agent invocation."
+      }
+    ]
+  },
+  {
     "type": "bloodbank.v1.agent.invocation.started",
+    "kind": "event",
     "domain": "agent",
     "title": "Agent Invocation Started Event",
     "description": "An agent invocation began. One round of agent runtime calling an LLM. See bloodbank/docs/event-naming.md.",
@@ -103,6 +146,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.agent.session.ended",
+    "kind": "event",
     "domain": "agent",
     "title": "Agent Session Ended Event",
     "description": "An agent CLI session ended. Canonical session-end event per bloodbank/docs/event-naming.md; supersedes cli.session.ended for agent CLIs.",
@@ -123,6 +167,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.agent.session.started",
+    "kind": "event",
     "domain": "agent",
     "title": "Agent Session Started Event",
     "description": "An agent CLI session began (claude, codex, copilot, …). Canonical session-start event per bloodbank/docs/event-naming.md; supersedes cli.session.started for agent CLIs.",
@@ -143,6 +188,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.agent.tool.completed",
+    "kind": "event",
     "domain": "agent",
     "title": "Agent Tool Completed Event",
     "description": "A tool call reached a terminal state. See bloodbank/docs/event-naming.md.",
@@ -181,6 +227,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.agent.tool.invoked",
+    "kind": "event",
     "domain": "agent",
     "title": "Agent Tool Invoked Event",
     "description": "A tool call was invoked by the runtime (mid-execution). See bloodbank/docs/event-naming.md.",
@@ -207,6 +254,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.agent.tool.requested",
+    "kind": "event",
     "domain": "agent",
     "title": "Agent Tool Requested Event",
     "description": "An agent requested a tool call. The runtime has not executed it yet. See bloodbank/docs/event-naming.md.",
@@ -238,7 +286,74 @@ export const eventSchemas: EventSchema[] = [
     ]
   },
   {
+    "type": "bloodbank.v1.attendance.clock.clock_in",
+    "kind": "command",
+    "domain": "attendance",
+    "title": "Attendance Explicit Clock In Command",
+    "description": "Imperative request to explicitly clock a worker in on a target timekeeping system. Orwell can consume this command without performing state inference.",
+    "dataFields": [
+      {
+        "name": "clock_system",
+        "jsonType": "string",
+        "required": true,
+        "description": "Target timekeeping integration or system name, for example 'orwell'."
+      },
+      {
+        "name": "principal",
+        "jsonType": "string",
+        "required": true,
+        "description": "Logical worker or account identifier that should be clocked in."
+      },
+      {
+        "name": "reason",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional operator-visible reason for the explicit clock-in request."
+      },
+      {
+        "name": "requested_at",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional caller timestamp representing when the clock-in was requested."
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.attendance.clock.clock_out",
+    "kind": "command",
+    "domain": "attendance",
+    "title": "Attendance Explicit Clock Out Command",
+    "description": "Imperative request to explicitly clock a worker out on a target timekeeping system. Orwell can consume this command without performing state inference.",
+    "dataFields": [
+      {
+        "name": "clock_system",
+        "jsonType": "string",
+        "required": true,
+        "description": "Target timekeeping integration or system name, for example 'orwell'."
+      },
+      {
+        "name": "principal",
+        "jsonType": "string",
+        "required": true,
+        "description": "Logical worker or account identifier that should be clocked out."
+      },
+      {
+        "name": "reason",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional operator-visible reason for the explicit clock-out request."
+      },
+      {
+        "name": "requested_at",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional caller timestamp representing when the clock-out was requested."
+      }
+    ]
+  },
+  {
     "type": "bloodbank.v1.attendance.clock.clocked_in",
+    "kind": "event",
     "domain": "attendance",
     "title": "Attendance Clocked In Event",
     "description": "A worker was clocked in on a target timekeeping system. Orwell should emit this after a successful clock-in, whether triggered by a toggle or an explicit command.",
@@ -277,6 +392,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.attendance.clock.clocked_out",
+    "kind": "event",
     "domain": "attendance",
     "title": "Attendance Clocked Out Event",
     "description": "A worker was clocked out on a target timekeeping system. Orwell should emit this after a successful clock-out, whether triggered by a toggle or an explicit command.",
@@ -315,6 +431,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.attendance.clock.detected",
+    "kind": "event",
     "domain": "attendance",
     "title": "Attendance Clock State Detected Event",
     "description": "A target timekeeping system was queried and its current clock state was observed. Orwell should emit this after running a read-only state check.",
@@ -370,7 +487,74 @@ export const eventSchemas: EventSchema[] = [
     ]
   },
   {
+    "type": "bloodbank.v1.attendance.clock.request",
+    "kind": "command",
+    "domain": "attendance",
+    "title": "Attendance Clock State Request Command",
+    "description": "Imperative request to read the current clocked-in/out state from a target timekeeping system without mutating it. Orwell can consume this before deciding whether a clock-in or clock-out command is safe to execute.",
+    "dataFields": [
+      {
+        "name": "clock_system",
+        "jsonType": "string",
+        "required": true,
+        "description": "Target timekeeping integration or system name, for example 'orwell'."
+      },
+      {
+        "name": "principal",
+        "jsonType": "string",
+        "required": true,
+        "description": "Logical worker or account identifier whose clock state should be read."
+      },
+      {
+        "name": "reason",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional reason for performing the read before another action."
+      },
+      {
+        "name": "requested_at",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional caller timestamp representing when the state read was requested."
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.attendance.clock.toggle",
+    "kind": "command",
+    "domain": "attendance",
+    "title": "Attendance Clock Toggle Command",
+    "description": "Imperative request to toggle a worker's clock state on a target timekeeping system. Orwell can consume this command and decide whether to clock in or clock out based on current state.",
+    "dataFields": [
+      {
+        "name": "clock_system",
+        "jsonType": "string",
+        "required": true,
+        "description": "Target timekeeping integration or system name, for example 'orwell'."
+      },
+      {
+        "name": "principal",
+        "jsonType": "string",
+        "required": true,
+        "description": "Logical worker or account identifier whose clock state should be toggled."
+      },
+      {
+        "name": "reason",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional operator-visible reason for the toggle request."
+      },
+      {
+        "name": "requested_at",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional caller timestamp representing when the toggle was requested."
+      }
+    ]
+  },
+  {
     "type": "bloodbank.v1.audio.file.received",
+    "kind": "event",
     "domain": "audio",
     "title": "Audio File Received Event",
     "description": "An audio file was observed appearing in a watched inbox directory (e.g. ~/audio/inbox). Producer is the inbox watcher. The same file_path may legitimately re-fire on re-detect/rescan; use ordering_key bucket 'file:<sha256(file_path)>' so de",
@@ -427,6 +611,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.audio.transcription.completed",
+    "kind": "event",
     "domain": "audio",
     "title": "Audio Transcription Completed Event",
     "description": "A transcription job finished successfully and the transcript is available. For long transcripts the full text MAY be stored externally and referenced via transcript_uri instead of being inlined in transcript_text. Use ordering_key 'transcri",
@@ -507,6 +692,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.audio.transcription.failed",
+    "kind": "event",
     "domain": "audio",
     "title": "Audio Transcription Failed Event",
     "description": "A transcription job terminated with an error. Use this for any non-recoverable failure during the transcription pipeline (file unreadable, engine error, timeout, OOM, etc.). The 'retryable' flag tells downstream orchestrators whether re-iss",
@@ -556,7 +742,53 @@ export const eventSchemas: EventSchema[] = [
     ]
   },
   {
+    "type": "bloodbank.v1.audio.transcription.start",
+    "kind": "command",
+    "domain": "audio",
+    "title": "Audio Transcription Start Command",
+    "description": "Imperative request to transcribe a single audio file. Consumed by the transcription service. The service answers with audio.transcription.started (acceptance) and eventually audio.transcription.completed or audio.transcription.failed. Per d",
+    "dataFields": [
+      {
+        "name": "file_path",
+        "jsonType": "string",
+        "required": true,
+        "description": "Absolute path to the audio file to transcribe."
+      },
+      {
+        "name": "transcription_id",
+        "jsonType": "string",
+        "required": false,
+        "description": "Optional caller-assigned transcription id. When null the service MUST generate one and surface it on the resulting started event."
+      },
+      {
+        "name": "engine",
+        "jsonType": "string",
+        "required": false,
+        "description": "Preferred engine ('whisper', 'voxcpm2', 'elevenlabs', ...). Service MAY ignore if not supported."
+      },
+      {
+        "name": "engine_model",
+        "jsonType": "string",
+        "required": false,
+        "description": "Preferred model variant under the engine."
+      },
+      {
+        "name": "language",
+        "jsonType": "string",
+        "required": false,
+        "description": "BCP-47 language hint (e.g. 'en', 'en-US'). Null means engine-autodetect."
+      },
+      {
+        "name": "priority",
+        "jsonType": "string",
+        "required": false,
+        "description": "Queue priority hint. Service MAY honor or ignore."
+      }
+    ]
+  },
+  {
     "type": "bloodbank.v1.audio.transcription.started",
+    "kind": "event",
     "domain": "audio",
     "title": "Audio Transcription Started Event",
     "description": "A transcription job began. Emitted by the transcription service after it accepts a bloodbank.v1.audio.transcription.start command (or after it picks up a file.received event in autonomous mode). Use ordering_key 'transcription:<transcriptio",
@@ -601,6 +833,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.cli.process.exited",
+    "kind": "event",
     "domain": "cli",
     "title": "Cli Process Exited Event",
     "description": "A CLI-spawned process terminated. See bloodbank/docs/event-naming.md.",
@@ -627,6 +860,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.cli.process.spawned",
+    "kind": "event",
     "domain": "cli",
     "title": "Cli Process Spawned Event",
     "description": "An OS process was spawned within a CLI session. See bloodbank/docs/event-naming.md.",
@@ -653,6 +887,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.cli.session.ended",
+    "kind": "event",
     "domain": "cli",
     "title": "Cli Session Ended Event",
     "description": "A CLI session ended. See bloodbank/docs/event-naming.md.",
@@ -673,6 +908,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.cli.session.started",
+    "kind": "event",
     "domain": "cli",
     "title": "Cli Session Started Event",
     "description": "A CLI session began (e.g. claude or copilot process tree start). See bloodbank/docs/event-naming.md.",
@@ -693,6 +929,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.cli.stderr.appended",
+    "kind": "event",
     "domain": "cli",
     "title": "Cli Stderr Appended Event",
     "description": "A chunk of stderr was emitted by a CLI-spawned process. See bloodbank/docs/event-naming.md.",
@@ -725,6 +962,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.cli.stdout.appended",
+    "kind": "event",
     "domain": "cli",
     "title": "Cli Stdout Appended Event",
     "description": "A chunk of stdout was emitted by a CLI-spawned process. See bloodbank/docs/event-naming.md.",
@@ -757,6 +995,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.conversation.message.appended",
+    "kind": "event",
     "domain": "conversation",
     "title": "Conversation Message Appended Event",
     "description": "A message was appended to the durable conversation transcript. See bloodbank/docs/event-naming.md.",
@@ -795,6 +1034,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.conversation.thread.created",
+    "kind": "event",
     "domain": "conversation",
     "title": "Conversation Thread Created Event",
     "description": "A conversation thread was created. Emitted on the first turn of a new thread. See bloodbank/docs/event-naming.md.",
@@ -809,6 +1049,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.conversation.thread.resumed",
+    "kind": "event",
     "domain": "conversation",
     "title": "Conversation Thread Resumed Event",
     "description": "A known conversation thread was reopened. See bloodbank/docs/event-naming.md.",
@@ -823,6 +1064,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.conversation.turn.completed",
+    "kind": "event",
     "domain": "conversation",
     "title": "Conversation Turn Completed Event",
     "description": "A turn reached a terminal state. See bloodbank/docs/event-naming.md.",
@@ -849,6 +1091,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.conversation.turn.started",
+    "kind": "event",
     "domain": "conversation",
     "title": "Conversation Turn Started Event",
     "description": "A new turn started inside a thread. The user prompt is what initiates a turn. See bloodbank/docs/event-naming.md.",
@@ -874,7 +1117,188 @@ export const eventSchemas: EventSchema[] = [
     ]
   },
   {
+    "type": "bloodbank.v1.curator.file.failed",
+    "kind": "event",
+    "domain": "curator",
+    "title": "Curator File Failed Event",
+    "description": "A folder-curator curation step failed for a file. Wire from the workflow's error branch (not a catch-all). Carries the failing stage and message. ordering_key 'file:<sha256(file_path)>'.",
+    "dataFields": [
+      {
+        "name": "file_path",
+        "jsonType": "string",
+        "required": true,
+        "description": "Absolute path of the file whose curation failed."
+      },
+      {
+        "name": "stage",
+        "jsonType": "string",
+        "required": true,
+        "description": "The step that failed: one of plan, apply, reindex, announce."
+      },
+      {
+        "name": "error",
+        "jsonType": "string",
+        "required": true,
+        "description": "Error message / exception summary."
+      },
+      {
+        "name": "file_hash_sha256",
+        "jsonType": "string",
+        "required": false,
+        "description": "SHA-256 of the file's contents, if computed before the failure."
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.curator.file.flagged",
+    "kind": "event",
+    "domain": "curator",
+    "title": "Curator File Flagged Event",
+    "description": "folder-curator could not confidently place a file (it matched zero or multiple categories) and parked it in the review queue (pipeline-status: new) for human/agent triage. Carries the curated directory's declared purpose to aid the decision",
+    "dataFields": [
+      {
+        "name": "file_path",
+        "jsonType": "string",
+        "required": true,
+        "description": "Absolute path of the file parked for review."
+      },
+      {
+        "name": "reason",
+        "jsonType": "string",
+        "required": true,
+        "description": "Why it was parked (e.g. 'matched multiple categories', 'no category matched')."
+      },
+      {
+        "name": "confidence",
+        "jsonType": "string",
+        "required": false,
+        "description": "Classification confidence, typically 'low' for a flagged item."
+      },
+      {
+        "name": "purpose",
+        "jsonType": "string",
+        "required": false,
+        "description": "The curated directory's declared purpose, echoed to guide triage."
+      },
+      {
+        "name": "review_location",
+        "jsonType": "string",
+        "required": false,
+        "description": "Directory-relative path where the file is parked awaiting triage (the review/ingest folder)."
+      },
+      {
+        "name": "file_hash_sha256",
+        "jsonType": "string",
+        "required": false,
+        "description": "SHA-256 of the file's contents (ledger key)."
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.curator.file.received",
+    "kind": "event",
+    "domain": "curator",
+    "title": "Curator File Received Event",
+    "description": "A file appeared in a curated directory (a folder-curator watch root, e.g. client_dropbox). Producer is the directory's inbound watcher/pull. The same file_path may re-fire on rescan; use ordering_key 'file:<sha256(file_path)>' so downstream",
+    "dataFields": [
+      {
+        "name": "file_path",
+        "jsonType": "string",
+        "required": true,
+        "description": "Absolute path to the file that appeared in the curated directory."
+      },
+      {
+        "name": "file_name",
+        "jsonType": "string",
+        "required": false,
+        "description": "Basename of the file, for display."
+      },
+      {
+        "name": "curated_dir",
+        "jsonType": "string",
+        "required": false,
+        "description": "Absolute path of the curated directory (watch root) the file landed in."
+      },
+      {
+        "name": "file_size_bytes",
+        "jsonType": "integer",
+        "required": false,
+        "description": "Size of the file on disk in bytes at detection time."
+      },
+      {
+        "name": "mime_type",
+        "jsonType": "string",
+        "required": false,
+        "description": "Detected MIME type, if probeable at detect time."
+      },
+      {
+        "name": "file_hash_sha256",
+        "jsonType": "string",
+        "required": false,
+        "description": "SHA-256 hex digest of contents; the folder-curator ledger dedup key."
+      },
+      {
+        "name": "detected_at",
+        "jsonType": "string",
+        "required": false,
+        "description": "RFC3339 timestamp when the watcher first observed the file."
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.curator.file.routed",
+    "kind": "event",
+    "domain": "curator",
+    "title": "Curator File Routed Event",
+    "description": "folder-curator classified, renamed, enriched, and placed a file at its destination within a curated directory. Emitted after a successful `apply`. ordering_key 'file:<sha256(file_path)>'. Carries the classification so downstream consumers n",
+    "dataFields": [
+      {
+        "name": "file_path",
+        "jsonType": "string",
+        "required": true,
+        "description": "Original absolute path of the incoming file."
+      },
+      {
+        "name": "destination",
+        "jsonType": "string",
+        "required": true,
+        "description": "Directory-relative destination the file was placed at (e.g. 'threads/2026-07-14-damian-sync.md')."
+      },
+      {
+        "name": "category",
+        "jsonType": "string",
+        "required": false,
+        "description": "Category folder chosen (e.g. threads, workshop, client_dropbox)."
+      },
+      {
+        "name": "kind",
+        "jsonType": "string",
+        "required": false,
+        "description": "Frontmatter kind assigned (e.g. transcript, email, work-product, voice-note)."
+      },
+      {
+        "name": "confidence",
+        "jsonType": "string",
+        "required": false,
+        "description": "Classification confidence: one of low, medium, high."
+      },
+      {
+        "name": "file_hash_sha256",
+        "jsonType": "string",
+        "required": false,
+        "description": "SHA-256 of the placed file's contents (ledger key)."
+      },
+      {
+        "name": "updated",
+        "jsonType": "string",
+        "required": false,
+        "description": "The file's `updated` freshness timestamp after enrichment."
+      }
+    ]
+  },
+  {
     "type": "bloodbank.v1.finance.account.detected",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Account Detected Event",
     "description": "Account auto-discovery inserted a new tracked account. Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -913,6 +1337,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.paycheck.detected",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Paycheck Detected Event",
     "description": "An income deposit matching a payday pattern landed. Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -945,6 +1370,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.projection.breached",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Projection Breached Event",
     "description": "The cashflow projection crossed a threshold (buffer dip, projected negative, or next-day bounce risk). Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -1001,6 +1427,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.subscription.canceled",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Subscription Canceled Event",
     "description": "A recurring series was confirmed dead (user-marked or auto-promoted after missed cycles). Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -1027,6 +1454,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.subscription.detected",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Subscription Detected Event",
     "description": "The recurring detector found a new charge/income series. Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -1071,6 +1499,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.subscription.updated",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Subscription Updated Event",
     "description": "A recurring series changed state (status transition, cancel-watch checkpoint). Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -1103,6 +1532,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.sync.completed",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Sync Completed Event",
     "description": "A tiller sync run finished with ingest/detector counts. Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -1189,6 +1619,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.sync.failed",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Sync Failed Event",
     "description": "A tiller sync run aborted. Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -1209,6 +1640,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.sync.started",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Sync Started Event",
     "description": "A tiller sheet-to-Postgres sync run opened. Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -1229,6 +1661,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.transaction.flagged",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Transaction Flagged Event",
     "description": "A transaction was flagged for review (by the operator or a rule such as large_unknown_charge). Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -1273,6 +1706,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.transaction.recorded",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Transaction Recorded Event",
     "description": "A new posted transaction was ingested. Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -1305,6 +1739,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.finance.zombie_charge.detected",
+    "kind": "event",
     "domain": "finance",
     "title": "Finance Zombie Charge Detected Event",
     "description": "A charge landed on a series the owner already canceled — a zombie strike. Producer: tiller. See bloodbank/docs/event-naming.md.",
@@ -1349,6 +1784,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.lifecycle.checkpoint.reached",
+    "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Checkpoint Reached Event",
     "description": "The system has evidence that a checkpoint is satisfied. Checkpoints are versioned roadmap milestones. Consumers subscribe to checkpoint.kind == 'mvp' for MVP events.",
@@ -1381,6 +1817,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.lifecycle.gate.opened",
+    "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Gate Opened Event",
     "description": "A gate has opened on this lifecycle. Gates are intentional pauses or review points. A blocking gate halts progress; a non-blocking gate allows parallel work to continue.",
@@ -1407,6 +1844,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.lifecycle.gate.resolved",
+    "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Gate Resolved Event",
     "description": "A previously opened gate has been resolved. The lifecycle may now resume if no other blocking gates remain.",
@@ -1439,6 +1877,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.lifecycle.mission.created",
+    "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Created Event",
     "description": "A new lifecycle was created. A lifecycle is the finite, observable execution envelope for a development mission.",
@@ -1495,6 +1934,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.lifecycle.roadmap.updated",
+    "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Roadmap Updated Event",
     "description": "The definition of 'done' or the path to done changed for this lifecycle. Fires on scope changes, phase additions/removals, or acceptance criteria updates.",
@@ -1533,6 +1973,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.lifecycle.status.updated",
+    "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Status Updated Event",
     "description": "The aggregate lifecycle status changed. This is the primary event for detecting blocked pipelines, stalls, and state transitions. Consumers filter on data.current.status and data.previous.status.",
@@ -1595,6 +2036,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.llm.request.sent",
+    "kind": "event",
     "domain": "llm",
     "title": "Llm Request Sent Event",
     "description": "A request was sent to an LLM provider. Protocol boundary. See bloodbank/docs/event-naming.md.",
@@ -1615,6 +2057,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.llm.response.received",
+    "kind": "event",
     "domain": "llm",
     "title": "Llm Response Received Event",
     "description": "A response was received from an LLM provider. Protocol boundary. See bloodbank/docs/event-naming.md.",
@@ -1640,7 +2083,181 @@ export const eventSchemas: EventSchema[] = [
     ]
   },
   {
+    "type": "bloodbank.v1.portfolio.approval.requested",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Approval Requested Event",
+    "description": "A delegated work item reached an explicit human or policy approval boundary.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.approval.resolved",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Approval Resolved Event",
+    "description": "A prior portfolio approval request received its immutable decision.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.capacity.recorded",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Capacity Snapshot Recorded Event",
+    "description": "The Director recorded the available global delegation capacity for one slot class.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.escalation.raised",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Escalation Raised Event",
+    "description": "A child PM raised a work exception to the Director without transferring child lifecycle authority.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.escalation.resolved",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Escalation Resolved Event",
+    "description": "A prior portfolio escalation received an immutable resolution.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.intake.received",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Intake Received Event",
+    "description": "The DeLoNET Director accepted a new company-level intake. Project, repository, and agent identifiers remain in data.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.intake.triaged",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Intake Triaged Event",
+    "description": "The Director classified an intake and selected its target agent or disposition.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.lease.expired",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Capacity Lease Expired Event",
+    "description": "A delegation slot lease expired and became reclaimable by the Director scheduler.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.lease.granted",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Capacity Lease Granted Event",
+    "description": "The Director granted one global delegation slot to an explicit target agent and work attempt.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.lease.released",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Capacity Lease Released Event",
+    "description": "A delegation slot was explicitly returned to the global pool.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.receipt.recorded",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Terminal Receipt Recorded Event",
+    "description": "First-write-wins terminal receipt for one delegated work attempt. Exact retries preserve the complete envelope; conflicting outcomes never overwrite it.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.work.delegated",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Work Delegated Event",
+    "description": "The Director delegated a bounded work item to an explicit child-PM or worker target under a capacity lease.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.portfolio.work.updated",
+    "kind": "event",
+    "domain": "portfolio",
+    "title": "Portfolio Work Updated Event",
+    "description": "A child PM reported a projection-friendly work status; lifecycle authority remains with the child system and its board.",
+    "dataFields": []
+  },
+  {
+    "type": "bloodbank.v1.repo.board.created",
+    "kind": "event",
+    "domain": "repo",
+    "title": "Repo Board Created Event",
+    "description": "A project board was created for a repo. Provider identity and the lossless board entity live in data.",
+    "dataFields": [
+      {
+        "name": "repo",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "slug",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "workspace",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "board_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "project_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "board_key",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "provider",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "provider_event_type",
+        "jsonType": "string",
+        "required": true,
+        "description": "Provider provenance name, for example plane.board.created."
+      },
+      {
+        "name": "timestamp",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "board",
+        "jsonType": "object",
+        "required": true,
+        "description": "Lossless JSON board entity supplied by the provider."
+      }
+    ]
+  },
+  {
     "type": "bloodbank.v1.repo.decision.recorded",
+    "kind": "event",
     "domain": "repo",
     "title": "Repo Decision Recorded Event",
     "description": "A PM agent recorded a repo-scoped decision. The repo slug belongs in data.repo, not in the CloudEvents type.",
@@ -1673,6 +2290,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.repo.intake.triaged",
+    "kind": "event",
     "domain": "repo",
     "title": "Repo Intake Triaged Event",
     "description": "A PM agent triaged an incoming repo-scoped request. The repo slug belongs in data.repo, not in the CloudEvents type.",
@@ -1710,7 +2328,317 @@ export const eventSchemas: EventSchema[] = [
     ]
   },
   {
+    "type": "bloodbank.v1.repo.maintenance.completed",
+    "kind": "event",
+    "domain": "repo",
+    "title": "Repo Maintenance Completed Event",
+    "description": "A repository maintenance run completed successfully after provider and merge-gate evaluation.",
+    "dataFields": [
+      {
+        "name": "schema_version",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "run_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "repository",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "tick",
+        "jsonType": "integer",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "at",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "automerge",
+        "jsonType": "boolean",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "outcome",
+        "jsonType": "object",
+        "required": true,
+        "description": ""
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.repo.maintenance.failed",
+    "kind": "event",
+    "domain": "repo",
+    "title": "Repo Maintenance Failed Event",
+    "description": "A repository maintenance run failed provider evaluation, setup, or a live merge attempt.",
+    "dataFields": [
+      {
+        "name": "schema_version",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "run_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "repository",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "tick",
+        "jsonType": "integer",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "at",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "automerge",
+        "jsonType": "boolean",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "outcome",
+        "jsonType": "object",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "failure",
+        "jsonType": "object",
+        "required": true,
+        "description": ""
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.repo.maintenance.started",
+    "kind": "event",
+    "domain": "repo",
+    "title": "Repo Maintenance Started Event",
+    "description": "A repository maintenance run started. The repository identity and run controls live in data so the type remains provider-neutral.",
+    "dataFields": [
+      {
+        "name": "schema_version",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "run_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "repository",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "tick",
+        "jsonType": "integer",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "at",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "automerge",
+        "jsonType": "boolean",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "outcome",
+        "jsonType": "object",
+        "required": true,
+        "description": ""
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.repo.skill.updated",
+    "kind": "event",
+    "domain": "repo",
+    "title": "Repo Skill Updated Event",
+    "description": "A repo-scoped agent skill was updated by an automated tuning cycle (e.g. the merge-forward session-end rebalancer). The repo slug and skill name belong in data, not in the CloudEvents type.",
+    "dataFields": [
+      {
+        "name": "repo",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "skill",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "session_id",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "client",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "files_changed",
+        "jsonType": "array",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "commit",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "validation",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "summary",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.repo.task.appended",
+    "kind": "event",
+    "domain": "repo",
+    "title": "Repo Task Appended Event",
+    "description": "A comment or other append-only note was added to a provider-neutral repo task.",
+    "dataFields": [
+      {
+        "name": "repo",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "slug",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "workspace",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "board_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "project_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "ticket_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "ticket_key",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "provider",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "provider_event_type",
+        "jsonType": "string",
+        "required": true,
+        "description": "Provider provenance name, for example plane.ticket.commented."
+      },
+      {
+        "name": "comment_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "author_id",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "body",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "appended_at",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "comment",
+        "jsonType": "object",
+        "required": true,
+        "description": "Lossless JSON comment entity supplied by the provider."
+      }
+    ]
+  },
+  {
     "type": "bloodbank.v1.repo.task.completed",
+    "kind": "event",
     "domain": "repo",
     "title": "Repo Task Completed Event",
     "description": "A PM/worker completed a repo-scoped task (ticket). The repo slug belongs in data.repo, not in the CloudEvents type.",
@@ -1761,9 +2689,10 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.repo.task.created",
+    "kind": "event",
     "domain": "repo",
     "title": "Repo Task Created Event",
-    "description": "A PM agent created a repo-scoped task. The repo slug belongs in data.repo, not in the CloudEvents type.",
+    "description": "A ticket provider or PM created a repo-scoped task. The repo slug and provider provenance belong in data, not in the CloudEvents type.",
     "dataFields": [
       {
         "name": "repo",
@@ -1794,11 +2723,84 @@ export const eventSchemas: EventSchema[] = [
         "jsonType": "string",
         "required": false,
         "description": ""
+      },
+      {
+        "name": "slug",
+        "jsonType": "string",
+        "required": false,
+        "description": "Canonical project slug; normally identical to repo."
+      },
+      {
+        "name": "workspace",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "board_id",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "project_id",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "ticket_id",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "ticket_key",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "provider",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "provider_event_type",
+        "jsonType": "string",
+        "required": false,
+        "description": "Provider provenance name, for example plane.ticket.created."
+      },
+      {
+        "name": "phase",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "tp_band",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "timestamp",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "ticket",
+        "jsonType": "object",
+        "required": false,
+        "description": "Lossless JSON ticket entity supplied by the provider."
       }
     ]
   },
   {
     "type": "bloodbank.v1.repo.task.recorded",
+    "kind": "event",
     "domain": "repo",
     "title": "Repo Task Recorded Event",
     "description": "A PM/worker recorded a task (ticket) state update under the repo domain.",
@@ -1860,7 +2862,284 @@ export const eventSchemas: EventSchema[] = [
     ]
   },
   {
+    "type": "bloodbank.v1.repo.task.updated",
+    "kind": "event",
+    "domain": "repo",
+    "title": "Repo Task Updated Event",
+    "description": "A provider-neutral repo task changed. Provider provenance and the lossless ticket entity live in data.",
+    "dataFields": [
+      {
+        "name": "repo",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "slug",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "workspace",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "board_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "project_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "ticket_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "ticket_key",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "title",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "provider",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "provider_event_type",
+        "jsonType": "string",
+        "required": true,
+        "description": "Provider provenance name, for example plane.ticket.transitioned."
+      },
+      {
+        "name": "previous_phase",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "phase",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "previous_tp_band",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "tp_band",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "changed_fields",
+        "jsonType": "array",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "trigger_source",
+        "jsonType": "string",
+        "required": false,
+        "description": ""
+      },
+      {
+        "name": "timestamp",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "ticket",
+        "jsonType": "object",
+        "required": true,
+        "description": "Lossless JSON ticket entity supplied by the provider."
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.reporting.report.completed",
+    "kind": "event",
+    "domain": "reporting",
+    "title": "Reporting Report Completed Event",
+    "description": "A daily company report was composed, archived, and reached its declared delivery outcome.",
+    "dataFields": [
+      {
+        "name": "schema_version",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "run_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "report_date",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "started_at",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "completed_at",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "outcome",
+        "jsonType": "object",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "artifacts",
+        "jsonType": "object",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "delivery",
+        "jsonType": "object",
+        "required": true,
+        "description": ""
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.reporting.report.failed",
+    "kind": "event",
+    "domain": "reporting",
+    "title": "Reporting Report Failed Event",
+    "description": "A daily company report run failed before successful archive and delivery completion.",
+    "dataFields": [
+      {
+        "name": "schema_version",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "run_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "report_date",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "started_at",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "failed_at",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "failure",
+        "jsonType": "object",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "delivery",
+        "jsonType": "object",
+        "required": true,
+        "description": ""
+      }
+    ]
+  },
+  {
+    "type": "bloodbank.v1.reporting.report.started",
+    "kind": "event",
+    "domain": "reporting",
+    "title": "Reporting Report Started Event",
+    "description": "A daily company report run started with an explicit reporting window and expected section set.",
+    "dataFields": [
+      {
+        "name": "schema_version",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "run_id",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "report_date",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "started_at",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "timezone",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "trigger",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "expected_sections",
+        "jsonType": "array",
+        "required": true,
+        "description": ""
+      }
+    ]
+  },
+  {
     "type": "bloodbank.v1.system.heartbeat.received",
+    "kind": "event",
     "domain": "system",
     "title": "System Heartbeat Received Event",
     "description": "A liveness heartbeat was received from a producer. Also used as the canonical smoketest fixture. See bloodbank/docs/event-naming.md.",
@@ -1881,6 +3160,7 @@ export const eventSchemas: EventSchema[] = [
   },
   {
     "type": "bloodbank.v1.system.process.exited",
+    "kind": "event",
     "domain": "system",
     "title": "System Process Exited Event",
     "description": "A host-observed process or container terminated. Used by operator monitors such as docker-health-monitor to surface exit incidents into Bloodbank. See bloodbank/docs/event-naming.md.",
@@ -2008,3 +3288,6 @@ export const eventSchemas: EventSchema[] = [
     ]
   }
 ];
+
+export const eventSchemas = schemas.filter((schema) => schema.kind === 'event');
+export const commandSchemas = schemas.filter((schema) => schema.kind === 'command');

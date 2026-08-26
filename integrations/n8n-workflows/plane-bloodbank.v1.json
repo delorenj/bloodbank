@@ -1,0 +1,73 @@
+[
+  {
+    "id": "iMw484J1ZCqKME2C",
+    "name": "Plane → Bloodbank",
+    "active": false,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "plane",
+          "responseMode": "lastNode",
+          "options": {
+            "rawBody": true,
+            "responseContentType": "application/json"
+          }
+        },
+        "id": "e73f2b2c-d56f-49d9-8dfd-98ba2fde4f7c",
+        "name": "Plane Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          -260,
+          0
+        ],
+        "webhookId": "85961a48-44a1-4c06-9a45-c10671ddf8a9"
+      },
+      {
+        "parameters": {
+          "verifySignature": true,
+          "secretReference": "op://DeLoSecrets/PlaneWebhook/credential",
+          "registryFile": "~/.hermes/agents-registry.yaml",
+          "connection": {
+            "natsHost": "localhost",
+            "natsPort": 4222,
+            "timeoutMs": 3000
+          }
+        },
+        "id": "9df8998d-c344-43b3-a8c6-9bcf4bbcceeb",
+        "name": "Normalize and Publish",
+        "type": "n8n-nodes-bloodbank.planeBloodbank",
+        "typeVersion": 1,
+        "position": [
+          0,
+          0
+        ]
+      }
+    ],
+    "connections": {
+      "Plane Webhook": {
+        "main": [
+          [
+            {
+              "node": "Normalize and Publish",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "saveManualExecutions": true,
+      "callerPolicy": "workflowsFromSameOwner",
+      "availableInMCP": false
+    },
+    "staticData": null,
+    "pinData": {},
+    "versionId": "0edafacd-1a4a-41be-99d8-d0caf971e23f",
+    "triggerCount": 1,
+    "tags": []
+  }
+]

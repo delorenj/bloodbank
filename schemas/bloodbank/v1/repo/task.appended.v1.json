@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://33god.dev/schemas/bloodbank/v1/repo/task.created.v1.json",
-  "title": "Repo Task Created Event",
-  "description": "A ticket provider or PM created a repo-scoped task. The repo slug and provider provenance belong in data, not in the CloudEvents type.",
+  "$id": "https://33god.dev/schemas/bloodbank/v1/repo/task.appended.v1.json",
+  "title": "Repo Task Appended Event",
+  "description": "A comment or other append-only note was added to a provider-neutral repo task.",
   "type": "object",
   "allOf": [
     {
@@ -11,7 +11,7 @@
   ],
   "properties": {
     "type": {
-      "const": "bloodbank.v1.repo.task.created"
+      "const": "bloodbank.v1.repo.task.appended"
     },
     "kind": {
       "const": "event"
@@ -21,29 +21,14 @@
     },
     "data": {
       "type": "object",
-      "description": "Payload for bloodbank.v1.repo.task.created.",
       "properties": {
         "repo": {
           "type": "string",
           "minLength": 1
         },
-        "task_id": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string",
-          "minLength": 1
-        },
-        "description": {
-          "type": "string"
-        },
-        "assignee": {
-          "type": "string"
-        },
         "slug": {
           "type": "string",
-          "minLength": 1,
-          "description": "Canonical project slug; normally identical to repo."
+          "minLength": 1
         },
         "workspace": {
           "type": "string",
@@ -71,27 +56,41 @@
         "provider_event_type": {
           "type": "string",
           "minLength": 1,
-          "description": "Provider provenance name, for example plane.ticket.created."
+          "description": "Provider provenance name, for example plane.ticket.commented."
         },
-        "phase": {
+        "comment_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "author_id": {
           "type": ["string", "null"]
         },
-        "tp_band": {
-          "type": ["string", "null"]
+        "body": {
+          "type": "string"
         },
-        "timestamp": {
+        "appended_at": {
           "type": "string",
           "format": "date-time"
         },
-        "ticket": {
+        "comment": {
           "type": "object",
-          "description": "Lossless JSON ticket entity supplied by the provider.",
+          "description": "Lossless JSON comment entity supplied by the provider.",
           "additionalProperties": true
         }
       },
       "required": [
         "repo",
-        "title"
+        "slug",
+        "workspace",
+        "board_id",
+        "project_id",
+        "ticket_id",
+        "provider",
+        "provider_event_type",
+        "comment_id",
+        "body",
+        "appended_at",
+        "comment"
       ],
       "additionalProperties": true
     }

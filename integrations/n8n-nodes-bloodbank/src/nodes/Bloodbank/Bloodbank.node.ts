@@ -60,7 +60,7 @@ export class Bloodbank implements INodeType {
         placeholder: 'Add option',
         default: {},
         options: [
-          { displayName: 'NATS Host', name: 'natsHost', type: 'string', default: '127.0.0.1' },
+          { displayName: 'NATS Host', name: 'natsHost', type: 'string', default: 'localhost' },
           { displayName: 'NATS Port', name: 'natsPort', type: 'number', default: 4222 },
         ],
       },
@@ -114,7 +114,13 @@ export class Bloodbank implements INodeType {
         });
 
         out.push({
-          json: { published: true, type, subject: res.subject, correlationid: res.correlationid },
+          json: {
+            published: true,
+            type,
+            subject: res.subject,
+            eventId: res.eventId,
+            correlationid: res.correlationid,
+          },
           pairedItem: { item: i },
         });
       } catch (error) {

@@ -1,62 +1,47 @@
-# plane-webhook-bridge
+# Plane webhook compatibility relay
 
-Real-time PM board reactivity: self-hosted **Plane** webhooks → repo-scoped
-**Bloodbank** events → the right PM reacts on **its** board.
+The canonical Plane ingress is the versioned n8n workflow at
+/webhook/plane. It verifies Plane's HMAC, normalizes provider payloads, and
+publishes schema-backed Bloodbank events.
 
-```
-Plane (docker) ──webhook──▶ bridge ──NATS──▶ bloodbank.evt.v1.repo.<repo>.ticket_*
-                                              └▶ PM's bloodbank-consumer (already
-                                                 subscribes …repo.<repo>.>) ─▶ inbox
-                                                 ─▶ gateway turn ─▶ PM reads + reacts
-```
+This service preserves the historical :8477/plane-webhook URL while Plane
+configuration is migrated. It does not build or publish events. It verifies the
+same HMAC and relays the original bytes and signature to n8n:
 
-- **Routing** keys off the agents-registry: `agents.<id>.plane.project_id → repo`.
-  The emitted type `bloodbank.v1.repo.<repo>.ticket_<action>` is 5-token
-  contract-compliant AND matches each PM's existing subscription.
-- **One** fleet service, **one** Plane workspace webhook — it fans every
-  project's events to the correct PM. Cares about `issue` + `issue_comment`
-  events; acks-and-ignores the rest.
+    Plane -> compatibility relay -> n8n Webhook -> Plane to Bloodbank node
+                                               -> bloodbank.evt.v1.repo.*
 
-## Deploy
+Direct and relayed requests therefore produce the same n8n provenance and the
+same canonical event dialect.
 
-```bash
-# 1. secret (optional but recommended — enables HMAC verify)
-echo 'PLANE_WEBHOOK_SECRET=<random-hex>' > ~/.hermes/plane-webhook-bridge.env
-mkdir -p ~/.hermes/logs
+## Event normalization
 
-# 2. install + start the systemd user service
-cp hermes-plane-webhook-bridge.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now hermes-plane-webhook-bridge.service
-curl -s localhost:8477/health          # {"ok":true,"projects":20}
+| Plane provenance | Canonical CloudEvent | n8n trigger label |
+| --- | --- | --- |
+| plane.board.created | bloodbank.v1.repo.board.created | On Board Created |
+| plane.ticket.created | bloodbank.v1.repo.task.created | On Ticket Created |
+| plane.ticket.updated | bloodbank.v1.repo.task.updated | On Ticket Updated |
+| plane.ticket.transitioned | bloodbank.v1.repo.task.updated | On Ticket Transitioned |
+| plane.ticket.commented | bloodbank.v1.repo.task.appended | On Ticket Commented |
+| plane.ticket.deleted | bloodbank.v1.repo.task.updated | On Ticket Deleted |
 
-# 3. dry-check routing without NATS/Plane
-~/.hermes/hermes-agent/.venv/bin/python plane-webhook-bridge.py --selftest
-```
+Provider names intentionally remain in data.provider_event_type and the n8n
+binding alias. Bloodbank wire types remain provider-neutral per the event naming
+contract. Every normalized envelope carries workspace, board_id, slug, and
+provider_event_type extensions; its data carries the same routing metadata plus
+the lossless ticket, board, or comment JSON entity.
 
-## Configure Plane (self-hosted)
+## Runtime
 
-Create ONE **workspace webhook** pointing at the bridge (Plane's containers reach
-the host via `host.docker.internal`):
+The signing secret is an op:// reference in
+~/.hermes/plane-webhook-bridge.env. The systemd unit resolves it in memory with
+op run; plaintext secret files are not supported.
 
-- **URL:** `http://host.docker.internal:8477/plane-webhook`
-- **Secret:** the same `PLANE_WEBHOOK_SECRET`
-- **Events:** Issues (+ Issue Comments)
+    systemctl --user daemon-reload
+    systemctl --user restart hermes-plane-webhook-bridge.service
+    curl -fsS http://localhost:8477/health
+    op run --env-file="$HOME/.hermes/plane-webhook-bridge.env" -- \
+      python services/plane-webhook-bridge/plane-webhook-bridge.py --selftest
 
-Either via **Workspace Settings → Webhooks** in the Plane admin UI, or the API:
-
-```bash
-curl -X POST "$PLANE_API_URL/api/workspaces/33god/webhooks/" \
-  -H "X-API-Key: $PLANE_API_KEY" -H 'Content-Type: application/json' \
-  -d '{"url":"http://host.docker.internal:8477/plane-webhook","is_active":true,
-       "secret_key":"'"$PLANE_WEBHOOK_SECRET"'","issue":true,"issue_comment":true}'
-```
-
-## What the PM does on an event
-
-The PM's sentinel pass (`.scripts/sentinel.prompt.md`) now has a **Trigger** note
-(read the changed ticket first, react) and a **Before-going-idle protocol**:
-(a) claim any unclaimed ready/unstarted ticket (delegation cycle), and
-(b) status-sweep every in-progress ticket — post a status note, and actively
-unblock anything blocked. So a board change wakes the PM immediately, and every
-pass ends by clearing claimable work + chasing in-flight tickets.
+The default relay target is http://localhost:5678/webhook/plane. Override it
+with N8N_PLANE_WEBHOOK_URL when n8n runs under another service hostname.

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://33god.dev/schemas/bloodbank/v1/repo/task.created.v1.json",
-  "title": "Repo Task Created Event",
-  "description": "A ticket provider or PM created a repo-scoped task. The repo slug and provider provenance belong in data, not in the CloudEvents type.",
+  "$id": "https://33god.dev/schemas/bloodbank/v1/repo/task.updated.v1.json",
+  "title": "Repo Task Updated Event",
+  "description": "A provider-neutral repo task changed. Provider provenance and the lossless ticket entity live in data.",
   "type": "object",
   "allOf": [
     {
@@ -11,7 +11,7 @@
   ],
   "properties": {
     "type": {
-      "const": "bloodbank.v1.repo.task.created"
+      "const": "bloodbank.v1.repo.task.updated"
     },
     "kind": {
       "const": "event"
@@ -21,29 +21,14 @@
     },
     "data": {
       "type": "object",
-      "description": "Payload for bloodbank.v1.repo.task.created.",
       "properties": {
         "repo": {
           "type": "string",
           "minLength": 1
         },
-        "task_id": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string",
-          "minLength": 1
-        },
-        "description": {
-          "type": "string"
-        },
-        "assignee": {
-          "type": "string"
-        },
         "slug": {
           "type": "string",
-          "minLength": 1,
-          "description": "Canonical project slug; normally identical to repo."
+          "minLength": 1
         },
         "workspace": {
           "type": "string",
@@ -64,6 +49,9 @@
         "ticket_key": {
           "type": ["string", "null"]
         },
+        "title": {
+          "type": ["string", "null"]
+        },
         "provider": {
           "type": "string",
           "minLength": 1
@@ -71,12 +59,29 @@
         "provider_event_type": {
           "type": "string",
           "minLength": 1,
-          "description": "Provider provenance name, for example plane.ticket.created."
+          "description": "Provider provenance name, for example plane.ticket.transitioned."
+        },
+        "previous_phase": {
+          "type": ["string", "null"]
         },
         "phase": {
           "type": ["string", "null"]
         },
+        "previous_tp_band": {
+          "type": ["string", "null"]
+        },
         "tp_band": {
+          "type": ["string", "null"]
+        },
+        "changed_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "trigger_source": {
           "type": ["string", "null"]
         },
         "timestamp": {
@@ -91,7 +96,16 @@
       },
       "required": [
         "repo",
-        "title"
+        "slug",
+        "workspace",
+        "board_id",
+        "project_id",
+        "ticket_id",
+        "provider",
+        "provider_event_type",
+        "changed_fields",
+        "timestamp",
+        "ticket"
       ],
       "additionalProperties": true
     }

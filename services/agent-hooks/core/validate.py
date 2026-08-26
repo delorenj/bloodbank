@@ -78,7 +78,7 @@ ALLOWED_ENTITIES = frozenset({
     "request", "response",
     "tool",
     "heartbeat",
-    "decision", "intake", "task", "maintenance", "skill",
+    "decision", "intake", "task", "board", "maintenance", "skill",
     "approval_request",
     "worktree", "branch", "diff",
     "file", "transcription",

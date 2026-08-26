@@ -1,5 +1,5 @@
 [Unit]
-Description=Plane → Bloodbank webhook bridge (PM board reactivity)
+Description=Plane webhook compatibility relay to n8n
 After=network-online.target
 Wants=network-online.target
 
@@ -7,11 +7,9 @@ Wants=network-online.target
 Type=simple
 Environment=HERMES_PLANE_BRIDGE_HOST=0.0.0.0
 Environment=HERMES_PLANE_BRIDGE_PORT=8477
-Environment=BLOODBANK_HOME=%h/code/33GOD/bloodbank
-Environment=HERMES_FLEET_REGISTRY_FILE=%h/.hermes/agents-registry.yaml
-# Put PLANE_WEBHOOK_SECRET=... here to enable HMAC verification:
-EnvironmentFile=-%h/.hermes/plane-webhook-bridge.env
-ExecStart=%h/.hermes/hermes-agent/.venv/bin/python %h/code/33GOD/bloodbank/services/plane-webhook-bridge/plane-webhook-bridge.py
+Environment=N8N_PLANE_WEBHOOK_URL=http://localhost:5678/webhook/plane
+# The env file contains op:// references only. op run resolves them in memory.
+ExecStart=%h/.local/bin/op run --env-file=%h/.hermes/plane-webhook-bridge.env -- %h/.hermes/hermes-agent/.venv/bin/python %h/code/33GOD/bloodbank/services/plane-webhook-bridge/plane-webhook-bridge.py
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:%h/.hermes/logs/plane-webhook-bridge.log
