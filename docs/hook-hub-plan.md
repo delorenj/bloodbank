@@ -31,6 +31,67 @@ conflicting with that concurrent work. Phases 1+ touch `hooks.master.json` and
 `sync.py`, which are exactly the files the other agent is editing — coordinate
 before starting them.
 
+## Verified findings from deep review (2026-08-26)
+
+A five-agent review pass ran against this plan. Claims below were re-verified
+against the live tree; two were wrong and are corrected here.
+
+### Landmines for Phase 1+ (confirmed, must be handled)
+
+**L1 — swapping the runner orphans the old publisher hook.** `_merge_hooks()`
+identifies its own entry by command **substring** via `_publisher_markers()`
+(`= [publisher] + legacy_publishers + ["<name>/publish.py"]`). Change `runner`
+to `bb-hook` *and* drop `bloodbank/publish.py` from the marker list, and the
+installer stops recognizing the live entry: it appends the re-trigger and leaves
+the old publisher firing forever.
+
+Reviewer called this unbounded growth. **It is not** — `_merge_hooks` appends
+only when no live hook matches, so it stabilizes at exactly one orphan. That is
+worse than it sounds: a stable orphan looks like a clean install while every
+event publishes twice. Fix is data-only — keep the retired path in
+`legacy_publishers`. Pinned by `tests/test_runner_swap_idempotency.py`.
+
+**L2 — two concerns have their own installers that will re-add native entries.**
+`~/.claude/settings.json` has **four** independent writers: bloodbank `sync.py`,
+Orca, pjangler's `project-hooks.py` (owner-prefix `PJ_HOOK_OWNER=…`), and
+`deckard install-hooks`. Absorb project-notebook or deckard into the hub and the
+next `pj` run or `deckard install-hooks` silently restores the native entry →
+double-fire. `test_sync_coexistence.py` currently *asserts* the project-notebook
+entries survive a sync.
+
+Consequence: **project-notebook comes out of Phase 1–4 scope.** Absorb it only
+together with deleting its projector, or teach the projector about the hub.
+Deckard is already resolved for a different reason (see Status above).
+
+**L3 — `clients/*.py` call `os.getcwd()` inside `shape_data`.** Three sites
+(`claude.py`, `codex.py`, `hermes.py`). Harmless today because the hub does not
+publish, but the moment Phase 5 moves publishing into the daemon they resolve to
+the *daemon's* cwd and `data.working_directory` becomes wrong-but-plausible.
+Phase 5 must add a `cwd` attribute on `ClientAdapter` and set
+`WorkingDirectory=/` on the unit so a regression is loud rather than subtle.
+
+### Corrections to the review
+
+- **`hooks:uninstall` exists.** Reviewer asserted it does not and that rollback
+  was unbuilt. It is defined in `task.sh` and lists in `mise tasks` as "Remove
+  per-user 33GOD hook injections." The rollback section stands.
+- **L1 is not unbounded** — see above.
+
+### Facts worth acting on separately
+
+- **`hindsight-retain` does almost nothing today.** Its `hindsight memory retain`
+  call is commented out (`hindsight-retain.sh:92`); the hook only appends to
+  `~/.agents/journal/sessions/<id>.jsonl`. Migrating it is near-free, but decide
+  whether it should be doing its actual job first.
+- **One recall costs ~4.1 s** and the hook makes one call per bank (primary +
+  globals + linked). Claude caps it at `timeout=12`, so on multi-bank repos it is
+  plausibly being killed mid-flight and injecting nothing. Independent of this
+  refactor.
+- **Scope is 6 CLIs, but 7 have hooks.** Kimi Code (`~/.kimi-code/config.toml`)
+  and OpenCode (`~/.config/opencode/plugins/*.ts`) carry hook wiring and are not
+  in `hooks.master.json`. Out of scope here; worth knowing the hub does not cover
+  them.
+
 ## Context
 
 You maintain agent hooks by **fan-out**: every behavioral concern gets hand-wired

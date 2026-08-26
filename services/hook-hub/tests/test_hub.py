@@ -346,3 +346,66 @@ class TestClientFailOpen(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestEnvCapture(unittest.TestCase):
+    """The captured env crosses a socket into a daemon and lands in its log.
+
+    Prefix matching (`HINDSIGHT_*`, `CLAUDE_*`) was tried during development and
+    reverted because it swept in HINDSIGHT_API_KEY, HINDSIGHT_DB_PASSWORD and
+    CLAUDE_CODE_MESSAGING_TOKEN. These tests exist so that cannot come back.
+    """
+
+    def _captured(self, env: dict) -> dict:
+        ns = {"__name__": "notmain"}
+        exec(compile(CLIENT.read_text(), str(CLIENT), "exec"), ns)
+        old = dict(os.environ)
+        try:
+            os.environ.clear()
+            os.environ.update(env)
+            return ns["captured_env"]()
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
+    def test_secret_shaped_names_are_never_captured(self):
+        got = self._captured({
+            "HINDSIGHT_API_KEY": "sk-live-xxxx",
+            "HINDSIGHT_DB_PASSWORD": "hunter2",
+            "CLAUDE_CODE_MESSAGING_TOKEN": "tok-xxxx",
+            "OPENROUTER_API_KEY": "sk-or-xxxx",
+            "AWS_SECRET_ACCESS_KEY": "xxxx",
+            "GITHUB_TOKEN": "gho_xxxx",
+            "ZELLIJ_PANE_ID": "13",
+        })
+        self.assertEqual(
+            got, {"ZELLIJ_PANE_ID": "13"},
+            f"credential-shaped env captured: {sorted(set(got) - {'ZELLIJ_PANE_ID'})}",
+        )
+
+    def test_attribution_and_control_vars_are_captured(self):
+        """Dropping a control var silently revokes the caller's opt-out."""
+        want = {
+            "ZELLIJ_PANE_ID": "13",
+            "ZELLIJ_SESSION_NAME": "Workspace",
+            "DISABLE_HINDSIGHT_HOOKS": "1",
+            "GOD_MERGE_FORWARD_REBALANCE": "1",
+            "HINDSIGHT_OUTPUT_FORMAT": "text",
+            "BLOODBANK_ENABLED": "false",
+            "PJ_HOOK_OWNER": "project-notebook.v1",
+        }
+        self.assertEqual(self._captured(dict(want)), want)
+
+    def test_unlisted_vars_are_dropped(self):
+        got = self._captured({"PATH": "/usr/bin", "HOME": "/home/x",
+                              "RANDOM_THING": "v", "ZELLIJ_PANE_ID": "1"})
+        self.assertEqual(set(got), {"ZELLIJ_PANE_ID"})
+
+    def test_dbus_address_survives_the_denylist(self):
+        """It matches /AUTH|SESSION_BUS_ADDRESS/ but claude-notify needs it."""
+        got = self._captured({"DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/x"})
+        self.assertIn("DBUS_SESSION_BUS_ADDRESS", got)
+
+    def test_empty_values_are_omitted(self):
+        got = self._captured({"ZELLIJ_PANE_ID": "", "ZELLIJ_SESSION_NAME": "W"})
+        self.assertEqual(set(got), {"ZELLIJ_SESSION_NAME"})

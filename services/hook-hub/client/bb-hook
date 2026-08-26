@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import select
 import socket
 import sys
@@ -38,15 +39,76 @@ MAX_PAYLOAD_BYTES = 1 << 20          # 1 MiB, matching forward_envelope
 STDIN_BUDGET = 0.5                   # payload is already buffered by the CLI
 TOTAL_BUDGET = float(os.environ.get("BB_HOOK_DEADLINE", "3.0"))
 
-# Only what host-side handlers actually need for attribution. Never os.environ
-# wholesale -- that would ship the user's secrets into an event payload.
+# Never os.environ wholesale, and never by PREFIX. This frame crosses a socket
+# into a long-lived daemon and lands in its request log, so the allowlist is
+# EXACT NAMES ONLY.
+#
+# Prefix matching was tried and reverted: `HINDSIGHT_*` swept in
+# HINDSIGHT_API_KEY and HINDSIGHT_DB_PASSWORD, and `CLAUDE_*` swept in
+# CLAUDE_CODE_MESSAGING_TOKEN. A family prefix is not a safe proxy for "this
+# family is all config" -- credentials live in the same namespace as tunables.
+#
+# Three groups, all deliberate:
+#   attribution  which pane/terminal asked. deckard and zellij-notify hard-exit
+#                without these, and a guessed pane is worse than none.
+#   desktop      claude-notify is a host notifier; with no bus/display address
+#                it degrades to silence instead of sound.
+#   control      per-invocation switches a caller sets to suppress or redirect a
+#                handler. Dropping these silently revokes the caller's opt-out.
 ENV_ALLOWLIST = (
+    # attribution
     "ZELLIJ_SESSION_NAME",
     "ZELLIJ_PANE_ID",
     "TERM",
     "TERM_PROGRAM",
+    "COLORTERM",
     "SSH_TTY",
+    # desktop session
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "PULSE_SERVER",
+    "XDG_SESSION_TYPE",
+    # control -- hindsight
+    "DISABLE_HINDSIGHT_HOOKS",
+    "HINDSIGHT_OUTPUT_FORMAT",
+    "HINDSIGHT_GLOBAL_BANKS",
+    "HINDSIGHT_FANOUT_MAX",
+    "HINDSIGHT_DREAM_GRAPH",
+    # control -- merge-forward recursion guards
+    "GOD_MERGE_FORWARD_REBALANCE",
+    "GOD_MERGE_FORWARD_REBALANCE_ENABLE",
+    "GOD_MERGE_FORWARD_REBALANCE_TIMEOUT",
+    # control -- publisher
+    "BLOODBANK_ENABLED",
+    "BLOODBANK_HOOK_STRICT",
+    "BLOODBANK_DEBUG",
+    # control -- session identity
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_PROJECT_DIR",
+    "PJ_HOOK_OWNER",
 )
+
+# Second gate, independent of the first. Anything credential-shaped is dropped
+# even if a future edit adds it to the allowlist by mistake. Cheap, and the
+# failure it prevents is the expensive kind.
+SECRET_SHAPED = re.compile(
+    r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|SESSION_BUS_ADDRESS$)"
+)
+_SECRET_EXEMPT = frozenset({"DBUS_SESSION_BUS_ADDRESS"})
+
+
+def captured_env() -> dict:
+    out = {}
+    for key in ENV_ALLOWLIST:
+        value = os.environ.get(key)
+        if not value:
+            continue
+        if key not in _SECRET_EXEMPT and SECRET_SHAPED.search(key):
+            continue
+        out[key] = value
+    return out
+
 
 TRAILERS = {"passive": "{}", "stop": '{"decision":""}'}
 
@@ -193,7 +255,7 @@ def main(argv: list[str]) -> int:
         "native": native,
         "cwd": os.environ.get("PWD") or _getcwd(),
         "pid": os.getpid(),
-        "env": {k: os.environ[k] for k in ENV_ALLOWLIST if os.environ.get(k)},
+        "env": captured_env(),
         "payload": payload,
         "extra": rest[2:],
     }
