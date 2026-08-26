@@ -21,6 +21,15 @@ The event envelope records:
 The payload repeats the routing fields and preserves the provider entity as
 lossless JSON under ticket, board, or comment.
 
+## Routing source of truth
+
+Project identity is declared in each repo's `.project.json` and reconciled into
+the shared Hermes `~/.hermes/agents-registry.yaml`. The n8n node reads that
+fleet registry on every execution so a reconciled board migration is live
+without redeploying the node. Unknown board IDs are acknowledged as unrouted;
+workspace-only guessing is forbidden because one Plane workspace can own many
+boards.
+
 ## Mapping
 
 | Plane webhook | Provenance name | Bloodbank type | Bloodbank subject |

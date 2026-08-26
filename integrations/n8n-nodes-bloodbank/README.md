@@ -40,6 +40,11 @@ Routing metadata comes from ~/.hermes/agents-registry.yaml. Plane project IDs
 map to repo slug, workspace, and project identifier without embedding host
 addresses or credentials.
 
+The registry entry must match the repo-root `.project.json` ticket-provider
+binding. Re-run the PM fleet-registry reconciliation after a board migration;
+an unknown board is acknowledged as unrouted and is never guessed from the
+workspace alone.
+
 ## Development and verification
 
     npm ci

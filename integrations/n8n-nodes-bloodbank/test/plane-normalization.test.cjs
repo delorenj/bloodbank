@@ -10,7 +10,7 @@ const {
   planeRoutesFromRegistry,
 } = require('../src/index.ts');
 
-const BOARD_ID = 'f6746659-7698-4b5a-b509-9666e35fab09';
+const BOARD_ID = '15258893-0206-4e8f-aea6-340eb217988c';
 const TICKET_ID = '5082ee4f-5e93-4fd5-8ee9-62ea4109b7fd';
 const OBSERVED_AT = '2026-08-26T12:34:56.000Z';
 
@@ -18,7 +18,7 @@ function routes() {
   return planeRoutesFromRegistry({
     agents: {
       '33god-pm': {
-        repo: '33GOD',
+        repo: '33god',
         plane: { project_id: BOARD_ID, workspace: '33god', identifier: '33GOD' },
       },
     },
@@ -72,8 +72,8 @@ test('Plane issue.created normalizes to a canonical repo.task.created fact', () 
   assert.ok(event);
   assert.equal(event.canonicalType, 'bloodbank.v1.repo.task.created');
   assert.equal(event.providerEventType, 'plane.ticket.created');
-  assert.equal(event.data.repo, '33GOD');
-  assert.equal(event.data.slug, '33GOD');
+  assert.equal(event.data.repo, '33god');
+  assert.equal(event.data.slug, '33god');
   assert.equal(event.data.workspace, '33god');
   assert.equal(event.data.board_id, BOARD_ID);
   assert.equal(event.data.ticket_id, TICKET_ID);

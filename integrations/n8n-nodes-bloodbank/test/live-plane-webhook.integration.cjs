@@ -11,7 +11,7 @@ const NATS_SERVER = process.env.BLOODBANK_NATS_URL || 'nats://localhost:4222';
 const WEBHOOK_URL = process.env.N8N_PLANE_WEBHOOK_URL || 'http://localhost:5678/webhook/plane';
 const SECRET_REFERENCE =
   process.env.PLANE_WEBHOOK_SECRET_REFERENCE || 'op://DeLoSecrets/PlaneWebhook/credential';
-const BOARD_ID = process.env.PLANE_TEST_BOARD_ID || 'f6746659-7698-4b5a-b509-9666e35fab09';
+const BOARD_ID = process.env.PLANE_TEST_BOARD_ID || '15258893-0206-4e8f-aea6-340eb217988c';
 const PROJECT_SLUG = process.env.PLANE_TEST_PROJECT_SLUG || '33god';
 
 function deadline(promise, milliseconds = 10000) {
