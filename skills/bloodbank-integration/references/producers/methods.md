@@ -96,15 +96,22 @@ curl -X POST https://bloodbank.delo.sh/publish \
   -d '{"event_type": "myservice.thing.happened", "payload": {"thing_id": "abc"}}'
 ```
 
-## 5. bloodbank HTTP `/event` (typed webhook ingress)
+## 5. bloodbank HTTP `/event` (legacy typed v2 ingress)
 
-For webhooks where bloodbank derives the routing key from headers/body (Plane, GitHub-style). See `bloodbank/event_producers/http.py:195` for the full handler.
+This is a compatibility endpoint for integrations that intentionally remain on
+the RabbitMQ v2 path. It is **not** the Plane ingress. Plane posts to
+`https://n8n.delo.sh/webhook/plane`; the active n8n workflow verifies the raw-body
+HMAC, normalizes the payload, and publishes NATS-direct. See
+`../event-journey.md`.
+
+For a legacy typed integration, see `bloodbank/event_producers/http.py:195` for
+the full handler.
 
 ```bash
-curl -X POST 'https://bloodbank.delo.sh/event?secret=$PLANE_WEBHOOK_SECRET' \
-  -H 'x-plane-event: issue.created' \
+curl -X POST 'https://bloodbank.delo.sh/event?secret=$LEGACY_WEBHOOK_SECRET' \
+  -H 'x-event-type: legacy.thing.created' \
   -H 'content-type: application/json' \
-  -d '{...plane payload...}'
+  -d '{...legacy payload...}'
 ```
 
 Same v2 RabbitMQ caveat as `/publish`.

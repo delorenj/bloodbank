@@ -7,38 +7,45 @@ repository, not a duplicate Bloodbank stack:
   NATS JetStream topology, Dapr component conventions, and the compose sandbox.
 - `~/code/33GOD/candystore` owns the audit application: HTTP ingestion/API,
   PostgreSQL migrations, React UI, and its per-service Dapr pub/sub component.
-- `bloodbank/compose/docker-compose.yml` is the local runtime bridge. The
-  `candystore` profile builds `../../candystore`, runs `bloodbank-candystore`,
-  attaches it to `bloodbank-network`, and gives it Postgres plus a Dapr sidecar.
+- `33god-platform/compose.yaml` is the active runtime bridge. It runs the
+  standalone Candystore triplet beside Bloodbank and mounts Candystore's own
+  Dapr component.
+- `bloodbank/compose/docker-compose.yml` retains a legacy `candystore` profile
+  for isolated compatibility work. It is excluded from the root stack and must
+  never run beside the canonical durable consumer.
 
-## Runtime Path
+## Active Runtime Path
 
-The local event flow is:
+The root-managed event flow is:
 
-1. Bloodbank producers publish CloudEvents to NATS/Dapr on subjects matching
-   `bloodbank.evt.v1.>`.
+1. Bloodbank producers publish CloudEvents to NATS/Dapr. The event stream admits
+   `bloodbank.evt.v1.>` plus explicitly registered v2 subjects.
 2. `BLOODBANK_EVENTS` stores those messages in NATS JetStream.
-3. `bloodbank-daprd-candystore` mounts
-   `../../candystore/dapr-components:/components:ro`.
-4. Dapr calls `GET http://candystore:3001/dapr/subscribe`.
+3. `candystore-daprd` mounts Candystore's
+   `dapr-components:/components:ro`.
+4. Dapr calls `GET http://candystore-app:3001/dapr/subscribe`.
 5. Candystore declares subscription:
-   `pubsubname=bloodbank-pubsub`, `topic=bloodbank.evt.v1.>`,
+   `pubsubname=bloodbank-pubsub`, `topic=bloodbank.evt.>`,
    `route=/events/all`.
-6. Dapr POSTs matching events to `http://candystore:3001/events/all`.
+6. Dapr POSTs matching events to `http://candystore-app:3001/events/all`.
 7. Candystore persists the full envelope in PostgreSQL and exposes query/UI
    routes on the app port.
 
+The broad Candystore topic is a durable-history choice, not an event-admission
+choice. JetStream still stores only subjects explicitly configured on
+`BLOODBANK_EVENTS`.
+
 On the host, the default ports are:
 
-- Candystore app/API: `http://127.0.0.1:3603`
-- Candystore Dapr sidecar: `http://127.0.0.1:3505`
+- Candystore app/API: `http://127.0.0.1:8683`
+- Candystore Dapr sidecar: `http://127.0.0.1:3504`
 
 Quick probes:
 
 ```bash
-curl -fsS http://127.0.0.1:3603/dapr/subscribe
-curl -fsS http://127.0.0.1:3505/v1.0/metadata
-curl -fsS 'http://127.0.0.1:3603/events?limit=3'
+curl -fsS http://127.0.0.1:8683/dapr/subscribe
+curl -fsS http://127.0.0.1:3504/v1.0/metadata
+curl -fsS 'http://127.0.0.1:8683/events?limit=3'
 ```
 
 ## Component Ownership
@@ -64,8 +71,10 @@ Candystore is intentionally strict. Any event delivered through this path must
 conform to `docs/event-naming.md` and include the canonical top-level fields
 required by Bloodbank:
 
-- `type`: `bloodbank.v1.<domain>.<entity>.<action>`
-- `subject`: `bloodbank.<evt|cmd|rpy>.v1.<domain>.<entity>.<action>`
+- `type`: the schema-approved Bloodbank type, normally
+  `bloodbank.v1.<domain>.<entity>.<action>`
+- `subject`: the matching schema-approved Bloodbank subject, normally
+  `bloodbank.<evt|cmd|rpy>.v1.<domain>.<entity>.<action>`
 - `domain`: must match the third token of `type`
 - `kind`: `event`, `command`, or `reply`
 - `correlationid` and `causationid`

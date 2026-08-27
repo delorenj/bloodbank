@@ -18,7 +18,8 @@ How to publish an event onto the bloodbank bus. The recommended path is **NATS d
 | **NATS direct (stdlib TCP)**    | Hook scripts, no deps allowed, fire-and-forget | NATS subject `bloodbank.evt.v1.<...>` | `bloodbank/services/agent-hooks/core/nats_publish.py` |
 | **Dapr pub/sub**                | 33GOD service container with a Dapr sidecar | Dapr `bloodbank-pubsub` → NATS `bloodbank.evt.v1.<...>` | `bloodbank/services/heartbeat-tick/main.py` |
 | **bloodbank HTTP `/publish`**   | External tool with HTTP only, generic event | RabbitMQ `bloodbank.events.v1` (v2 path; toaster won't see it) | `bloodbank/event_producers/http.py` |
-| **bloodbank HTTP `/event`**     | Typed webhook (Plane, GitHub) where bloodbank derives the routing key | RabbitMQ `bloodbank.events.v1` (v2 path) | `bloodbank/event_producers/http.py` |
+| **n8n Plane ingress**           | Signed Plane webhook from either self-hosted workspace | HMAC + normalization → NATS `bloodbank.evt.v1.repo.*` | `bloodbank/integrations/n8n-nodes-bloodbank` |
+| **bloodbank HTTP `/event`**     | Legacy typed HTTP producer that explicitly needs v2 | RabbitMQ `bloodbank.events.v1` (v2 path) | `bloodbank/event_producers/http.py` |
 | **hookd_bridge `/hooks/agent`** | Issuing a COMMAND envelope (not an event) to a specific agent | command subject `bloodbank.cmd.v1.agent.invocation.start` | `bloodbank/hookd_bridge/bridge.py` |
 
 ## The default
@@ -48,7 +49,8 @@ Verify it arrived: tail `bloodbank-event-toaster` logs or curl `https://ntfy.del
 
 Use `methods.md` to pick the alternative. The common reasons to deviate:
 
-- You're a webhook receiver with no NATS reachability → HTTP `/event`.
+- You're receiving Plane → use the one HTTPS n8n ingress; do not add `/event`, a second workflow, or a port-8477 relay.
+- You're another webhook receiver with no NATS reachability → build an authenticated normalization adapter; treat HTTP `/event` as a legacy v2 exception.
 - You're a Bash hook from an agent harness → canonical `services/agent-hooks/publish.py` + client adapter.
 - You need command semantics (TTL, FSM-guard, target_agent) → hookd_bridge.
 - You already have a Dapr sidecar wired up → Dapr publish (one less broker to think about in your service code).

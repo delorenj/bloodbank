@@ -76,9 +76,10 @@ temporary consumer, and runs the same complete validator at the consumer
 boundary. It deliberately does not start or provision NATS: an absent service,
 stream, or network is reported as a residual runtime gate.
 
-- **Candystore:** its current Dapr subscription is `bloodbank.evt.v1.>`, so it
-  will ingest and retain this family without a subscription change. A
-  portfolio-specific query/projection is separate downstream work.
+- **Candystore:** its current durable Dapr subscription is `bloodbank.evt.>`, so
+  it ingests every portfolio subject admitted by `BLOODBANK_EVENTS`, including
+  the exact v2 maintenance failure subject. A portfolio-specific
+  query/projection is separate downstream work.
 - **Fleet Hermes gateway:** it filters only
   `bloodbank.cmd.v1.agent.invocation.start`; these events neither collide with
   nor change that command consumer. Producing portfolio facts from gateway

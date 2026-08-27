@@ -116,3 +116,37 @@ curl -s "https://ntfy.delo.sh/bloodbank/json?poll=1&since=5m"
 ```
 
 Every event the toaster sees on `bloodbank.evt.v1.>` shows up here. Use it for human eyes / smoke tests, not for code-level consumption.
+
+## 6. Candystore durable event projection (canonical audit consumer)
+
+Candystore's Dapr sidecar binds durable consumer `candystore-events` and calls
+the application's programmatic subscription:
+
+```json
+[{"pubsubname":"bloodbank-pubsub","topic":"bloodbank.evt.>","route":"/events/all"}]
+```
+
+The broad `bloodbank.evt.>` filter is intentional: the stream itself limits what
+exists, while this projection is responsible for complete event history across
+supported event-contract versions. The handler returns `SUCCESS` for an inserted
+or duplicate event, `DROP` for a permanently malformed event after preserving a
+dead-letter copy, and a non-2xx retry only for transient failure.
+
+Verify projection rather than mere live fan-out:
+
+```bash
+curl -fsS 'http://127.0.0.1:8683/events?producer=<producer>&type=<type>&limit=10'
+```
+
+## 7. Hermes fleet command consumer (canonical targeted-intent consumer)
+
+`hermes-fleet-bloodbank-gateway.service` owns one JetStream durable pull
+consumer on `bloodbank.cmd.v1.agent.invocation.start`. It validates the complete
+command, routes `data.target_agent_id` through the fleet registry's explicit
+Bloodbank eligibility block, journals execution state, invokes the selected
+Hermes profile, and emits started plus terminal lifecycle **events**.
+
+This is a command consumer, not an event subscription template. Do not create
+per-agent consumers, do not infer target from the subject, and do not acknowledge
+before Hermes processing and terminal lifecycle publication complete. See
+`../event-journey.md` and `bloodbank/services/hermes-gateway/README.md`.

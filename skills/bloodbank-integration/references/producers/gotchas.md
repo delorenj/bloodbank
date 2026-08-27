@@ -61,3 +61,37 @@ Each gotcha: **Symptom**, **Cause**, **Fix**, **Prevention**.
 **Fix.** Identify the canonical owner. Deactivate the duplicate by either (a) removing its publish call, or (b) renaming its `type` to a producer-specific variant during migration.
 
 **Prevention.** One event_type = one producer service. Encode the owning service in the envelope's `source` (`urn:33god:service:<owner>`) and have consumers reject foreign sources during cutover.
+
+## Plane HMAC fails even though the configured secret is correct
+
+**Symptom.** The active n8n Plane workflow rejects `X-Plane-Signature`, often
+after a Code/Set node or webhook-node option changed.
+
+**Cause.** Plane signs the exact request bytes. HMAC verification was attempted
+over parsed/re-serialized JSON, or the n8n Webhook node did not preserve the raw
+body. Equivalent JSON is not byte-identical JSON.
+
+**Fix.** Enable raw-body handling on the Webhook node and pass those bytes to the
+custom Plane → Bloodbank node. Select the secret by payload `webhook_id`; do not
+guess by workspace name. Resolve the selected `op://` reference only at runtime.
+
+**Prevention.** Keep HMAC verification as the first provenance step. Test a known
+webhook, an unknown `webhook_id`, a bad signature, and a payload whose parsed
+object would serialize differently.
+
+## Plane events arrive twice or on the wrong transport
+
+**Symptom.** A single Plane action produces duplicate facts, or `/event` returns
+200 while NATS/Candystore remains silent.
+
+**Cause.** A legacy port-8477 bridge, second n8n workflow, or Bloodbank HTTP
+`/event` path is still active. `/event` lands on RabbitMQ v2; it is not bridged to
+the canonical NATS event stream.
+
+**Fix.** Keep exactly one active Plane workflow and one Plane webhook per
+workspace, all targeting `https://n8n.delo.sh/webhook/plane`. Disable the legacy
+relay and query Candystore for the deterministic event ID before retrying.
+
+**Prevention.** Treat n8n as the sole Plane provenance boundary and derive a
+deterministic ID from provider action, board, entity, source time, and state or
+comment identity.

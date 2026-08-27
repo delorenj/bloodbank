@@ -384,8 +384,9 @@ echo '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
 docker logs -f bloodbank-event-toaster
 ```
 
-End-to-end, durable audit/inspection is handled by Candystore, which consumes
-`bloodbank.evt.v1.>` through its own Dapr sidecar.
+End-to-end, durable audit/inspection is handled by Candystore, whose Dapr
+sidecar consumes `bloodbank.evt.>` so it receives every event subject admitted
+by `BLOODBANK_EVENTS`. Agent-hook publications remain canonical v1 subjects.
 
 ## Contract verifier
 

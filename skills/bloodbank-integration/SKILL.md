@@ -1,6 +1,6 @@
 ---
 name: bloodbank-integration
-description: "Integrate services or agent harnesses with the 33GOD Bloodbank event bus. Covers schemas in Bloodbank schemas/ and docs/event-naming.md, producing events (NATS preferred; Dapr, HTTP /publish, hookd_bridge alternatives), consuming events (NATS, Dapr, FastStream, event-toaster), and agent hook wiring through the canonical services/agent-hooks publisher. Use for event publish/consume, authoring schemas, integrating harnesses (Claude Code, Copilot CLI, OpenCode, Cursor, Aider, Codex CLI, Hermes), or debugging missing envelopes. Triggers: bloodbank, event bus, publish, subscribe, NATS subject, holyfields legacy, CloudEvents, event-toaster, ntfy.delo.sh/bloodbank, bloodbank.v1.agent.session.started, bloodbank.v1.agent.tool.completed, bloodbank.cmd.v1.agent.invocation.start. Skip for generic brokers, n8n, hindsight memory, or non-event-bus 33GOD."
+description: "Integrate producers, consumers, webhooks, or agent harnesses with the 33GOD Bloodbank event and command pipeline. Covers the full event journey, schemas in Bloodbank schemas/ and docs/event-naming.md, Plane webhook ingress through n8n, NATS/Dapr publication, Candystore projection, Holocene/toaster read sides, the fleet-shared Hermes command gateway, and canonical agent hooks. Use for event publish/consume, webhook normalization, command dispatch, authoring schemas, integrating harnesses (Claude Code, Copilot CLI, OpenCode, Cursor, Aider, Codex CLI, Hermes), or tracing a message end-to-end. Triggers: bloodbank, event bus, publish, subscribe, NATS subject, CloudEvents, Plane webhook, n8n Plane to Bloodbank, Candystore projection, event-toaster, ntfy.delo.sh/bloodbank, bloodbank.v1.agent.session.started, bloodbank.v1.agent.tool.completed, bloodbank.cmd.v1.agent.invocation.start. Skip for generic brokers, general n8n workflow authoring, hindsight memory, or non-event-bus 33GOD."
 ---
 
 # Bloodbank Integration
@@ -12,7 +12,9 @@ Route here when a service or harness needs to **emit** or **consume** events on 
 - **Bus is canon.** All inter-service traffic flows through bloodbank. Direct service-to-service calls are an anti-pattern enforced repo-wide.
 - **Schema first.** Every event has a JSON Schema under `bloodbank/schemas/`. Build envelopes through the canonical builder/validator path, and keep manual envelope examples derivable from the schema and naming contract.
 - **NATS is the current bus.** v3 (Dapr + NATS JetStream + CloudEvents 1.0) is the live target. v2 (RabbitMQ topic exchange) still runs but is migration-only territory.
+- **Facts and intent take different lanes.** Events are immutable facts on `bloodbank.evt.*`; commands are targeted intent on `bloodbank.cmd.*`. Candystore projects events, not commands. A command consumer emits lifecycle events so execution still becomes durable history.
 - **Subject convention is load-bearing.** CloudEvents `type` is `bloodbank.v1.<domain>.<entity>.<action>`. NATS subjects are `bloodbank.evt.v1.<domain>.<entity>.<action>` for events, `bloodbank.cmd.v1.<domain>.<entity>.<action>` for commands, and `bloodbank.rpy.v1.<domain>.<entity>.<action>` for replies. The catch-all `event-toaster` listens on `bloodbank.evt.v1.>`.
+- **Plane enters through one provenance boundary.** Both self-hosted Plane workspaces post over HTTPS to the active `Plane → Bloodbank` n8n workflow. The custom node selects the 1Password secret by payload `webhook_id`, verifies `X-Plane-Signature` over the raw body, resolves the board through the Hermes registry, normalizes the provider action, and publishes NATS-direct. Port `8477` and Bloodbank HTTP `/event` are not active Plane paths.
 - **Agent hooks use one publisher.** All CLI lifecycle hooks call `~/.agents/hooks/bloodbank/publish.py --client <agent> --hook <native-event>`. Client-specific prep lives in `services/agent-hooks/clients/<agent>.py`; per-client `publish.py` files are wrappers.
 - **Fail open at the boundary.** Hooks must never block the host agent. Producer libs should swallow publish failures by default.
 
@@ -22,6 +24,8 @@ Match the user's intent against the signals on the left; load the cited file fir
 
 | Signal in the request | Load |
 |---|---|
+| "show the whole pipeline", "where does this event go", "producer to consumer", "event vs command", "trace this message" | `references/event-journey.md` |
+| "Plane webhook", "HMAC error", "which n8n workflow", "automaticai workspace", "port 8477" | `references/event-journey.md`, then `docs/plane-event-normalization.md` |
 | "define / author / version / change an event schema", `.json` under `bloodbank/schemas/`, "schema validation", "wire contract" | `references/schemas/README.md` |
 | "what should I name this event / subject", "dotted convention", "event_type", "routing key" | `references/schemas/naming.md` |
 | "how do I publish / fire / emit", "send an event", "publish to bloodbank", "from <language>" | `references/producers/README.md` |
@@ -43,8 +47,12 @@ Are you in a 33GOD service container with a Dapr sidecar?
    │  → Canonical agent-hook publisher (stdlib raw TCP, no nats-py). See bloodbank/services/agent-hooks/.
    ├─ Long-running Python service on the host?
    │  → nats-py direct, subject "bloodbank.evt.v1.<...>". See references/producers/methods.md.
-   ├─ External webhook (Plane, GitHub, etc.) with HTTP only?
-   │  → POST to bloodbank's /event (typed webhook) or /publish (generic). RabbitMQ path.
+   ├─ Plane webhook?
+   │  → HTTPS `n8n.delo.sh/webhook/plane` → active `Plane → Bloodbank` workflow →
+   │    custom HMAC/normalization node → NATS event. See references/event-journey.md.
+   ├─ Another external webhook with HTTP only?
+   │  → Build an authenticated ingress adapter that validates + normalizes before NATS.
+   │    `/event` and `/publish` are legacy RabbitMQ paths, not defaults for new work.
    └─ HTTP client that needs to issue a COMMAND envelope (not an event)?
       → POST to hookd_bridge :18790/hooks/agent. See bloodbank/hookd_bridge/; command subject is `bloodbank.cmd.v1.agent.invocation.start`.
 ```
@@ -59,7 +67,7 @@ Do you own a 33GOD service container with a Dapr sidecar?
    │  → NATS core subscribe on "bloodbank.evt.v1.>" (no JetStream consumer, no durability).
    │    Reference: services/event-toaster/main.py.
    ├─ Need durable, replay-capable consumption on a specific subject?
-   │  → NATS JetStream durable consumer. Subjects defined in compose/v3/nats/streams.json.
+   │  → NATS JetStream durable consumer. Subjects defined in compose/nats/streams.json.
    ├─ Legacy v2 consumer or RabbitMQ-only environment?
    │  → FastStream RabbitMQ consumer bound to exchange bloodbank.events.v1. Avoid for new work.
    └─ Just want desktop notifications for everything?
@@ -76,6 +84,8 @@ These apply regardless of producer/consumer path or language:
 - **Do not make schemas optional.** Edit the JSON Schema first, then validate with `mise run smoketest:schemas`.
 - **Use Hindsight memory bank `bloodbank` for integration notes** — broker-level decisions, subject-naming surprises, consumer wiring gotchas live there, not in the code.
 - **Test producers with the toaster.** `bloodbank-event-toaster` subscribes to `bloodbank.evt.v1.>` and forwards every envelope to `https://ntfy.delo.sh/bloodbank`. If you don't see your event there, it didn't make it to NATS.
+- **Prove durable arrival in Candystore.** The canonical projection subscribes through Dapr to `bloodbank.evt.>` and exposes loopback query API `GET http://127.0.0.1:8683/events`. A toaster notification proves live fan-out; a Candystore row proves durable projection.
+- **Do not treat a running command gateway as routability.** The fleet gateway is default-deny. Before claiming commands can execute, count registry entries with `bloodbank.enabled: true`, `gateway_scope: fleet`, a matching `target_agent_id`, and a nonblank `profile_name`.
 
 ## Reading Order
 
@@ -83,6 +93,7 @@ For the most common entry points:
 
 | Task | Read first | Then |
 |---|---|---|
+| Understand or prove the whole event/command journey | `references/event-journey.md` | the producer/consumer method it identifies |
 | Author a brand-new event end-to-end | `references/schemas/README.md` | `references/producers/README.md`, `references/consumers/README.md` |
 | Add a producer to an existing event | `references/producers/README.md` | `references/producers/methods.md` |
 | Add a consumer to an existing event | `references/consumers/README.md` | `references/consumers/methods.md` |
@@ -94,7 +105,7 @@ For the most common entry points:
 This skill does NOT cover:
 
 - **Generic RabbitMQ / NATS / Kafka setup or tuning** unrelated to bloodbank's topology. Use the broker vendor's documentation; this skill assumes the v3 stack (`compose/v3/docker-compose.yml`) is already running.
-- **n8n workflow authoring or routing decisions.** Use `workflow-router` to choose between n8n, bloodbank, and other automation tools.
+- **General n8n workflow authoring or routing decisions.** Use `delonet-n8n-architecture` for canvas/node design. This skill still owns the Plane ingress contract at the n8n→Bloodbank boundary.
 - **Hindsight memory recall/retain.** Use the `hindsight` skill for memory-bank operations even when wiring bloodbank events that *carry* memory references.
 - **Non-event-bus parts of 33GOD** (Candystore persistence internals, Candybar UI work, Bloodbank validator implementation). Use the `33god-ecosystem` hub for routing, or the project's own AGENTS.md.
 - **Schema validator internals.** This skill points at the schema workflow; change `scripts/validate_schemas.sh` and naming smoke tests in the Bloodbank repo when the validator itself changes.

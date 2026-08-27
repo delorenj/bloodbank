@@ -20,6 +20,12 @@ How to receive events from the bloodbank bus. The recommended default for new co
 | **FastStream RabbitMQ consumer** | Yes (AMQP ack) | v2 only; legacy consumer or RabbitMQ-only environment | `bloodbank/event_producers/consumer.py` |
 | **ntfy.delo.sh/bloodbank**       | No  | You want desktop notifications, not code-level consumption | already running; subscribe in the ntfy app |
 
+Canonical platform consumers are intentionally different: Candystore uses a
+durable Dapr/JetStream subscription on `bloodbank.evt.>`; event-toaster uses a
+non-durable core wildcard for human notification; the Hermes fleet gateway uses
+a durable pull consumer on the **command** stream. Do not copy one consumer's
+delivery semantics into another just because all three connect to NATS.
+
 ## The default
 
 For new consumers, default to **NATS core subscribe** on the specific subject your service cares about:
@@ -55,5 +61,7 @@ Subject filters:
 | "I already have a Dapr sidecar in this service" | Dapr subscriber via `/dapr/subscribe` routes |
 | "I'm wiring a v2 RabbitMQ consumer that pre-dates the v3 migration" | FastStream + exchange `bloodbank.events.v1` |
 | "I just want to see events on my phone" | Subscribe to topic `bloodbank` on `https://ntfy.delo.sh` |
+| "I need a durable audit/read model" | Follow Candystore's Dapr `bloodbank.evt.>` projection |
+| "I consume targeted agent commands" | Follow the fleet-shared Hermes JetStream pull consumer; never make one consumer per agent |
 
 Recipes for each are in [methods.md](./methods.md).
