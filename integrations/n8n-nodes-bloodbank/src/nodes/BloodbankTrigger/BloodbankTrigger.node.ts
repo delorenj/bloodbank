@@ -92,6 +92,7 @@ export class BloodbankTrigger implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'Bloodbank Trigger',
     name: 'bloodbankTrigger',
+    icon: { light: 'file:bloodbank.svg', dark: 'file:bloodbank.dark.svg' },
     group: ['trigger'],
     version: 1,
     subtitle: '={{$parameter["messageKind"]}}',

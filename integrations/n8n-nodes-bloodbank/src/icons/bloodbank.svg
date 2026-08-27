@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Bloodbank">
+  <title>Bloodbank</title>
+  <defs>
+    <linearGradient id="bb-fill-l" x1="16" y1="8" x2="50" y2="60" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#C4222C"/><stop offset="1" stop-color="#8E141C"/></linearGradient>
+    <clipPath id="bb-l-drop"><path d="M32 5C33 17 53 25 51.5 42A19.5 19.5 0 0 1 12.5 42C11 25 31 17 32 5Z"/></clipPath>
+  </defs>
+  <path d="M32 5C33 17 53 25 51.5 42A19.5 19.5 0 0 1 12.5 42C11 25 31 17 32 5Z" fill="url(#bb-fill-l)"/>
+  <g>
+    <ellipse cx="32" cy="44" rx="26" ry="8.5" transform="rotate(-18 32 44)" fill="none" stroke="#23252C" stroke-width="1.9"/>
+    <path d="M18 41.5H23l3-2 3 4.5 4-17 4 19 3.5-11 3.5 6.5H48" fill="none" stroke="#23252C" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#23252C"><circle cx="55.2" cy="34.15" r="2.1"/><circle cx="47.62" cy="32.6" r="2.1"/><circle cx="11.89" cy="55.0" r="2.1"/><circle cx="23.93" cy="54.72" r="2.1"/></g>
+  </g>
+  <g clip-path="url(#bb-l-drop)">
+    <ellipse cx="32" cy="44" rx="26" ry="8.5" transform="rotate(-18 32 44)" fill="none" stroke="#FAF8F7" stroke-width="1.9"/>
+    <path d="M18 41.5H23l3-2 3 4.5 4-17 4 19 3.5-11 3.5 6.5H48" fill="none" stroke="#FAF8F7" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#FAF8F7"><circle cx="55.2" cy="34.15" r="2.1"/><circle cx="47.62" cy="32.6" r="2.1"/><circle cx="11.89" cy="55.0" r="2.1"/><circle cx="23.93" cy="54.72" r="2.1"/></g>
+  </g>
+</svg>

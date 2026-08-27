@@ -26,6 +26,7 @@ export class Bloodbank implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'Bloodbank',
     name: 'bloodbank',
+    icon: { light: 'file:bloodbank.svg', dark: 'file:bloodbank.dark.svg' },
     group: ['output'],
     version: 1,
     subtitle: '={{$parameter["event"]}}',

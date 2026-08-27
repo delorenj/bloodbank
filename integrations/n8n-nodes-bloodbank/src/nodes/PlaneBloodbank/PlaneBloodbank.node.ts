@@ -127,6 +127,7 @@ export class PlaneBloodbank implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'Plane → Bloodbank',
     name: 'planeBloodbank',
+    icon: { light: 'file:planeBloodbank.svg', dark: 'file:planeBloodbank.dark.svg' },
     group: ['transform'],
     version: 1,
     description: 'Verify and normalize a Plane webhook, then publish one canonical Bloodbank fact',

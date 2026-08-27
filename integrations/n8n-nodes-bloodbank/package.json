@@ -11,6 +11,13 @@
     "33god"
   ],
   "license": "MIT",
+  "homepage": "https://github.com/delorenj/bloodbank/tree/main/integrations/n8n-nodes-bloodbank#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/delorenj/bloodbank.git",
+    "directory": "integrations/n8n-nodes-bloodbank"
+  },
+  "bugs": "https://github.com/delorenj/bloodbank/issues",
   "author": "Jarad DeLorenzo <jaradd@gmail.com>",
   "engines": {
     "node": ">=20"
@@ -25,11 +32,13 @@
     ]
   },
   "files": [
-    "dist"
+    "dist",
+    "assets"
   ],
   "scripts": {
     "codegen": "node codegen/generate-events.mjs",
-    "build": "npm run codegen && tsc",
+    "icons": "node scripts/copy-icons.mjs",
+    "build": "npm run codegen && tsc && npm run icons",
     "test": "npm run build && tsx --test test/*.test.cjs",
     "test:live": "npm run build && tsx --test test/live-nats.integration.cjs",
     "test:live-plane": "node --test test/live-plane-webhook.integration.cjs",

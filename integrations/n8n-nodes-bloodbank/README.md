@@ -1,10 +1,25 @@
+<div align="center">
+
+<img src="assets/bloodbank.png" alt="Bloodbank" width="176">
+
 # n8n Bloodbank nodes
 
-The package contains three schema-backed nodes:
+Schema-backed publisher, consumer trigger, and Plane webhook ingress for the
+33GOD Bloodbank NATS bus.
 
-- Bloodbank publishes a selected canonical event.
-- Bloodbank Trigger starts workflows from events or commands.
-- Plane to Bloodbank verifies, normalizes, and publishes Plane webhooks.
+</div>
+
+## Nodes
+
+| Node | Group | What it does |
+| --- | --- | --- |
+| **Bloodbank** | output | Publishes a selected canonical event. Also usable as an agent tool. |
+| **Bloodbank Trigger** | trigger | Starts workflows from events or single-consumer commands. |
+| **Plane → Bloodbank** | transform | Verifies, normalizes, and publishes Plane webhooks. |
+
+Each node carries the Bloodbank mark as a light/dark icon pair, so the canvas
+reads correctly in either n8n theme. Plane → Bloodbank adds an inbound arrow to
+mark it as the edge where outside traffic enters the bus.
 
 ## Bloodbank Trigger
 
@@ -51,6 +66,26 @@ binding. Re-run the PM fleet-registry reconciliation after a board migration;
 an unknown board is acknowledged as unrouted and is never guessed from the
 workspace alone.
 
+## Branding
+
+`src/icons/` holds the icon masters, drawn from the Bloodbank mark at the
+repository root. They are the single source of truth. n8n resolves a `file:`
+icon next to the `.node.js` that declares it, so `npm run build` fans the
+masters out into every compiled node directory and fails the build when a node
+declares an icon that no master satisfies. Edit the master, never the copy
+under `dist/`.
+
+| Asset | Shipped as | Use |
+| --- | --- | --- |
+| `src/icons/bloodbank.svg` · `bloodbank.dark.svg` | `dist/nodes/{Bloodbank,BloodbankTrigger}/` | Publisher and trigger canvas icon |
+| `src/icons/planeBloodbank.svg` · `planeBloodbank.dark.svg` | `dist/nodes/PlaneBloodbank/` | Plane ingress canvas icon |
+| `assets/bloodbank.png` | package tarball | README and package listing |
+
+Palette sampled from the source mark: `#C4222C` blood red and `#8E141C` deep
+red on light canvases, lifted to `#D2242F`/`#9C1820` on dark ones; `#FAF8F7`
+off-white for the orbit, pulse, and nodes; `#23252C` ink where those marks fall
+outside the drop on a light canvas.
+
 ## Development and verification
 
     npm ci
@@ -59,6 +94,7 @@ workspace alone.
     npm run deploy
 
 npm test covers schema generation, trigger configuration, canonical envelopes,
-Plane creation/transition/comment normalization, and provenance alias filters.
-npm run test:live proves multi-event subscriptions, command queue competition,
-and synchronous command replies against the live NATS service.
+Plane creation/transition/comment normalization, provenance alias filters, and
+the node icon contract. npm run test:live proves multi-event subscriptions,
+command queue competition, and synchronous command replies against the live
+NATS service.
