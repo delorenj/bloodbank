@@ -1,11 +1,11 @@
 ---
 name: bloodbank-sdk-generation
-description: Generate typed SDK bindings (Pydantic v2 models, TypeScript types) from the Bloodbank JSON Schema tree at `bloodbank/schemas/bloodbank/v1/**` (Draft 2020-12). Uses `datamodel-code-generator` and `json-schema-to-typescript` — NOT the deprecated hand-rolled Holyfields generators. Use when generating event-contract bindings for a Bloodbank consumer, importing typed CloudEvents envelopes into another project, or scaffolding a `bloodbank-contracts` SDK package. Trigger keywords — "bloodbank SDK", "bloodbank contracts", "Pydantic from bloodbank schemas", "TypeScript types for bloodbank events", "bloodbank.v1.* types", "event contract bindings", "datamodel-code-generator", "json-schema-to-typescript", "regenerate SDK", "CloudEvents bindings". Do NOT use for schema authoring (edit `bloodbank/schemas/` directly per `docs/event-naming.md` §12), runtime envelope validation (use `BLOODBANK_HOOK_VALIDATE=1`), schema-tree consistency (`mise run smoketest:schemas`), or generic JSON Schema codegen unrelated to Bloodbank.
+description: Generate typed SDK bindings (Pydantic v2 models, TypeScript types) from the Bloodbank JSON Schema tree at `bloodbank/schemas/bloodbank/**` (Draft 2020-12). Uses `datamodel-code-generator` and `json-schema-to-typescript` — NOT the deprecated hand-rolled Holyfields generators. Use when generating event-contract bindings for a Bloodbank consumer, importing typed CloudEvents envelopes into another project, or scaffolding a `bloodbank-contracts` SDK package. Trigger keywords — "bloodbank SDK", "bloodbank contracts", "Pydantic from bloodbank schemas", "TypeScript types for bloodbank events", "bloodbank.* types", "event contract bindings", "datamodel-code-generator", "json-schema-to-typescript", "regenerate SDK", "CloudEvents bindings". Do NOT use for schema authoring (edit `bloodbank/schemas/` directly per `docs/event-naming.md` §12), runtime envelope validation (use `BLOODBANK_HOOK_VALIDATE=1`), schema-tree consistency (`mise run smoketest:schemas`), or generic JSON Schema codegen unrelated to Bloodbank.
 ---
 
 # Bloodbank SDK Generation
 
-Deterministic recipe for generating typed bindings from `bloodbank/schemas/bloodbank/v1/**`. Outputs are plain artifacts the consumer commits or vendors — this skill produces code, not an installable package.
+Deterministic recipe for generating typed bindings from `bloodbank/schemas/bloodbank/**`. Outputs are plain artifacts the consumer commits or vendors — this skill produces code, not an installable package.
 
 ## Prereqs
 
@@ -17,7 +17,7 @@ Deterministic recipe for generating typed bindings from `bloodbank/schemas/blood
 
 ```bash
 uvx --from 'datamodel-code-generator>=0.25' datamodel-codegen \
-  --input schemas/bloodbank/v1 \
+  --input schemas/bloodbank \
   --input-file-type jsonschema \
   --output-model-type pydantic_v2.BaseModel \
   --target-python-version 3.12 \
@@ -31,17 +31,17 @@ uvx --from 'datamodel-code-generator>=0.25' datamodel-codegen \
 Flag rationale:
 
 - `--input-file-type jsonschema` — required; the default `auto` mis-detects when the tree has multiple files.
-- `--enum-field-as-literal one` — `properties.type.const` becomes `Literal["bloodbank.v1.<...>"]`, matching the 5-token contract.
+- `--enum-field-as-literal one` — `properties.type.const` becomes `Literal["bloodbank.<domain>.<entity>.<action>"]`, matching the 4-token contract.
 - `--use-schema-description` / `--use-field-description` — preserves the human-readable descriptions from the JSON Schemas as Pydantic field docstrings.
 - `--target-python-version 3.12` — matches the project floor; bump if the project floor moves.
 
-The generator resolves `$ref: "../../../_common/cloudevent_base.v1.json"` correctly because all schemas live under one input root.
+The generator resolves `$ref: "../../_common/cloudevent_base.v1.json"` correctly because all schemas live under one input root. (Two levels up, not three — the `v1/` tier that made it three is gone.)
 
 ## TypeScript (interfaces + type unions)
 
 ```bash
 npx json-schema-to-typescript \
-  'schemas/bloodbank/v1/**/*.v1.json' \
+  'schemas/bloodbank/**/*.json' \
   --cwd schemas \
   --bannerComment '' \
   --unreachableDefinitions \
@@ -72,7 +72,7 @@ If either fails, regenerate from a clean `validate:schemas` pass before debuggin
 
 ## Common combinations
 
-- **Refresh + commit on schema change**: re-run both generators whenever you edit anything under `bloodbank/schemas/bloodbank/v1/`. Treat the generated files as committed artifacts the consumer holds — git diff is the drift signal.
+- **Refresh + commit on schema change**: re-run both generators whenever you edit anything under `bloodbank/schemas/bloodbank/`. Treat the generated files as committed artifacts the consumer holds — git diff is the drift signal.
 - **One-off consumer scaffold**: a downstream project that needs the types runs both commands once, vendors the outputs, and pins via the schema-tree commit hash recorded in their changelog.
 - **Future packaging**: when a second external consumer materializes, promote `bloodbank_contracts/` into a real package (`uv build` for Python, `tsc --declaration` + `package.json` for TS). See `RECOMMENDATION.md` step 5 in the Bloodbank repo.
 

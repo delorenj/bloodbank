@@ -55,7 +55,7 @@ Each gotcha: **Symptom**, **Cause**, **Fix**, **Prevention**.
 
 ## 6. "I get duplicate session.started events on every Claude Code session"
 
-**Symptom.** `bloodbank.evt.v1.agent.session.started` arrives twice per real session.
+**Symptom.** `bloodbank.evt.agent.session.started` arrives twice per real session.
 
 **Cause.** Claude Code can emit both `SessionStart` and a later restart/start path. The adapter self-roots each new session chain, so different session IDs may represent real new sessions.
 

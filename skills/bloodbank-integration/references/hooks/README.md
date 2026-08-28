@@ -35,7 +35,7 @@ Client-specific differences are isolated in
 - native hook names and config dialect
 - stdin/env/argv payload parsing
 - session-id, model, tool-result, and error-shape quirks
-- data shaping for the shared v1 envelope
+- data shaping for the shared CloudEvents envelope
 
 Everything else is shared in `core/`: event-map resolution, session
 causation/correlation, envelope construction, validation, NATS publish,
@@ -43,21 +43,21 @@ fail-open logging, and strict-mode behavior.
 
 ## Subject layout
 
-All agent CLI hooks emit provider-neutral v1 Bloodbank types. Provider identity
+All agent CLI hooks emit provider-neutral Bloodbank types. Provider identity
 lives in `actor`, not in `type`.
 
 | Semantic event | CloudEvents `type` | NATS subject |
 |---|---|---|
-| Session started | `bloodbank.v1.agent.session.started` | `bloodbank.evt.v1.agent.session.started` |
-| Session ended | `bloodbank.v1.agent.session.ended` | `bloodbank.evt.v1.agent.session.ended` |
-| Prompt/turn started | `bloodbank.v1.conversation.turn.started` | `bloodbank.evt.v1.conversation.turn.started` |
-| Tool requested | `bloodbank.v1.agent.tool.requested` | `bloodbank.evt.v1.agent.tool.requested` |
-| Tool completed | `bloodbank.v1.agent.tool.completed` | `bloodbank.evt.v1.agent.tool.completed` |
-| Invocation started | `bloodbank.v1.agent.invocation.started` | `bloodbank.evt.v1.agent.invocation.started` |
-| Invocation completed | `bloodbank.v1.agent.invocation.completed` | `bloodbank.evt.v1.agent.invocation.completed` |
-| Invocation failed | `bloodbank.v1.agent.invocation.failed` | `bloodbank.evt.v1.agent.invocation.failed` |
+| Session started | `bloodbank.agent.session.started` | `bloodbank.evt.agent.session.started` |
+| Session ended | `bloodbank.agent.session.ended` | `bloodbank.evt.agent.session.ended` |
+| Prompt/turn started | `bloodbank.conversation.turn.started` | `bloodbank.evt.conversation.turn.started` |
+| Tool requested | `bloodbank.agent.tool.requested` | `bloodbank.evt.agent.tool.requested` |
+| Tool completed | `bloodbank.agent.tool.completed` | `bloodbank.evt.agent.tool.completed` |
+| Invocation started | `bloodbank.agent.invocation.started` | `bloodbank.evt.agent.invocation.started` |
+| Invocation completed | `bloodbank.agent.invocation.completed` | `bloodbank.evt.agent.invocation.completed` |
+| Invocation failed | `bloodbank.agent.invocation.failed` | `bloodbank.evt.agent.invocation.failed` |
 
-`bloodbank-event-toaster` subscribes to `bloodbank.evt.v1.>` and forwards every
+`bloodbank-event-toaster` subscribes to `bloodbank.evt.>` and forwards every
 event to `https://ntfy.delo.sh/bloodbank`.
 
 ## Current implementation

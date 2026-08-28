@@ -4,28 +4,39 @@ Each section is a self-contained recipe with the runtime requirements, env vars,
 
 ## 1. NATS direct via nats-py (recommended for services)
 
-**Requires.** `nats-py` in your service's dependencies; NATS reachable at `nats://nats:4222` (inside `bloodbank-network`) or `nats://127.0.0.1:4222` (from host).
+**Requires.** `nats-py` in your service's dependencies; NATS reachable at `nats://nats:4222` (inside `bloodbank-network`) or `nats://127.0.0.1:4222` (from host). Use this recipe when the canonical publisher or `bb.py emit` is unavailable but the local NATS port is reachable.
 
-**Pattern.**
+**Pattern.** Build a complete CloudEvents envelope that satisfies the naming contract (`bloodbank.<domain>.<entity>.<action>`) and includes the extension fields `producer`, `service`, `actor`, `correlationid`, `causationid`, and `ordering_key`. If the event targets the agent's fleet consumer (e.g., `repo` domain events), set `data.repo` to the PM agent's repo slug so the consumer ingests it.
 
 ```python
 import asyncio, json, uuid
 from datetime import datetime, timezone
 import nats
 
+AGENT_ID = "your-agent-id"      # e.g. james-brennan-pm
+REPO = "your-repo-slug"         # e.g. james-brennan
+SOURCE = f"hermes://agent/{AGENT_ID}"
+PRODUCER = f"hermes-agent:{AGENT_ID}"
+
 async def emit():
-    nc = await nats.connect("nats://nats:4222", name="my-service")
+    nc = await nats.connect("nats://nats:4222", name=f"hermes-{AGENT_ID}")
     envelope = {
         "specversion": "1.0",
         "id": str(uuid.uuid4()),
-        "source": "urn:33god:service:my-service",
-        "type": "bloodbank.v1.system.heartbeat.received",
-        "subject": "bloodbank.evt.v1.system.heartbeat.received",
-        "time": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "source": SOURCE,
+        "type": "bloodbank.system.heartbeat.received",
+        "subject": "bloodbank.evt.system.heartbeat.received",
+        "time": datetime.now(timezone.utc).isoformat(),
         "datacontenttype": "application/json",
         "kind": "event",
         "domain": "system",
-        "data": {"thing_id": "abc123", "detail": "..."},
+        "producer": PRODUCER,
+        "service": "hermes-agent",
+        "actor": {"type": "agent", "agent_id": AGENT_ID, "cli": "hermes"},
+        "correlationid": str(uuid.uuid4()),
+        "causationid": str(uuid.uuid4()),
+        "ordering_key": f"agent:{AGENT_ID}",
+        "data": {"repo": REPO, "thing_id": "abc123", "detail": "..."},
     }
     await nc.publish(envelope["subject"], json.dumps(envelope).encode("utf-8"))
     await nc.drain()
@@ -33,7 +44,7 @@ async def emit():
 asyncio.run(emit())
 ```
 
-**Verify.** `docker logs bloodbank-event-toaster --tail 5` should show the `bloodbank.v1.system.heartbeat.received` event.
+**Verify.** `docker logs bloodbank-event-toaster --tail 5` should show the `bloodbank.system.heartbeat.received` event.
 
 ## 2. NATS direct via stdlib TCP (recommended for shell hooks)
 
@@ -68,7 +79,7 @@ import json, urllib.request
 
 DAPR_HTTP = "http://daprd-mysvc:3500"
 PUBSUB = "bloodbank-pubsub"
-TOPIC = "bloodbank.evt.v1.system.heartbeat.received"   # Dapr topic == NATS subject
+TOPIC = "bloodbank.evt.system.heartbeat.received"   # Dapr topic == NATS subject
 
 req = urllib.request.Request(
     f"{DAPR_HTTP}/v1.0/publish/{PUBSUB}/{TOPIC}",
@@ -118,7 +129,7 @@ Same v2 RabbitMQ caveat as `/publish`.
 
 ## 6. hookd_bridge `/hooks/agent` (command envelopes)
 
-For issuing a directive at a specific agent, not announcing a fact. The bridge wraps your text in a CommandEnvelope and publishes a v1 command such as `bloodbank.cmd.v1.agent.invocation.start`.
+For issuing a directive at a specific agent, not announcing a fact. The bridge wraps your text in a CommandEnvelope and publishes a command such as `bloodbank.cmd.agent.invocation.start`.
 
 ```bash
 curl -X POST http://localhost:18790/hooks/agent \
@@ -130,4 +141,4 @@ curl -X POST http://localhost:18790/hooks/agent \
   }'
 ```
 
-Use only when you actually need command semantics. Most integrations want event semantics — stay in `bloodbank.evt.v1.*`.
+Use only when you actually need command semantics. Most integrations want event semantics — stay in `bloodbank.evt.*`.

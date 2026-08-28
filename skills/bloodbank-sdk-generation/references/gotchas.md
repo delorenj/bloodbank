@@ -9,18 +9,18 @@ Load this only when generation fails with a non-obvious error or the output look
 - **Fix:** pin the floor — `uvx --from 'datamodel-code-generator>=0.25'`.
 - **Why:** the Pydantic v2 backend was rewritten in 0.25; earlier versions emitted v1 BaseModel even with the v2 flag, producing import errors downstream.
 
-## 2. Generated Python has `type: str` instead of `type: Literal["bloodbank.v1...."]`
+## 2. Generated Python has `type: str` instead of `type: Literal["bloodbank...."]`
 
 - **Symptom:** the `type` field of each event class is typed as plain `str`, not as a literal of the const value.
 - **Cause:** `--enum-field-as-literal` is missing or set to `all`.
 - **Fix:** pass `--enum-field-as-literal one`. The `one` value means "fields with a single-value enum or const become `Literal[...]`"; `all` over-promotes everything and breaks open-ended enums.
-- **Why:** Bloodbank's 5-token contract relies on `properties.type.const` being authoritative at the type level — that's what gives consumers compile-time / static-type guarantees against wrong event types.
+- **Why:** Bloodbank's 4-token type contract relies on `properties.type.const` being authoritative at the type level — that's what gives consumers compile-time / static-type guarantees against wrong event types.
 
-## 3. `Could not resolve reference ../../../_common/cloudevent_base.v1.json`
+## 3. `Could not resolve reference ../../_common/cloudevent_base.v1.json`
 
 - **Symptom:** datamodel-codegen or json-schema-to-typescript fails resolving the `_common` ref.
 - **Cause:** running from the wrong working directory, or pointing `--input` at a single file instead of the tree root.
-- **Fix:** run from the Bloodbank repo root; pass the directory `schemas/bloodbank/v1` (Python) or use `--cwd schemas` plus a glob over the v1 tree (TypeScript). The `$ref` walks up to `schemas/_common/`; both tools need `schemas/` in scope.
+- **Fix:** run from the Bloodbank repo root; pass the directory `schemas/bloodbank` (Python) or use `--cwd schemas` plus a glob over the domain tree (TypeScript). The `$ref` walks up to `schemas/_common/`; both tools need `schemas/` in scope.
 - **Why:** the schemas are authored against a fixed relative path. The generator's resolver root determines whether `../../../_common/` lands inside or outside the tree.
 
 ## 4. TypeScript output is one giant union with anonymous types
@@ -39,7 +39,7 @@ Load this only when generation fails with a non-obvious error or the output look
 
 ## 6. Want `EVENT_TYPE` class constants in Python
 
-- **Symptom:** the Holyfields-era generator emitted `EVENT_TYPE: ClassVar[str] = "bloodbank.v1..."` on each model; `datamodel-code-generator` does not.
+- **Symptom:** the Holyfields-era generator emitted `EVENT_TYPE: ClassVar[str] = "bloodbank..."` on each model; `datamodel-code-generator` does not.
 - **Cause:** datamodel-code-generator emits the literal as the `type` field's annotation, not as a separate class constant.
 - **Fix:** either (a) skip — consumers can reference `Model.model_fields['type'].annotation.__args__[0]` to get the literal value, or (b) post-process with a one-shot script that walks the generated file, finds each `type: Literal['...']`, and inserts `EVENT_TYPE: ClassVar[str] = '...'` on the class. Keep the post-processor checked in next to the regenerate command if you commit to (b).
 - **Why:** the type-level literal already provides static guarantees; a runtime constant is convenience, not contract.

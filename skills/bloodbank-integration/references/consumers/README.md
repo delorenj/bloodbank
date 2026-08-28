@@ -40,7 +40,7 @@ async def main():
         envelope = json.loads(msg.data.decode("utf-8"))
         # react...
 
-    await nc.subscribe("bloodbank.evt.v1.agent.tool.completed", cb=on_msg)
+    await nc.subscribe("bloodbank.evt.agent.tool.completed", cb=on_msg)
     await asyncio.Event().wait()   # run forever
 
 asyncio.run(main())
@@ -48,9 +48,9 @@ asyncio.run(main())
 
 Subject filters:
 
-- `bloodbank.evt.v1.agent.tool.completed` — exactly that event.
-- `bloodbank.evt.v1.agent.>` — all agent events.
-- `bloodbank.evt.v1.>` — wildcard fan-in (the catch-all pattern; see `event-toaster`).
+- `bloodbank.evt.agent.tool.completed` — exactly that event.
+- `bloodbank.evt.agent.>` — all agent events.
+- `bloodbank.evt.>` — wildcard fan-in (the catch-all pattern; see `event-toaster`).
 
 ## When to upgrade past core subscribe
 

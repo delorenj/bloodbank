@@ -6,7 +6,7 @@ Each gotcha: **Symptom**, **Cause**, **Fix**, **Prevention**.
 
 **Symptom.** A `curl … /publish` returns 200, but `docker logs bloodbank-event-toaster` shows nothing for your event.
 
-**Cause.** `/publish` lands on the v2 RabbitMQ exchange. `event-toaster` subscribes to v3 NATS `bloodbank.evt.v1.>` only. The two buses are not bridged.
+**Cause.** `/publish` lands on the v2 RabbitMQ exchange. `event-toaster` subscribes to v3 NATS `bloodbank.evt.>` only. The two buses are not bridged.
 
 **Fix.** Republish through NATS — either the canonical stdlib hook publisher (`bloodbank/services/agent-hooks/publish.py`) or nats-py.
 
@@ -16,9 +16,9 @@ Each gotcha: **Symptom**, **Cause**, **Fix**, **Prevention**.
 
 **Symptom.** Toaster logs `toasted: myservice.thing.happened` (so NATS got it), but the specific consumer that filters on `type == "myservice.thing.happened"` never fires.
 
-**Cause.** Envelope `type` field doesn't match the NATS subject. The subject was `bloodbank.evt.v1.system.heartbeat.received` but the envelope's `type` is `"bloodbank.v1.system.heartbeat.RECEIVED"` or `"system.heartbeat.received"` etc.
+**Cause.** Envelope `type` field doesn't match the NATS subject. The subject was `bloodbank.evt.system.heartbeat.received` but the envelope's `type` is `"bloodbank.system.heartbeat.RECEIVED"` or `"system.heartbeat.received"` etc.
 
-**Fix.** Make subject and `type` mathematically derivable: insert `evt` after the `bloodbank` segment (`bloodbank.v1.x.y.z` -> `bloodbank.evt.v1.x.y.z`). Always.
+**Fix.** Make subject and `type` mathematically derivable: insert `evt` after the `bloodbank` segment (`bloodbank.x.y.z` -> `bloodbank.evt.x.y.z`). Always.
 
 **Prevention.** Derive both from a single constant in your code. Never type either by hand at the call site.
 
@@ -61,6 +61,33 @@ Each gotcha: **Symptom**, **Cause**, **Fix**, **Prevention**.
 **Fix.** Identify the canonical owner. Deactivate the duplicate by either (a) removing its publish call, or (b) renaming its `type` to a producer-specific variant during migration.
 
 **Prevention.** One event_type = one producer service. Encode the owning service in the envelope's `source` (`urn:33god:service:<owner>`) and have consumers reject foreign sources during cutover.
+
+## 7. "`bb.py emit` exists but does nothing"
+
+**Symptom.** `python3 bloodbank/cli/bb.py emit ...` prints usage and exits; there is no documented way to hand-craft an event.
+
+**Cause.** `emit` is intentionally a stub in the current wave. Per the module docstring, operator emission is only valid through a Dapr sidecar per ADR-0001; the CLI is not the production publish path.
+
+**Fix.** If you are on the host and the Candystore / platform stack is up, publish directly to the local candystore Dapr sidecar. Construct a valid CloudEvents envelope, validate it with `bb.py verify-envelope --file <envelope.json>`, then POST it:
+
+```python
+import json, urllib.request
+
+with open("envelope.json") as f:
+    envelope = json.load(f)
+
+req = urllib.request.Request(
+    "http://127.0.0.1:3504/v1.0/publish/bloodbank-pubsub/bloodbank.evt.<domain>.<entity>.<action>",
+    data=json.dumps(envelope).encode("utf-8"),
+    headers={"Content-Type": "application/cloudevents+json"},
+    method="POST",
+)
+urllib.request.urlopen(req, timeout=5)   # 204 = accepted
+```
+
+Verify ingestion by querying Candystore: `GET http://127.0.0.1:8683/events?type=<type>&limit=10`.
+
+**Prevention.** Treat `bb.py emit` as a scaffold placeholder. For recurring operator emission, add a small wrapper script that validates the envelope and posts to the sidecar, rather than relying on the stub subcommand.
 
 ## Plane HMAC fails even though the configured secret is correct
 

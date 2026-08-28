@@ -1,6 +1,6 @@
 # Schemas
 
-Every bloodbank event is described by a versioned JSON Schema in the Bloodbank `schemas/` directory. The schema source of truth lives in the Bloodbank repo at `~/code/33GOD/bloodbank/`; validation scripts check `$id` uniqueness, `$ref` resolution, Draft 2020-12 validity, and consistency with the v1 naming contract.
+Every bloodbank event is described by a JSON Schema in the Bloodbank `schemas/` directory. The schema source of truth lives in the Bloodbank repo at `~/code/33GOD/bloodbank/`; validation scripts check `$id` uniqueness, `$ref` resolution, Draft 2020-12 validity, and consistency with the naming contract in `docs/event-naming.md`.
 
 ## Reading Order
 
@@ -14,7 +14,7 @@ Every bloodbank event is described by a versioned JSON Schema in the Bloodbank `
 
 | Artifact | Path |
 |---|---|
-| JSON Schema sources (single source of truth) | `bloodbank/schemas/bloodbank/v1/<domain>/<entity>.<action>.v<N>.json` |
+| JSON Schema sources (single source of truth) | `bloodbank/schemas/bloodbank/<domain>/<entity>.<action>.json` |
 | CloudEvents base schema (every event `allOf`-extends this) | `bloodbank/schemas/_common/cloudevent_base.v1.json` |
 | Shared types ($defs for uuid, timestamp, etc.) | `bloodbank/schemas/_common/types.v1.json` |
 | Schema validator | `bloodbank/scripts/validate_schemas.sh` |
@@ -23,7 +23,7 @@ Every bloodbank event is described by a versioned JSON Schema in the Bloodbank `
 
 ## High-level workflow
 
-1. Draft or modify the JSON Schema under `bloodbank/schemas/bloodbank/v1/<domain>/`.
+1. Draft or modify the JSON Schema under `bloodbank/schemas/bloodbank/<domain>/`.
 2. `mise run validate:schemas` (catches malformed `$ref`, missing required, etc.).
 3. `mise run smoketest:schema-contract-consistency` (catches schema names/types the contract validator rejects).
 4. `mise run smoketest:schemas` before commit.

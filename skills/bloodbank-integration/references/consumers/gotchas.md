@@ -48,7 +48,7 @@ Each gotcha: **Symptom**, **Cause**, **Fix**, **Prevention**.
 
 **Cause.** Wrong routing key pattern. `bloodbank.events.v1` is a **topic** exchange — patterns use `*` (one token) and `#` (zero+ tokens), not regex.
 
-**Fix.** For old unversioned `/publish` events: `routing_key="agent.#"`, `routing_key="agent.session.started"`, or `routing_key="*.session.*"` as appropriate. For new Bloodbank v1 events, consume NATS/Dapr subjects such as `bloodbank.evt.v1.agent.>` instead.
+**Fix.** For old unversioned `/publish` events: `routing_key="agent.#"`, `routing_key="agent.session.started"`, or `routing_key="*.session.*"` as appropriate. For current Bloodbank events, consume NATS/Dapr subjects such as `bloodbank.evt.agent.>` instead.
 
 **Prevention.** Match what you see in `event_producers/http.py` — the routing key is the envelope's `event_type` field verbatim.
 

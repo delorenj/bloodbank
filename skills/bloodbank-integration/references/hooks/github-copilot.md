@@ -20,7 +20,7 @@ Copilot CLI hook
   -> ~/.agents/hooks/bloodbank/publish.py --client copilot --hook <hookName>
   -> clients/copilot.py
   -> core.publisher + core.envelope + core.nats_publish
-  -> bloodbank.evt.v1.<domain>.<entity>.<action>
+  -> bloodbank.evt.<domain>.<entity>.<action>
 ```
 
 The publisher is stdlib-only and fail-open by default; no virtualenv or
@@ -32,13 +32,13 @@ Reference: <https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-cop
 
 | Copilot hook | CloudEvents `type` | NATS subject |
 |---|---|---|
-| `sessionStart` | `bloodbank.v1.agent.session.started` | `bloodbank.evt.v1.agent.session.started` |
-| `sessionEnd` | `bloodbank.v1.agent.session.ended` | `bloodbank.evt.v1.agent.session.ended` |
-| `userPromptSubmitted` | `bloodbank.v1.conversation.turn.started` | `bloodbank.evt.v1.conversation.turn.started` |
-| `preToolUse` | `bloodbank.v1.agent.tool.requested` | `bloodbank.evt.v1.agent.tool.requested` |
-| `postToolUse` | `bloodbank.v1.agent.tool.completed` | `bloodbank.evt.v1.agent.tool.completed` |
-| `errorOccurred` | `bloodbank.v1.agent.invocation.failed` | `bloodbank.evt.v1.agent.invocation.failed` |
-| `agentStop` | `bloodbank.v1.agent.invocation.completed` | `bloodbank.evt.v1.agent.invocation.completed` |
+| `sessionStart` | `bloodbank.agent.session.started` | `bloodbank.evt.agent.session.started` |
+| `sessionEnd` | `bloodbank.agent.session.ended` | `bloodbank.evt.agent.session.ended` |
+| `userPromptSubmitted` | `bloodbank.conversation.turn.started` | `bloodbank.evt.conversation.turn.started` |
+| `preToolUse` | `bloodbank.agent.tool.requested` | `bloodbank.evt.agent.tool.requested` |
+| `postToolUse` | `bloodbank.agent.tool.completed` | `bloodbank.evt.agent.tool.completed` |
+| `errorOccurred` | `bloodbank.agent.invocation.failed` | `bloodbank.evt.agent.invocation.failed` |
+| `agentStop` | `bloodbank.agent.invocation.completed` | `bloodbank.evt.agent.invocation.completed` |
 
 Provider identity stays in `actor.cli=copilot` and
 `actor.provider=github_copilot`; it is not encoded into `type`.

@@ -506,80 +506,44 @@ intake-to-terminal chain.
 
 ## 12. Schema directory layout
 
-Versioned Bloodbank schemas live under `bloodbank/schemas/` in this repo. The
-v1 tree remains unchanged; the v2 tree contains only registered v2 types:
+Bloodbank schemas live under `bloodbank/schemas/` in this repo. The tree is
+keyed by **domain**, not by contract version — §3.1 removed the version token
+from the type, so there is no `v1/` or `v2/` tier to sort into:
 
 ```
 bloodbank/schemas/
   _common/
     cloudevent_base.v1.json
     types.v1.json
-  bloodbank/v1/
-    conversation/
-      thread.created.v1.json
-      thread.resumed.v1.json
-      turn.started.v1.json
-      turn.completed.v1.json
-      message.appended.v1.json
-    agent/
-      invocation.start.v1.json
-      invocation.started.v1.json
-      invocation.completed.v1.json
-      invocation.failed.v1.json
-    llm/
-      request.sent.v1.json
-      response.received.v1.json
-    cli/
-      session.started.v1.json
-      session.ended.v1.json
-      process.spawned.v1.json
-      process.exited.v1.json
-      stdout.appended.v1.json
-      stderr.appended.v1.json
-    agent/
-      tool.requested.v1.json
-      tool.invoked.v1.json
-      tool.completed.v1.json
-    system/
-      heartbeat.received.v1.json
-    repo/
-      maintenance.started.v1.json
-      maintenance.completed.v1.json
-      maintenance.failed.v1.json
-    reporting/
-      report.started.v1.json
-      report.completed.v1.json
-      report.failed.v1.json
-    portfolio/
-      intake.received.v1.json
-      intake.triaged.v1.json
-      work.delegated.v1.json
-      work.updated.v1.json
-      receipt.recorded.v1.json
-      approval.requested.v1.json
-      approval.resolved.v1.json
-      escalation.raised.v1.json
-      escalation.resolved.v1.json
-      capacity.recorded.v1.json
-      lease.granted.v1.json
-      lease.released.v1.json
-      lease.expired.v1.json
-  bloodbank/v2/
-    repo/
-      maintenance.failed.v1.json
+    portfolio_data.v1.json
+  bloodbank/
+    <domain>/
+      <entity>.<action>.json
 ```
+
+The `_common/*.v1.json` filenames keep their suffix on purpose: those are
+JSON Schema documents with their own revision line (§13's `<n>`), not event
+types. Everything under `bloodbank/<domain>/` is named for the fact it
+describes and nothing else.
+
+There are 13 live domains — `agent`, `attendance`, `audio`, `cli`,
+`conversation`, `curator`, `finance`, `lifecycle`, `llm`, `portfolio`,
+`repo`, `reporting`, `system` — matching the active half of
+`ALLOWED_DOMAINS` in `services/agent-hooks/core/validate.py`. A domain
+directory appears when its first schema does.
 
 Each schema:
 
-- `$id` MUST be `https://33god.dev/schemas/bloodbank/v<N>/<domain>/<entity>.<action>.v1.json`.
-- MUST `$ref` `../../../_common/cloudevent_base.v1.json`.
-- MUST set `properties.type.const` to the full 5-token type string.
+- `$id` MUST be `https://33god.dev/schemas/bloodbank/<domain>/<entity>.<action>.json`.
+- MUST `$ref` `../../_common/cloudevent_base.v1.json` — two levels up, not
+  three. The `v<N>/` tier that made it three is gone.
+- MUST set `properties.type.const` to the full 4-token type string.
 - MUST set `properties.kind.const` to `event` or `command`.
-- MUST set `properties.domain.const` to match segment 3 of `type`.
+- MUST set `properties.domain.const` to match segment 2 of `type`.
 
 There is no provider-named subdirectory (for example,
-`bloodbank/schemas/bloodbank/v1/copilot/`) — provider identity does not
-shape the schema tree.
+`bloodbank/schemas/bloodbank/copilot/`) — provider identity does not shape
+the schema tree.
 
 Runtime validator lookup (`services/agent-hooks/core/validate.py`) resolves
 the schema root in this order:

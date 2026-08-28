@@ -14,13 +14,13 @@ How to publish an event onto the bloodbank bus. The recommended path is **NATS d
 
 | Method | When to use | Where it lands | Code reference |
 |---|---|---|---|
-| **NATS direct (nats-py)**       | Long-running Python service on host, has nats-py available | NATS subject `bloodbank.evt.v1.<domain>.<entity>.<action>` | _new code; see `methods.md`_ |
-| **NATS direct (stdlib TCP)**    | Hook scripts, no deps allowed, fire-and-forget | NATS subject `bloodbank.evt.v1.<...>` | `bloodbank/services/agent-hooks/core/nats_publish.py` |
-| **Dapr pub/sub**                | 33GOD service container with a Dapr sidecar | Dapr `bloodbank-pubsub` → NATS `bloodbank.evt.v1.<...>` | `bloodbank/services/heartbeat-tick/main.py` |
+| **NATS direct (nats-py)**       | Long-running Python service on host, has nats-py available | NATS subject `bloodbank.evt.<domain>.<entity>.<action>` | _new code; see `methods.md`_ |
+| **NATS direct (stdlib TCP)**    | Hook scripts, no deps allowed, fire-and-forget | NATS subject `bloodbank.evt.<...>` | `bloodbank/services/agent-hooks/core/nats_publish.py` |
+| **Dapr pub/sub**                | 33GOD service container with a Dapr sidecar | Dapr `bloodbank-pubsub` → NATS `bloodbank.evt.<...>` | `bloodbank/services/heartbeat-tick/main.py` |
 | **bloodbank HTTP `/publish`**   | External tool with HTTP only, generic event | RabbitMQ `bloodbank.events.v1` (v2 path; toaster won't see it) | `bloodbank/event_producers/http.py` |
-| **n8n Plane ingress**           | Signed Plane webhook from either self-hosted workspace | HMAC + normalization → NATS `bloodbank.evt.v1.repo.*` | `bloodbank/integrations/n8n-nodes-bloodbank` |
+| **n8n Plane ingress**           | Signed Plane webhook from either self-hosted workspace | HMAC + normalization → NATS `bloodbank.evt.repo.*` | `bloodbank/integrations/n8n-nodes-bloodbank` |
 | **bloodbank HTTP `/event`**     | Legacy typed HTTP producer that explicitly needs v2 | RabbitMQ `bloodbank.events.v1` (v2 path) | `bloodbank/event_producers/http.py` |
-| **hookd_bridge `/hooks/agent`** | Issuing a COMMAND envelope (not an event) to a specific agent | command subject `bloodbank.cmd.v1.agent.invocation.start` | `bloodbank/hookd_bridge/bridge.py` |
+| **hookd_bridge `/hooks/agent`** | Issuing a COMMAND envelope (not an event) to a specific agent | command subject `bloodbank.cmd.agent.invocation.start` | `bloodbank/hookd_bridge/bridge.py` |
 
 ## The default
 
@@ -28,15 +28,16 @@ For new producers, default to **NATS direct** on the envelope's `subject` using 
 
 ```python
 import nats, json
-from bloodbank.generated.agent.session_started_v1 import AgentSessionStartedV1, AgentSessionStartedV1Data
+# symbol names come from your codegen run over schemas/bloodbank/agent/session.started.json
+from bloodbank.generated.agent.session_started import AgentSessionStarted, AgentSessionStartedData
 
-env = AgentSessionStartedV1(
+env = AgentSessionStarted(
     specversion="1.0", id=str(uuid.uuid4()),
     source="urn:33god:service:my-service",
-    type="bloodbank.v1.agent.session.started",
-    subject="bloodbank.evt.v1.agent.session.started",
+    type="bloodbank.agent.session.started",
+    subject="bloodbank.evt.agent.session.started",
     time=now_iso(), domain="agent",
-    data=AgentSessionStartedV1Data(session_id=session_id, working_directory=cwd, started_at=now_iso()),
+    data=AgentSessionStartedData(session_id=session_id, working_directory=cwd, started_at=now_iso()),
 )
 nc = await nats.connect("nats://nats:4222")    # use localhost:4222 from the host
 await nc.publish(env.subject, env.model_dump_json().encode())

@@ -18,7 +18,7 @@ Claude Code hook
   -> ~/.agents/hooks/bloodbank/publish.py --client claude --hook <arg>
   -> clients/claude.py
   -> core.publisher + core.envelope + core.nats_publish
-  -> bloodbank.evt.v1.<domain>.<entity>.<action>
+  -> bloodbank.evt.<domain>.<entity>.<action>
 ```
 
 Claude-specific behavior lives in `services/agent-hooks/clients/claude.py`:
@@ -29,12 +29,12 @@ tool counters, and session archive.
 
 | Claude hook | Publisher arg | CloudEvents `type` | NATS subject |
 |---|---|---|---|
-| `SessionStart` | `session-start` | `bloodbank.v1.agent.session.started` | `bloodbank.evt.v1.agent.session.started` |
-| `UserPromptSubmit` | `prompt-submitted` | `bloodbank.v1.conversation.turn.started` | `bloodbank.evt.v1.conversation.turn.started` |
-| `PreToolUse` | `tool-request` | `bloodbank.v1.agent.tool.requested` | `bloodbank.evt.v1.agent.tool.requested` |
-| `PostToolUse` | `tool-action` | `bloodbank.v1.agent.tool.completed` | `bloodbank.evt.v1.agent.tool.completed` |
-| `SubagentStop` | `subagent-stopped` | `bloodbank.v1.agent.invocation.completed` | `bloodbank.evt.v1.agent.invocation.completed` |
-| `Stop` | `session-end` | `bloodbank.v1.agent.session.ended` | `bloodbank.evt.v1.agent.session.ended` |
+| `SessionStart` | `session-start` | `bloodbank.agent.session.started` | `bloodbank.evt.agent.session.started` |
+| `UserPromptSubmit` | `prompt-submitted` | `bloodbank.conversation.turn.started` | `bloodbank.evt.conversation.turn.started` |
+| `PreToolUse` | `tool-request` | `bloodbank.agent.tool.requested` | `bloodbank.evt.agent.tool.requested` |
+| `PostToolUse` | `tool-action` | `bloodbank.agent.tool.completed` | `bloodbank.evt.agent.tool.completed` |
+| `SubagentStop` | `subagent-stopped` | `bloodbank.agent.invocation.completed` | `bloodbank.evt.agent.invocation.completed` |
+| `Stop` | `session-end` | `bloodbank.agent.session.ended` | `bloodbank.evt.agent.session.ended` |
 
 Provider identity stays in the envelope actor:
 `actor.cli=claude`, `actor.provider=anthropic`.
@@ -56,7 +56,7 @@ printf '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
 ```
 
 With NATS running, set `BLOODBANK_HOOK_VERBOSE=1` and confirm
-`bloodbank-event-toaster` sees `bloodbank.evt.v1.agent.tool.completed`.
+`bloodbank-event-toaster` sees `bloodbank.evt.agent.tool.completed`.
 
 ## Legacy wrappers
 

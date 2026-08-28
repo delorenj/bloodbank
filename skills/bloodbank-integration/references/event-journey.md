@@ -8,20 +8,21 @@ transport, security, identity, durability, and observation boundaries.
 
 | Lane | Meaning | Subject | Retention | Durable history |
 |---|---|---|---|---|
-| Event | An immutable fact that already happened | `bloodbank.evt.v1.<domain>.<entity>.<action>` | `BLOODBANK_EVENTS`, limits retention, seven days | Candystore projects it into PostgreSQL |
-| Command | Targeted intent asking one consumer to act | `bloodbank.cmd.v1.<domain>.<entity>.<action>` | `BLOODBANK_COMMANDS`, work-queue retention, one day | Not projected directly; the consumer emits lifecycle events |
-| Reply | Short-lived correlated response when a request/reply contract needs one | `bloodbank.rpy.v1.<domain>.<entity>.<action>` | `BLOODBANK_COMMANDS`, one day | Not a source-of-truth history |
+| Event | An immutable fact that already happened | `bloodbank.evt.<domain>.<entity>.<action>` | `BLOODBANK_EVENTS`, limits retention, seven days | Candystore projects it into PostgreSQL |
+| Command | Targeted intent asking one consumer to act | `bloodbank.cmd.<domain>.<entity>.<action>` | `BLOODBANK_COMMANDS`, work-queue retention, one day | Not projected directly; the consumer emits lifecycle events |
+| Reply | Short-lived correlated response when a request/reply contract needs one | `bloodbank.rpy.<domain>.<entity>.<action>` | `BLOODBANK_COMMANDS`, one day | Not a source-of-truth history |
 
 Do not put an agent ID, repo slug, workspace, or board into extra subject tokens.
 Routing data belongs in the schema-defined envelope. Events are broadcast facts;
 commands have one intentional consumer.
 
-`BLOODBANK_EVENTS` binds the v1 wildcard plus explicitly registered v2 subjects
-(currently the repo-maintenance failure contract). Candystore deliberately
-subscribes to `bloodbank.evt.>` so durable history receives every event the
-stream admits. The consumer wildcard does not authorize producers to invent new
-versions or subjects; the stream configuration and schemas remain the admission
-boundary.
+`BLOODBANK_EVENTS` binds exactly one subject: `bloodbank.evt.>`. There is no
+version tier to enumerate any more, so there is nothing to register a new
+wildcard for — the stream admits every event kind by construction. Candystore
+binds the same `bloodbank.evt.>` so durable history receives everything the
+stream admits. The wildcard does not authorize producers to invent subjects:
+the schemas and `validate.py`'s domain/entity/action allowlists remain the
+admission boundary, and they are checked at publish time, not at bind time.
 
 ## Journey A: Plane fact to durable 33GOD history
 
@@ -37,7 +38,7 @@ n8n workflow `Plane → Bloodbank` (iMw484J1ZCqKME2C)
   │ 4. resolve board_id through ~/.hermes/agents-registry.yaml
   │ 5. normalize Plane action to provider-neutral repo fact
   ▼
-NATS `bloodbank.evt.v1.repo.*`
+NATS `bloodbank.evt.repo.*`
   ├─ JetStream `BLOODBANK_EVENTS` retains the immutable envelope
   ├─ event-toaster core subscription fans out to ntfy for human observation
   └─ Dapr durable `candystore-events` subscription (`bloodbank.evt.>`)
@@ -69,11 +70,11 @@ idempotency rules live in `bloodbank/docs/plane-event-normalization.md`.
 
 | Plane action | Provider provenance | Canonical fact | NATS subject |
 |---|---|---|---|
-| project create | `plane.board.created` | `bloodbank.v1.repo.board.created` | `bloodbank.evt.v1.repo.board.created` |
-| issue create | `plane.ticket.created` | `bloodbank.v1.repo.task.created` | `bloodbank.evt.v1.repo.task.created` |
-| issue update/state activity | `plane.ticket.updated` or `plane.ticket.transitioned` | `bloodbank.v1.repo.task.updated` | `bloodbank.evt.v1.repo.task.updated` |
-| issue comment create | `plane.ticket.commented` | `bloodbank.v1.repo.task.appended` | `bloodbank.evt.v1.repo.task.appended` |
-| issue delete | `plane.ticket.deleted` | `bloodbank.v1.repo.task.updated` | `bloodbank.evt.v1.repo.task.updated` |
+| project create | `plane.board.created` | `bloodbank.repo.board.created` | `bloodbank.evt.repo.board.created` |
+| issue create | `plane.ticket.created` | `bloodbank.repo.task.created` | `bloodbank.evt.repo.task.created` |
+| issue update/state activity | `plane.ticket.updated` or `plane.ticket.transitioned` | `bloodbank.repo.task.updated` | `bloodbank.evt.repo.task.updated` |
+| issue comment create | `plane.ticket.commented` | `bloodbank.repo.task.appended` | `bloodbank.evt.repo.task.appended` |
+| issue delete | `plane.ticket.deleted` | `bloodbank.repo.task.updated` | `bloodbank.evt.repo.task.updated` |
 
 The provider name stays in `data.provider_event_type`; the wire contract stays
 provider-neutral. A Plane retry derives the same deterministic event ID, and
@@ -84,11 +85,11 @@ Candystore's idempotent insert prevents a second durable fact.
 ```text
 Command producer (PM/control plane/operator adapter)
   │ full CloudEvents command envelope
-  │ subject: bloodbank.cmd.v1.agent.invocation.start
+  │ subject: bloodbank.cmd.agent.invocation.start
   │ data.target_agent_id + data.prompt + idempotency_key
   ▼
 JetStream `BLOODBANK_COMMANDS` (work-queue retention)
-  ▼ durable pull consumer `bloodbank-hermes-gateway-v1`
+  ▼ durable pull consumer `bloodbank-hermes-gateway`
 Fleet-shared `hermes-fleet-bloodbank-gateway.service`
   │ 1. cap size and validate command/schema/actor/prompt
   │ 2. resolve target_agent_id through fleet registry
@@ -97,7 +98,7 @@ Fleet-shared `hermes-fleet-bloodbank-gateway.service`
   │ 5. dispatch to the selected Hermes profile
   │ 6. wait for Hermes processing-complete
   ▼
-Lifecycle event publications on `bloodbank.evt.v1.*`
+Lifecycle event publications on `bloodbank.evt.*`
   ├─ conversation.turn.started
   ├─ agent.invocation.started
   ├─ agent.invocation.completed OR agent.invocation.failed
@@ -157,17 +158,17 @@ gateway with zero eligible entries is healthy but intentionally unroutable.
 4. Confirm the n8n execution accepted the known `webhook_id` and HMAC.
 5. Confirm the expected NATS subject or event-toaster observation.
 6. Query Candystore by producer and type, for example:
-   `GET /events?producer=n8n-plane-webhook&type=bloodbank.v1.repo.task.created`.
+   `GET /events?producer=n8n-plane-webhook&type=bloodbank.repo.task.created`.
 7. Match `id`, `workspace`, `board_id`, `repo`, and
    `data.provider_event_type` across the trace.
 
 ### Hermes command
 
-1. Confirm `BLOODBANK_COMMANDS` binds `bloodbank.cmd.v1.>` and the fleet
+1. Confirm `BLOODBANK_COMMANDS` binds `bloodbank.cmd.>` and the fleet
    gateway service is active.
 2. Audit the target's current registry eligibility; do not rely on history.
 3. Validate the full envelope, including `kind=command`, `actor`,
-   `schemaref=bloodbank.v1.agent.invocation.start.v1`, nonempty `data.prompt`,
+   `schemaref=bloodbank.agent.invocation.start.v1`, nonempty `data.prompt`,
    `data.target_agent_id`, and an idempotency key.
 4. Publish only if the action itself is authorized; a smoke test invokes a real
    agent.

@@ -17,7 +17,7 @@ async def main():
         envelope = json.loads(msg.data.decode("utf-8", errors="replace"))
         # work...
 
-    await nc.subscribe("bloodbank.evt.v1.agent.tool.completed", cb=on_msg)
+    await nc.subscribe("bloodbank.evt.agent.tool.completed", cb=on_msg)
     await asyncio.Event().wait()
 
 asyncio.run(main())
@@ -25,7 +25,7 @@ asyncio.run(main())
 
 **Properties.** No durability — if your service is down when an event fires, the event is missed. No ack — if your handler raises, the message is gone. Fan-in works (multiple instances of the same consumer all get every message).
 
-**Reference.** `bloodbank/services/event-toaster/main.py` — wildcard `bloodbank.evt.v1.>` fan-in.
+**Reference.** `bloodbank/services/event-toaster/main.py` — wildcard `bloodbank.evt.>` fan-in.
 
 ## 2. NATS JetStream durable consumer
 
@@ -46,7 +46,7 @@ async def main():
         await msg.ack()
 
     await js.subscribe(
-        subject="bloodbank.evt.v1.agent.session.started",
+        subject="bloodbank.evt.agent.session.started",
         durable="my-consumer-durable",
         cb=on_msg,
         manual_ack=True,
@@ -69,9 +69,9 @@ asyncio.run(main())
 ```python
 # /dapr/subscribe — Dapr calls this once at sidecar startup
 SUBSCRIPTIONS = [
-    {"pubsubname": "bloodbank-pubsub", "topic": "bloodbank.evt.v1.agent.session.started",
+    {"pubsubname": "bloodbank-pubsub", "topic": "bloodbank.evt.agent.session.started",
      "route": "/events/session_started"},
-    {"pubsubname": "bloodbank-pubsub", "topic": "bloodbank.evt.v1.agent.tool.completed",
+    {"pubsubname": "bloodbank-pubsub", "topic": "bloodbank.evt.agent.tool.completed",
      "route": "/events/tool_invoked"},
 ]
 
@@ -115,7 +115,7 @@ Nothing to deploy. Open `https://ntfy.delo.sh/bloodbank` in the ntfy mobile/desk
 curl -s "https://ntfy.delo.sh/bloodbank/json?poll=1&since=5m"
 ```
 
-Every event the toaster sees on `bloodbank.evt.v1.>` shows up here. Use it for human eyes / smoke tests, not for code-level consumption.
+Every event the toaster sees on `bloodbank.evt.>` shows up here. Use it for human eyes / smoke tests, not for code-level consumption.
 
 ## 6. Candystore durable event projection (canonical audit consumer)
 
@@ -141,7 +141,7 @@ curl -fsS 'http://127.0.0.1:8683/events?producer=<producer>&type=<type>&limit=10
 ## 7. Hermes fleet command consumer (canonical targeted-intent consumer)
 
 `hermes-fleet-bloodbank-gateway.service` owns one JetStream durable pull
-consumer on `bloodbank.cmd.v1.agent.invocation.start`. It validates the complete
+consumer on `bloodbank.cmd.agent.invocation.start`. It validates the complete
 command, routes `data.target_agent_id` through the fleet registry's explicit
 Bloodbank eligibility block, journals execution state, invokes the selected
 Hermes profile, and emits started plus terminal lifecycle **events**.
