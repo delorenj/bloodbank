@@ -1,4 +1,4 @@
-# Bloodbank Event Naming Contract — versioned, with v1 baseline
+# Bloodbank Event Naming Contract
 
 **Status:** Locked  
 **Adopted:** 2026-05-14  
@@ -33,49 +33,51 @@ whole point.
 
 ## 2. CloudEvents `type` — shape and regex
 
-Every event's CloudEvents `type` is exactly five dotted tokens:
+Every event's CloudEvents `type` is exactly four dotted tokens:
 
 ```
-bloodbank.v<N>.<domain>.<entity>.<action>
+bloodbank.<domain>.<entity>.<action>
 ```
 
-The vendor prefix (`bloodbank`) and contract version (`v<N>`) are baked into
-the type so a consumer reading a single envelope knows the contract and its
-version without parsing `dataschema`.
+The vendor prefix (`bloodbank`) is baked into the type so a consumer reading a
+single envelope knows which contract the fact belongs to without parsing
+`dataschema`. There is no contract version token; §3.1 states the rule that
+replaced it.
 
 Regex (anchored, lowercase, underscores allowed in body tokens):
 
 ```
-^bloodbank\.v[0-9]+\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$
+^bloodbank\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$
 ```
 
 Valid:
 
 ```
-bloodbank.v1.conversation.message.appended
-bloodbank.v1.llm.response.received
-bloodbank.v1.cli.stdout.appended
-bloodbank.v1.agent.invocation.started
-bloodbank.v2.repo.maintenance.failed
+bloodbank.conversation.message.appended
+bloodbank.llm.response.received
+bloodbank.cli.stdout.appended
+bloodbank.agent.invocation.started
+bloodbank.repo.maintenance.failed
 ```
 
 Invalid (contract violation):
 
 ```
-agent.session.started                  # legacy 3-token shape; no vendor/version
-bloodbank.v1.agent.claude.response     # provider name in type
-bloodbank.v1.copilot.message.generated # provider name in type
-bloodbank.v1.agent.session.response    # response is not an action verb
-bloodbank.v1.conversation.message      # only 4 tokens
-bloodbank.V1.x.y.z                     # uppercase forbidden
+agent.session.started                  # legacy 3-token shape; no vendor prefix
+bloodbank.v1.agent.session.started     # version token; segment 2 is the domain
+bloodbank.agent.claude.response        # provider name in type
+bloodbank.copilot.message.generated    # provider name in type
+bloodbank.agent.session.response       # response is not an action verb
+bloodbank.conversation.message         # only 3 tokens
+bloodbank.Agent.session.started        # uppercase forbidden
 ```
 
 Token rules:
 
-- `bloodbank` and `v<N>` are literal segments 1–2.
-- `domain` (segment 3) MUST be in §6 allowlist.
-- `entity` (segment 4) MUST be in §7 allowlist.
-- `action` (segment 5) MUST be in §8 allowlist and MUST match the tense
+- `bloodbank` is literal segment 1.
+- `domain` (segment 2) MUST be in §6 allowlist.
+- `entity` (segment 3) MUST be in §7 allowlist.
+- `action` (segment 4) MUST be in §8 allowlist and MUST match the tense
   required by §5 for the envelope `kind`.
 - Every body token is `[a-z][a-z0-9_]*` (lowercase, may contain underscores,
   must start with a letter). Hyphens are not allowed.
@@ -89,18 +91,18 @@ segment so JetStream streams can be bound by transport-level routing
 without parsing the envelope body:
 
 ```
-bloodbank.<kind>.v<N>.<domain>.<entity>.<action>
+bloodbank.<kind>.<domain>.<entity>.<action>
 ```
 
 `<kind>` ∈ `{ evt, cmd, rpy }`:
 
-| Marker | Envelope `kind` | Stream               | Subject filter       |
-| ------ | --------------- | -------------------- | -------------------- |
-| `evt`  | `event`         | `BLOODBANK_EVENTS`   | `bloodbank.evt.v1.>` |
-| `cmd`  | `command`       | `BLOODBANK_COMMANDS` | `bloodbank.cmd.v1.>` |
-| `rpy`  | `reply`         | `BLOODBANK_COMMANDS` | `bloodbank.rpy.v1.>` |
+| Marker | Envelope `kind` | Stream               | Subject filter    |
+| ------ | --------------- | -------------------- | ----------------- |
+| `evt`  | `event`         | `BLOODBANK_EVENTS`   | `bloodbank.evt.>` |
+| `cmd`  | `command`       | `BLOODBANK_COMMANDS` | `bloodbank.cmd.>` |
+| `rpy`  | `reply`         | `BLOODBANK_COMMANDS` | `bloodbank.rpy.>` |
 
-Subject is 6 tokens. `type` stays 5 tokens. The subject's kind marker is a
+Subject is 5 tokens. `type` stays 4 tokens. The subject's kind marker is a
 **transport-only** redundancy with the envelope `kind` field — consumers
 MUST treat `envelope.kind` as authoritative; the subject marker exists only
 so NATS can route without deserializing.
@@ -110,29 +112,28 @@ The pair `(domain, entity, action)` is identical across subject and type.
 Example for `conversation.message.appended`:
 
 ```
-type     bloodbank.v1.conversation.message.appended
-subject  bloodbank.evt.v1.conversation.message.appended   # event
+type     bloodbank.conversation.message.appended
+subject  bloodbank.evt.conversation.message.appended   # event
 ```
 
 Example for `agent.invocation.start` command:
 
 ```
-type     bloodbank.v1.agent.invocation.start
-subject  bloodbank.cmd.v1.agent.invocation.start          # command
+type     bloodbank.agent.invocation.start
+subject  bloodbank.cmd.agent.invocation.start          # command
 ```
 
 Repository maintenance and company reporting use these provider-neutral
 event routes:
 
-| CloudEvents `type`                              | NATS subject                                          |
-| ----------------------------------------------- | ----------------------------------------------------- |
-| `bloodbank.v1.repo.maintenance.started`         | `bloodbank.evt.v1.repo.maintenance.started`           |
-| `bloodbank.v1.repo.maintenance.completed`       | `bloodbank.evt.v1.repo.maintenance.completed`         |
-| `bloodbank.v1.repo.maintenance.failed`          | `bloodbank.evt.v1.repo.maintenance.failed`            |
-| `bloodbank.v2.repo.maintenance.failed`          | `bloodbank.evt.v2.repo.maintenance.failed`            |
-| `bloodbank.v1.reporting.report.started`         | `bloodbank.evt.v1.reporting.report.started`           |
-| `bloodbank.v1.reporting.report.completed`       | `bloodbank.evt.v1.reporting.report.completed`         |
-| `bloodbank.v1.reporting.report.failed`          | `bloodbank.evt.v1.reporting.report.failed`            |
+| CloudEvents `type`                     | NATS subject                                 |
+| -------------------------------------- | -------------------------------------------- |
+| `bloodbank.repo.maintenance.started`   | `bloodbank.evt.repo.maintenance.started`     |
+| `bloodbank.repo.maintenance.completed` | `bloodbank.evt.repo.maintenance.completed`   |
+| `bloodbank.repo.maintenance.failed`    | `bloodbank.evt.repo.maintenance.failed`      |
+| `bloodbank.reporting.report.started`   | `bloodbank.evt.reporting.report.started`     |
+| `bloodbank.reporting.report.completed` | `bloodbank.evt.reporting.report.completed`   |
+| `bloodbank.reporting.report.failed`    | `bloodbank.evt.reporting.report.failed`      |
 
 These lifecycle events use strict, privacy-preserving telemetry. Maintenance
 failures identify a structured phase and code. Setup and preflight failures
@@ -149,38 +150,42 @@ Failure summaries are redacted, limited to 500 characters, and marked with
 credential-bearing URLs, access tokens, or absolute filesystem paths in these
 events.
 
-### 3.1 Targeted repo maintenance v2 extension
+### 3.1 The subject is an address, not a version
 
-The only registered v2 type is
-`bloodbank.v2.repo.maintenance.failed`. It preserves the v1
-`setup`, `preflight`, `provider`, and `merge` failure payload branches and adds
-`failure.phase=action`. The action branch requires
-`failure.code=action_failed`, successful provider context, zero merge counts,
-and a bounded `outcome.actions` collection. Each action record has a
-provider-neutral `type` and `status` of `success` or `failed`; at least one
-record MUST be failed. Attempt and failure totals are derived from this single
-collection, so producers cannot publish contradictory independent counters.
+A subject names *where a fact is delivered*. It does not carry a contract
+version, and the five-token head above is fixed for the life of the system.
+This is the rule that replaced versioning, and it is the whole of it:
 
-The v2 schema is version 1 of the v2 event type:
+- **A breaking payload change gets a new `action`, or a new `entity` — never
+  a version segment.** If the fact genuinely changed, it is a different fact
+  and deserves its own name. If it did not change, the address must not move
+  underneath the consumers bound to it.
+- **Payload compatibility lives in `dataschema` (§13), not in the subject.**
+  The schema revision is a separate axis that evolves independently and is
+  read from the envelope, not from the routing layer.
+- **Therefore `bloodbank.evt.>` is all any catch-all consumer ever needs to
+  bind**, and a durable's `filter_subject` is stable enough to be asserted
+  against a compiled constant.
 
-- `dataschema` is
-  `apicurio://holyfields/bloodbank.v2.repo.maintenance.failed/versions/1`.
-- `schemaref` is `bloodbank.v2.repo.maintenance.failed.v1`.
-- The NATS subject is `bloodbank.evt.v2.repo.maintenance.failed`.
+The two axes are easy to confuse because both once used a `v`. They are not
+the same thing, and only one of them still exists:
 
-The `BLOODBANK_EVENTS` stream binds this exact v2 subject alongside the v1
-wildcard. No broad `bloodbank.evt.v2.>` registration exists. Producers MUST
-continue to emit v1 for all other maintenance and reporting events.
+```
+type        bloodbank.repo.maintenance.failed                              # the fact — no version
+dataschema  apicurio://holyfields/bloodbank.repo.maintenance.failed/versions/2   # the schema revision
+schemaref   bloodbank.repo.maintenance.failed.v2                          # the same revision, short form
+```
 
-The stdlib contract validator explicitly registers this one non-v1 type. It
-rejects every other v2 type and every v3-or-later type before schema lookup.
-Adding another non-v1 type requires both a reviewed schema and a registry
-entry; a version-shaped type alone is not registration.
+The trailing `/versions/<n>` and `.v<n>` are the **schema revision**. They are
+expected to increment, they say nothing about the subject, and nothing about
+them is deprecated by the removal of the contract version.
+
+### 3.2 Command dispatch and registry eligibility
 
 Canonical PM->agent dispatch contract:
 
-- Command envelope type: `bloodbank.v1.agent.invocation.start`
-- Command subject: `bloodbank.cmd.v1.agent.invocation.start`
+- Command envelope type: `bloodbank.agent.invocation.start`
+- Command subject: `bloodbank.cmd.agent.invocation.start`
 - Target routing key: `data.target_agent_id`
 
 Routers and consumers MUST dispatch this command by `data.target_agent_id`
@@ -209,9 +214,6 @@ retryable, and exact redelivery replays the stored envelopes without executing
 the agent. Only a journal-proven pre-start rejection may be eventless. Explicit
 adapter `target_profiles` entries are separate, operator-owned static overrides
 and do not inherit registry eligibility.
-
-The legacy `event.>` / `command.>` / `reply.>` subject prefixes are
-**deprecated** and will be removed when the migration completes (§16).
 
 ---
 
@@ -251,7 +253,7 @@ verb pair `received` / `sent` for protocol boundaries (e.g.
 
 ---
 
-## 6. Domain allowlist (v1)
+## 6. Domain allowlist
 
 Segment 3 of `type` MUST be one of:
 
@@ -281,7 +283,7 @@ MUST NOT invent domains; add them to this table in a PR before emitting.
 
 ---
 
-## 7. Entity allowlist (v1)
+## 7. Entity allowlist
 
 Segment 4 of `type` MUST be one of:
 
@@ -338,7 +340,7 @@ emit an entity not paired with it here.
 
 ---
 
-## 8. Action allowlists (v1)
+## 8. Action allowlists
 
 ### 8.1 Immutable event actions (past tense / past participle)
 
@@ -494,7 +496,7 @@ Every `portfolio` payload repeats the envelope lineage as
 `correlationid` and `causationid` exactly; publishers and consumers reject a
 cross-layer mismatch instead of repairing it.
 
-`bloodbank.v1.portfolio.intake.received` is the only portfolio root contract.
+`bloodbank.portfolio.intake.received` is the only portfolio root contract.
 Its envelope `causationid` and payload `data.causation_id` are both null. Every
 other portfolio event has a non-null causation UUID identifying its immediate
 parent event or command. The correlation UUID remains unchanged for the full
@@ -598,10 +600,14 @@ consistent (every `$id` unique, every `$ref` resolves).
 
 Following the new shape:
 
-- `dataschema` — `apicurio://holyfields/bloodbank.v1.<domain>.<entity>.<action>/versions/<n>`
-- `schemaref` — `bloodbank.v1.<domain>.<entity>.<action>.v1` (string)
+- `dataschema` — `apicurio://holyfields/bloodbank.<domain>.<entity>.<action>/versions/<n>`
+- `schemaref` — `bloodbank.<domain>.<entity>.<action>.v<n>` (string)
 
-The Apicurio registry's artifact ID is the 5-token type string, not the
+The `<n>` in both is the schema revision described in §3.1, and it is the only
+version number left in the contract. It is expected to move; the type and the
+subject are not.
+
+The Apicurio registry's artifact ID is the 4-token type string, not the
 filesystem path. Holyfields' registration script (`scripts/register-schemas.sh`
 or equivalent) uses the type as the key when uploading.
 
@@ -613,23 +619,23 @@ For a single agent turn from any CLI (Claude, Copilot, Codex, future), the
 normalized event sequence is:
 
 ```
-bloodbank.v1.conversation.thread.created         # only on first turn of a thread
+bloodbank.conversation.thread.created         # only on first turn of a thread
                                                   # OR
-bloodbank.v1.conversation.thread.resumed         # if a known thread is reopened
-bloodbank.v1.conversation.turn.started
-bloodbank.v1.agent.invocation.started
-bloodbank.v1.agent.session.started               # agent CLI session (supersedes cli.session.started)
-bloodbank.v1.cli.process.spawned                 # CLI-backed paths only
-bloodbank.v1.cli.stdout.appended                 # 0..n; chunked
-bloodbank.v1.cli.stderr.appended                 # 0..n; chunked
-bloodbank.v1.llm.request.sent                    # protocol boundary
-bloodbank.v1.llm.response.received               # protocol boundary
-bloodbank.v1.agent.tool.requested            # 0..n
-bloodbank.v1.agent.tool.invoked              # 0..n
-bloodbank.v1.agent.tool.completed            # 0..n
-bloodbank.v1.conversation.message.appended       # durable transcript record
-bloodbank.v1.agent.invocation.completed
-bloodbank.v1.conversation.turn.completed
+bloodbank.conversation.thread.resumed         # if a known thread is reopened
+bloodbank.conversation.turn.started
+bloodbank.agent.invocation.started
+bloodbank.agent.session.started               # agent CLI session (supersedes cli.session.started)
+bloodbank.cli.process.spawned                 # CLI-backed paths only
+bloodbank.cli.stdout.appended                 # 0..n; chunked
+bloodbank.cli.stderr.appended                 # 0..n; chunked
+bloodbank.llm.request.sent                    # protocol boundary
+bloodbank.llm.response.received               # protocol boundary
+bloodbank.agent.tool.requested            # 0..n
+bloodbank.agent.tool.invoked              # 0..n
+bloodbank.agent.tool.completed            # 0..n
+bloodbank.conversation.message.appended       # durable transcript record
+bloodbank.agent.invocation.completed
+bloodbank.conversation.turn.completed
 ```
 
 Claude, Copilot, and Codex adapters MUST emit the same sequence; only
@@ -637,88 +643,21 @@ Claude, Copilot, and Codex adapters MUST emit the same sequence; only
 
 ---
 
-## 15. Migration map — legacy → v1 type renames
+## 15. Verifier checks
 
-The hard-rename (no aliases) list. As of 2026-06-07 the agent-hooks mapping is
-no longer hand-maintained in each `publish.py`: it is propagated from the single
-source of truth `services/agent-hooks/hooks.master.json` by `sync.py`
-(`mise run hooks:sync`). Divergence resolutions are recorded in
-`services/agent-hooks/hooks.mappings.lock.json`.
-
-Two resolutions landed in this revision (see the lock for rationale):
-
-- **`cli.session.*` → `agent.session.*`** — agent CLI session events moved
-  under the `agent` domain (beside `agent.invocation` / `agent.tool`). The
-  `cli` domain keeps `process` / `stdout` / `stderr`. Ordering bucket
-  `cli_session` → `session`.
-- **post-tool hooks emit `agent.tool.completed`** (not `agent.tool.invoked`)
-  on every agent — the single post-tool hook fires after execution and
-  carries `outcome`.
-
-| Legacy `type`              | v1 `type`                                 | Notes                                                               |
-| -------------------------- | ----------------------------------------- | ------------------------------------------------------------------- |
-| `agent.session.started`    | `bloodbank.v1.agent.session.started`        | Plus `bloodbank.v1.conversation.thread.created` on first turn.      |
-| `agent.session.ended`      | `bloodbank.v1.agent.session.ended`          | Plus `bloodbank.v1.conversation.turn.completed` if a turn was open. |
-| `agent.prompt.submitted`   | `bloodbank.v1.conversation.turn.started`  | The prompt is what starts a turn.                                   |
-| `agent.tool.requested`     | `bloodbank.v1.agent.tool.requested`   |                                                                     |
-| `agent.tool.invoked`       | `bloodbank.v1.agent.tool.invoked`     |                                                                     |
-| `agent.subagent.completed` | `bloodbank.v1.agent.invocation.completed` | Sub-agent runs are nested invocations.                              |
-| `agent.subagent.started`   | `bloodbank.v1.agent.invocation.started`   | (openclaw emits this)                                               |
-| `copilot.session.started`  | `bloodbank.v1.agent.session.started`        | `actor.cli=copilot`, `actor.provider=github_copilot`.               |
-| `copilot.session.ended`    | `bloodbank.v1.agent.session.ended`          |                                                                     |
-| `copilot.prompt.submitted` | `bloodbank.v1.conversation.turn.started`  |                                                                     |
-| `copilot.tool.pre`         | `bloodbank.v1.agent.tool.requested`   |                                                                     |
-| `copilot.tool.post`        | `bloodbank.v1.agent.tool.completed`   |                                                                     |
-| `copilot.error.occurred`   | `bloodbank.v1.agent.invocation.failed`    |                                                                     |
-| `copilot.agent.stopped`    | `bloodbank.v1.agent.invocation.completed` |                                                                     |
-| `codex.session.started`    | `bloodbank.v1.agent.session.started`        | `actor.cli=codex`, `actor.provider=openai`.                         |
-| `codex.session.ended`      | `bloodbank.v1.agent.session.ended`          |                                                                     |
-| `codex.prompt.submitted`   | `bloodbank.v1.conversation.turn.started`  |                                                                     |
-| `codex.tool.pre`           | `bloodbank.v1.agent.tool.requested`       |                                                                     |
-| `codex.tool.post`          | `bloodbank.v1.agent.tool.completed`       |                                                                     |
-| `codex.subagent.started`   | `bloodbank.v1.agent.invocation.started`   |                                                                     |
-| `codex.subagent.stopped`   | `bloodbank.v1.agent.invocation.completed` |                                                                     |
-| `smoketest.ping`           | `bloodbank.v1.system.heartbeat.received`  | Smoke fixture.                                                      |
-
-Anything not on this table that does not match §2's regex MUST be
-quarantined by the publisher (§16, follow-up T-4).
-
----
-
-## 16. Migration status
-
-Implementation landed alongside the contract. The §15 rename and the
-schema/publisher/stream cutover happened in a single hard-rename PR — no
-aliases, no deprecation period.
-
-| ID   | Repo       | Work                                                                                                                                                            | Status                                  |
-| ---- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| T-1  | holyfields | Tighten `_common/cloudevent_base.v1.json` `type` regex to §2's regex. Add `kind`, `actor`, `ordering_key` fields.                                               | DONE                                    |
-| T-2  | bloodbank  | Schema tree at `bloodbank/schemas/bloodbank/v1/<domain>/...` per §12 + `_common/{cloudevent_base,types}.v1.json` deps. Validator and CI consume it locally.     | DONE                                    |
-| T-3  | bloodbank  | Port Pydantic + Zod generators from Holyfields into `bloodbank/scripts` + `bloodbank/tools/generators` and emit `BloodbankV1Type` enum from the local tree.     | OPEN — see RECOMMENDATION.md            |
-| T-4  | bloodbank  | `services/agent-hooks/core/{envelope,validate}.py` enforce §2, §3, §5, §9 and §11 on every envelope. Loud `ContractViolation`; no quarantine.                   | DONE                                    |
-| T-5  | bloodbank  | `services/agent-hooks/{claude,copilot,codex,openclaw}/publish.py` (and `watch.py`) emit v1 types per §15.                                                       | DONE                                    |
-| T-6  | bloodbank  | `compose/nats/streams.json` filters are `bloodbank.evt.v1.>` and `bloodbank.{cmd,rpy}.v1.>`. `compose/docker-compose.yml` env defaults migrated.                | DONE                                    |
-| T-7  | bloodbank  | `services/event-toaster/main.py` subscribes to `bloodbank.evt.v1.>`. (ntfy formatter is operator-local — out of scope per goal.)                                | PARTIAL — subject default migrated      |
-| T-8  | bloodbank  | `cli/bb.py verify-envelope` runs the full v1 contract against any envelope on stdin/file.                                                                       | DONE                                    |
-| T-9  | bloodbank  | `ops/smoketest/smoketest-bloodbank-naming.sh` + `mise run smoketest:bloodbank-naming` — stdlib verifier (no Docker) for §14 sequence × {claude, copilot, codex}. | DONE                                    |
-| T-10 | bloodbank  | `compose/nats/README.md`, `services/agent-hooks/README.md`, `ops/smoketest/README.md`, `AGENTS.md` all point here.                                              | DONE                                    |
-| T-11 | 33god meta | If ADR-0001 needs an amendment recording this contract, file ADR-0002.                                                                                          | OPEN — metarepo-side                    |
-
-### 16.2 Verifier checks (T-9)
-
-The smoke harness asserts:
+`ops/smoketest/smoketest-bloodbank-naming.sh` (`mise run
+smoketest:bloodbank-naming`) is a stdlib verifier — no Docker — that walks the
+§14 sequence for each emitter and asserts:
 
 ```
 type matches §2 regex
-type has exactly 5 dot-separated tokens
+type has exactly 4 dot-separated tokens
 tokens[0] == "bloodbank"
-tokens[1] matches v[0-9]+
-tokens[2] in §6 domain allowlist
-tokens[3] in §7 entity allowlist
-tokens[4] in §8.1 for kind=event, §8.2 for kind=command
+tokens[1] in §6 domain allowlist
+tokens[2] in §7 entity allowlist
+tokens[3] in §8.1 for kind=event, §8.2 for kind=command
 tokens ∩ §9 banned tokens == ∅
-subject == "bloodbank." + {evt|cmd|rpy} + ".v1." + tokens[2..5].join(".")
+subject == "bloodbank." + {evt|cmd|rpy} + "." + tokens[1..4].join(".")
 subject's kind marker matches envelope.kind
 source, actor, subject, correlationid, ordering_key all present on every event
 actor.cli ∈ {claude, copilot, codex, ...} per actual emitter
@@ -727,7 +666,7 @@ ordering_key is stable across events on the same entity
 
 ---
 
-## 17. References
+## 16. References
 
 - [CloudEvents 1.0 spec](https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md) — `type`, `source`, `subject`, duplicate detection via `source + id`.
 - [NATS subject-based messaging](https://docs.nats.io/nats-concepts/subjects) — dot-hierarchy guidance.
