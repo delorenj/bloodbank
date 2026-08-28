@@ -76,23 +76,31 @@ def main():
                     help="exit non-zero on publish/validation failure (default: fail-open)")
     a = ap.parse_args()
 
-    fail_rc = 1 if a.strict else 0
+    # Fail-open is a policy about the BUS: if NATS is down, a producer should
+    # not take its caller down with it. It is not a policy about the caller's
+    # own arguments. A malformed --type or unparseable data is the caller's
+    # bug, is 100% reproducible, and fixing it is entirely in the caller's
+    # hands -- so those always exit non-zero regardless of --strict. Without
+    # this split, a shell script that emits a retired 5-token type sees rc=0
+    # and reports success while nothing was ever published.
+    fail_rc = 1 if a.strict else 0   # bus-boundary failures only
+    usage_rc = 1                     # caller-side errors, always loud
 
     raw = a.data if a.data is not None else sys.stdin.read()
     try:
         data = json.loads(raw) if raw and raw.strip() else {}
     except json.JSONDecodeError as e:
         print(f"bb-emit: invalid data JSON: {e}", file=sys.stderr)
-        return fail_rc
+        return usage_rc
     if not isinstance(data, dict):
         print("bb-emit: data must be a JSON object", file=sys.stderr)
-        return fail_rc
+        return usage_rc
 
     parts = a.type.split(".")
     if len(parts) != 4 or parts[0] != "bloodbank":
         print(f"bb-emit: --type must be bloodbank.<domain>.<entity>.<action>, got '{a.type}'",
               file=sys.stderr)
-        return fail_rc
+        return usage_rc
     domain = parts[1]
     subject = "bloodbank.evt." + a.type[len("bloodbank."):]
 
