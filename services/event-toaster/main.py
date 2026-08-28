@@ -30,7 +30,7 @@ logging.basicConfig(
 log = logging.getLogger("event-toaster")
 
 NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")
-SUBJECT = os.environ.get("SUBJECT_FILTER", "event.>")
+SUBJECT = os.environ.get("SUBJECT_FILTER", "bloodbank.evt.>")
 NTFY_URL = os.environ.get("NTFY_URL", "https://ntfy.delo.sh").rstrip("/")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "bloodbank")
 NTFY_PRIORITY = os.environ.get("NTFY_PRIORITY", "5")  # 1=min, 5=max (loud)
