@@ -267,6 +267,14 @@ if [ -n "$SOT_BOARD_ID" ]; then
   # carries none, and an unsourced identifier is a proposal — not a fact.
   IDENT_SOURCE=""
   [ -z "$LIVE_IDENT" ] || IDENT_SOURCE="${SOT_IDENT_SOURCE:-proposed}"
+  # …and a `provider` stamp beside a provider that assigns no identifiers is
+  # not evidence either. It is a stale claim from a writer that conflated
+  # "the board is confirmed" with "the provider named this key". Correct it
+  # on the way through rather than carrying the lie into another manifest.
+  case "$PROVIDER" in
+    plane|linear) ;;
+    *) if [ "$IDENT_SOURCE" = provider ]; then IDENT_SOURCE=proposed; fi ;;
+  esac
   if [ "$PROVIDER" = plane ]; then
     OUT="$(tp resolve)" || die "existing Plane board could not be validated"
     LIVE_IDENT="$(printf '%s' "$OUT" | python3 -c 'import sys,json
