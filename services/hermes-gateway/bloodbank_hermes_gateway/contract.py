@@ -17,8 +17,8 @@ from typing import Any, Callable, Mapping
 import yaml
 
 
-COMMAND_TYPE = "bloodbank.v1.agent.invocation.start"
-COMMAND_SUBJECT = "bloodbank.cmd.v1.agent.invocation.start"
+COMMAND_TYPE = "bloodbank.agent.invocation.start"
+COMMAND_SUBJECT = "bloodbank.cmd.agent.invocation.start"
 COMMAND_STREAM = "BLOODBANK_COMMANDS"
 EVENT_STREAM = "BLOODBANK_EVENTS"
 

@@ -1,7 +1,7 @@
 # Bloodbank Hermes gateway
 
 This directory is the Bloodbank-owned, standalone Hermes platform plugin for
-the canonical `bloodbank.cmd.v1.agent.invocation.start` command. It does not
+the canonical `bloodbank.cmd.agent.invocation.start` command. It does not
 modify or monkey-patch Hermes core.
 
 The adapter binds one JetStream durable pull consumer, validates every command
@@ -53,7 +53,7 @@ gateway:
         fleet_registry: ~/.hermes/agents-registry.yaml
         execution_state_file: ~/.hermes/bloodbank-hermes-gateway-state.sqlite3
         allow_direct_profile_targets: false
-        durable_name: bloodbank-hermes-gateway-v1
+        durable_name: bloodbank-hermes-gateway
         max_inflight: 4
         ack_wait_seconds: 90
         ack_progress_seconds: 20
@@ -147,11 +147,11 @@ backward compatibility.
 
 The plugin publishes only existing canonical events:
 
-- `bloodbank.v1.conversation.turn.started`
-- `bloodbank.v1.agent.invocation.started`
-- `bloodbank.v1.agent.invocation.completed`
-- `bloodbank.v1.agent.invocation.failed`
-- `bloodbank.v1.conversation.turn.completed`
+- `bloodbank.conversation.turn.started`
+- `bloodbank.agent.invocation.started`
+- `bloodbank.agent.invocation.completed`
+- `bloodbank.agent.invocation.failed`
+- `bloodbank.conversation.turn.completed`
 
 ## Hermes API assumptions
 

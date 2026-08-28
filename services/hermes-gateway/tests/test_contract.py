@@ -308,9 +308,9 @@ def test_structurally_invalid_registry_is_transient_before_direct_fallback(
 @pytest.mark.parametrize(
     "outcome,invocation_type,turn_outcome",
     [
-        ("success", "bloodbank.v1.agent.invocation.completed", "completed"),
-        ("failure", "bloodbank.v1.agent.invocation.failed", "failed"),
-        ("cancelled", "bloodbank.v1.agent.invocation.failed", "canceled"),
+        ("success", "bloodbank.agent.invocation.completed", "completed"),
+        ("failure", "bloodbank.agent.invocation.failed", "failed"),
+        ("cancelled", "bloodbank.agent.invocation.failed", "canceled"),
     ],
 )
 def test_lifecycle_events_use_existing_schema_contracts(

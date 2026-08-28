@@ -110,7 +110,7 @@ class BloodbankAdapter(BasePlatformAdapter):
             extra.get("credentials_file", "")
         )
         self.durable_name = str(
-            extra.get("durable_name", "bloodbank-hermes-gateway-v1")
+            extra.get("durable_name", "bloodbank-hermes-gateway")
         ).strip()
         if not self.durable_name:
             raise ValueError("bloodbank.extra.durable_name must be non-empty")

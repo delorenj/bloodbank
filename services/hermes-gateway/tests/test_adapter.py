@@ -97,7 +97,7 @@ def write_registry(tmp_path, *, enabled=True, scope="fleet", target="bloodbank-p
 def test_stale_durable_contract_is_rejected(tmp_path):
     adapter = make_adapter(tmp_path)
     stale = SimpleNamespace(
-        filter_subject="bloodbank.cmd.v1.agent.invocation.other",
+        filter_subject="bloodbank.cmd.agent.invocation.other",
         ack_policy="explicit",
         max_ack_pending=adapter.max_inflight,
         max_deliver=adapter.max_deliver,
@@ -178,8 +178,8 @@ async def test_connect_binds_one_bounded_durable_pull_consumer(tmp_path, monkeyp
     assert await adapter.connect() is True
     assert len(calls) == 1
     subject, kwargs = calls[0]
-    assert subject == "bloodbank.cmd.v1.agent.invocation.start"
-    assert kwargs["durable"] == "bloodbank-hermes-gateway-v1"
+    assert subject == "bloodbank.cmd.agent.invocation.start"
+    assert kwargs["durable"] == "bloodbank-hermes-gateway"
     assert kwargs["stream"] == "BLOODBANK_COMMANDS"
     assert kwargs["config"].max_ack_pending == 2
     assert kwargs["pending_msgs_limit"] == 2
@@ -260,10 +260,10 @@ async def test_ack_waits_for_hermes_and_sends_progress(tmp_path, valid_command):
     assert message.acked == 1
     assert message.nacked == 0
     assert [event["type"] for event in adapter._js.events] == [
-        "bloodbank.v1.conversation.turn.started",
-        "bloodbank.v1.agent.invocation.started",
-        "bloodbank.v1.agent.invocation.completed",
-        "bloodbank.v1.conversation.turn.completed",
+        "bloodbank.conversation.turn.started",
+        "bloodbank.agent.invocation.started",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed",
     ]
 
 
@@ -281,8 +281,8 @@ async def test_failed_hermes_turn_publishes_failure_then_acks(tmp_path, valid_co
     assert message.acked == 1
     assert message.nacked == 0
     assert [event["type"] for event in adapter._js.events[-2:]] == [
-        "bloodbank.v1.agent.invocation.failed",
-        "bloodbank.v1.conversation.turn.completed",
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed",
     ]
     assert "secret details" not in json.dumps(adapter._js.events)
 
@@ -493,10 +493,10 @@ async def test_route_disabled_after_started_publish_closes_and_replays_exactly(
     assert executions == 0
     assert message.termed == 1
     assert [event["type"] for event in adapter._js.events] == [
-        "bloodbank.v1.conversation.turn.started",
-        "bloodbank.v1.agent.invocation.started",
-        "bloodbank.v1.agent.invocation.failed",
-        "bloodbank.v1.conversation.turn.completed",
+        "bloodbank.conversation.turn.started",
+        "bloodbank.agent.invocation.started",
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed",
     ]
     rejected = adapter.execution_state.get(valid_command["command_id"])
     assert rejected is not None and rejected.state == "rejected_closed"
@@ -563,7 +563,7 @@ async def test_partial_started_publish_is_closed_on_disabled_redelivery(
     assert first_delivery.nacked == 1
     assert first_delivery.termed == 0
     assert [event["type"] for event in published] == [
-        "bloodbank.v1.conversation.turn.started"
+        "bloodbank.conversation.turn.started"
     ]
     opened = first.execution_state.get(valid_command["command_id"])
     assert opened is not None and opened.state == "started"
@@ -578,10 +578,10 @@ async def test_partial_started_publish_is_closed_on_disabled_redelivery(
     assert redelivery.termed == 1
     assert redelivery.nacked == 0
     assert [event["type"] for event in restarted._js.events] == [
-        "bloodbank.v1.conversation.turn.started",
-        "bloodbank.v1.agent.invocation.started",
-        "bloodbank.v1.agent.invocation.failed",
-        "bloodbank.v1.conversation.turn.completed",
+        "bloodbank.conversation.turn.started",
+        "bloodbank.agent.invocation.started",
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed",
     ]
     closed = restarted.execution_state.get(valid_command["command_id"])
     assert closed is not None and closed.state == "rejected_closed"
@@ -658,7 +658,7 @@ async def test_partial_terminal_publish_naks_and_exact_restart_replays_closure(
     async def fail_turn_terminal(subject, payload, **kwargs):
         del subject, kwargs
         envelope = json.loads(payload)
-        if envelope["type"] == "bloodbank.v1.conversation.turn.completed":
+        if envelope["type"] == "bloodbank.conversation.turn.completed":
             raise RuntimeError("terminal turn event was not acknowledged")
         published.append(envelope)
 
@@ -683,9 +683,9 @@ async def test_partial_terminal_publish_naks_and_exact_restart_replays_closure(
     assert first_delivery.nacked == 1
     assert first_delivery.termed == 0
     assert [event["type"] for event in published] == [
-        "bloodbank.v1.conversation.turn.started",
-        "bloodbank.v1.agent.invocation.started",
-        "bloodbank.v1.agent.invocation.failed",
+        "bloodbank.conversation.turn.started",
+        "bloodbank.agent.invocation.started",
+        "bloodbank.agent.invocation.failed",
     ]
     closed = first.execution_state.get(valid_command["command_id"])
     assert closed is not None and closed.state == "rejected_closed"
@@ -926,10 +926,10 @@ async def test_v2_rejected_row_migrates_to_closure_without_execution(
     assert redelivery.termed == 1
     assert redelivery.nacked == 0
     assert [event["type"] for event in adapter._js.events] == [
-        "bloodbank.v1.conversation.turn.started",
-        "bloodbank.v1.agent.invocation.started",
-        "bloodbank.v1.agent.invocation.failed",
-        "bloodbank.v1.conversation.turn.completed",
+        "bloodbank.conversation.turn.started",
+        "bloodbank.agent.invocation.started",
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed",
     ]
     migrated = adapter.execution_state.get(valid_command["command_id"])
     assert migrated is not None and migrated.state == "rejected_closed"
@@ -1009,10 +1009,10 @@ async def test_completed_command_replays_after_terminal_publish_failure_without_
         *completed.terminal_events,
     )
     assert [event["type"] for event in restarted._js.events] == [
-        "bloodbank.v1.conversation.turn.started",
-        "bloodbank.v1.agent.invocation.started",
-        "bloodbank.v1.agent.invocation.completed",
-        "bloodbank.v1.conversation.turn.completed",
+        "bloodbank.conversation.turn.started",
+        "bloodbank.agent.invocation.started",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed",
     ]
 
 
