@@ -104,6 +104,17 @@ PY
 # because Trello mints no key). There is deliberately no third option and no
 # default: an unstamped identifier is refused outright, so no locally-computed
 # string can ever land in .project.json wearing the authority of a live board.
+#
+# `provider` is further refused outright for a provider that assigns no
+# identifiers at all. Trello cannot have named a key it has no concept of, so
+# the claim is not merely unproven, it is impossible — and a downstream reader
+# must always be able to tell "Plane assigned PJAN" from "we picked INT and
+# Trello confirmed a board exists".
+#
+# Those are two different facts, so they get two different fields. Whether the
+# BOARD is real is stamped in board_confirmed_at, and that is what a link rests
+# on; whether the KEY came from the provider is identifier_source. Every
+# provider can answer the first. Only some can answer the second.
 pj_write() {
   REPO="$REPO" REPO_ROOT="$REPO_ROOT" AGENT_ID="$AGENT_ID" ROLE="$ROLE" \
   ROLE_DIR_REL="$ROLE_DIR_REL" PROJECT_DESC="${PROJECT_DESC:-}" \
@@ -113,11 +124,23 @@ import errno
 import sys, os, json, pathlib, stat, tempfile
 (path, set_provider, provider, board_id, workspace, identifier, team,
  identifier_source) = sys.argv[1:9]
+# Providers that mint their own keys and hand them back on read.
+IDENTIFIER_ASSIGNING = ("plane", "linear")
 if identifier and identifier_source not in ("provider", "proposed"):
     raise SystemExit(
         "refusing to persist ticket_provider.identifier %r with source %r: "
         "every identifier must be stamped provider|proposed" % (identifier, identifier_source)
     )
+if identifier_source == "provider" and provider not in IDENTIFIER_ASSIGNING:
+    raise SystemExit(
+        "refusing to persist ticket_provider.identifier %r as provider-sourced: "
+        "%s assigns no identifiers, so it cannot have named one" % (identifier, provider)
+    )
+now = (
+    datetime.datetime.now(datetime.timezone.utc)
+    .isoformat(timespec="milliseconds")
+    .replace("+00:00", "Z")
+)
 p = pathlib.Path(path)
 if p.is_symlink():
     raise SystemExit(f"refusing .project.json symlink: {p}")
@@ -143,14 +166,15 @@ if set_provider == "1":
         tp["identifier"] = identifier
         tp["identifier_source"] = identifier_source
         if identifier_source == "provider":
-            tp["identifier_fetched_at"] = (
-                datetime.datetime.now(datetime.timezone.utc)
-                .isoformat(timespec="milliseconds")
-                .replace("+00:00", "Z")
-            )
+            tp["identifier_fetched_at"] = now
         else:
             tp.pop("identifier_fetched_at", None)
-    if board_id:   tp["board_id"] = board_id
+    if board_id:
+        tp["board_id"] = board_id
+        # Every caller that reaches here with a board id got it out of the
+        # provider itself (create_board or resolve), so this write IS the
+        # confirmation and may stamp its own instant.
+        tp["board_confirmed_at"] = now
     if team:       tp["team"] = team
     tp.pop("board_url", None)
     tp["state"] = "linked" if board_id else "deferred"
