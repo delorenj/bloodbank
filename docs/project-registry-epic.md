@@ -2,6 +2,24 @@
      the consumer defect that surfaced it is in this repo
      (integrations/n8n-nodes-bloodbank/src/plane.ts). -->
 
+> **STATUS 2026-08-28 — the spine (PID-0 … PID-7) is shipped and verified.**
+> Measured live, not reported: `routes 24 | blank boardKeys 0`, `ticket_key 33GOD-41`.
+> Fleet registry 28 agents / 0 mismatches vs live Plane. SSOT 25 records, 14 linked and
+> provider-confirmed, 0 collisions, 0 provenance lies. `npm test` 58/58.
+> PID-8/9/11 were not built; PID-10 landed as a surgical field reconciler only.
+>
+> Three things the build changed about this plan:
+> 1. **R3 was wrong.** Trello assigns no identifier, so `linked ⇒ identifier_source==="provider"`
+>    made an honest Trello link illegal. The contract now splits `board_confirmed_at`
+>    (any provider can confirm a board) from `identifier_source` (only Plane/Linear assign keys).
+> 2. **intelliforia is a Trello project**, not a Plane one with a dead board. The plan said to
+>    clear it; doing so would have deleted the only correct binding in the file.
+> 3. **Both "pre-existing, environmental" test failures were real product bugs** — a missing
+>    `SKIP_HOST_STATE` guard that broke every deferred agent render, and a `readFileSync(…,"utf8")`
+>    that silently rewrote operator config with U+FFFD. Neither needed quarantine.
+>
+> Live page: https://claude.ai/code/artifact/16c6cf3e-580d-4b10-98ab-37b7b794222d
+
 # Epic: Provider-Derived Project Identity (PID)
 
 ## Problem
