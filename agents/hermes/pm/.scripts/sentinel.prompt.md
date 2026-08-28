@@ -21,9 +21,10 @@ Never call plane directly. Use the adapter:
 .scripts/lib/ticket-provider.sh        # defines tp(); source it, then:
 tp active_milestone                    # JSON {id,name,state}
 tp list_issues                         # JSON [{id,key,title,state,state_type,...}]
-tp get_issue <id>                      # JSON incl. description + comments
+tp get_issue <id>                      # JSON incl. description + comments + attachments
 tp comment <id> "<body>"               # post a PM/review note
-tp transition <id> <normalized-state>  # backlog|unstarted|started|in_review|completed
+tp transition <id> <normalized-state>  # backlog|unstarted|started|in_review|completed|cancelled
+tp create_issue "<title>" "<desc>"    # file a NEW ticket; --if-absent to dedupe by title
 ```
 
 Reason in **normalized states**, not provider terms. This pass works identically
@@ -32,7 +33,7 @@ on Linear, Plane, or Trello.
 ## Pass
 
 **Trigger.** This pass runs both on the cheap heartbeat timer AND on a live
-**Plane board event** — a `bloodbank.evt.v1.repo.bloodbank.ticket_*` event delivered
+**Plane board event** — a `bloodbank.evt.v1.repo.<repo>.ticket_*` event delivered
 by the `plane-webhook-bridge`. If a specific ticket event triggered you, FIRST
 `tp get_issue <that ticket>`, read the change, and react to it (triage / refine /
 comment / transition per the lifecycle) before the general reconcile below.

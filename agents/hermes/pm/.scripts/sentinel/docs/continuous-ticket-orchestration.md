@@ -19,7 +19,7 @@ approve merges.
 All board access goes through the adapter (`tp`, from
 `.scripts/lib/ticket-provider.sh`) and reasons in normalized states:
 `backlog | unstarted | started | in_review | completed`. Never call the provider
-directly — the engine is identical across Plane and Trello.
+directly — the engine is identical across Linear, Plane, and Trello.
 
 ## Work-state feed
 

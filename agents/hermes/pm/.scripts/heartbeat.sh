@@ -6,28 +6,35 @@
 # reconciliation pass when local state says no worker is active, the worker
 # heartbeat is stale, or the last full run is outside the cooldown window. The
 # full pass executes the role's sentinel.prompt.md, which reasons about tickets
-# through the ticket-provider adapter (Plane | Trello) — never a
+# through the ticket-provider adapter (Linear | Plane | Trello) — never a
 # hardcoded backend. After the sentinel decision (skip OR full), it
-# opportunistically checkpoints the runtime submodule (commit+push) at most once
+# opportunistically checkpoints only legacy nested-Git runtimes at most once
 # per HEARTBEAT_CHECKPOINT_MIN_INTERVAL_SECONDS, so memory/session state stays
 # durable without pushing every minute.
 set -euo pipefail
 
 ROLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # agents/hermes/<role>
 RUNTIME="$ROLE_DIR/runtime"
+RUN_HOME="${HERMES_HOME:-$RUNTIME}"
 PROMPT_FILE="$ROLE_DIR/.scripts/sentinel.prompt.md"
 STATE_FILE="$RUNTIME/continuous-ticket-sentinel-state.json"
 LOCK_FILE="$RUNTIME/continuous-ticket-sentinel.lock"
 ROLE_YAML="$ROLE_DIR/role.yaml"
 FLEET_ENV="${HERMES_FLEET_ENV:-$HOME/.hermes/fleet.env}"
+FLEET_ENV_LIBRARY="$ROLE_DIR/.scripts/lib/fleet-env.sh"
+FLEET_ENV_PARSER="$ROLE_DIR/.scripts/lib/parse-fleet-env.py"
 LOG_FILE="$RUNTIME/logs/heartbeat.log"
 CHECKPOINT_BIN="$ROLE_DIR/.scripts/checkpoint.sh"
 CHECKPOINT_STAMP="$RUNTIME/.last-checkpoint"
 
-if [[ -f "$FLEET_ENV" ]]; then
-  # shellcheck disable=SC1090
-  source "$FLEET_ENV"
+if [[ ! -f "$FLEET_ENV_LIBRARY" || -L "$FLEET_ENV_LIBRARY" \
+   || ! -f "$FLEET_ENV_PARSER" || -L "$FLEET_ENV_PARSER" ]]; then
+  echo "heartbeat: trusted fleet environment loader unavailable" >&2
+  exit 1
 fi
+# shellcheck source=lib/fleet-env.sh
+builtin source "$FLEET_ENV_LIBRARY"
+load_fleet_environment "$FLEET_ENV" "$FLEET_ENV_PARSER"
 
 # Hermes binary: explicit env > ~/.config/hermes-agent/hermes-bin > PATH.
 HERMES_BIN="${HERMES_BIN:-${HERMES_FLEET_BIN:-}}"
@@ -86,61 +93,13 @@ print(value.strip().strip('"').strip("'"))
 PYEOF
 }
 
-repo_root() {
-  local dir="$ROLE_DIR"
-  for _ in 1 2 3 4 5; do
-    dir="$(dirname "$dir")"
-    if [[ -d "$dir/.git" || -f "$dir/.git" ]]; then printf '%s\n' "$dir"; return 0; fi
-  done
-  return 1
-}
-REPO_ROOT="$(repo_root)"
-PROJECT_JSON="$REPO_ROOT/.project.json"
-
-project_json_value() {
-  python3 - "$PROJECT_JSON" "$1" <<'PYEOF'
-import json
-import pathlib
-import sys
-
-path, key = sys.argv[1:3]
-try:
-    cur = json.loads(pathlib.Path(path).read_text())
-except Exception:
-    print("")
-    raise SystemExit(0)
-for part in key.split("."):
-    if isinstance(cur, dict) and part in cur:
-        cur = cur[part]
-    else:
-        print("")
-        raise SystemExit(0)
-print(cur if isinstance(cur, (str, int, float, bool)) else "")
-PYEOF
-}
-
-# Project-owned automation gate. Legacy role.yaml reconcile.enabled is honored
-# only for older agents that have not migrated their .project.json yet.
+# True only when role.yaml has a reconcile: block with enabled: true. Block-aware
+# so an unrelated `enabled:` leaf elsewhere in the file can't flip it on.
 reconcile_enabled() {
-  python3 - "$PROJECT_JSON" "$ROLE_YAML" <<'PYEOF'
-import json
-import re
-import sys
+  python3 - "$ROLE_YAML" <<'PYEOF'
+import re, sys
 from pathlib import Path
-project_path, role_path = map(Path, sys.argv[1:3])
-try:
-    project = json.loads(project_path.read_text())
-except Exception:
-    project = {}
-reconcile = ((project.get("automation") or {}).get("reconcile") or {}) if isinstance(project, dict) else {}
-if "enabled" in reconcile:
-    value = reconcile.get("enabled")
-    print("true" if str(value).lower() == "true" else "false")
-    raise SystemExit(0)
-try:
-    text = role_path.read_text()
-except Exception:
-    text = ""
+text = Path(sys.argv[1]).read_text()
 m = re.search(r'(?m)^reconcile:[ \t]*\n((?:[ \t]+\S.*\n?)*)', text)
 block = m.group(1) if m else ""
 me = re.search(r'(?m)^[ \t]+enabled:[ \t]*"?([A-Za-z]+)"?', block)
@@ -150,8 +109,17 @@ PYEOF
 
 AGENT_ID="$(yaml_value agent_id)"
 REPO_NAME="$(yaml_value repo)"
-PROVIDER="$(project_json_value ticket_provider.type)"
-[[ -n "$PROVIDER" ]] || PROVIDER="$(yaml_block_value ticket_provider name)"
+PROVIDER="$(yaml_block_value ticket_provider name)"
+
+repo_root() {
+  local dir="$ROLE_DIR"
+  for _ in 1 2 3 4 5; do
+    dir="$(dirname "$dir")"
+    if [[ -d "$dir/.git" || -f "$dir/.git" ]]; then printf '%s\n' "$dir"; return 0; fi
+  done
+  return 1
+}
+REPO_ROOT="$(repo_root)"
 cd "$REPO_ROOT"
 mkdir -p "$RUNTIME/logs"
 
@@ -177,10 +145,11 @@ else
 fi
 
 # Reconcile gate: the autonomous board-reconciliation pass runs only when
-# repo-root .project.json automation.reconcile.enabled is true. Default off →
-# the heartbeat just checkpoints (legacy checkpoint-timer behavior).
+# role.yaml's reconcile.enabled is true. Default off → the heartbeat just
+# checkpoints (behaves like the legacy hourly checkpoint timer). Flip
+# reconcile.enabled to opt a repo into autonomous board reconciliation.
 if [[ "$(reconcile_enabled)" != "true" ]]; then
-  printf '[heartbeat] reconcile disabled (automation.reconcile.enabled != true) — checkpoint-only tick\n'
+  printf '[heartbeat] reconcile disabled (reconcile.enabled != true) — checkpoint-only tick\n'
   maybe_checkpoint
   exit 0
 fi
@@ -274,7 +243,8 @@ tmp = path.with_suffix(path.suffix + ".tmp"); tmp.write_text(json.dumps(state, i
 PYEOF
 
 # Coexistence WIP=1 lease (momo E2/S2.3): don't full-drive if the human-drivable
-# Momo holds it. A crashed holder's lease expires (ttl) so the board is never wedged.
+# Momo holds it — it's driving the same board. A crashed holder's lease expires
+# (ttl) so the board is never wedged. Release on any exit.
 WIP_LOCK="$RUNTIME/wip-driver.lock"
 if ! python3 "$ROLE_DIR/.scripts/momo-wip-lock.py" acquire "$WIP_LOCK" "hermes:$AGENT_ID" --ttl 3600 >/dev/null 2>&1; then
   printf '[heartbeat] WIP lease held by Momo — skipping full reconcile pass this tick\n'
@@ -285,7 +255,7 @@ trap 'python3 "$ROLE_DIR/.scripts/momo-wip-lock.py" release "$WIP_LOCK" "hermes:
 
 prompt="$(<"$PROMPT_FILE")"
 set +e
-env HERMES_HOME="$RUNTIME" "$HERMES_BIN" chat -Q --source cron --max-turns 90 -q "$prompt"
+env HERMES_HOME="$RUN_HOME" "$HERMES_BIN" chat -Q --source cron --max-turns 90 -q "$prompt"
 status=$?
 set -e
 

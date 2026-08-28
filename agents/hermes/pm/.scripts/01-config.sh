@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # Ensure the distributable config exists before any other step reads it.
 # Seeds ~/.config/hermes-agent-template/config.toml from the shipped example.
+
+# MCP render transactions establish repo-local lifecycle eligibility before
+# touching any host-global state. This guard must precede _lib.sh because that
+# library creates the role log and may read fleet configuration.
+if [[ "${SKIP_HOST_STATE:-0}" == "1" ]]; then
+  printf '%s\n' '[01] host config — DEFERRED (SKIP_HOST_STATE=1)' >&2
+  exit 0
+fi
+
 # shellcheck source=_lib.sh
 source "$(dirname "$0")/_lib.sh"
 
@@ -21,12 +30,14 @@ else
     cat > "$CONFIG" <<'TOML'
 # hermes-agent-template config — edit for your environment.
 [fleet]
-hermes_bin = "~/.hermes/hermes-agent/.venv/bin/hermes"
-hermes_repo = "~/.hermes/hermes-agent"
+hermes_bin = "~/.local/share/hermes-agent/releases/0408fec7a153e6c32c064acd2b8053917f1525f1/.venv/bin/hermes"
+hermes_repo = "~/.local/share/hermes-agent/releases/0408fec7a153e6c32c064acd2b8053917f1525f1"
+hermes_git_url = "https://github.com/delorenj/hermes-agent.git"
+hermes_git_ref = "main"
+hermes_git_sha = "0408fec7a153e6c32c064acd2b8053917f1525f1"
 fleet_env = "~/.hermes/fleet.env"
 registry_file = "~/.hermes/agents-registry.yaml"
 canonical_skills_dir = "/home/delorenj/.agents/skills"
-pm_external_skill_dirs = ["~/code/skillex/skill-sets/global/.system", "~/code/skillex/packs/bmad/6.10.2"]
 
 [github]
 runtime_repo_owner = "delorenj"
