@@ -10,8 +10,8 @@ workflows (bootstrap, smoketest, replay, trace).
 ## Architecture
 
 - **Broker:** NATS JetStream. Two durable streams: `BLOODBANK_EVENTS` for
-  immutable `bloodbank.evt.v1.*` traffic, `BLOODBANK_COMMANDS` for
-  `bloodbank.cmd.v1.*` / `bloodbank.rpy.v1.*` round-trips.
+  immutable `bloodbank.evt.>` traffic, `BLOODBANK_COMMANDS` for
+  `bloodbank.cmd.>` / `bloodbank.rpy.>` round-trips.
   round-trips. Topology in [`compose/nats/streams.json`](compose/nats/streams.json).
 - **Runtime:** Dapr sidecars. Pub/sub component fronts NATS via
   [`compose/components/pubsub.yaml`](compose/components/pubsub.yaml). State and
@@ -32,7 +32,7 @@ workflows (bootstrap, smoketest, replay, trace).
   See [`docs/candystore-integration.md`](docs/candystore-integration.md) for the
   ownership boundary and runtime wiring.
 - **Portfolio coordination:** Director and child-PM event contracts live under
-  `schemas/bloodbank/v1/portfolio/`; producer, consumer, retry, and compatibility
+  `schemas/bloodbank/portfolio/`; producer, consumer, retry, and compatibility
   rules are in [`docs/portfolio-orchestration-contracts.md`](docs/portfolio-orchestration-contracts.md).
 - **Fleet command dispatch:** the Bloodbank-owned Hermes gateway consumes the
   canonical invocation command once for the fleet and default-denies registry
@@ -104,9 +104,10 @@ intentional stubs that will be filled in as the operator surfaces land.
 
 ## Conventions
 
-- Subjects: `bloodbank.evt.v1.<domain>.<entity>.<action>`,
-  `bloodbank.cmd.v1.<domain>.<entity>.<action>`, and
-  `bloodbank.rpy.v1.<domain>.<entity>.<action>`.
+- Subjects: `bloodbank.evt.<domain>.<entity>.<action>`,
+  `bloodbank.cmd.<domain>.<entity>.<action>`, and
+  `bloodbank.rpy.<domain>.<entity>.<action>`. No version token — a breaking
+  payload change gets a new `action` or `entity` (`docs/event-naming.md` §3.1).
 - Every envelope carries `correlationid` and `causationid`.
 - Sandbox identifiers all use the `bloodbank` prefix (project, network,
   containers). No version suffix.

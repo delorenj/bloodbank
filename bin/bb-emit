@@ -4,7 +4,7 @@
 Dependency-free (stdlib only). Wraps a `data` payload (read from stdin, or --data)
 in the 33GOD CloudEvents v1 envelope, derives the NATS subject / domain /
 ordering_key / correlationid from --type, and PUBs to NATS on 127.0.0.1:4222 —
-the same core subject the bloodbank-event-toaster listens on (bloodbank.evt.v1.>),
+the same core subject the bloodbank-event-toaster listens on (bloodbank.evt.>),
 so a correct emit fans out to ntfy.delo.sh/bloodbank plus every other consumer.
 
 This is the host-side seed of the future n8n-nodes-bloodbank node: same envelope
@@ -14,12 +14,18 @@ Fail-open by default — a dead bus must never break the calling pipeline. Pass
 --strict to exit non-zero on publish failure.
 
 Envelope contract: bloodbank/schemas/_common/cloudevent_base.v1.json
-Subject binding : type `bloodbank.v1.<domain>.<entity>.<action>`
-                  -> subject `bloodbank.evt.v1.<domain>.<entity>.<action>`
+Subject binding : type `bloodbank.<domain>.<entity>.<action>`     (4 tokens)
+                  -> subject `bloodbank.evt.<domain>.<entity>.<action>`
+
+There is no contract version token. A 5-token --type (the retired
+`bloodbank.v1.*` shape) is REJECTED outright rather than rewritten, so a
+stale caller fails loudly instead of publishing to a subject nobody binds.
+The `.v1` in `schemaref` is the schema revision — a different axis, still
+live; see docs/event-naming.md §3.1 and §13.
 
 Usage:
   echo '{"transcription_id":"42","file_path":"/x.mp3","transcript_text":""}' \
-    | bb-emit --type bloodbank.v1.audio.transcription.completed
+    | bb-emit --type bloodbank.audio.transcription.completed
 """
 import argparse
 import json
@@ -58,7 +64,7 @@ def _nats_publish(subject, body, host, port, timeout=3.0):
 def main():
     ap = argparse.ArgumentParser(description="Publish a Bloodbank v3 event to NATS.")
     ap.add_argument("--type", required=True,
-                    help="bloodbank.v<N>.<domain>.<entity>.<action>")
+                    help="bloodbank.<domain>.<entity>.<action> (4 tokens, no version)")
     ap.add_argument("--data", help="data JSON as a string (default: read from stdin)")
     ap.add_argument("--source", default="urn:33god:service:n8n-inbox-transcribe")
     ap.add_argument("--producer", default="n8n")

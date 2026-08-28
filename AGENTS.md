@@ -140,17 +140,20 @@ alongside each service, using publishers generated from the local
   of truth for `type`, subject, `kind`, allowlists, banned tokens, and where
   provider identity lives. Any conflict between that doc and code/config is
   a defect in the code/config.
-- CloudEvents `type`: `bloodbank.v<N>.<domain>.<entity>.<action>` (5 tokens).
-  Regex: `^bloodbank\.v[0-9]+\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`.
-- NATS subject: `bloodbank.<kind>.v<N>.<domain>.<entity>.<action>` (6 tokens),
-  where `<kind>` ∈ `{evt, cmd, rpy}`. Stream filters: `bloodbank.evt.v1.>`,
-  `bloodbank.cmd.v1.>`, `bloodbank.rpy.v1.>`.
-- v1 remains the default. The only registered v2 type is
-  `bloodbank.v2.repo.maintenance.failed`, persisted on the exact subject
-  `bloodbank.evt.v2.repo.maintenance.failed` for action-phase failures.
-- Every non-v1 type requires an explicit entry in
-  `services/agent-hooks/core/validate.py`; a matching type shape isn't enough
-  to register it.
+- CloudEvents `type`: `bloodbank.<domain>.<entity>.<action>` (4 tokens).
+  Regex: `^bloodbank\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`.
+- NATS subject: `bloodbank.<kind>.<domain>.<entity>.<action>` (5 tokens),
+  where `<kind>` ∈ `{evt, cmd, rpy}`. Stream filters: `bloodbank.evt.>`,
+  `bloodbank.cmd.>`, `bloodbank.rpy.>`.
+- **There is no contract version token, in either shape.** A 5-token `type`
+  is rejected outright by `validate.py` and by `bin/bb-emit`. A breaking
+  payload change earns a new `action` or a new `entity` — the address never
+  moves underneath the consumers bound to it (`docs/event-naming.md` §3.1).
+  The only `v<n>` left in the system is the **schema revision** carried in
+  `dataschema` / `schemaref` (§13); that axis is alive and expected to move.
+- Every domain, entity, and action must have an explicit allowlist entry in
+  `services/agent-hooks/core/validate.py`; matching the type regex isn't
+  enough to register it.
 - Legacy `event.>` / `command.>` / `reply.>` subject prefixes and 3-token
   types (`agent.session.started`, `copilot.tool.pre`, etc.) are **deprecated**;
   removal is tracked by the §16 migration tickets in `docs/event-naming.md`.
@@ -177,7 +180,7 @@ alongside each service, using publishers generated from the local
 
 - No service-to-service calls that bypass the broker.
 - No ad-hoc envelopes; every envelope conforms to a schema under
-  `bloodbank/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json`.
+  `bloodbank/schemas/bloodbank/<domain>/<entity>.<action>.json`.
 - No synchronous I/O in event handlers.
 - No assumptions of a centrally-running publisher service — there isn't one.
 - No provider/CLI/model names anywhere in `type` (claude, anthropic, copilot,
