@@ -33,7 +33,10 @@ plane:
 # Bloodbank wiring (consumed + produced subjects).
 bloodbank:
   subscribe:
-    - "bloodbank.evt.v1.repo.bloodbank.>"
+    # Non-functional: the repo name sits in the grammar's entity slot, which
+    # real repo events fill with task/board/decision/intake/maintenance. Left
+    # as-is pending the optional scope-tail phase; do not improvise a scope.
+    - "bloodbank.evt.repo.bloodbank.>"
     - "bloodbank.cmd.agent.invocation.start"
   producer: "hermes-agent:bloodbank-pm"
 
