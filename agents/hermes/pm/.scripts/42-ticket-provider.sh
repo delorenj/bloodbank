@@ -96,13 +96,28 @@ PY
 
 # pj_write — merge board binding (optional) + this agent into .project.json.
 # args: set_provider(0|1) provider board_id workspace identifier team
+#       identifier_source
+#
+# identifier_source is REQUIRED whenever identifier is non-empty and must be
+# `provider` (read back out of the provider's own response) or `proposed` (a
+# local prefix the provider never confirmed, e.g. the string Trello echoes back
+# because Trello mints no key). There is deliberately no third option and no
+# default: an unstamped identifier is refused outright, so no locally-computed
+# string can ever land in .project.json wearing the authority of a live board.
 pj_write() {
   REPO="$REPO" REPO_ROOT="$REPO_ROOT" AGENT_ID="$AGENT_ID" ROLE="$ROLE" \
   ROLE_DIR_REL="$ROLE_DIR_REL" PROJECT_DESC="${PROJECT_DESC:-}" \
   python3 - "$PROJECT_JSON" "$@" <<'PY'
+import datetime
 import errno
 import sys, os, json, pathlib, stat, tempfile
-(path, set_provider, provider, board_id, workspace, identifier, team) = sys.argv[1:8]
+(path, set_provider, provider, board_id, workspace, identifier, team,
+ identifier_source) = sys.argv[1:9]
+if identifier and identifier_source not in ("provider", "proposed"):
+    raise SystemExit(
+        "refusing to persist ticket_provider.identifier %r with source %r: "
+        "every identifier must be stamped provider|proposed" % (identifier, identifier_source)
+    )
 p = pathlib.Path(path)
 if p.is_symlink():
     raise SystemExit(f"refusing .project.json symlink: {p}")
@@ -124,7 +139,17 @@ if set_provider == "1":
     tp = d.setdefault("ticket_provider", {})
     tp["type"] = provider
     if workspace:  tp["workspace"] = workspace
-    if identifier: tp["identifier"] = identifier
+    if identifier:
+        tp["identifier"] = identifier
+        tp["identifier_source"] = identifier_source
+        if identifier_source == "provider":
+            tp["identifier_fetched_at"] = (
+                datetime.datetime.now(datetime.timezone.utc)
+                .isoformat(timespec="milliseconds")
+                .replace("+00:00", "Z")
+            )
+        else:
+            tp.pop("identifier_fetched_at", None)
     if board_id:   tp["board_id"] = board_id
     if team:       tp["team"] = team
     tp.pop("board_url", None)
@@ -199,6 +224,7 @@ SOT_TYPE="$(pj ticket_provider.type)"
 SOT_BOARD_ID="$(pj ticket_provider.board_id)"
 SOT_WS="$(pj ticket_provider.workspace)"
 SOT_IDENT="$(pj ticket_provider.identifier)"
+SOT_IDENT_SOURCE="$(pj ticket_provider.identifier_source)"
 SOT_TEAM="$(pj ticket_provider.team)"
 
 # role.yaml provider comes from copier --data (the operator's pjangler choice).
@@ -212,15 +238,21 @@ if [ -n "$SOT_BOARD_ID" ]; then
   fi
   log "[42] binding $AGENT_ID to existing repo board (provider=$PROVIDER, id=$SOT_BOARD_ID)"
   LIVE_IDENT="$SOT_IDENT"
+  # An identifier already sitting in .project.json is only as trustworthy as
+  # the source recorded beside it. A record written before sources existed
+  # carries none, and an unsourced identifier is a proposal — not a fact.
+  IDENT_SOURCE=""
+  [ -z "$LIVE_IDENT" ] || IDENT_SOURCE="${SOT_IDENT_SOURCE:-proposed}"
   if [ "$PROVIDER" = plane ]; then
     OUT="$(tp resolve)" || die "existing Plane board could not be validated"
     LIVE_IDENT="$(printf '%s' "$OUT" | python3 -c 'import sys,json
 try: print(str(json.load(sys.stdin).get("identifier") or ""))
 except Exception: print("")')"
     [ -n "$LIVE_IDENT" ] || die "existing Plane board has no authoritative live identifier"
+    IDENT_SOURCE=provider
   fi
   mirror_to_role_yaml "$PROVIDER" "$SOT_BOARD_ID" "$SOT_WS" "$LIVE_IDENT" "$SOT_TEAM"
-  pj_write 1 "$PROVIDER" "$SOT_BOARD_ID" "$SOT_WS" "$LIVE_IDENT" "$SOT_TEAM"
+  pj_write 1 "$PROVIDER" "$SOT_BOARD_ID" "$SOT_WS" "$LIVE_IDENT" "$SOT_TEAM" "$IDENT_SOURCE"
   mark_done 42-ticket-provider
   exit 0
 fi
@@ -231,7 +263,9 @@ log "[42] no board in .project.json — bootstrapping a repo board (provider: $P
 
 # Identifier PROPOSAL for a brand-new board only. It is sent to the provider in
 # the create request and is NEVER persisted as though it were confirmed: every
-# write below uses LIVE_IDENT, read back from the provider's own response.
+# write below uses LIVE_IDENT, taken from the provider's own response, carrying
+# the source that response earns it (`provider` where the provider mints the
+# identifier, `proposed` where — as with Trello — it only echoes ours back).
 PROPOSED_RAW=$(printf '%s' "$REPO" | tr -cd '[:alnum:]' | tr '[:lower:]' '[:upper:]')
 while [ ${#PROPOSED_RAW} -lt 2 ]; do PROPOSED_RAW="${PROPOSED_RAW}X"; done
 PROPOSED_IDENT="${SOT_IDENT:-${PROPOSED_RAW:0:4}}"
@@ -242,24 +276,28 @@ DESC="Ticket board for $REPO"
 
 case "$PROVIDER" in
   linear)
+    # Linear DOES mint an authoritative identifier — the team key — so nothing
+    # here ever persists the local proposal. Without a live team read there is
+    # no identifier to record, and the record simply carries none.
     if [[ -z "${LINEAR_API_KEY:-}" ]]; then
       warn "[42] LINEAR_API_KEY not set; set role.yaml/.project.json ticket_provider.team and re-run ./.scripts/42-ticket-provider.sh"
-      pj_write 1 linear "" "" "$PROPOSED_IDENT" "$SOT_TEAM"
+      pj_write 1 linear "" "" "" "$SOT_TEAM" ""
       mark_done 42-ticket-provider; exit 0
     fi
     OUT="$(tp resolve 2>/dev/null || true)"
     BID="$(printf '%s' "$OUT" | python3 -c 'import sys,json
 try: print(json.load(sys.stdin).get("board_id",""))
 except Exception: print("")')"
-    BURL="$(printf '%s' "$OUT" | python3 -c 'import sys,json
-try: print(json.load(sys.stdin).get("board_url",""))
+    LIVE_IDENT="$(printf '%s' "$OUT" | python3 -c 'import sys,json
+try: print(str(json.load(sys.stdin).get("identifier") or ""))
 except Exception: print("")')"
     if [ -n "$BID" ]; then
-      mirror_to_role_yaml linear "$BID" "" "$PROPOSED_IDENT" "$SOT_TEAM"
-      pj_write 1 linear "$BID" "" "$PROPOSED_IDENT" "$SOT_TEAM"
+      [ -n "$LIVE_IDENT" ] || die "linear resolved a team with no authoritative key"
+      mirror_to_role_yaml linear "$BID" "" "$LIVE_IDENT" "$SOT_TEAM"
+      pj_write 1 linear "$BID" "" "$LIVE_IDENT" "$SOT_TEAM" provider
     else
       warn "[42] linear resolve returned no board; set ticket_provider.team and re-run"
-      pj_write 1 linear "" "" "$PROPOSED_IDENT" "$SOT_TEAM"
+      pj_write 1 linear "" "" "" "$SOT_TEAM" ""
     fi
     ;;
 
@@ -269,20 +307,32 @@ except Exception: print("")')"
       warn "[42] $KEYVAR not set; skipping board creation. Set creds and re-run ./.scripts/42-ticket-provider.sh"
       # Deferred: no board was created, so there is no confirmed identifier.
       # Persist nothing rather than freezing the proposal into .project.json.
-      pj_write 1 "$PROVIDER" "" "${SOT_WS:-$PLANE_WORKSPACE}" "" ""
+      pj_write 1 "$PROVIDER" "" "${SOT_WS:-$PLANE_WORKSPACE}" "" "" ""
       mark_done 42-ticket-provider; exit 0
     fi
     OUT="$(tp create_board "$NAME" "$PROPOSED_IDENT" "$DESC")" || die "create_board failed for $PROVIDER"
     BID="$(printf '%s' "$OUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("board_id",""))')"
-    BURL="$(printf '%s' "$OUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("board_url",""))')"
     LIVE_IDENT="$(printf '%s' "$OUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("identifier","") or "")')"
     WS="${SOT_WS:-$PLANE_WORKSPACE}"
     [ "$PROVIDER" = trello ] && WS=""
-    [ "$PROVIDER" != plane ] || [ -n "$LIVE_IDENT" ] \
-      || die "created/bound Plane board has no authoritative live identifier"
-    [ -n "$LIVE_IDENT" ] || LIVE_IDENT="$PROPOSED_IDENT"
+    case "$PROVIDER" in
+      plane)
+        # Plane mints the identifier and hands it back on create; anything else
+        # is a guess and must not be written.
+        [ -n "$LIVE_IDENT" ] \
+          || die "created/bound Plane board has no authoritative live identifier"
+        IDENT_SOURCE=provider
+        ;;
+      trello)
+        # Trello mints no key. create_board echoes back the prefix it was
+        # handed, which confirms what the board is BOUND under — not a value
+        # Trello chose. Record it stamped as the proposal it is, so nothing
+        # downstream can read it as provider truth.
+        IDENT_SOURCE=proposed
+        ;;
+    esac
     mirror_to_role_yaml "$PROVIDER" "$BID" "$WS" "$LIVE_IDENT" ""
-    pj_write 1 "$PROVIDER" "$BID" "$WS" "$LIVE_IDENT" ""
+    pj_write 1 "$PROVIDER" "$BID" "$WS" "$LIVE_IDENT" "" "$IDENT_SOURCE"
     ;;
 
   *) die "unknown ticket provider: $PROVIDER (expected linear|plane|trello)" ;;
