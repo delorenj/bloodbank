@@ -9,7 +9,7 @@ receipt ledger.
 ## Contract family
 
 All messages are CloudEvents 1.0 events on
-`bloodbank.evt.v1.portfolio.<entity>.<action>`. Repository, Plane project,
+`bloodbank.evt.portfolio.<entity>.<action>`. Repository, Plane project,
 ticket, work, delegation, lease, and agent identities appear only in `data`.
 Every payload requires `portfolio_id`, `target_agent_id`, `correlation_id`,
 `causation_id`, `occurred_at`, and `idempotency_key`. Correlation, causation,
@@ -24,7 +24,7 @@ and idempotency are repeated at envelope level and must match exactly.
 | Three-slot scheduler | `capacity.recorded`, `lease.granted`, `lease.released`, `lease.expired` |
 
 The Director still invokes an agent through the existing command
-`bloodbank.cmd.v1.agent.invocation.start`; the fleet-shared Hermes gateway keeps
+`bloodbank.cmd.agent.invocation.start`; the fleet-shared Hermes gateway keeps
 exclusive ownership of that command. `work.delegated` records the portfolio
 decision and never substitutes for the invocation command.
 
@@ -81,7 +81,7 @@ stream, or network is reported as a residual runtime gate.
   the exact v2 maintenance failure subject. A portfolio-specific
   query/projection is separate downstream work.
 - **Fleet Hermes gateway:** it filters only
-  `bloodbank.cmd.v1.agent.invocation.start`; these events neither collide with
+  `bloodbank.cmd.agent.invocation.start`; these events neither collide with
   nor change that command consumer. Producing portfolio facts from gateway
   completion hooks is separate downstream work.
 - **Runtime scope:** the transport harness is a bounded test publisher and

@@ -11,7 +11,7 @@ migration. It does not build or publish events. It verifies the same HMAC and
 relays the original bytes and signature to n8n:
 
     Plane -> compatibility relay -> n8n Webhook -> Plane to Bloodbank node
-                                               -> bloodbank.evt.v1.repo.*
+                                               -> bloodbank.evt.repo.*
 
 All live Plane webhooks now call `https://n8n.delo.sh/webhook/plane` directly
 with per-webhook HMAC secrets. Do not install this relay for normal operation.
@@ -20,12 +20,12 @@ with per-webhook HMAC secrets. Do not install this relay for normal operation.
 
 | Plane provenance | Canonical CloudEvent | n8n trigger label |
 | --- | --- | --- |
-| plane.board.created | bloodbank.v1.repo.board.created | On Board Created |
-| plane.ticket.created | bloodbank.v1.repo.task.created | On Ticket Created |
-| plane.ticket.updated | bloodbank.v1.repo.task.updated | On Ticket Updated |
-| plane.ticket.transitioned | bloodbank.v1.repo.task.updated | On Ticket Transitioned |
-| plane.ticket.commented | bloodbank.v1.repo.task.appended | On Ticket Commented |
-| plane.ticket.deleted | bloodbank.v1.repo.task.updated | On Ticket Deleted |
+| plane.board.created | bloodbank.repo.board.created | On Board Created |
+| plane.ticket.created | bloodbank.repo.task.created | On Ticket Created |
+| plane.ticket.updated | bloodbank.repo.task.updated | On Ticket Updated |
+| plane.ticket.transitioned | bloodbank.repo.task.updated | On Ticket Transitioned |
+| plane.ticket.commented | bloodbank.repo.task.appended | On Ticket Commented |
+| plane.ticket.deleted | bloodbank.repo.task.updated | On Ticket Deleted |
 
 Provider names intentionally remain in data.provider_event_type and the n8n
 binding alias. Bloodbank wire types remain provider-neutral per the event naming

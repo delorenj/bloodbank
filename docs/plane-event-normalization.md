@@ -27,7 +27,7 @@ Plane (33god or automaticai workspace)
        2. verify X-Plane-Signature over the raw body
        3. normalize Plane create/update/delete actions
        4. publish one canonical event
-  -> NATS bloodbank.evt.v1.repo.*
+  -> NATS bloodbank.evt.repo.*
   -> Candystore durable event projection
 ```
 
@@ -66,12 +66,12 @@ boards.
 
 | Plane webhook | Provenance name | Bloodbank type | Bloodbank subject |
 | --- | --- | --- | --- |
-| project / create | plane.board.created | bloodbank.v1.repo.board.created | bloodbank.evt.v1.repo.board.created |
-| issue / create | plane.ticket.created | bloodbank.v1.repo.task.created | bloodbank.evt.v1.repo.task.created |
-| issue / update | plane.ticket.updated | bloodbank.v1.repo.task.updated | bloodbank.evt.v1.repo.task.updated |
-| issue / update with state activity | plane.ticket.transitioned | bloodbank.v1.repo.task.updated | bloodbank.evt.v1.repo.task.updated |
-| issue_comment / create | plane.ticket.commented | bloodbank.v1.repo.task.appended | bloodbank.evt.v1.repo.task.appended |
-| issue / delete | plane.ticket.deleted | bloodbank.v1.repo.task.updated | bloodbank.evt.v1.repo.task.updated |
+| project / create | plane.board.created | bloodbank.repo.board.created | bloodbank.evt.repo.board.created |
+| issue / create | plane.ticket.created | bloodbank.repo.task.created | bloodbank.evt.repo.task.created |
+| issue / update | plane.ticket.updated | bloodbank.repo.task.updated | bloodbank.evt.repo.task.updated |
+| issue / update with state activity | plane.ticket.transitioned | bloodbank.repo.task.updated | bloodbank.evt.repo.task.updated |
+| issue_comment / create | plane.ticket.commented | bloodbank.repo.task.appended | bloodbank.evt.repo.task.appended |
+| issue / delete | plane.ticket.deleted | bloodbank.repo.task.updated | bloodbank.evt.repo.task.updated |
 
 The Plane provenance name lives in data.provider_event_type and is exposed as a
 first-class n8n trigger alias, such as On Ticket Created. It does not become a

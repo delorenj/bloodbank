@@ -19,7 +19,7 @@ repository, not a duplicate Bloodbank stack:
 The root-managed event flow is:
 
 1. Bloodbank producers publish CloudEvents to NATS/Dapr. The event stream admits
-   `bloodbank.evt.v1.>` plus explicitly registered v2 subjects.
+   `bloodbank.evt.>` plus explicitly registered v2 subjects.
 2. `BLOODBANK_EVENTS` stores those messages in NATS JetStream.
 3. `candystore-daprd` mounts Candystore's
    `dapr-components:/components:ro`.
@@ -72,7 +72,7 @@ conform to `docs/event-naming.md` and include the canonical top-level fields
 required by Bloodbank:
 
 - `type`: the schema-approved Bloodbank type, normally
-  `bloodbank.v1.<domain>.<entity>.<action>`
+  `bloodbank.<domain>.<entity>.<action>`
 - `subject`: the matching schema-approved Bloodbank subject, normally
   `bloodbank.<evt|cmd|rpy>.v1.<domain>.<entity>.<action>`
 - `domain`: must match the third token of `type`
