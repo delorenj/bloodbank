@@ -209,7 +209,7 @@ async def test_default_outbox_publish_keeps_event_unpublished():
                 OutboxEvent(
                     id=123,
                     lifecycle_id="lc_1",
-                    event_type="bloodbank.v1.lifecycle.status.updated",
+                    event_type="bloodbank.lifecycle.status.updated",
                 )
             ]
 

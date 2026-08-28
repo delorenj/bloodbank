@@ -30,7 +30,7 @@ class OutboxPublisher:
         raise RuntimeError("outbox publisher is not configured")
         # TODO: integrate with bloodbank publisher
         # await nats_publish(
-        #     subject=f"bloodbank.evt.v1.{event.event_type}",
+        #     subject=event.event_type.replace("bloodbank.", "bloodbank.evt.", 1),
         #     payload=event.payload,
         #     headers=event.headers,
         # )

@@ -262,7 +262,7 @@ def reconcile(
         outbox_events.append(
             OutboxEvent(
                 lifecycle_id=lifecycle_id,
-                event_type="bloodbank.v1.lifecycle.status.updated",
+                event_type="bloodbank.lifecycle.status.updated",
                 payload={
                     "lifecycle_id": lifecycle_id,
                     "repo": "",  # filled by DB layer
@@ -291,7 +291,7 @@ def reconcile(
         outbox_events.append(
             OutboxEvent(
                 lifecycle_id=lifecycle_id,
-                event_type="bloodbank.v1.lifecycle.blocker.detected",
+                event_type="bloodbank.lifecycle.blocker.detected",
                 payload={
                     "lifecycle_id": lifecycle_id,
                     "blocker": _blocker_to_json(blocker),

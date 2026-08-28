@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Heartbeat tick producer (v1 contract).
+"""Heartbeat tick producer.
 
-Long-running service that emits `bloodbank.v1.system.heartbeat.received`
+Long-running service that emits `bloodbank.system.heartbeat.received`
 events through Dapr pub/sub on a configurable interval. Each tick carries
 a monotonic sequence number, an instance-stable producer_id, and the
 producer's start time so consumers can detect restarts.
 
-Schema: bloodbank/schemas/bloodbank/v1/system/heartbeat.received.v1.json
+Schema: bloodbank/schemas/bloodbank/system/heartbeat.received.json
 (extends cloudevent_base.v1.json). Envelope shape follows
 bloodbank/docs/event-naming.md.
 
@@ -15,7 +15,7 @@ Configuration via env vars:
   DAPR_HTTP_PORT       Port of the daprd HTTP API (default: 3500)
   DAPR_PUBSUB          Dapr pubsub component name (default: bloodbank-pubsub)
   HEARTBEAT_INTERVAL   Tick interval in seconds (default: 5)
-  HEARTBEAT_TOPIC      Dapr topic / NATS subject (default: bloodbank.evt.v1.system.heartbeat.received)
+  HEARTBEAT_TOPIC      Dapr topic / NATS subject (default: bloodbank.evt.system.heartbeat.received)
   PRODUCER_ID          Stable per-instance id (default: heartbeat-tick:<random>)
   LOG_LEVEL            INFO / DEBUG (default: INFO)
 
@@ -43,12 +43,12 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-CE_TYPE = "bloodbank.v1.system.heartbeat.received"
-SUBJECT = "bloodbank.evt.v1.system.heartbeat.received"
+CE_TYPE = "bloodbank.system.heartbeat.received"
+SUBJECT = "bloodbank.evt.system.heartbeat.received"
 
 
 def build_envelope(*, tick_seq: int, producer_id: str, started_at: str, interval_ms: int) -> dict:
-    """Construct a v1 Bloodbank CloudEvents envelope per docs/event-naming.md."""
+    """Construct a Bloodbank CloudEvents envelope per docs/event-naming.md."""
     event_id = str(uuid.uuid4())
     correlation_id = str(uuid.uuid4())
     return {

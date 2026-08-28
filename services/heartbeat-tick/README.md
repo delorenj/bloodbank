@@ -59,7 +59,7 @@ story for containers land.
 | `DAPR_HTTP_HOST` | `daprd-heartbeat` | Sidecar host on compose network |
 | `DAPR_HTTP_PORT` | `3500` | Sidecar HTTP port |
 | `DAPR_PUBSUB` | `bloodbank-pubsub` | Dapr pubsub component |
-| `HEARTBEAT_TOPIC` | `event.system.heartbeat.tick` | Topic = NATS subject |
+| `HEARTBEAT_TOPIC` | `bloodbank.evt.system.heartbeat.received` | Topic = NATS subject |
 | `HEARTBEAT_INTERVAL` | `5` | Tick interval (seconds) |
 | `PRODUCER_ID` | `heartbeat-tick:<random>` | Stable per-instance id |
 | `LOG_LEVEL` | `INFO` | Standard Python logging level |

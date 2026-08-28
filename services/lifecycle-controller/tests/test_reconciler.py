@@ -213,7 +213,7 @@ class TestReconcileDrumjangler:
         assert result.current_state.status == LifecycleStatus.BLOCKED
         assert result.current_state.health == LifecycleHealth.BLOCKED
         # Should emit lifecycle.status.updated
-        assert any(e.event_type == "bloodbank.v1.lifecycle.status.updated" for e in result.outbox_events)
+        assert any(e.event_type == "bloodbank.lifecycle.status.updated" for e in result.outbox_events)
 
     def test_drumjangler_stalled_no_commits(self):
         """No commits in 2+ hours despite runnable work."""
