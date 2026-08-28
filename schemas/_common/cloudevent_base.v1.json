@@ -28,15 +28,15 @@
     },
     "type": {
       "type": "string",
-      "pattern": "^bloodbank\\.v[0-9]+\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
+      "pattern": "^bloodbank\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
       "minLength": 1,
-      "description": "Bloodbank Event Naming Contract v1 type. Shape: bloodbank.v<N>.<domain>.<entity>.<action>. Exactly 5 dotted tokens; domain/entity/action come from the allowlists in bloodbank/docs/event-naming.md §6-§8. Provider/CLI/model names are BANNED here and live in 'actor' instead. The NATS subject is bloodbank.<kind>.v<N>.<domain>.<entity>.<action> where <kind> in {evt, cmd, rpy}.",
+      "description": "Bloodbank Event Naming Contract v1 type. Shape: bloodbank.<domain>.<entity>.<action>. Exactly 4 dotted tokens; domain/entity/action come from the allowlists in bloodbank/docs/event-naming.md §6-§8. Provider/CLI/model names are BANNED here and live in 'actor' instead. The NATS subject is bloodbank.<kind>.<domain>.<entity>.<action> where <kind> in {evt, cmd, rpy}.",
       "examples": [
-        "bloodbank.v1.conversation.message.appended",
-        "bloodbank.v1.llm.response.received",
-        "bloodbank.v1.cli.session.started",
-        "bloodbank.v1.agent.invocation.completed",
-        "bloodbank.v1.system.heartbeat.received"
+        "bloodbank.conversation.message.appended",
+        "bloodbank.llm.response.received",
+        "bloodbank.cli.session.started",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.system.heartbeat.received"
       ]
     },
     "subject": {
@@ -63,7 +63,7 @@
       "format": "uri-reference",
       "description": "Apicurio registry URI identifying the schema that validates data. Convention: 'apicurio://holyfields/<type>/versions/<n>'.",
       "examples": [
-        "apicurio://holyfields/bloodbank.v1.llm.response.received/versions/1"
+        "apicurio://holyfields/bloodbank.llm.response.received/versions/1"
       ]
     },
     "correlationid": {
@@ -98,16 +98,16 @@
     "domain": {
       "type": "string",
       "minLength": 1,
-      "description": "The domain this event belongs to. MUST match segment 3 of 'type' for Bloodbank v1 events.",
+      "description": "The domain this event belongs to. MUST match segment 2 of 'type'.",
       "examples": ["conversation", "agent", "llm", "cli", "tool", "system"]
     },
     "schemaref": {
       "type": "string",
       "minLength": 1,
-      "description": "Short schema reference, distinct from dataschema (which is the full URI). For Bloodbank v1 events: '<type>.v<N>' (e.g. 'bloodbank.v1.llm.response.received.v1').",
+      "description": "Short schema reference, distinct from dataschema (which is the full URI). For Bloodbank events: '<type>.v<N>' (e.g. 'bloodbank.llm.response.received.v1').",
       "examples": [
-        "bloodbank.v1.llm.response.received.v1",
-        "bloodbank.v1.conversation.message.appended.v1"
+        "bloodbank.llm.response.received.v1",
+        "bloodbank.conversation.message.appended.v1"
       ]
     },
     "traceparent": {
