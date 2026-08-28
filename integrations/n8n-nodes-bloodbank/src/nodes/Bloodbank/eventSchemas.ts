@@ -19,7 +19,7 @@ export interface EventSchema {
 
 const schemas: EventSchema[] = [
   {
-    "type": "bloodbank.v1.agent.invocation.completed",
+    "type": "bloodbank.agent.invocation.completed",
     "kind": "event",
     "domain": "agent",
     "title": "Agent Invocation Completed Event",
@@ -46,7 +46,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.agent.invocation.failed",
+    "type": "bloodbank.agent.invocation.failed",
     "kind": "event",
     "domain": "agent",
     "title": "Agent Invocation Failed Event",
@@ -73,11 +73,11 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.agent.invocation.start",
+    "type": "bloodbank.agent.invocation.start",
     "kind": "command",
     "domain": "agent",
     "title": "Agent Invocation Start Command",
-    "description": "Canonical PM->agent invocation command. Producers publish this envelope on bloodbank.cmd.v1.agent.invocation.start and routers/consumers dispatch using data.target_agent_id.",
+    "description": "Canonical PM->agent invocation command. Producers publish this envelope on bloodbank.cmd.agent.invocation.start and routers/consumers dispatch using data.target_agent_id.",
     "dataFields": [
       {
         "name": "target_agent_id",
@@ -112,7 +112,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.agent.invocation.started",
+    "type": "bloodbank.agent.invocation.started",
     "kind": "event",
     "domain": "agent",
     "title": "Agent Invocation Started Event",
@@ -145,7 +145,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.agent.session.ended",
+    "type": "bloodbank.agent.session.ended",
     "kind": "event",
     "domain": "agent",
     "title": "Agent Session Ended Event",
@@ -166,7 +166,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.agent.session.started",
+    "type": "bloodbank.agent.session.started",
     "kind": "event",
     "domain": "agent",
     "title": "Agent Session Started Event",
@@ -187,7 +187,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.agent.tool.completed",
+    "type": "bloodbank.agent.tool.completed",
     "kind": "event",
     "domain": "agent",
     "title": "Agent Tool Completed Event",
@@ -226,7 +226,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.agent.tool.invoked",
+    "type": "bloodbank.agent.tool.invoked",
     "kind": "event",
     "domain": "agent",
     "title": "Agent Tool Invoked Event",
@@ -253,7 +253,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.agent.tool.requested",
+    "type": "bloodbank.agent.tool.requested",
     "kind": "event",
     "domain": "agent",
     "title": "Agent Tool Requested Event",
@@ -286,7 +286,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.attendance.clock.clock_in",
+    "type": "bloodbank.attendance.clock.clock_in",
     "kind": "command",
     "domain": "attendance",
     "title": "Attendance Explicit Clock In Command",
@@ -319,7 +319,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.attendance.clock.clock_out",
+    "type": "bloodbank.attendance.clock.clock_out",
     "kind": "command",
     "domain": "attendance",
     "title": "Attendance Explicit Clock Out Command",
@@ -352,7 +352,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.attendance.clock.clocked_in",
+    "type": "bloodbank.attendance.clock.clocked_in",
     "kind": "event",
     "domain": "attendance",
     "title": "Attendance Clocked In Event",
@@ -391,7 +391,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.attendance.clock.clocked_out",
+    "type": "bloodbank.attendance.clock.clocked_out",
     "kind": "event",
     "domain": "attendance",
     "title": "Attendance Clocked Out Event",
@@ -430,7 +430,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.attendance.clock.detected",
+    "type": "bloodbank.attendance.clock.detected",
     "kind": "event",
     "domain": "attendance",
     "title": "Attendance Clock State Detected Event",
@@ -487,7 +487,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.attendance.clock.request",
+    "type": "bloodbank.attendance.clock.request",
     "kind": "command",
     "domain": "attendance",
     "title": "Attendance Clock State Request Command",
@@ -520,7 +520,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.attendance.clock.toggle",
+    "type": "bloodbank.attendance.clock.toggle",
     "kind": "command",
     "domain": "attendance",
     "title": "Attendance Clock Toggle Command",
@@ -553,7 +553,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.audio.file.received",
+    "type": "bloodbank.audio.file.received",
     "kind": "event",
     "domain": "audio",
     "title": "Audio File Received Event",
@@ -610,7 +610,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.audio.transcription.completed",
+    "type": "bloodbank.audio.transcription.completed",
     "kind": "event",
     "domain": "audio",
     "title": "Audio Transcription Completed Event",
@@ -691,7 +691,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.audio.transcription.failed",
+    "type": "bloodbank.audio.transcription.failed",
     "kind": "event",
     "domain": "audio",
     "title": "Audio Transcription Failed Event",
@@ -742,7 +742,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.audio.transcription.start",
+    "type": "bloodbank.audio.transcription.start",
     "kind": "command",
     "domain": "audio",
     "title": "Audio Transcription Start Command",
@@ -787,11 +787,11 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.audio.transcription.started",
+    "type": "bloodbank.audio.transcription.started",
     "kind": "event",
     "domain": "audio",
     "title": "Audio Transcription Started Event",
-    "description": "A transcription job began. Emitted by the transcription service after it accepts a bloodbank.v1.audio.transcription.start command (or after it picks up a file.received event in autonomous mode). Use ordering_key 'transcription:<transcriptio",
+    "description": "A transcription job began. Emitted by the transcription service after it accepts a bloodbank.audio.transcription.start command (or after it picks up a file.received event in autonomous mode). Use ordering_key 'transcription:<transcription_i",
     "dataFields": [
       {
         "name": "transcription_id",
@@ -832,7 +832,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.cli.process.exited",
+    "type": "bloodbank.cli.process.exited",
     "kind": "event",
     "domain": "cli",
     "title": "Cli Process Exited Event",
@@ -859,7 +859,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.cli.process.spawned",
+    "type": "bloodbank.cli.process.spawned",
     "kind": "event",
     "domain": "cli",
     "title": "Cli Process Spawned Event",
@@ -886,7 +886,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.cli.session.ended",
+    "type": "bloodbank.cli.session.ended",
     "kind": "event",
     "domain": "cli",
     "title": "Cli Session Ended Event",
@@ -907,7 +907,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.cli.session.started",
+    "type": "bloodbank.cli.session.started",
     "kind": "event",
     "domain": "cli",
     "title": "Cli Session Started Event",
@@ -928,7 +928,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.cli.stderr.appended",
+    "type": "bloodbank.cli.stderr.appended",
     "kind": "event",
     "domain": "cli",
     "title": "Cli Stderr Appended Event",
@@ -961,7 +961,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.cli.stdout.appended",
+    "type": "bloodbank.cli.stdout.appended",
     "kind": "event",
     "domain": "cli",
     "title": "Cli Stdout Appended Event",
@@ -994,7 +994,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.conversation.message.appended",
+    "type": "bloodbank.conversation.message.appended",
     "kind": "event",
     "domain": "conversation",
     "title": "Conversation Message Appended Event",
@@ -1033,7 +1033,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.conversation.thread.created",
+    "type": "bloodbank.conversation.thread.created",
     "kind": "event",
     "domain": "conversation",
     "title": "Conversation Thread Created Event",
@@ -1048,7 +1048,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.conversation.thread.resumed",
+    "type": "bloodbank.conversation.thread.resumed",
     "kind": "event",
     "domain": "conversation",
     "title": "Conversation Thread Resumed Event",
@@ -1063,7 +1063,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.conversation.turn.completed",
+    "type": "bloodbank.conversation.turn.completed",
     "kind": "event",
     "domain": "conversation",
     "title": "Conversation Turn Completed Event",
@@ -1090,7 +1090,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.conversation.turn.started",
+    "type": "bloodbank.conversation.turn.started",
     "kind": "event",
     "domain": "conversation",
     "title": "Conversation Turn Started Event",
@@ -1117,7 +1117,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.curator.file.failed",
+    "type": "bloodbank.curator.file.failed",
     "kind": "event",
     "domain": "curator",
     "title": "Curator File Failed Event",
@@ -1150,7 +1150,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.curator.file.flagged",
+    "type": "bloodbank.curator.file.flagged",
     "kind": "event",
     "domain": "curator",
     "title": "Curator File Flagged Event",
@@ -1195,7 +1195,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.curator.file.received",
+    "type": "bloodbank.curator.file.received",
     "kind": "event",
     "domain": "curator",
     "title": "Curator File Received Event",
@@ -1246,7 +1246,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.curator.file.routed",
+    "type": "bloodbank.curator.file.routed",
     "kind": "event",
     "domain": "curator",
     "title": "Curator File Routed Event",
@@ -1297,7 +1297,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.account.detected",
+    "type": "bloodbank.finance.account.detected",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Account Detected Event",
@@ -1336,7 +1336,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.paycheck.detected",
+    "type": "bloodbank.finance.paycheck.detected",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Paycheck Detected Event",
@@ -1369,7 +1369,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.projection.breached",
+    "type": "bloodbank.finance.projection.breached",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Projection Breached Event",
@@ -1426,7 +1426,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.subscription.canceled",
+    "type": "bloodbank.finance.subscription.canceled",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Subscription Canceled Event",
@@ -1453,7 +1453,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.subscription.detected",
+    "type": "bloodbank.finance.subscription.detected",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Subscription Detected Event",
@@ -1498,7 +1498,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.subscription.updated",
+    "type": "bloodbank.finance.subscription.updated",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Subscription Updated Event",
@@ -1531,7 +1531,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.sync.completed",
+    "type": "bloodbank.finance.sync.completed",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Sync Completed Event",
@@ -1618,7 +1618,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.sync.failed",
+    "type": "bloodbank.finance.sync.failed",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Sync Failed Event",
@@ -1639,7 +1639,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.sync.started",
+    "type": "bloodbank.finance.sync.started",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Sync Started Event",
@@ -1660,7 +1660,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.transaction.flagged",
+    "type": "bloodbank.finance.transaction.flagged",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Transaction Flagged Event",
@@ -1705,7 +1705,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.transaction.recorded",
+    "type": "bloodbank.finance.transaction.recorded",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Transaction Recorded Event",
@@ -1738,7 +1738,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.finance.zombie_charge.detected",
+    "type": "bloodbank.finance.zombie_charge.detected",
     "kind": "event",
     "domain": "finance",
     "title": "Finance Zombie Charge Detected Event",
@@ -1783,7 +1783,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.lifecycle.checkpoint.reached",
+    "type": "bloodbank.lifecycle.checkpoint.reached",
     "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Checkpoint Reached Event",
@@ -1816,7 +1816,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.lifecycle.gate.opened",
+    "type": "bloodbank.lifecycle.gate.opened",
     "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Gate Opened Event",
@@ -1843,7 +1843,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.lifecycle.gate.resolved",
+    "type": "bloodbank.lifecycle.gate.resolved",
     "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Gate Resolved Event",
@@ -1876,7 +1876,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.lifecycle.mission.created",
+    "type": "bloodbank.lifecycle.mission.created",
     "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Created Event",
@@ -1933,7 +1933,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.lifecycle.roadmap.updated",
+    "type": "bloodbank.lifecycle.roadmap.updated",
     "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Roadmap Updated Event",
@@ -1972,7 +1972,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.lifecycle.status.updated",
+    "type": "bloodbank.lifecycle.status.updated",
     "kind": "event",
     "domain": "lifecycle",
     "title": "Lifecycle Status Updated Event",
@@ -2035,7 +2035,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.llm.request.sent",
+    "type": "bloodbank.llm.request.sent",
     "kind": "event",
     "domain": "llm",
     "title": "Llm Request Sent Event",
@@ -2056,7 +2056,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.llm.response.received",
+    "type": "bloodbank.llm.response.received",
     "kind": "event",
     "domain": "llm",
     "title": "Llm Response Received Event",
@@ -2083,7 +2083,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.portfolio.approval.requested",
+    "type": "bloodbank.portfolio.approval.requested",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Approval Requested Event",
@@ -2091,7 +2091,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.approval.resolved",
+    "type": "bloodbank.portfolio.approval.resolved",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Approval Resolved Event",
@@ -2099,7 +2099,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.capacity.recorded",
+    "type": "bloodbank.portfolio.capacity.recorded",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Capacity Snapshot Recorded Event",
@@ -2107,7 +2107,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.escalation.raised",
+    "type": "bloodbank.portfolio.escalation.raised",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Escalation Raised Event",
@@ -2115,7 +2115,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.escalation.resolved",
+    "type": "bloodbank.portfolio.escalation.resolved",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Escalation Resolved Event",
@@ -2123,7 +2123,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.intake.received",
+    "type": "bloodbank.portfolio.intake.received",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Intake Received Event",
@@ -2131,7 +2131,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.intake.triaged",
+    "type": "bloodbank.portfolio.intake.triaged",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Intake Triaged Event",
@@ -2139,7 +2139,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.lease.expired",
+    "type": "bloodbank.portfolio.lease.expired",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Capacity Lease Expired Event",
@@ -2147,7 +2147,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.lease.granted",
+    "type": "bloodbank.portfolio.lease.granted",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Capacity Lease Granted Event",
@@ -2155,7 +2155,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.lease.released",
+    "type": "bloodbank.portfolio.lease.released",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Capacity Lease Released Event",
@@ -2163,7 +2163,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.receipt.recorded",
+    "type": "bloodbank.portfolio.receipt.recorded",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Terminal Receipt Recorded Event",
@@ -2171,7 +2171,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.work.delegated",
+    "type": "bloodbank.portfolio.work.delegated",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Work Delegated Event",
@@ -2179,7 +2179,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.portfolio.work.updated",
+    "type": "bloodbank.portfolio.work.updated",
     "kind": "event",
     "domain": "portfolio",
     "title": "Portfolio Work Updated Event",
@@ -2187,7 +2187,7 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
-    "type": "bloodbank.v1.repo.board.created",
+    "type": "bloodbank.repo.board.created",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Board Created Event",
@@ -2256,7 +2256,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.decision.recorded",
+    "type": "bloodbank.repo.decision.recorded",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Decision Recorded Event",
@@ -2289,7 +2289,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.intake.triaged",
+    "type": "bloodbank.repo.intake.triaged",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Intake Triaged Event",
@@ -2328,7 +2328,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.maintenance.completed",
+    "type": "bloodbank.repo.maintenance.completed",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Maintenance Completed Event",
@@ -2379,11 +2379,11 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.maintenance.failed",
+    "type": "bloodbank.repo.maintenance.failed",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Maintenance Failed Event",
-    "description": "A repository maintenance run failed provider evaluation, setup, or a live merge attempt.",
+    "description": "A repository maintenance run failed during setup, preflight, provider execution, a runner-owned action, or merge. Carries the failure phase and a bounded action-status collection.",
     "dataFields": [
       {
         "name": "schema_version",
@@ -2436,7 +2436,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.maintenance.started",
+    "type": "bloodbank.repo.maintenance.started",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Maintenance Started Event",
@@ -2487,7 +2487,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.skill.updated",
+    "type": "bloodbank.repo.skill.updated",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Skill Updated Event",
@@ -2544,7 +2544,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.task.appended",
+    "type": "bloodbank.repo.task.appended",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Task Appended Event",
@@ -2637,7 +2637,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.task.completed",
+    "type": "bloodbank.repo.task.completed",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Task Completed Event",
@@ -2688,7 +2688,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.task.created",
+    "type": "bloodbank.repo.task.created",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Task Created Event",
@@ -2799,7 +2799,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.task.recorded",
+    "type": "bloodbank.repo.task.recorded",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Task Recorded Event",
@@ -2862,7 +2862,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.repo.task.updated",
+    "type": "bloodbank.repo.task.updated",
     "kind": "event",
     "domain": "repo",
     "title": "Repo Task Updated Event",
@@ -2979,7 +2979,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.reporting.report.completed",
+    "type": "bloodbank.reporting.report.completed",
     "kind": "event",
     "domain": "reporting",
     "title": "Reporting Report Completed Event",
@@ -3036,7 +3036,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.reporting.report.failed",
+    "type": "bloodbank.reporting.report.failed",
     "kind": "event",
     "domain": "reporting",
     "title": "Reporting Report Failed Event",
@@ -3087,7 +3087,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.reporting.report.started",
+    "type": "bloodbank.reporting.report.started",
     "kind": "event",
     "domain": "reporting",
     "title": "Reporting Report Started Event",
@@ -3138,7 +3138,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.system.heartbeat.received",
+    "type": "bloodbank.system.heartbeat.received",
     "kind": "event",
     "domain": "system",
     "title": "System Heartbeat Received Event",
@@ -3159,7 +3159,7 @@ const schemas: EventSchema[] = [
     ]
   },
   {
-    "type": "bloodbank.v1.system.process.exited",
+    "type": "bloodbank.system.process.exited",
     "kind": "event",
     "domain": "system",
     "title": "System Process Exited Event",

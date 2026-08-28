@@ -49,7 +49,7 @@ test('signed Plane webhook traverses active n8n ingress and publishes canonical 
     servers: NATS_SERVER,
     name: 'n8n-plane-webhook-live-test',
   });
-  const subscription = connection.subscribe('bloodbank.evt.v1.repo.task.created');
+  const subscription = connection.subscribe('bloodbank.evt.repo.task.created');
   await connection.flush();
   let resolveEvent;
   const received = new Promise((resolve) => { resolveEvent = resolve; });
@@ -87,8 +87,8 @@ test('signed Plane webhook traverses active n8n ingress and publishes canonical 
     assert.equal(responseBody.provider_event_type, 'plane.ticket.created');
 
     const envelope = await deadline(received);
-    assert.equal(envelope.type, 'bloodbank.v1.repo.task.created');
-    assert.equal(envelope.subject, 'bloodbank.evt.v1.repo.task.created');
+    assert.equal(envelope.type, 'bloodbank.repo.task.created');
+    assert.equal(envelope.subject, 'bloodbank.evt.repo.task.created');
     assert.equal(envelope.source, 'urn:33god:integration:n8n:plane-webhook');
     assert.equal(envelope.producer, 'n8n-plane-webhook');
     assert.equal(envelope.actor.provider, 'plane');
@@ -123,7 +123,7 @@ test('invalid Plane signature is rejected before Bloodbank publication', async (
     servers: NATS_SERVER,
     name: 'n8n-plane-webhook-rejection-test',
   });
-  const subscription = connection.subscribe('bloodbank.evt.v1.repo.task.created');
+  const subscription = connection.subscribe('bloodbank.evt.repo.task.created');
   await connection.flush();
   let published = false;
   const consume = (async () => {

@@ -10,7 +10,7 @@ const {
 test('publisher builds a complete canonical event envelope', () => {
   const eventId = deterministicUuid('plane.ticket.created:ticket-1');
   const { subject, envelope } = buildEnvelope({
-    type: 'bloodbank.v1.repo.task.created',
+    type: 'bloodbank.repo.task.created',
     data: { repo: '33GOD', task_id: 'ticket-1', title: 'Test' },
     eventId,
     observedAt: '2026-08-26T12:34:56.000Z',
@@ -21,7 +21,7 @@ test('publisher builds a complete canonical event envelope', () => {
       provider_event_type: 'plane.ticket.created',
     },
   });
-  assert.equal(subject, 'bloodbank.evt.v1.repo.task.created');
+  assert.equal(subject, 'bloodbank.evt.repo.task.created');
   assert.equal(envelope.id, eventId);
   assert.equal(envelope.kind, 'event');
   assert.equal(envelope.domain, 'repo');
@@ -35,16 +35,16 @@ test('publisher builds a complete canonical event envelope', () => {
 });
 
 test('subject generation distinguishes events, commands, and replies', () => {
-  const type = 'bloodbank.v1.agent.invocation.start';
-  assert.equal(subjectFor(type, 'event'), 'bloodbank.evt.v1.agent.invocation.start');
-  assert.equal(subjectFor(type, 'command'), 'bloodbank.cmd.v1.agent.invocation.start');
-  assert.equal(subjectFor(type, 'reply'), 'bloodbank.rpy.v1.agent.invocation.start');
+  const type = 'bloodbank.agent.invocation.start';
+  assert.equal(subjectFor(type, 'event'), 'bloodbank.evt.agent.invocation.start');
+  assert.equal(subjectFor(type, 'command'), 'bloodbank.cmd.agent.invocation.start');
+  assert.equal(subjectFor(type, 'reply'), 'bloodbank.rpy.agent.invocation.start');
 });
 
 test('extensions cannot replace canonical envelope fields', () => {
   assert.throws(
     () => buildEnvelope({
-      type: 'bloodbank.v1.repo.task.created',
+      type: 'bloodbank.repo.task.created',
       data: { repo: '33GOD', title: 'Test' },
       extensions: { type: 'replacement' },
     }),

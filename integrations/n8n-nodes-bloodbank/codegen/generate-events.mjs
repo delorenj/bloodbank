@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generate src/nodes/Bloodbank/eventSchemas.ts from bloodbank/schemas/bloodbank/v1/**.
+// Generate src/nodes/Bloodbank/eventSchemas.ts from bloodbank/schemas/bloodbank/**.
 // This is what makes both publisher and consumer selections schema-backed: add
 // or change a schema, run `npm run codegen` (or `npm run deploy`), and the event
 // and command dropdowns update together.
@@ -8,8 +8,8 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-// package: bloodbank/integrations/n8n-nodes-bloodbank/ ; schemas: bloodbank/schemas/bloodbank/v1
-const schemasRoot = resolve(here, '..', '..', '..', 'schemas', 'bloodbank', 'v1');
+// package: bloodbank/integrations/n8n-nodes-bloodbank/ ; schemas: bloodbank/schemas/bloodbank
+const schemasRoot = resolve(here, '..', '..', '..', 'schemas', 'bloodbank');
 const outFile = resolve(here, '..', 'src', 'nodes', 'Bloodbank', 'eventSchemas.ts');
 
 function walk(dir) {

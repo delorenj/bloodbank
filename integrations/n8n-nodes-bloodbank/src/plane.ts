@@ -17,37 +17,37 @@ export const planeEventBindings: PlaneEventBinding[] = [
   {
     name: 'On Board Created (plane.board.created)',
     value: 'plane.board.created',
-    canonicalType: 'bloodbank.v1.repo.board.created',
+    canonicalType: 'bloodbank.repo.board.created',
     description: 'Plane project creation normalized to repo.board.created',
   },
   {
     name: 'On Ticket Created (plane.ticket.created)',
     value: 'plane.ticket.created',
-    canonicalType: 'bloodbank.v1.repo.task.created',
+    canonicalType: 'bloodbank.repo.task.created',
     description: 'Plane issue creation normalized to repo.task.created',
   },
   {
     name: 'On Ticket Updated (plane.ticket.updated)',
     value: 'plane.ticket.updated',
-    canonicalType: 'bloodbank.v1.repo.task.updated',
+    canonicalType: 'bloodbank.repo.task.updated',
     description: 'Non-state Plane issue update normalized to repo.task.updated',
   },
   {
     name: 'On Ticket Transitioned (plane.ticket.transitioned)',
     value: 'plane.ticket.transitioned',
-    canonicalType: 'bloodbank.v1.repo.task.updated',
+    canonicalType: 'bloodbank.repo.task.updated',
     description: 'Plane issue state transition normalized to repo.task.updated',
   },
   {
     name: 'On Ticket Commented (plane.ticket.commented)',
     value: 'plane.ticket.commented',
-    canonicalType: 'bloodbank.v1.repo.task.appended',
+    canonicalType: 'bloodbank.repo.task.appended',
     description: 'Plane issue comment normalized to repo.task.appended',
   },
   {
     name: 'On Ticket Deleted (plane.ticket.deleted)',
     value: 'plane.ticket.deleted',
-    canonicalType: 'bloodbank.v1.repo.task.updated',
+    canonicalType: 'bloodbank.repo.task.updated',
     description: 'Plane issue deletion normalized to a terminal repo.task.updated fact',
   },
 ];
@@ -259,7 +259,7 @@ export function normalizePlaneWebhook(
   if (event === 'project' && action === 'created') {
     const providerEventType = 'plane.board.created';
     return {
-      canonicalType: 'bloodbank.v1.repo.board.created',
+      canonicalType: 'bloodbank.repo.board.created',
       providerEventType,
       observedAt,
       orderingKey: `board:${route.boardId}`,
@@ -289,8 +289,8 @@ export function normalizePlaneWebhook(
           ? 'plane.ticket.transitioned'
           : 'plane.ticket.updated';
     const canonicalType = action === 'created'
-      ? 'bloodbank.v1.repo.task.created'
-      : 'bloodbank.v1.repo.task.updated';
+      ? 'bloodbank.repo.task.created'
+      : 'bloodbank.repo.task.updated';
     const currentState = data.state_detail ?? data.state;
     const previousState = activity.old_value ?? activity.previous_value;
     const normalizedFields = action === 'deleted' && !fields.length ? ['deleted'] : fields;
@@ -335,7 +335,7 @@ export function normalizePlaneWebhook(
     const providerEventType = 'plane.ticket.commented';
     const body = firstText(data.comment_html, data.comment_json, data.body, data.comment) ?? '';
     return {
-      canonicalType: 'bloodbank.v1.repo.task.appended',
+      canonicalType: 'bloodbank.repo.task.appended',
       providerEventType,
       observedAt,
       orderingKey: `task:${route.repo}:${ticketId}`,

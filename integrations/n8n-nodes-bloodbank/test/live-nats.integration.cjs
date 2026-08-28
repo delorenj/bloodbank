@@ -107,8 +107,8 @@ test('one trigger subscription can bind multiple event subjects', async () => {
   const subscription = await subscribe({
     host: SERVER,
     subjects: [
-      'bloodbank.evt.v1.system.heartbeat.received',
-      'bloodbank.evt.v1.repo.task.created',
+      'bloodbank.evt.system.heartbeat.received',
+      'bloodbank.evt.repo.task.created',
     ],
     onError: (error) => { throw error; },
     onMessage: async (message) => {
@@ -123,13 +123,13 @@ test('one trigger subscription can bind multiple event subjects', async () => {
     expected.add(taskId);
     const heartbeat = await publish({
       host: SERVER,
-      type: 'bloodbank.v1.system.heartbeat.received',
+      type: 'bloodbank.system.heartbeat.received',
       data: { service: 'n8n-live-test' },
       eventId: heartbeatId,
     });
     const task = await publish({
       host: SERVER,
-      type: 'bloodbank.v1.repo.task.created',
+      type: 'bloodbank.repo.task.created',
       data: { repo: '33GOD', title: 'Live multi-event binding proof' },
       eventId: taskId,
     });
@@ -143,7 +143,7 @@ test('one trigger subscription can bind multiple event subjects', async () => {
 });
 
 test('command queue group gives one command to one competing consumer', async () => {
-  const type = 'bloodbank.v1.agent.invocation.start';
+  const type = 'bloodbank.agent.invocation.start';
   const subject = subjectFor(type, 'command');
   const queue = `n8n-live-${randomUUID()}`;
   let deliveries = 0;
@@ -174,7 +174,7 @@ test('command queue group gives one command to one competing consumer', async ()
 });
 
 test('sync command handling publishes a correlated reply', async () => {
-  const type = 'bloodbank.v1.agent.invocation.start';
+  const type = 'bloodbank.agent.invocation.start';
   const commandSubject = subjectFor(type, 'command');
   const replySubject = subjectFor(type, 'reply');
   const commandId = randomUUID();
@@ -225,8 +225,8 @@ test('BloodbankTrigger class emits every selected event binding', async () => {
     {
       messageKind: 'event',
       events: [
-        'bloodbank.v1.system.heartbeat.received',
-        'bloodbank.v1.repo.task.created',
+        'bloodbank.system.heartbeat.received',
+        'bloodbank.repo.task.created',
       ],
       connection: { natsHost: SERVER, natsPort: 4222, timeoutMs: 5000 },
     },
@@ -244,13 +244,13 @@ test('BloodbankTrigger class emits every selected event binding', async () => {
     expected.add(secondId);
     await publish({
       host: SERVER,
-      type: 'bloodbank.v1.system.heartbeat.received',
+      type: 'bloodbank.system.heartbeat.received',
       data: { service: 'n8n-trigger-class-test' },
       eventId: firstId,
     });
     await publish({
       host: SERVER,
-      type: 'bloodbank.v1.repo.task.created',
+      type: 'bloodbank.repo.task.created',
       data: { repo: '33god', title: 'Trigger class multi-binding proof' },
       eventId: secondId,
     });
@@ -262,7 +262,7 @@ test('BloodbankTrigger class emits every selected event binding', async () => {
 });
 
 test('BloodbankTrigger class async mode emits without publishing a reply', async () => {
-  const type = 'bloodbank.v1.agent.invocation.start';
+  const type = 'bloodbank.agent.invocation.start';
   const commandId = randomUUID();
   let resolveEmitted;
   const emitted = new Promise((resolve) => { resolveEmitted = resolve; });
@@ -301,7 +301,7 @@ test('BloodbankTrigger class async mode emits without publishing a reply', async
 });
 
 test('BloodbankTrigger class sync mode waits for execution and replies', async () => {
-  const type = 'bloodbank.v1.agent.invocation.start';
+  const type = 'bloodbank.agent.invocation.start';
   const commandId = randomUUID();
   let resolveReply;
   const replyReceived = new Promise((resolve) => { resolveReply = resolve; });

@@ -55,9 +55,9 @@ test('Plane webhook secrets are selected from an explicit webhook-id allowlist',
 });
 
 test('schema codegen exposes events and exactly one command selector surface', () => {
-  assert.ok(eventSchemas.some((schema) => schema.type === 'bloodbank.v1.repo.task.updated'));
-  assert.ok(eventSchemas.some((schema) => schema.type === 'bloodbank.v1.repo.task.appended'));
-  assert.ok(commandSchemas.some((schema) => schema.type === 'bloodbank.v1.agent.invocation.start'));
+  assert.ok(eventSchemas.some((schema) => schema.type === 'bloodbank.repo.task.updated'));
+  assert.ok(eventSchemas.some((schema) => schema.type === 'bloodbank.repo.task.appended'));
+  assert.ok(commandSchemas.some((schema) => schema.type === 'bloodbank.agent.invocation.start'));
   assert.ok(commandSchemas.every((schema) => schema.kind === 'command'));
 
   const description = new BloodbankTrigger().description;
@@ -99,7 +99,7 @@ test('Plane issue.create normalizes to a canonical repo.task.created fact', () =
     OBSERVED_AT,
   );
   assert.ok(event);
-  assert.equal(event.canonicalType, 'bloodbank.v1.repo.task.created');
+  assert.equal(event.canonicalType, 'bloodbank.repo.task.created');
   assert.equal(event.providerEventType, 'plane.ticket.created');
   assert.equal(event.data.repo, '33god');
   assert.equal(event.data.slug, '33god');
@@ -141,7 +141,7 @@ test('Plane state changes preserve raw ticket JSON and normalize transition prov
     OBSERVED_AT,
   );
   assert.ok(event);
-  assert.equal(event.canonicalType, 'bloodbank.v1.repo.task.updated');
+  assert.equal(event.canonicalType, 'bloodbank.repo.task.updated');
   assert.equal(event.providerEventType, 'plane.ticket.transitioned');
   assert.deepEqual(event.data.changed_fields, ['state']);
   assert.equal(event.data.previous_phase, 'Todo');
@@ -165,7 +165,7 @@ test('Plane issue.delete normalizes to a terminal repo.task.updated fact', () =>
     OBSERVED_AT,
   );
   assert.ok(event);
-  assert.equal(event.canonicalType, 'bloodbank.v1.repo.task.updated');
+  assert.equal(event.canonicalType, 'bloodbank.repo.task.updated');
   assert.equal(event.providerEventType, 'plane.ticket.deleted');
   assert.equal(event.data.phase, 'deleted');
   assert.equal(event.data.tp_band, 'completed');
@@ -190,7 +190,7 @@ test('Plane comments normalize to append-only repo.task.appended facts', () => {
     OBSERVED_AT,
   );
   assert.ok(event);
-  assert.equal(event.canonicalType, 'bloodbank.v1.repo.task.appended');
+  assert.equal(event.canonicalType, 'bloodbank.repo.task.appended');
   assert.equal(event.providerEventType, 'plane.ticket.commented');
   assert.equal(event.data.comment_id, 'comment-1');
   assert.equal(event.data.body, '<p>Evidence attached.</p>');
@@ -214,7 +214,7 @@ test('new Plane project webhooks can emit board provenance before registry recon
     OBSERVED_AT,
   );
   assert.ok(event);
-  assert.equal(event.canonicalType, 'bloodbank.v1.repo.board.created');
+  assert.equal(event.canonicalType, 'bloodbank.repo.board.created');
   assert.equal(event.providerEventType, 'plane.board.created');
   assert.equal(event.data.slug, 'new');
   assert.equal(event.data.workspace, '33god');

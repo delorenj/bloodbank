@@ -50,7 +50,7 @@ export interface BloodbankSubscription {
 
 const URL_NS = '6ba7b811-9dad-11d1-80b4-00c04fd430c8';
 const TYPE_PATTERN =
-  /^bloodbank\.v[0-9]+\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
+  /^bloodbank\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
 const RESERVED_ENVELOPE_KEYS = new Set([
   'specversion',
   'id',
@@ -84,13 +84,13 @@ export function deterministicUuid(name: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function typeParts(type: string): [string, string, string, string, string] {
+function typeParts(type: string): [string, string, string, string] {
   if (!TYPE_PATTERN.test(type)) {
     throw new Error(
-      `invalid Bloodbank type "${type}" — need bloodbank.v<N>.<domain>.<entity>.<action>`,
+      `invalid Bloodbank type "${type}" — need bloodbank.<domain>.<entity>.<action>`,
     );
   }
-  return type.split('.') as [string, string, string, string, string];
+  return type.split('.') as [string, string, string, string];
 }
 
 function serverUrl(host = 'localhost', port = 4222): string {
@@ -117,7 +117,7 @@ export function buildEnvelope(opts: EmitOptions): {
   subject: string;
   envelope: Record<string, unknown>;
 } {
-  const [, , domain] = typeParts(opts.type);
+  const [, domain] = typeParts(opts.type);
   const subject = subjectFor(opts.type, 'event');
   const identity = entityIdentity(opts.data);
   const eventId = opts.eventId || randomUUID();
@@ -163,7 +163,7 @@ function replyEnvelope(
   data: Record<string, unknown>,
 ): { subject: string; envelope: Record<string, unknown> } {
   const type = String(command.type || '');
-  const [, , domain] = typeParts(type);
+  const [, domain] = typeParts(type);
   const subject = subjectFor(type, 'reply');
   const replyId = randomUUID();
   const commandId = String(command.command_id || command.id || '');

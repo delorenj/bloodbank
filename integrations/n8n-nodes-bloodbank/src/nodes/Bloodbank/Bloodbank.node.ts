@@ -44,7 +44,7 @@ export class Bloodbank implements INodeType {
         options: eventOptions(),
         default: eventSchemas.length ? eventSchemas[0].type : '',
         required: true,
-        description: 'The bloodbank event to publish (generated from schemas/bloodbank/v1/**)',
+        description: 'The bloodbank event to publish (generated from schemas/bloodbank/**)',
       },
       {
         displayName: 'Data (JSON)',
