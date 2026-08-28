@@ -2,34 +2,28 @@
   "$comment": "Bloodbank NATS JetStream topology. Stream names are locked by ADR-0001; subject filters follow the Bloodbank Event Naming Contract — see bloodbank/docs/event-naming.md §3.",
   "project": "bloodbank",
   "subject_conventions": {
+    "$comment": "Subjects carry no version token. A CloudEvents type is 4 tokens (bloodbank.<domain>.<entity>.<action>); the NATS subject prefixes the channel, making 5 (bloodbank.<channel>.<domain>.<entity>.<action>). Breaking payload changes get a new action or entity, not a version segment.",
     "events": {
-      "wildcard": "bloodbank.evt.v1.>",
-      "pattern": "bloodbank.evt.v1.<domain>.<entity>.<action>",
-      "example": "bloodbank.evt.v1.conversation.message.appended"
-    },
-    "events_v2": {
-      "subjects": [
-        "bloodbank.evt.v2.repo.maintenance.failed"
-      ],
-      "note": "v2 is intentionally scoped to the repo maintenance action-failure extension."
+      "wildcard": "bloodbank.evt.>",
+      "pattern": "bloodbank.evt.<domain>.<entity>.<action>",
+      "example": "bloodbank.evt.conversation.message.appended"
     },
     "commands": {
-      "wildcard": "bloodbank.cmd.v1.>",
-      "pattern": "bloodbank.cmd.v1.<domain>.<entity>.<action>",
-      "example": "bloodbank.cmd.v1.agent.invocation.start"
+      "wildcard": "bloodbank.cmd.>",
+      "pattern": "bloodbank.cmd.<domain>.<entity>.<action>",
+      "example": "bloodbank.cmd.agent.invocation.start"
     },
     "replies": {
-      "wildcard": "bloodbank.rpy.v1.>",
-      "pattern": "bloodbank.rpy.v1.<domain>.<entity>.<action>",
-      "example": "bloodbank.rpy.v1.agent.invocation.start"
+      "wildcard": "bloodbank.rpy.>",
+      "pattern": "bloodbank.rpy.<domain>.<entity>.<action>",
+      "example": "bloodbank.rpy.agent.invocation.start"
     }
   },
   "streams": [
     {
       "name": "BLOODBANK_EVENTS",
       "subjects": [
-        "bloodbank.evt.v1.>",
-        "bloodbank.evt.v2.repo.maintenance.failed"
+        "bloodbank.evt.>"
       ],
       "retention": "limits",
       "storage": "file",
@@ -61,8 +55,8 @@
     {
       "name": "BLOODBANK_COMMANDS",
       "subjects": [
-        "bloodbank.cmd.v1.>",
-        "bloodbank.rpy.v1.>"
+        "bloodbank.cmd.>",
+        "bloodbank.rpy.>"
       ],
       "retention": "workqueue",
       "storage": "file",
@@ -81,7 +75,7 @@
         ]
       },
       "notes": [
-        "Operational traffic only; covers v1 commands (`bloodbank.cmd.v1.>`) and replies (`bloodbank.rpy.v1.>`).",
+        "Operational traffic only; covers commands (`bloodbank.cmd.>`) and replies (`bloodbank.rpy.>`).",
         "Dead-letter handling is documented in README.md and will be implemented in V3-007, not here."
       ]
     }
