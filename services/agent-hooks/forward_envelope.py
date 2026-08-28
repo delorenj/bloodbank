@@ -55,21 +55,22 @@ REQUIRED_FIELDS = (
     "kind",
 )
 
-# Bloodbank Event Naming Contract v1 -- see bloodbank/docs/event-naming.md.
+# Bloodbank Event Naming Contract -- see bloodbank/docs/event-naming.md.
+# The `vN.` segment is OPTIONAL here on purpose: this is the one transitional
+# tolerance in the version-drop. Producers are being cut over one at a time, so
+# for the duration of the flip this forwarder must accept both the old
+# bloodbank.evt.v1.<domain>.<entity>.<action> and the new
+# bloodbank.evt.<domain>.<entity>.<action>. Drop the optional group once no
+# producer emits the versioned shape.
 SUBJECT_PATTERN = re.compile(
-    r"^bloodbank\.(?:evt|cmd|rpy)\.v[1-9][0-9]*\.[a-z0-9]+(?:\.[a-z0-9_]+)+$"
+    r"^bloodbank\.(?:evt|cmd|rpy)\.(?:v[1-9][0-9]*\.)?[a-z0-9]+(?:\.[a-z0-9_]+)+$"
 )
 
-# Subjects the BLOODBANK_EVENTS stream actually binds, from
-# compose/nats/streams.json. A subject outside these is published to a topic no
-# stream captures, so it is accepted by NATS and then silently dropped -- worth
-# refusing rather than reporting a success that persists nothing.
-STREAM_BOUND = (
-    ("bloodbank.evt.v1.", True),
-    ("bloodbank.cmd.v1.", True),
-    ("bloodbank.rpy.v1.", True),
-    ("bloodbank.evt.v2.repo.maintenance.failed", False),
-)
+# Prefixes the BLOODBANK_EVENTS stream binds (bloodbank.evt.> / cmd.> / rpy.>,
+# from compose/nats/streams.json). A subject outside these is published to a
+# topic no stream captures, so it is accepted by NATS and then silently dropped
+# -- worth refusing rather than reporting a success that persists nothing.
+STREAM_PREFIXES = ("bloodbank.evt.", "bloodbank.cmd.", "bloodbank.rpy.")
 
 
 def fail(reason: str) -> int:
@@ -78,10 +79,7 @@ def fail(reason: str) -> int:
 
 
 def subject_is_bound(subject: str) -> bool:
-    for value, is_prefix in STREAM_BOUND:
-        if subject.startswith(value) if is_prefix else subject == value:
-            return True
-    return False
+    return subject.startswith(STREAM_PREFIXES)
 
 
 def main() -> int:

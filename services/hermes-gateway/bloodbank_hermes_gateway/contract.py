@@ -22,11 +22,11 @@ COMMAND_SUBJECT = "bloodbank.cmd.v1.agent.invocation.start"
 COMMAND_STREAM = "BLOODBANK_COMMANDS"
 EVENT_STREAM = "BLOODBANK_EVENTS"
 
-TURN_STARTED = "bloodbank.v1.conversation.turn.started"
-INVOCATION_STARTED = "bloodbank.v1.agent.invocation.started"
-INVOCATION_COMPLETED = "bloodbank.v1.agent.invocation.completed"
-INVOCATION_FAILED = "bloodbank.v1.agent.invocation.failed"
-TURN_COMPLETED = "bloodbank.v1.conversation.turn.completed"
+TURN_STARTED = "bloodbank.conversation.turn.started"
+INVOCATION_STARTED = "bloodbank.agent.invocation.started"
+INVOCATION_COMPLETED = "bloodbank.agent.invocation.completed"
+INVOCATION_FAILED = "bloodbank.agent.invocation.failed"
+TURN_COMPLETED = "bloodbank.conversation.turn.completed"
 
 _UUID_NAMESPACE = uuid.UUID("633de934-f359-50f8-978f-3ef4ebbdac69")
 _RFC3339 = re.compile(
@@ -300,8 +300,8 @@ def _now() -> str:
 
 
 def _subject_for(event_type: str) -> str:
-    _, version, domain, entity, action = event_type.split(".")
-    return f"bloodbank.evt.{version}.{domain}.{entity}.{action}"
+    _, domain, entity, action = event_type.split(".")
+    return f"bloodbank.evt.{domain}.{entity}.{action}"
 
 
 def lifecycle_event(
@@ -312,7 +312,7 @@ def lifecycle_event(
     data: dict[str, Any],
     occurred_at: str | None = None,
 ) -> dict[str, Any]:
-    domain = event_type.split(".")[2]
+    domain = event_type.split(".")[1]
     event_id = invocation.event_id(event_type)
     return {
         "specversion": "1.0",

@@ -1,4 +1,4 @@
-"""Bloodbank Event Naming Contract v1 validation.
+"""Bloodbank Event Naming Contract validation.
 
 This module is the runtime enforcement point for bloodbank/docs/event-naming.md.
 It exposes two layers:
@@ -10,7 +10,7 @@ It exposes two layers:
    §11.
 
 2. Optional JSON Schema validation (validate_envelope) against the
-   bloodbank/schemas/bloodbank/v1/<domain>/<entity>.<action>.v1.json schema.
+   bloodbank/schemas/bloodbank/<domain>/<entity>.<action>.json schema.
    Requires jsonschema. Off by default at hook time; on in CI.
 
 Schemas live in this repo (bloodbank/schemas/) and are the single source of
@@ -37,7 +37,7 @@ from typing import Any
 # --------------------------------------------------------------------------
 
 TYPE_REGEX = re.compile(
-    r"^bloodbank\.v[0-9]+\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
+    r"^bloodbank\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
 )
 
 # --------------------------------------------------------------------------
@@ -47,17 +47,9 @@ TYPE_REGEX = re.compile(
 KIND_MARKERS = {"event": "evt", "command": "cmd", "reply": "rpy"}
 MARKER_TO_KIND = {v: k for k, v in KIND_MARKERS.items()}
 SUBJECT_REGEX = re.compile(
-    r"^bloodbank\.(evt|cmd|rpy)\.v[0-9]+\."
+    r"^bloodbank\.(evt|cmd|rpy)\."
     r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
 )
-
-# v1 retains its convention-based open registry for backward compatibility.
-# Every later contract version is opt-in and maps to one reviewed schema path.
-REGISTERED_NON_V1_SCHEMAS = {
-    "bloodbank.v2.repo.maintenance.failed": (
-        "bloodbank/v2/repo/maintenance.failed.v1.json"
-    ),
-}
 
 # --------------------------------------------------------------------------
 # §6, §7, §8, §9 - allowlists / banned tokens
@@ -116,7 +108,7 @@ BANNED_TOKENS = frozenset({
 
 
 class ContractViolation(ValueError):
-    """Raised when an envelope violates the v1 naming contract."""
+    """Raised when an envelope violates the naming contract."""
 
 
 class ValidationUnavailable(RuntimeError):
@@ -132,37 +124,28 @@ class EnvelopeInvalid(ValueError):
 # --------------------------------------------------------------------------
 
 
-def _split_type(ce_type: str) -> tuple[str, str, str, str, str]:
-    """Split a versioned type into (vendor, version, domain, entity, action)."""
+def _split_type(ce_type: str) -> tuple[str, str, str, str]:
+    """Split a type into (vendor, domain, entity, action)."""
     if not isinstance(ce_type, str):
         raise ContractViolation(f"type must be str, got {type(ce_type).__name__}")
     if not TYPE_REGEX.match(ce_type):
         raise ContractViolation(
-            f"type {ce_type!r} does not match v1 regex {TYPE_REGEX.pattern!r}"
+            f"type {ce_type!r} does not match type regex {TYPE_REGEX.pattern!r}"
         )
     parts = ce_type.split(".")
-    return parts[0], parts[1], parts[2], parts[3], parts[4]
-
-
-def assert_registered_version(ce_type: str) -> None:
-    """Reject non-v1 types unless their exact type has a reviewed schema."""
-    _, version, _, _, _ = _split_type(ce_type)
-    if version != "v1" and ce_type not in REGISTERED_NON_V1_SCHEMAS:
-        raise ContractViolation(
-            f"type {ce_type!r} is not registered for contract version {version!r}"
-        )
+    return parts[0], parts[1], parts[2], parts[3]
 
 
 def assert_type_shape(ce_type: str) -> tuple[str, str, str]:
     """Assert §2. Returns (domain, entity, action) on success."""
-    _, _, domain, entity, action = _split_type(ce_type)
+    _, domain, entity, action = _split_type(ce_type)
     if domain not in ALLOWED_DOMAINS:
         raise ContractViolation(
-            f"domain {domain!r} not in v1 allowlist (§6); see docs/event-naming.md"
+            f"domain {domain!r} not in allowlist (§6); see docs/event-naming.md"
         )
     if entity not in ALLOWED_ENTITIES:
         raise ContractViolation(
-            f"entity {entity!r} not in v1 allowlist (§7); see docs/event-naming.md"
+            f"entity {entity!r} not in allowlist (§7); see docs/event-naming.md"
         )
     return domain, entity, action
 
@@ -212,16 +195,16 @@ def assert_action_tense(action: str, kind: str) -> None:
 def subject_for(ce_type: str, kind: str) -> str:
     """Build the NATS subject for (type, kind). §3.
 
-    Type:    bloodbank.v1.<domain>.<entity>.<action>
-    Subject: bloodbank.<evt|cmd|rpy>.v1.<domain>.<entity>.<action>
+    Type:    bloodbank.<domain>.<entity>.<action>
+    Subject: bloodbank.<evt|cmd|rpy>.<domain>.<entity>.<action>
     """
-    vendor, version, domain, entity, action = _split_type(ce_type)
+    vendor, domain, entity, action = _split_type(ce_type)
     if kind not in KIND_MARKERS:
         raise ContractViolation(
             f"unknown kind {kind!r}; expected event|command|reply (§4)"
         )
     marker = KIND_MARKERS[kind]
-    return f"{vendor}.{marker}.{version}.{domain}.{entity}.{action}"
+    return f"{vendor}.{marker}.{domain}.{entity}.{action}"
 
 
 def assert_subject_matches(subject: str, ce_type: str, kind: str) -> None:
@@ -241,7 +224,7 @@ REQUIRED_BASE_FIELDS = (
 REQUIRED_EVENT_FIELDS = ("actor", "ordering_key")
 REQUIRED_COMMAND_FIELDS = ("actor", "command_id", "idempotency_key", "delivery")
 
-PORTFOLIO_TERMINAL_RECEIPT_TYPE = "bloodbank.v1.portfolio.receipt.recorded"
+PORTFOLIO_TERMINAL_RECEIPT_TYPE = "bloodbank.portfolio.receipt.recorded"
 PORTFOLIO_COMMON_DATA_FIELDS = (
     "schema_version",
     "portfolio_id",
@@ -251,7 +234,7 @@ PORTFOLIO_COMMON_DATA_FIELDS = (
     "idempotency_key",
     "occurred_at",
 )
-PORTFOLIO_ROOT_TYPE = "bloodbank.v1.portfolio.intake.received"
+PORTFOLIO_ROOT_TYPE = "bloodbank.portfolio.intake.received"
 
 
 def portfolio_terminal_receipt_digest(data: dict) -> str:
@@ -350,7 +333,7 @@ def assert_portfolio_invariants(envelope: dict) -> None:
                 "portfolio terminal receipt outcome_digest does not match canonical outcome"
             )
 
-    if ce_type == "bloodbank.v1.portfolio.capacity.recorded":
+    if ce_type == "bloodbank.portfolio.capacity.recorded":
         total = data.get("capacity_total")
         in_use = data.get("capacity_in_use")
         available = data.get("capacity_available")
@@ -401,8 +384,7 @@ def assert_contract(envelope: dict) -> None:
     ce_type = envelope["type"]
     kind = envelope["kind"]
 
-    # §2 + explicit post-v1 registration + §6-§9
-    assert_registered_version(ce_type)
+    # §2 + §6-§9
     domain, entity, action = assert_type_shape(ce_type)
     assert_banned_tokens(ce_type)
     assert_action_tense(action, kind)
@@ -431,7 +413,7 @@ def assert_contract(envelope: dict) -> None:
     if subject is not None:
         if not SUBJECT_REGEX.match(subject):
             raise ContractViolation(
-                f"subject {subject!r} does not match versioned regex {SUBJECT_REGEX.pattern!r}"
+                f"subject {subject!r} does not match subject regex {SUBJECT_REGEX.pattern!r}"
             )
         assert_subject_matches(subject, ce_type, kind)
 
@@ -446,7 +428,7 @@ def assert_contract(envelope: dict) -> None:
     # §11.2 command delivery
     if kind == "command" and envelope.get("delivery") != "single_consumer":
         raise ContractViolation(
-            "command.delivery must be 'single_consumer' for v1 (§11)"
+            "command.delivery must be 'single_consumer' (§11)"
         )
 
     assert_portfolio_invariants(envelope)
@@ -516,21 +498,13 @@ def _schemas_root() -> Path:
 
 
 def _schema_path_for(ce_type: str) -> Path:
-    """Map a CE type to its versioned schema directory and v1 schema file."""
-    _, version, domain, entity, action = _split_type(ce_type)
-    if version != "v1":
-        relative = REGISTERED_NON_V1_SCHEMAS.get(ce_type)
-        if relative is None:
-            raise ContractViolation(
-                f"type {ce_type!r} has no registered non-v1 schema"
-            )
-        return _schemas_root() / relative
+    """Map a CE type to its schema file: schemas/bloodbank/<domain>/<entity>.<action>.json."""
+    _, domain, entity, action = _split_type(ce_type)
     return (
         _schemas_root()
         / "bloodbank"
-        / version
         / domain
-        / f"{entity}.{action}.v1.json"
+        / f"{entity}.{action}.json"
     )
 
 
@@ -611,14 +585,13 @@ def validate_envelope(envelope: dict) -> None:
 
 
 def load_schema_for(ce_type: str) -> dict:
-    """Read the schema for a versioned Bloodbank type as a dict."""
+    """Read the schema for a Bloodbank type as a dict."""
     return _load_schema(str(_schema_path_for(ce_type)))
 
 
 __all__ = [
     "ALLOWED_DOMAINS",
     "ALLOWED_ENTITIES",
-    "REGISTERED_NON_V1_SCHEMAS",
     "BANNED_TOKENS",
     "COMMAND_ACTIONS",
     "ContractViolation",
@@ -636,7 +609,6 @@ __all__ = [
     "assert_subject_matches",
     "assert_terminal_receipt_retry",
     "assert_type_shape",
-    "assert_registered_version",
     "load_schema_for",
     "portfolio_terminal_receipt_digest",
     "subject_for",

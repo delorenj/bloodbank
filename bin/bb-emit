@@ -83,11 +83,11 @@ def main():
         return fail_rc
 
     parts = a.type.split(".")
-    if len(parts) != 5 or parts[0] != "bloodbank" or not parts[1].startswith("v"):
-        print(f"bb-emit: --type must be bloodbank.v<N>.<domain>.<entity>.<action>, got '{a.type}'",
+    if len(parts) != 4 or parts[0] != "bloodbank":
+        print(f"bb-emit: --type must be bloodbank.<domain>.<entity>.<action>, got '{a.type}'",
               file=sys.stderr)
         return fail_rc
-    domain = parts[2]
+    domain = parts[1]
     subject = "bloodbank.evt." + a.type[len("bloodbank."):]
 
     tid = str(data.get("transcription_id") or data.get("id") or "").strip()

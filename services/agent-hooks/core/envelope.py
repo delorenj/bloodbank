@@ -103,15 +103,15 @@ def build_envelope(
             f"kind {kind!r} must be event|command|reply (§4)"
         )
 
-    # Derive domain from type segment 3. assert_type_shape inside
+    # Derive domain from type segment 2. assert_type_shape inside
     # assert_contract will re-validate but we need the value now to populate
     # envelope.domain.
     parts = ce_type.split(".")
-    if len(parts) != 5:
+    if len(parts) != 4:
         raise ContractViolation(
-            f"type {ce_type!r} must be exactly 5 dotted tokens (§2)"
+            f"type {ce_type!r} must be exactly 4 dotted tokens (§2)"
         )
-    domain = parts[2]
+    domain = parts[1]
 
     if subject is None:
         subject = subject_for(ce_type, kind)
