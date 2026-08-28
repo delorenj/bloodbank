@@ -13,7 +13,7 @@ docs/event-naming.md §13 — that key is the registry artifact id, independent
 of where the source-of-truth schemas live on disk.
 
 There is no legacy 3-token path. Anything that does not match
-bloodbank.v1.<domain>.<entity>.<action> raises ContractViolation at build
+bloodbank.<domain>.<entity>.<action> raises ContractViolation at build
 time.
 """
 from __future__ import annotations
@@ -71,7 +71,7 @@ def build_envelope(
     """Build a v1 CloudEvents envelope.
 
     Mandatory:
-        ce_type           — bloodbank.v1.<domain>.<entity>.<action>
+        ce_type           — bloodbank.<domain>.<entity>.<action>
         kind              — "event" | "command" | "reply"
         source, producer, service — CloudEvents identity
         actor             — {type, agent_id, [cli, provider, model]} per §10

@@ -106,7 +106,7 @@ services:
     environment:
       APP_PORT: "3001"
       SUBSCRIBE_PUBSUB: "bloodbank-pubsub"
-      SUBSCRIBE_TOPIC: "bloodbank.evt.v1.system.heartbeat.received"
+      SUBSCRIBE_TOPIC: "bloodbank.evt.system.heartbeat.received"
       SUBSCRIBE_ROUTE: "/events/smoketest"
       PYTHONUNBUFFERED: "1"
     volumes:
@@ -172,7 +172,7 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # Heartbeat — first real-world event (bloodbank.v1.system.heartbeat.received)
+  # Heartbeat — first real-world event (bloodbank.system.heartbeat.received)
   # ---------------------------------------------------------------------------
   # Three services behind the `heartbeat` compose profile:
   #   - heartbeat-recorder: the shared stdlib smoke subscriber on port 3001;
@@ -191,7 +191,7 @@ services:
     environment:
       APP_PORT: "3001"
       SUBSCRIBE_PUBSUB: "bloodbank-pubsub"
-      SUBSCRIBE_TOPIC: "bloodbank.evt.v1.system.heartbeat.received"
+      SUBSCRIBE_TOPIC: "bloodbank.evt.system.heartbeat.received"
       SUBSCRIBE_ROUTE: "/events/heartbeat"
       PYTHONUNBUFFERED: "1"
     volumes:
@@ -253,7 +253,7 @@ services:
       DAPR_HTTP_HOST: "daprd-heartbeat"
       DAPR_HTTP_PORT: "3500"
       DAPR_PUBSUB: "bloodbank-pubsub"
-      HEARTBEAT_TOPIC: "bloodbank.evt.v1.system.heartbeat.received"
+      HEARTBEAT_TOPIC: "bloodbank.evt.system.heartbeat.received"
       HEARTBEAT_INTERVAL: "${BLOODBANK_HEARTBEAT_INTERVAL:-5}"
       LOG_LEVEL: "INFO"
     depends_on:
@@ -302,7 +302,7 @@ services:
       APP_PORT: "3001"
       DATABASE_URL: "postgresql://candystore:candystore@postgres:5432/candystore"
       SUBSCRIBE_PUBSUB: "bloodbank-pubsub"
-      SUBSCRIBE_TOPIC: "bloodbank.evt.v1.>"
+      SUBSCRIBE_TOPIC: "bloodbank.evt.>"
       SUBSCRIBE_ROUTE: "/events/all"
     ports:
       - "127.0.0.1:${BLOODBANK_CANDYSTORE_PORT:-3603}:3001"

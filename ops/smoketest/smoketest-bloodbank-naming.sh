@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# Bloodbank Event Naming Contract v1 verifier (docs/event-naming.md §16.2).
+# Bloodbank Event Naming Contract verifier (docs/event-naming.md §16.2).
 #
 # Walks the canonical §14 agent-turn sequence for Claude, Copilot, and Codex
 # actors, runs each synthetic envelope through `cli/bb.py verify-envelope`,
 # and asserts that:
 #
-#   - `type` matches §2's 5-token regex
+#   - `type` matches §2's 4-token regex
 #   - `kind` ∈ {event, command, reply}
 #   - `subject` mirrors `type` via the kind marker (§3)
-#   - domain/entity/action are in the v1 allowlists (§6–§8)
+#   - domain/entity/action are in the allowlists (§6–§8)
 #   - no banned tokens in `type` (§9)
 #   - actor, ordering_key (event), correlationid, causationid all present
 #
@@ -33,27 +33,27 @@ pass_count=0
 
 # Each row: ce_type | ordering_bucket_prefix | data_json
 SEQUENCE=(
-  "bloodbank.v1.conversation.thread.created|thread|{\"thread_id\":\"thr-1\"}"
-  "bloodbank.v1.conversation.turn.started|thread|{\"thread_id\":\"thr-1\",\"turn_id\":\"turn-1\"}"
-  "bloodbank.v1.agent.invocation.started|invocation|{\"invocation_id\":\"inv-1\"}"
-  "bloodbank.v1.agent.session.started|session|{\"session_id\":\"sess-1\"}"
-  "bloodbank.v1.agent.session.ended|session|{\"session_id\":\"sess-1\",\"end_reason\":\"user_stop\"}"
-  "bloodbank.v1.cli.process.spawned|process|{\"session_id\":\"sess-1\",\"process_id\":\"proc-1\"}"
-  "bloodbank.v1.cli.stdout.appended|process|{\"session_id\":\"sess-1\",\"process_id\":\"proc-1\",\"chunk\":\"hello\"}"
-  "bloodbank.v1.cli.stderr.appended|process|{\"session_id\":\"sess-1\",\"process_id\":\"proc-1\",\"chunk\":\"warn\"}"
-  "bloodbank.v1.llm.request.sent|invocation|{\"invocation_id\":\"inv-1\",\"request_id\":\"req-1\"}"
-  "bloodbank.v1.llm.response.received|invocation|{\"invocation_id\":\"inv-1\",\"response_id\":\"resp-1\"}"
-  "bloodbank.v1.agent.tool.requested|invocation|{\"invocation_id\":\"inv-1\",\"tool_call_id\":\"tc-1\",\"tool_name\":\"Bash\"}"
-  "bloodbank.v1.agent.tool.invoked|invocation|{\"invocation_id\":\"inv-1\",\"tool_call_id\":\"tc-1\",\"tool_name\":\"Bash\"}"
-  "bloodbank.v1.agent.tool.completed|invocation|{\"invocation_id\":\"inv-1\",\"tool_call_id\":\"tc-1\",\"tool_name\":\"Bash\",\"outcome\":\"success\"}"
-  "bloodbank.v1.conversation.message.appended|turn|{\"thread_id\":\"thr-1\",\"turn_id\":\"turn-1\",\"message_id\":\"msg-1\",\"role\":\"assistant\"}"
-  "bloodbank.v1.repo.decision.recorded|repo|{\"repo\":\"candystore\",\"decision\":\"Use repo-neutral decision event types\",\"basis\":[\"event-naming contract\"]}"
-  "bloodbank.v1.repo.intake.triaged|repo|{\"repo\":\"candystore\",\"intake_id\":\"intake-1\",\"summary\":\"Operator request triaged\"}"
-  "bloodbank.v1.repo.task.created|repo|{\"repo\":\"candystore\",\"task_id\":\"task-1\",\"title\":\"Update event filters\"}"
-  "bloodbank.v1.repo.task.recorded|repo|{\"repo\":\"candystore\",\"task_id\":\"task-1\",\"title\":\"Update event filters\",\"change_kind\":\"status\",\"from\":\"todo\",\"to\":\"in_progress\"}"
-  "bloodbank.v1.repo.task.completed|repo|{\"repo\":\"candystore\",\"task_id\":\"task-1\",\"title\":\"Update event filters\",\"status\":\"completed\"}"
-  "bloodbank.v1.agent.invocation.completed|invocation|{\"invocation_id\":\"inv-1\"}"
-  "bloodbank.v1.conversation.turn.completed|thread|{\"thread_id\":\"thr-1\",\"turn_id\":\"turn-1\",\"outcome\":\"completed\"}"
+  "bloodbank.conversation.thread.created|thread|{\"thread_id\":\"thr-1\"}"
+  "bloodbank.conversation.turn.started|thread|{\"thread_id\":\"thr-1\",\"turn_id\":\"turn-1\"}"
+  "bloodbank.agent.invocation.started|invocation|{\"invocation_id\":\"inv-1\"}"
+  "bloodbank.agent.session.started|session|{\"session_id\":\"sess-1\"}"
+  "bloodbank.agent.session.ended|session|{\"session_id\":\"sess-1\",\"end_reason\":\"user_stop\"}"
+  "bloodbank.cli.process.spawned|process|{\"session_id\":\"sess-1\",\"process_id\":\"proc-1\"}"
+  "bloodbank.cli.stdout.appended|process|{\"session_id\":\"sess-1\",\"process_id\":\"proc-1\",\"chunk\":\"hello\"}"
+  "bloodbank.cli.stderr.appended|process|{\"session_id\":\"sess-1\",\"process_id\":\"proc-1\",\"chunk\":\"warn\"}"
+  "bloodbank.llm.request.sent|invocation|{\"invocation_id\":\"inv-1\",\"request_id\":\"req-1\"}"
+  "bloodbank.llm.response.received|invocation|{\"invocation_id\":\"inv-1\",\"response_id\":\"resp-1\"}"
+  "bloodbank.agent.tool.requested|invocation|{\"invocation_id\":\"inv-1\",\"tool_call_id\":\"tc-1\",\"tool_name\":\"Bash\"}"
+  "bloodbank.agent.tool.invoked|invocation|{\"invocation_id\":\"inv-1\",\"tool_call_id\":\"tc-1\",\"tool_name\":\"Bash\"}"
+  "bloodbank.agent.tool.completed|invocation|{\"invocation_id\":\"inv-1\",\"tool_call_id\":\"tc-1\",\"tool_name\":\"Bash\",\"outcome\":\"success\"}"
+  "bloodbank.conversation.message.appended|turn|{\"thread_id\":\"thr-1\",\"turn_id\":\"turn-1\",\"message_id\":\"msg-1\",\"role\":\"assistant\"}"
+  "bloodbank.repo.decision.recorded|repo|{\"repo\":\"candystore\",\"decision\":\"Use repo-neutral decision event types\",\"basis\":[\"event-naming contract\"]}"
+  "bloodbank.repo.intake.triaged|repo|{\"repo\":\"candystore\",\"intake_id\":\"intake-1\",\"summary\":\"Operator request triaged\"}"
+  "bloodbank.repo.task.created|repo|{\"repo\":\"candystore\",\"task_id\":\"task-1\",\"title\":\"Update event filters\"}"
+  "bloodbank.repo.task.recorded|repo|{\"repo\":\"candystore\",\"task_id\":\"task-1\",\"title\":\"Update event filters\",\"change_kind\":\"status\",\"from\":\"todo\",\"to\":\"in_progress\"}"
+  "bloodbank.repo.task.completed|repo|{\"repo\":\"candystore\",\"task_id\":\"task-1\",\"title\":\"Update event filters\",\"status\":\"completed\"}"
+  "bloodbank.agent.invocation.completed|invocation|{\"invocation_id\":\"inv-1\"}"
+  "bloodbank.conversation.turn.completed|thread|{\"thread_id\":\"thr-1\",\"turn_id\":\"turn-1\",\"outcome\":\"completed\"}"
 )
 
 # Each actor: (cli, provider) tuple.
@@ -78,7 +78,7 @@ print(json.dumps({
     "id": str(uuid.uuid4()),
     "source": f"urn:33god:agent:{cli}",
     "type": ce_type,
-    "subject": f"bloodbank.evt.v1.{ce_type.split(chr(46), 2)[2]}",
+    "subject": f"bloodbank.evt.{ce_type.split(chr(46), 1)[1]}",
     "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
     "datacontenttype": "application/json",
     "dataschema": f"apicurio://holyfields/{ce_type}/versions/1",
@@ -86,7 +86,7 @@ print(json.dumps({
     "causationid": "00000000-0000-0000-0000-000000000001",
     "producer": cli,
     "service": cli,
-    "domain": ce_type.split(".")[2],
+    "domain": ce_type.split(".")[1],
     "schemaref": ce_type + ".v1",
     "traceparent": "00-00000000000000000000000000000000-0000000000000000-00",
     "kind": "event",
@@ -134,20 +134,23 @@ negative_probe() {
 LEGACY_3TOKEN='{"specversion":"1.0","id":"a","source":"x","type":"agent.session.started","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"agent","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
 negative_probe "legacy 3-token type (agent.session.started)" "$LEGACY_3TOKEN"
 
-BANNED_CLAUDE='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.v1.agent.claude.completed","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"agent","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
+BANNED_CLAUDE='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.agent.claude.completed","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"agent","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
 negative_probe "banned token 'claude' in entity slot" "$BANNED_CLAUDE"
 
-WRONG_TENSE='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.v1.conversation.message.append","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
+WRONG_TENSE='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.conversation.message.append","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
 negative_probe "imperative 'append' on kind=event" "$WRONG_TENSE"
 
-MISSING_ACTOR='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.v1.conversation.message.appended","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","ordering_key":"k","data":{}}'
+MISSING_ACTOR='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.conversation.message.appended","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","ordering_key":"k","data":{}}'
 negative_probe "missing actor on kind=event" "$MISSING_ACTOR"
 
-SUBJECT_MISMATCH='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.v1.conversation.message.appended","subject":"bloodbank.cmd.v1.conversation.message.appended","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
+SUBJECT_MISMATCH='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.conversation.message.appended","subject":"bloodbank.cmd.conversation.message.appended","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
 negative_probe "subject kind marker mismatch (cmd on kind=event)" "$SUBJECT_MISMATCH"
 
-SUBJECT_TYPE_MISMATCH='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.v1.conversation.message.appended","subject":"bloodbank.evt.v1.system.heartbeat.received","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
+SUBJECT_TYPE_MISMATCH='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.conversation.message.appended","subject":"bloodbank.evt.system.heartbeat.received","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
 negative_probe "subject suffix mismatch with envelope type" "$SUBJECT_TYPE_MISMATCH"
+
+VERSIONED_TYPE='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.v1.conversation.message.appended","subject":"bloodbank.evt.v1.conversation.message.appended","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
+negative_probe "retired 5-token versioned type/subject (bloodbank.v1.*)" "$VERSIONED_TYPE"
 
 total=$((pass_count + fail_count))
 echo "smoketest-bloodbank-naming: ${pass_count}/${total} checks passed"

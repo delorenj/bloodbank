@@ -40,12 +40,12 @@ class HermesAdapter(ClientAdapter):
     error_log = None
 
     default_map = {
-        "on_session_start": ("bloodbank.v1.agent.session.started", "session"),
-        "on_session_end": ("bloodbank.v1.agent.session.ended", "session"),
-        "pre_llm_call": ("bloodbank.v1.conversation.turn.started", "thread"),
-        "pre_tool_call": ("bloodbank.v1.agent.tool.requested", "invocation"),
-        "post_tool_call": ("bloodbank.v1.agent.tool.completed", "invocation"),
-        "subagent_stop": ("bloodbank.v1.agent.invocation.completed", "invocation"),
+        "on_session_start": ("bloodbank.agent.session.started", "session"),
+        "on_session_end": ("bloodbank.agent.session.ended", "session"),
+        "pre_llm_call": ("bloodbank.conversation.turn.started", "thread"),
+        "pre_tool_call": ("bloodbank.agent.tool.requested", "invocation"),
+        "post_tool_call": ("bloodbank.agent.tool.completed", "invocation"),
+        "subagent_stop": ("bloodbank.agent.invocation.completed", "invocation"),
     }
 
     @property
@@ -72,14 +72,14 @@ class HermesAdapter(ClientAdapter):
         hook_name: str,
         correlation_id: str,
     ) -> str:
-        if ce_type == "bloodbank.v1.agent.session.started":
+        if ce_type == "bloodbank.agent.session.started":
             return correlation_id
         return session.last_event_id or correlation_id
 
     def get_event_id(
         self, session: SessionState, ce_type: str, correlation_id: str
     ) -> str | None:
-        if ce_type == "bloodbank.v1.agent.session.started":
+        if ce_type == "bloodbank.agent.session.started":
             return correlation_id
         return None
 
@@ -101,27 +101,27 @@ class HermesAdapter(ClientAdapter):
         correlation = self.get_correlation_id(session, payload)
         raw = {"hook": hook_name, "payload": payload}
 
-        if ce_type == "bloodbank.v1.conversation.turn.started":
+        if ce_type == "bloodbank.conversation.turn.started":
             return {
                 "turn_id": correlation,
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.session.started":
+        if ce_type == "bloodbank.agent.session.started":
             return {
                 "session_id": correlation,
                 "working_directory": os.getcwd(),
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.session.ended":
+        if ce_type == "bloodbank.agent.session.ended":
             return {
                 "session_id": correlation,
                 "end_reason": _value(flat, "reason", "end_reason"),
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.tool.requested":
+        if ce_type == "bloodbank.agent.tool.requested":
             return {
                 "invocation_id": correlation,
                 "tool_call_id": _tool_call_id(correlation, flat),
@@ -130,7 +130,7 @@ class HermesAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.tool.completed":
+        if ce_type == "bloodbank.agent.tool.completed":
             return {
                 "invocation_id": correlation,
                 "tool_call_id": _tool_call_id(correlation, flat),
@@ -139,7 +139,7 @@ class HermesAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.invocation.completed":
+        if ce_type == "bloodbank.agent.invocation.completed":
             return {
                 "invocation_id": correlation,
                 "stop_reason": _value(flat, "reason", "stop_reason") or "completed",

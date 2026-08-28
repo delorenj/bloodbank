@@ -33,8 +33,8 @@ DAPR_HTTP="${DAPR_HTTP:-http://127.0.0.1:3501}"
 ECHO_SUB_HTTP="${ECHO_SUB_HTTP:-http://127.0.0.1:3301}"
 
 PUBSUB_NAME="bloodbank-pubsub"
-TOPIC="bloodbank.evt.v1.system.heartbeat.received"
-CE_TYPE="bloodbank.v1.system.heartbeat.received"
+TOPIC="bloodbank.evt.system.heartbeat.received"
+CE_TYPE="bloodbank.system.heartbeat.received"
 
 # How long to wait for Dapr to deliver the published event to echo-sub.
 DELIVERY_TIMEOUT_SECS=10
@@ -208,8 +208,8 @@ if env is None:
 problems = []
 if env.get('specversion') != '1.0':
     problems.append(f\"specversion: expected 1.0, got {env.get('specversion')!r}\")
-if env.get('type') != 'bloodbank.v1.system.heartbeat.received':
-    problems.append(f\"type: expected bloodbank.v1.system.heartbeat.received, got {env.get('type')!r}\")
+if env.get('type') != 'bloodbank.system.heartbeat.received':
+    problems.append(f\"type: expected bloodbank.system.heartbeat.received, got {env.get('type')!r}\")
 if env.get('kind') != 'event':
     problems.append(f\"kind: expected event, got {env.get('kind')!r}\")
 if env.get('domain') != 'system':

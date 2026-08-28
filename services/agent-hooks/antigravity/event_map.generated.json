@@ -2,19 +2,19 @@
   "_do_not_edit": "GENERATED from hooks.master.json by sync.py — run `mise run hooks:sync`.",
   "map": {
     "PreInvocation": [
-      "bloodbank.v1.agent.invocation.started",
+      "bloodbank.agent.invocation.started",
       "invocation"
     ],
     "PostInvocation": [
-      "bloodbank.v1.agent.invocation.completed",
+      "bloodbank.agent.invocation.completed",
       "invocation"
     ],
     "PostToolUse": [
-      "bloodbank.v1.agent.tool.completed",
+      "bloodbank.agent.tool.completed",
       "invocation"
     ],
     "Stop": [
-      "bloodbank.v1.agent.session.ended",
+      "bloodbank.agent.session.ended",
       "session"
     ]
   }

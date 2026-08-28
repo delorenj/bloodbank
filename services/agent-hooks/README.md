@@ -163,7 +163,7 @@ no compat aliases — see "Hard rename, no aliases" in
 
 | Field             | Source                                                                          |
 |-------------------|---------------------------------------------------------------------------------|
-| `type`            | 5-token `bloodbank.v1.<domain>.<entity>.<action>` — validated against §2 regex  |
+| `type`            | 5-token `bloodbank.<domain>.<entity>.<action>` — validated against §2 regex  |
 | `subject`         | derived: `bloodbank.<kind>.v1.<...>` — validated against §3                     |
 | `kind`            | `event` (hooks emit only events; commands flow through a different path)        |
 | `actor`           | per-CLI constant (`actor.cli`, `actor.provider`); §10                           |
@@ -225,12 +225,12 @@ entrypoints still fail open.
 
 | Hook              | event-type arg     | v1 CloudEvents `type`                       | NATS subject                                       |
 |-------------------|--------------------|---------------------------------------------|----------------------------------------------------|
-| `SessionStart`    | `session-start`    | `bloodbank.v1.agent.session.started`          | `bloodbank.evt.v1.agent.session.started`             |
-| `UserPromptSubmit`| `prompt-submitted` | `bloodbank.v1.conversation.turn.started`    | `bloodbank.evt.v1.conversation.turn.started`       |
-| `PreToolUse`      | `tool-request`     | `bloodbank.v1.agent.tool.requested`     | `bloodbank.evt.v1.agent.tool.requested`        |
-| `PostToolUse`     | `tool-action`      | `bloodbank.v1.agent.tool.completed`     | `bloodbank.evt.v1.agent.tool.completed`        |
-| `SubagentStop`    | `subagent-stopped` | `bloodbank.v1.agent.invocation.completed`   | `bloodbank.evt.v1.agent.invocation.completed`      |
-| `Stop`            | `session-end`      | `bloodbank.v1.agent.session.ended`            | `bloodbank.evt.v1.agent.session.ended`               |
+| `SessionStart`    | `session-start`    | `bloodbank.agent.session.started`          | `bloodbank.evt.agent.session.started`             |
+| `UserPromptSubmit`| `prompt-submitted` | `bloodbank.conversation.turn.started`    | `bloodbank.evt.conversation.turn.started`       |
+| `PreToolUse`      | `tool-request`     | `bloodbank.agent.tool.requested`     | `bloodbank.evt.agent.tool.requested`        |
+| `PostToolUse`     | `tool-action`      | `bloodbank.agent.tool.completed`     | `bloodbank.evt.agent.tool.completed`        |
+| `SubagentStop`    | `subagent-stopped` | `bloodbank.agent.invocation.completed`   | `bloodbank.evt.agent.invocation.completed`      |
+| `Stop`            | `session-end`      | `bloodbank.agent.session.ended`            | `bloodbank.evt.agent.session.ended`               |
 
 Session state lives at `~/.claude/bloodbank-session.json` (single global
 session, cwd-independent). On `session-end` it's archived to
@@ -248,13 +248,13 @@ Reference: <https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-cop
 
 | Copilot hook         | v1 CloudEvents `type`                       | NATS subject                                       |
 |----------------------|---------------------------------------------|----------------------------------------------------|
-| `sessionStart`       | `bloodbank.v1.agent.session.started`          | `bloodbank.evt.v1.agent.session.started`             |
-| `sessionEnd`         | `bloodbank.v1.agent.session.ended`            | `bloodbank.evt.v1.agent.session.ended`               |
-| `userPromptSubmitted`| `bloodbank.v1.conversation.turn.started`    | `bloodbank.evt.v1.conversation.turn.started`       |
-| `preToolUse`         | `bloodbank.v1.agent.tool.requested`     | `bloodbank.evt.v1.agent.tool.requested`        |
-| `postToolUse`        | `bloodbank.v1.agent.tool.completed`     | `bloodbank.evt.v1.agent.tool.completed`        |
-| `errorOccurred`      | `bloodbank.v1.agent.invocation.failed`      | `bloodbank.evt.v1.agent.invocation.failed`         |
-| `agentStop`          | `bloodbank.v1.agent.invocation.completed`   | `bloodbank.evt.v1.agent.invocation.completed`      |
+| `sessionStart`       | `bloodbank.agent.session.started`          | `bloodbank.evt.agent.session.started`             |
+| `sessionEnd`         | `bloodbank.agent.session.ended`            | `bloodbank.evt.agent.session.ended`               |
+| `userPromptSubmitted`| `bloodbank.conversation.turn.started`    | `bloodbank.evt.conversation.turn.started`       |
+| `preToolUse`         | `bloodbank.agent.tool.requested`     | `bloodbank.evt.agent.tool.requested`        |
+| `postToolUse`        | `bloodbank.agent.tool.completed`     | `bloodbank.evt.agent.tool.completed`        |
+| `errorOccurred`      | `bloodbank.agent.invocation.failed`      | `bloodbank.evt.agent.invocation.failed`         |
+| `agentStop`          | `bloodbank.agent.invocation.completed`   | `bloodbank.evt.agent.invocation.completed`      |
 
 Session state lives at `~/.copilot/bloodbank-session.json`.
 
@@ -278,13 +278,13 @@ or local operator hooks.
 
 | Codex hook        | v1 CloudEvents `type`                       | NATS subject                                       |
 |-------------------|---------------------------------------------|----------------------------------------------------|
-| `SessionStart`    | `bloodbank.v1.agent.session.started`          | `bloodbank.evt.v1.agent.session.started`             |
-| `Stop`            | `bloodbank.v1.agent.session.ended`            | `bloodbank.evt.v1.agent.session.ended`               |
-| `UserPromptSubmit`| `bloodbank.v1.conversation.turn.started`    | `bloodbank.evt.v1.conversation.turn.started`       |
-| `PreToolUse`      | `bloodbank.v1.agent.tool.requested`         | `bloodbank.evt.v1.agent.tool.requested`            |
-| `PostToolUse`     | `bloodbank.v1.agent.tool.completed`         | `bloodbank.evt.v1.agent.tool.completed`            |
-| `SubagentStart`   | `bloodbank.v1.agent.invocation.started`     | `bloodbank.evt.v1.agent.invocation.started`        |
-| `SubagentStop`    | `bloodbank.v1.agent.invocation.completed`   | `bloodbank.evt.v1.agent.invocation.completed`      |
+| `SessionStart`    | `bloodbank.agent.session.started`          | `bloodbank.evt.agent.session.started`             |
+| `Stop`            | `bloodbank.agent.session.ended`            | `bloodbank.evt.agent.session.ended`               |
+| `UserPromptSubmit`| `bloodbank.conversation.turn.started`    | `bloodbank.evt.conversation.turn.started`       |
+| `PreToolUse`      | `bloodbank.agent.tool.requested`         | `bloodbank.evt.agent.tool.requested`            |
+| `PostToolUse`     | `bloodbank.agent.tool.completed`         | `bloodbank.evt.agent.tool.completed`            |
+| `SubagentStart`   | `bloodbank.agent.invocation.started`     | `bloodbank.evt.agent.invocation.started`        |
+| `SubagentStop`    | `bloodbank.agent.invocation.completed`   | `bloodbank.evt.agent.invocation.completed`      |
 
 Session state lives at `~/.codex/bloodbank-session.json`.
 
@@ -305,11 +305,11 @@ argv) with the payload piped as JSON on stdin, gated by `shell-hooks-allowlist.j
 
 | Hermes event | v1 CloudEvents `type` |
 |--------------|------------------------|
-| `on_session_start` | `bloodbank.v1.agent.session.started` |
-| `on_session_end`   | `bloodbank.v1.agent.session.ended` |
-| `pre_tool_call`    | `bloodbank.v1.agent.tool.requested` |
-| `post_tool_call`   | `bloodbank.v1.agent.tool.completed` |
-| `subagent_stop`    | `bloodbank.v1.agent.invocation.completed` |
+| `on_session_start` | `bloodbank.agent.session.started` |
+| `on_session_end`   | `bloodbank.agent.session.ended` |
+| `pre_tool_call`    | `bloodbank.agent.tool.requested` |
+| `post_tool_call`   | `bloodbank.agent.tool.completed` |
+| `subagent_stop`    | `bloodbank.agent.invocation.completed` |
 
 `actor.cli=hermes`, `actor.agent_id=bloodbank.agent.hermes`. Each agent sets
 `HERMES_HOME=<role_dir>/runtime`, so `mise run deploy` is **fleet-wide**: it reads
@@ -331,10 +331,10 @@ for `Stop`), so the generated commands append the right `printf`.
 
 | Antigravity hook | v1 CloudEvents `type`                     |
 |------------------|-------------------------------------------|
-| `PreInvocation`  | `bloodbank.v1.agent.invocation.started`   |
-| `PostInvocation` | `bloodbank.v1.agent.invocation.completed` |
-| `PostToolUse`    | `bloodbank.v1.agent.tool.completed`       |
-| `Stop`           | `bloodbank.v1.agent.session.ended`        |
+| `PreInvocation`  | `bloodbank.agent.invocation.started`   |
+| `PostInvocation` | `bloodbank.agent.invocation.completed` |
+| `PostToolUse`    | `bloodbank.agent.tool.completed`       |
+| `Stop`           | `bloodbank.agent.session.ended`        |
 
 Deliberate gaps (platform constraints, not oversights):
 

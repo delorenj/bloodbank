@@ -9,10 +9,10 @@
 # Topic-to-subject mapping:
 #   The Dapr pubsub.jetstream component publishes the Dapr topic name
 #   directly as the NATS subject. That is: a service that calls
-#   `dapr publish --topic bloodbank.evt.v1.conversation.message.appended`
+#   `dapr publish --topic bloodbank.evt.conversation.message.appended`
 #   lands the message on NATS subject
-#   `bloodbank.evt.v1.conversation.message.appended`, which is captured by
-#   the BLOODBANK_EVENTS stream's `bloodbank.evt.v1.>` subject binding.
+#   `bloodbank.evt.conversation.message.appended`, which is captured by
+#   the BLOODBANK_EVENTS stream's `bloodbank.evt.>` subject binding.
 #
 #   The Bloodbank Event Naming Contract v1 (see bloodbank/docs/event-naming.md)
 #   prescribes both the CloudEvents `type` and the matching NATS subject.
@@ -49,7 +49,7 @@ spec:
     - name: queueGroupName
       value: "bloodbank"
     # Bind the pub/sub component to the events stream. The stream itself
-    # is configured to listen on `bloodbank.evt.v1.>` subjects (see
+    # is configured to listen on `bloodbank.evt.>` subjects (see
     # ../nats/streams.json).
     - name: streamName
       value: "BLOODBANK_EVENTS"

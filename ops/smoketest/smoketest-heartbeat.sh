@@ -120,8 +120,8 @@ for i, env in enumerate(envelopes):
             problems.append(f'envelope[{i}] missing {required!r}')
     if env.get('specversion') != '1.0':
         problems.append(f\"envelope[{i}] specversion = {env.get('specversion')!r}, want '1.0'\")
-    if env.get('type') != 'bloodbank.v1.system.heartbeat.received':
-        problems.append(f\"envelope[{i}] type = {env.get('type')!r}, want 'bloodbank.v1.system.heartbeat.received'\")
+    if env.get('type') != 'bloodbank.system.heartbeat.received':
+        problems.append(f\"envelope[{i}] type = {env.get('type')!r}, want 'bloodbank.system.heartbeat.received'\")
     if env.get('kind') != 'event':
         problems.append(f\"envelope[{i}] kind = {env.get('kind')!r}, want 'event'\")
     if env.get('domain') != 'system':

@@ -6,16 +6,16 @@
 # subject topology per docs/event-naming.md §3:
 #
 #   1. Publisher emits a command envelope on
-#      `bloodbank.cmd.v1.system.heartbeat.send`.
+#      `bloodbank.cmd.system.heartbeat.send`.
 #   2. A responder role consumes the command, constructs a reply, and
-#      publishes it on `bloodbank.rpy.v1.system.heartbeat.send` with
+#      publishes it on `bloodbank.rpy.system.heartbeat.send` with
 #      matching correlation_id and `in_reply_to` pointing at the command_id.
 #   3. The original publisher's role consumes the reply and validates the
 #      correlation chain.
 #
 # This exercises:
-#   - `bloodbank.cmd.v1.>` subject landing in BLOODBANK_COMMANDS
-#   - `bloodbank.rpy.v1.>` subject landing in BLOODBANK_COMMANDS
+#   - `bloodbank.cmd.>` subject landing in BLOODBANK_COMMANDS
+#   - `bloodbank.rpy.>` subject landing in BLOODBANK_COMMANDS
 #   - Workqueue retention (ack removes the message)
 #   - Correlation ID preservation across command → reply
 #
@@ -38,10 +38,10 @@ BLOODBANK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_PROJECT_NAME="bloodbank"
 COMPOSE_FILE="${BLOODBANK_ROOT}/compose/docker-compose.yml"
 STREAM="BLOODBANK_COMMANDS"
-COMMAND_SUBJECT="bloodbank.cmd.v1.system.heartbeat.send"
-REPLY_SUBJECT="bloodbank.rpy.v1.system.heartbeat.send"
-COMMAND_TYPE="bloodbank.v1.system.heartbeat.send"
-REPLY_TYPE="bloodbank.v1.system.heartbeat.send"
+COMMAND_SUBJECT="bloodbank.cmd.system.heartbeat.send"
+REPLY_SUBJECT="bloodbank.rpy.system.heartbeat.send"
+COMMAND_TYPE="bloodbank.system.heartbeat.send"
+REPLY_TYPE="bloodbank.system.heartbeat.send"
 RECEIVE_TIMEOUT="10s"
 
 CORRELATION_ID=""
@@ -274,8 +274,8 @@ if env.get('correlationid') != expected_corr:
     problems.append(f\"correlationid: expected {expected_corr}, got {env.get('correlationid')!r}\")
 if env.get('causationid') != expected_cmd_id:
     problems.append(f\"causationid: expected {expected_cmd_id}, got {env.get('causationid')!r}\")
-if env.get('type') != 'bloodbank.v1.system.heartbeat.send':
-    problems.append(f\"type: expected bloodbank.v1.system.heartbeat.send, got {env.get('type')!r}\")
+if env.get('type') != 'bloodbank.system.heartbeat.send':
+    problems.append(f\"type: expected bloodbank.system.heartbeat.send, got {env.get('type')!r}\")
 if env.get('kind') != 'reply':
     problems.append(f\"kind: expected reply, got {env.get('kind')!r}\")
 if env.get('status') != 'SUCCESS':

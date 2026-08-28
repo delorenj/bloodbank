@@ -47,23 +47,23 @@ class CodexAdapter(ClientAdapter):
     error_log = _CODEX_STATE_DIR / "bloodbank-sessions" / "publish-errors.log"
 
     default_map = {
-        "SessionStart": ("bloodbank.v1.agent.session.started", "session"),
-        "session-start": ("bloodbank.v1.agent.session.started", "session"),
-        "Stop": ("bloodbank.v1.agent.session.ended", "session"),
-        "SessionEnd": ("bloodbank.v1.agent.session.ended", "session"),
-        "session-end": ("bloodbank.v1.agent.session.ended", "session"),
-        "UserPromptSubmit": ("bloodbank.v1.conversation.turn.started", "thread"),
-        "prompt-submitted": ("bloodbank.v1.conversation.turn.started", "thread"),
-        "PreToolUse": ("bloodbank.v1.agent.tool.requested", "invocation"),
-        "tool-request": ("bloodbank.v1.agent.tool.requested", "invocation"),
-        "PostToolUse": ("bloodbank.v1.agent.tool.completed", "invocation"),
-        "tool-action": ("bloodbank.v1.agent.tool.completed", "invocation"),
-        "tool-completed": ("bloodbank.v1.agent.tool.completed", "invocation"),
-        "SubagentStart": ("bloodbank.v1.agent.invocation.started", "invocation"),
-        "subagent-started": ("bloodbank.v1.agent.invocation.started", "invocation"),
-        "SubagentStop": ("bloodbank.v1.agent.invocation.completed", "invocation"),
-        "subagent-stopped": ("bloodbank.v1.agent.invocation.completed", "invocation"),
-        "notify": ("bloodbank.v1.conversation.turn.completed", "thread"),
+        "SessionStart": ("bloodbank.agent.session.started", "session"),
+        "session-start": ("bloodbank.agent.session.started", "session"),
+        "Stop": ("bloodbank.agent.session.ended", "session"),
+        "SessionEnd": ("bloodbank.agent.session.ended", "session"),
+        "session-end": ("bloodbank.agent.session.ended", "session"),
+        "UserPromptSubmit": ("bloodbank.conversation.turn.started", "thread"),
+        "prompt-submitted": ("bloodbank.conversation.turn.started", "thread"),
+        "PreToolUse": ("bloodbank.agent.tool.requested", "invocation"),
+        "tool-request": ("bloodbank.agent.tool.requested", "invocation"),
+        "PostToolUse": ("bloodbank.agent.tool.completed", "invocation"),
+        "tool-action": ("bloodbank.agent.tool.completed", "invocation"),
+        "tool-completed": ("bloodbank.agent.tool.completed", "invocation"),
+        "SubagentStart": ("bloodbank.agent.invocation.started", "invocation"),
+        "subagent-started": ("bloodbank.agent.invocation.started", "invocation"),
+        "SubagentStop": ("bloodbank.agent.invocation.completed", "invocation"),
+        "subagent-stopped": ("bloodbank.agent.invocation.completed", "invocation"),
+        "notify": ("bloodbank.conversation.turn.completed", "thread"),
     }
 
     @property
@@ -104,7 +104,7 @@ class CodexAdapter(ClientAdapter):
         cwd = os.getcwd()
         raw = {"hook": hook_name, "payload": payload}
 
-        if ce_type == "bloodbank.v1.agent.session.started":
+        if ce_type == "bloodbank.agent.session.started":
             return {
                 "session_id": session.session_id,
                 "working_directory": cwd,
@@ -114,7 +114,7 @@ class CodexAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.session.ended":
+        if ce_type == "bloodbank.agent.session.ended":
             end_reason = "user_stop"
             if hook_name == "session-end" and isinstance(payload, str) and payload:
                 end_reason = payload
@@ -145,7 +145,7 @@ class CodexAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.conversation.turn.started":
+        if ce_type == "bloodbank.conversation.turn.started":
             prompt_text = str(
                 _value(payload, "prompt", "user_prompt", "userPrompt") or ""
             )
@@ -159,7 +159,7 @@ class CodexAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.conversation.turn.completed":
+        if ce_type == "bloodbank.conversation.turn.completed":
             outcome = "completed" if _tool_outcome(payload) == "success" else "failed"
             return {
                 "thread_id": session.session_id,
@@ -168,7 +168,7 @@ class CodexAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.tool.requested":
+        if ce_type == "bloodbank.agent.tool.requested":
             return {
                 "invocation_id": _invocation_id(session, payload),
                 "tool_call_id": _tool_call_id(session, payload),
@@ -180,7 +180,7 @@ class CodexAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.tool.completed":
+        if ce_type == "bloodbank.agent.tool.completed":
             data: dict[str, Any] = {
                 "invocation_id": _invocation_id(session, payload),
                 "tool_call_id": _tool_call_id(session, payload),
@@ -198,7 +198,7 @@ class CodexAdapter(ClientAdapter):
                 data["result"] = result
             return data
 
-        if ce_type == "bloodbank.v1.agent.invocation.started":
+        if ce_type == "bloodbank.agent.invocation.started":
             return {
                 "invocation_id": _invocation_id(session, payload),
                 "thread_id": _value(payload, "thread_id", "threadId")
@@ -208,7 +208,7 @@ class CodexAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.invocation.completed":
+        if ce_type == "bloodbank.agent.invocation.completed":
             return {
                 "invocation_id": _invocation_id(session, payload),
                 "stop_reason": _value(payload, "reason", "stop_reason", "stopReason")
@@ -222,9 +222,9 @@ class CodexAdapter(ClientAdapter):
     def post_publish(
         self, session: SessionState, ce_type: str, payload: Any, argv: list[str]
     ) -> None:
-        if ce_type == "bloodbank.v1.agent.tool.completed":
+        if ce_type == "bloodbank.agent.tool.completed":
             session.bump_tool(_tool_name(payload))
-        if ce_type == "bloodbank.v1.agent.session.ended" and self.sessions_dir:
+        if ce_type == "bloodbank.agent.session.ended" and self.sessions_dir:
             session.archive(self.sessions_dir)
 
 

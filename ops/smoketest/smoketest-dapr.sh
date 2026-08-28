@@ -29,8 +29,8 @@ STREAM="BLOODBANK_EVENTS"
 # Dapr HTTP API is exposed on the host port (default 3500).
 DAPR_HTTP="${DAPR_HTTP:-http://127.0.0.1:3500}"
 PUBSUB_NAME="bloodbank-pubsub"
-TOPIC="bloodbank.evt.v1.system.heartbeat.received"
-CE_TYPE="bloodbank.v1.system.heartbeat.received"
+TOPIC="bloodbank.evt.system.heartbeat.received"
+CE_TYPE="bloodbank.system.heartbeat.received"
 RECEIVE_TIMEOUT="10s"
 
 CORRELATION_ID=""
@@ -109,9 +109,9 @@ nats_run consumer add "${STREAM}" "${CONSUMER_NAME}" \
 # -----------------------------------------------------------------------------
 #
 # Per ADR-0001 topic-to-subject mapping, the Dapr topic name IS the NATS
-# subject. Publishing to topic "bloodbank.evt.v1.system.heartbeat.received"
-# lands on NATS subject "bloodbank.evt.v1.system.heartbeat.received" which
-# matches the BLOODBANK_EVENTS stream's `bloodbank.evt.v1.>` binding.
+# subject. Publishing to topic "bloodbank.evt.system.heartbeat.received"
+# lands on NATS subject "bloodbank.evt.system.heartbeat.received" which
+# matches the BLOODBANK_EVENTS stream's `bloodbank.evt.>` binding.
 
 ENVELOPE=$(cat <<JSON
 {
@@ -179,8 +179,8 @@ except json.JSONDecodeError as e:
 problems = []
 if env.get("specversion") != "1.0":
     problems.append(f"specversion: expected 1.0, got {env.get('specversion')!r}")
-if env.get("type") != "bloodbank.v1.system.heartbeat.received":
-    problems.append(f"type: expected bloodbank.v1.system.heartbeat.received, got {env.get('type')!r}")
+if env.get("type") != "bloodbank.system.heartbeat.received":
+    problems.append(f"type: expected bloodbank.system.heartbeat.received, got {env.get('type')!r}")
 if env.get("kind") != "event":
     problems.append(f"kind: expected event, got {env.get('kind')!r}")
 if env.get("domain") != "system":

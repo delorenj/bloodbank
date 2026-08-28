@@ -144,7 +144,7 @@ class ClientAdapter:
 
     def should_reset_session(self, ce_type: str, hook_name: str) -> bool:
         """Whether to force a fresh session id for this event."""
-        return ce_type == "bloodbank.v1.agent.session.started"
+        return ce_type == "bloodbank.agent.session.started"
 
     def get_correlation_id(self, session: SessionState, payload: Any) -> str:
         """Correlation ID for the envelope (defaults to session.session_id)."""
@@ -158,7 +158,7 @@ class ClientAdapter:
         correlation_id: str,
     ) -> str:
         """Causation ID for the envelope (defaults to session.last_event_id)."""
-        if ce_type == "bloodbank.v1.agent.session.started":
+        if ce_type == "bloodbank.agent.session.started":
             return correlation_id
         return session.last_event_id or correlation_id
 
@@ -169,7 +169,7 @@ class ClientAdapter:
 
         Session-start events self-root by default (id == correlation_id).
         """
-        if ce_type == "bloodbank.v1.agent.session.started":
+        if ce_type == "bloodbank.agent.session.started":
             return correlation_id
         return None
 
@@ -229,7 +229,7 @@ class ClientAdapter:
         self, session: SessionState, ce_type: str, payload: Any, argv: list[str]
     ) -> None:
         """Side effects after a successful publish (bump tool, archive, etc.)."""
-        if ce_type == "bloodbank.v1.agent.session.ended" and self.sessions_dir:
+        if ce_type == "bloodbank.agent.session.ended" and self.sessions_dir:
             session.archive(self.sessions_dir)
 
     def after_publish_attempt(

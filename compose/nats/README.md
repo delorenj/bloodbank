@@ -5,14 +5,14 @@ Machine-readable counterpart: `streams.json` in this directory.
 Authoritative naming contract: **`bloodbank/docs/event-naming.md`**. Any
 conflict between this file and the contract is a defect here — fix this
 file. ADR-0001 (metarepo, TBD) locks the stream names and `bloodbank-pubsub`
-component name; everything else flows from the versioned Bloodbank contract.
+component name; everything else flows from the Bloodbank naming contract.
 
 ## Streams
 
 | Stream                | Subjects                                              | Retention   | Storage | Max age | Discard |
 |-----------------------|-------------------------------------------------------|-------------|---------|---------|---------|
-| `BLOODBANK_EVENTS`    | `bloodbank.evt.v1.>`, exact repo-maintenance v2 failure subject | `limits`    | `file`  | `7d`    | `old`   |
-| `BLOODBANK_COMMANDS`  | `bloodbank.cmd.v1.>`, `bloodbank.rpy.v1.>`            | `workqueue` | `file`  | `1d`    | `old`   |
+| `BLOODBANK_EVENTS`    | `bloodbank.evt.>`                                     | `limits`    | `file`  | `7d`    | `old`   |
+| `BLOODBANK_COMMANDS`  | `bloodbank.cmd.>`, `bloodbank.rpy.>`                  | `workqueue` | `file`  | `1d`    | `old`   |
 
 - **Events** (`limits` retention) are durable CloudEvents facts. They are
   replayable, aged out after 7 days, and consumed by projections and
@@ -26,51 +26,48 @@ component name; everything else flows from the versioned Bloodbank contract.
 Per `bloodbank/docs/event-naming.md` §3:
 
 ```
-bloodbank.<kind>.v<N>.<domain>.<entity>.<action>
+bloodbank.<kind>.<domain>.<entity>.<action>
 ```
 
-where `<kind>` ∈ `{evt, cmd, rpy}`. Six dot-separated tokens, all lowercase
+where `<kind>` ∈ `{evt, cmd, rpy}`. Five dot-separated tokens, all lowercase
 `[a-z][a-z0-9_]*`. The corresponding CloudEvents `type` drops the `<kind>`
 marker:
 
 ```
-bloodbank.v<N>.<domain>.<entity>.<action>          (5 tokens)
+bloodbank.<domain>.<entity>.<action>               (4 tokens)
 ```
 
-### Events: `bloodbank.evt.v1.<domain>.<entity>.<action>`
+### Events: `bloodbank.evt.<domain>.<entity>.<action>`
 
 Past-tense action. Examples:
 
-- `bloodbank.evt.v1.conversation.message.appended`
-- `bloodbank.evt.v1.cli.session.started`
-- `bloodbank.evt.v1.system.heartbeat.received`
+- `bloodbank.evt.conversation.message.appended`
+- `bloodbank.evt.cli.session.started`
+- `bloodbank.evt.system.heartbeat.received`
 
-The targeted action-failure extension uses the exact subject
-`bloodbank.evt.v2.repo.maintenance.failed`. The stream doesn't bind a broad
-v2 wildcard; all other events remain v1.
+Subjects carry no version token. The action-failure extension that briefly
+lived at `bloodbank.evt.v2.repo.maintenance.failed` is now just the richer
+schema behind `bloodbank.evt.repo.maintenance.failed` — its `action` failure
+phase is distinguished by the payload, not by a subject. A breaking payload
+change gets a new action or entity, never a version segment, so
+`bloodbank.evt.>` is all any catch-all consumer ever needs to bind.
 
-A consumer subscribed to `bloodbank.evt.v1.>` does not receive this v2 event.
-Consumers that need action failures MUST add a second subscription to the
-exact v2 subject. Durable JetStream consumers use that exact filter; catch-all
-services such as event-toaster remain v1-only until they explicitly add the
-second subscription.
-
-### Commands: `bloodbank.cmd.v1.<domain>.<entity>.<action>`
+### Commands: `bloodbank.cmd.<domain>.<entity>.<action>`
 
 Imperative action. Examples:
 
-- `bloodbank.cmd.v1.agent.invocation.start` (canonical PM->agent invocation command; route via `data.target_agent_id`)
-- `bloodbank.cmd.v1.cli.process.spawn`
+- `bloodbank.cmd.agent.invocation.start` (canonical PM->agent invocation command; route via `data.target_agent_id`)
+- `bloodbank.cmd.cli.process.spawn`
 
-### Replies: `bloodbank.rpy.v1.<domain>.<entity>.<action>`
+### Replies: `bloodbank.rpy.<domain>.<entity>.<action>`
 
 Mirrors the command action; used as `reply_to` on the command envelope.
 Consumers correlate via `correlationid` / `in_reply_to`.
 
 Examples:
 
-- `bloodbank.rpy.v1.agent.invocation.start`
-- `bloodbank.rpy.v1.cli.process.spawn`
+- `bloodbank.rpy.agent.invocation.start`
+- `bloodbank.rpy.cli.process.spawn`
 
 For the domain / entity / action allowlists and banned-token rules, see
 `docs/event-naming.md` §6–§9.

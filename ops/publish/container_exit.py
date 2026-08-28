@@ -18,7 +18,7 @@ from core.nats_publish import publish as nats_publish  # noqa: E402
 
 CE_TYPE = os.environ.get(
     "BLOODBANK_CONTAINER_EXIT_CE_TYPE",
-    "bloodbank.v1.system.process.exited",
+    "bloodbank.system.process.exited",
 )
 SOURCE = os.environ.get(
     "BLOODBANK_CONTAINER_EXIT_SOURCE",

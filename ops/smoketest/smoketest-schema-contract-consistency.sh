@@ -2,7 +2,7 @@
 #
 # Schema ↔ validator consistency check.
 #
-# For every *.v1.json under bloodbank/schemas/bloodbank/v*/**, build a
+# For every *.json under bloodbank/schemas/bloodbank/**, build a
 # minimal envelope using the schema's declared (type, kind) and run it
 # through core.validate.assert_contract. Any schema whose declared type
 # is rejected by the stdlib contract surface (allowlist drift, banned-token
@@ -50,7 +50,7 @@ except Exception as exc:  # noqa: BLE001
 
 
 ROOT = Path("schemas/bloodbank")
-schemas = sorted(ROOT.rglob("*.v1.json"))
+schemas = sorted(ROOT.rglob("*.json"))
 if not schemas:
     print("smoketest-schema-contract-consistency: no schemas found", file=sys.stderr)
     sys.exit(2)
@@ -58,7 +58,7 @@ if not schemas:
 
 def minimal_envelope(ce_type: str, kind: str) -> dict:
     """Build the smallest envelope that should pass assert_contract for (type, kind)."""
-    domain = ce_type.split(".")[2]
+    domain = ce_type.split(".")[1]
     subject = subject_for(ce_type, kind)
     env = {
         "specversion": "1.0",
@@ -89,7 +89,7 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
         env["idempotency_key"] = payload["idempotency_key"]
         env["correlationid"] = payload["correlation_id"]
         env["causationid"] = payload["causation_id"]
-        if ce_type == "bloodbank.v1.portfolio.receipt.recorded":
+        if ce_type == "bloodbank.portfolio.receipt.recorded":
             env["id"] = payload["receipt_id"]
     return env
 
@@ -129,9 +129,9 @@ for sp in schemas:
     kind = kind_prop["const"]
     domain = domain_prop["const"]
 
-    # type segment 3 must equal domain.const
-    if ce_type.split(".")[2] != domain:
-        print(f"FAIL {rel}: type segment 3 != domain.const ({ce_type.split('.')[2]!r} vs {domain!r})")
+    # type segment 2 must equal domain.const
+    if ce_type.split(".")[1] != domain:
+        print(f"FAIL {rel}: type segment 2 != domain.const ({ce_type.split('.')[1]!r} vs {domain!r})")
         fail_count += 1
         continue
 

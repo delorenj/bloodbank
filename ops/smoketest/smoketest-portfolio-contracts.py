@@ -31,19 +31,19 @@ from core.validate import (  # noqa: E402
 
 
 EXPECTED_TYPES = {
-    "bloodbank.v1.portfolio.intake.received",
-    "bloodbank.v1.portfolio.intake.triaged",
-    "bloodbank.v1.portfolio.work.delegated",
-    "bloodbank.v1.portfolio.work.updated",
+    "bloodbank.portfolio.intake.received",
+    "bloodbank.portfolio.intake.triaged",
+    "bloodbank.portfolio.work.delegated",
+    "bloodbank.portfolio.work.updated",
     RECEIPT_TYPE,
-    "bloodbank.v1.portfolio.approval.requested",
-    "bloodbank.v1.portfolio.approval.resolved",
-    "bloodbank.v1.portfolio.escalation.raised",
-    "bloodbank.v1.portfolio.escalation.resolved",
-    "bloodbank.v1.portfolio.capacity.recorded",
-    "bloodbank.v1.portfolio.lease.granted",
-    "bloodbank.v1.portfolio.lease.released",
-    "bloodbank.v1.portfolio.lease.expired",
+    "bloodbank.portfolio.approval.requested",
+    "bloodbank.portfolio.approval.resolved",
+    "bloodbank.portfolio.escalation.raised",
+    "bloodbank.portfolio.escalation.resolved",
+    "bloodbank.portfolio.capacity.recorded",
+    "bloodbank.portfolio.lease.granted",
+    "bloodbank.portfolio.lease.released",
+    "bloodbank.portfolio.lease.expired",
 }
 
 
@@ -54,7 +54,7 @@ class PortfolioContractTests(unittest.TestCase):
         self.assertEqual(set(PAYLOADS), EXPECTED_TYPES)
         schema_types = set()
         for path in sorted(
-            (ROOT / "schemas" / "bloodbank" / "v1" / "portfolio").glob("*.v1.json")
+            (ROOT / "schemas" / "bloodbank" / "portfolio").glob("*.json")
         ):
             schema = json.loads(path.read_text())
             ce_type = schema["properties"]["type"]["const"]
@@ -83,13 +83,13 @@ class PortfolioContractTests(unittest.TestCase):
                 validate_envelope(built)
 
     def test_root_and_non_root_causation_semantics(self) -> None:
-        root = envelope("bloodbank.v1.portfolio.intake.received")
+        root = envelope("bloodbank.portfolio.intake.received")
         self.assertIsNone(root["causationid"])
         self.assertIsNone(root["data"]["causation_id"])
         validate_envelope(root)
 
         for ce_type in sorted(
-            EXPECTED_TYPES - {"bloodbank.v1.portfolio.intake.received"}
+            EXPECTED_TYPES - {"bloodbank.portfolio.intake.received"}
         ):
             with self.subTest(ce_type=ce_type):
                 built = envelope(ce_type)
@@ -97,7 +97,7 @@ class PortfolioContractTests(unittest.TestCase):
                 validate_envelope(built)
 
     def test_payload_lineage_must_match_envelope(self) -> None:
-        built = envelope("bloodbank.v1.portfolio.work.delegated")
+        built = envelope("bloodbank.portfolio.work.delegated")
         mismatched_correlation = copy.deepcopy(built)
         mismatched_correlation["data"]["correlation_id"] = (
             "33333333-3333-4333-8333-333333333333"
@@ -113,13 +113,13 @@ class PortfolioContractTests(unittest.TestCase):
             assert_contract(mismatched_causation)
 
     def test_only_intake_received_may_be_a_root(self) -> None:
-        invalid_root = envelope("bloodbank.v1.portfolio.intake.received")
+        invalid_root = envelope("bloodbank.portfolio.intake.received")
         invalid_root["causationid"] = "22222222-2222-4222-8222-222222222222"
         invalid_root["data"]["causation_id"] = invalid_root["causationid"]
         with self.assertRaises(self.failure_types):
             validate_envelope(invalid_root)
 
-        invalid_non_root = envelope("bloodbank.v1.portfolio.intake.triaged")
+        invalid_non_root = envelope("bloodbank.portfolio.intake.triaged")
         invalid_non_root["causationid"] = None
         invalid_non_root["data"]["causation_id"] = None
         with self.assertRaises(self.failure_types):
@@ -128,7 +128,7 @@ class PortfolioContractTests(unittest.TestCase):
     def test_identifiers_never_shape_type_or_subject(self) -> None:
         for ce_type in sorted(EXPECTED_TYPES):
             built = envelope(ce_type)
-            self.assertEqual(ce_type.split(".")[2], "portfolio")
+            self.assertEqual(ce_type.split(".")[1], "portfolio")
             self.assertEqual(built["subject"], subject_for(ce_type, "event"))
             for identity in (
                 built["data"]["target_agent_id"],
@@ -140,7 +140,7 @@ class PortfolioContractTests(unittest.TestCase):
                     self.assertNotIn(identity, built["subject"])
 
     def test_target_and_idempotency_are_mandatory_and_consistent(self) -> None:
-        built = envelope("bloodbank.v1.portfolio.work.delegated")
+        built = envelope("bloodbank.portfolio.work.delegated")
         missing_target = copy.deepcopy(built)
         missing_target["data"].pop("target_agent_id")
         with self.assertRaises(self.failure_types):
@@ -152,7 +152,7 @@ class PortfolioContractTests(unittest.TestCase):
             assert_contract(mismatched_key)
 
     def test_capacity_snapshot_arithmetic_is_enforced(self) -> None:
-        invalid = envelope("bloodbank.v1.portfolio.capacity.recorded")
+        invalid = envelope("bloodbank.portfolio.capacity.recorded")
         invalid["data"]["capacity_available"] = 2
         with self.assertRaises(ContractViolation):
             assert_contract(invalid)

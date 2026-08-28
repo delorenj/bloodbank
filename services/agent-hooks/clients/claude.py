@@ -44,13 +44,13 @@ class ClaudeAdapter(ClientAdapter):
     error_log = _CLAUDE_STATE_DIR / "bloodbank-sessions" / "publish-errors.log"
 
     default_map = {
-        "session-start": ("bloodbank.v1.agent.session.started", "session"),
-        "session-end": ("bloodbank.v1.agent.session.ended", "session"),
-        "session-stop": ("bloodbank.v1.agent.session.ended", "session"),
-        "prompt-submitted": ("bloodbank.v1.conversation.turn.started", "thread"),
-        "tool-request": ("bloodbank.v1.agent.tool.requested", "invocation"),
-        "tool-action": ("bloodbank.v1.agent.tool.completed", "invocation"),
-        "subagent-stopped": ("bloodbank.v1.agent.invocation.completed", "invocation"),
+        "session-start": ("bloodbank.agent.session.started", "session"),
+        "session-end": ("bloodbank.agent.session.ended", "session"),
+        "session-stop": ("bloodbank.agent.session.ended", "session"),
+        "prompt-submitted": ("bloodbank.conversation.turn.started", "thread"),
+        "tool-request": ("bloodbank.agent.tool.requested", "invocation"),
+        "tool-action": ("bloodbank.agent.tool.completed", "invocation"),
+        "subagent-stopped": ("bloodbank.agent.invocation.completed", "invocation"),
     }
 
     @property
@@ -67,7 +67,7 @@ class ClaudeAdapter(ClientAdapter):
     ) -> dict[str, Any]:
         cwd = os.getcwd()
 
-        if ce_type == "bloodbank.v1.agent.session.started":
+        if ce_type == "bloodbank.agent.session.started":
             return {
                 "session_id": session.session_id,
                 "working_directory": cwd,
@@ -76,7 +76,7 @@ class ClaudeAdapter(ClientAdapter):
                 "started_at": session.started_at,
             }
 
-        if ce_type == "bloodbank.v1.agent.session.ended":
+        if ce_type == "bloodbank.agent.session.ended":
             end_reason = argv[2] if len(argv) > 2 else "user_stop"
             try:
                 started = datetime.fromisoformat(
@@ -100,7 +100,7 @@ class ClaudeAdapter(ClientAdapter):
                 "git_branch": git_branch(cwd),
             }
 
-        if ce_type == "bloodbank.v1.conversation.turn.started":
+        if ce_type == "bloodbank.conversation.turn.started":
             prompt_text = str(payload.get("prompt", ""))
             turn_id = f"{session.session_id}:{session.turn_number + 1}"
             return {
@@ -112,7 +112,7 @@ class ClaudeAdapter(ClientAdapter):
                 "git_branch": git_branch(cwd),
             }
 
-        if ce_type == "bloodbank.v1.agent.tool.requested":
+        if ce_type == "bloodbank.agent.tool.requested":
             tool_name = str(payload.get("tool_name", "unknown"))
             tool_input = payload.get("tool_input") or {}
             turn_number = session.turn_number + 1
@@ -126,7 +126,7 @@ class ClaudeAdapter(ClientAdapter):
                 "turn_number": turn_number,
             }
 
-        if ce_type == "bloodbank.v1.agent.tool.completed":
+        if ce_type == "bloodbank.agent.tool.completed":
             tool_name = str(payload.get("tool_name", "unknown"))
             tool_input = payload.get("tool_input") or {}
             turn_number = session.turn_number + 1
@@ -142,7 +142,7 @@ class ClaudeAdapter(ClientAdapter):
                 "turn_number": turn_number,
             }
 
-        if ce_type == "bloodbank.v1.agent.invocation.completed":
+        if ce_type == "bloodbank.agent.invocation.completed":
             return {
                 "invocation_id": session.session_id,
                 "stop_reason": "completed",
@@ -154,7 +154,7 @@ class ClaudeAdapter(ClientAdapter):
     def before_publish(
         self, session: SessionState, ce_type: str, payload: Any, argv: list[str]
     ) -> None:
-        if ce_type == "bloodbank.v1.agent.tool.completed":
+        if ce_type == "bloodbank.agent.tool.completed":
             session.bump_tool(str(payload.get("tool_name", "unknown")))
 
     def post_publish(
@@ -171,7 +171,7 @@ class ClaudeAdapter(ClientAdapter):
         *,
         published: bool,
     ) -> None:
-        if ce_type == "bloodbank.v1.agent.session.ended" and self.sessions_dir:
+        if ce_type == "bloodbank.agent.session.ended" and self.sessions_dir:
             session.archive(self.sessions_dir)
 
 

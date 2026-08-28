@@ -6,8 +6,8 @@ set -euo pipefail
 
 BLOODBANK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STREAM="BLOODBANK_EVENTS"
-TYPE="bloodbank.v1.portfolio.intake.received"
-SUBJECT="bloodbank.evt.v1.portfolio.intake.received"
+TYPE="bloodbank.portfolio.intake.received"
+SUBJECT="bloodbank.evt.portfolio.intake.received"
 CONSUMER_NAME="portfolio-smoketest-$$-$(date +%s%N)"
 CORRELATION_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)"
 EVENT_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)"
@@ -56,7 +56,7 @@ from portfolio_contract import build_envelope
 
 correlation_id, event_id, occurred_at = sys.argv[1:]
 envelope = build_envelope(
-    "bloodbank.v1.portfolio.intake.received",
+    "bloodbank.portfolio.intake.received",
     correlation_id=correlation_id,
     event_id=event_id,
     occurred_at=occurred_at,

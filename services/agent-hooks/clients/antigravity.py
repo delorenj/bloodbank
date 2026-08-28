@@ -53,10 +53,10 @@ class AntigravityAdapter(ClientAdapter):
     error_log = _AGY_STATE_DIR / "bloodbank-sessions" / "publish-errors.log"
 
     default_map = {
-        "PreInvocation": ("bloodbank.v1.agent.invocation.started", "invocation"),
-        "PostInvocation": ("bloodbank.v1.agent.invocation.completed", "invocation"),
-        "PostToolUse": ("bloodbank.v1.agent.tool.completed", "invocation"),
-        "Stop": ("bloodbank.v1.agent.session.ended", "session"),
+        "PreInvocation": ("bloodbank.agent.invocation.started", "invocation"),
+        "PostInvocation": ("bloodbank.agent.invocation.completed", "invocation"),
+        "PostToolUse": ("bloodbank.agent.tool.completed", "invocation"),
+        "Stop": ("bloodbank.agent.session.ended", "session"),
     }
 
     @property
@@ -82,7 +82,7 @@ class AntigravityAdapter(ClientAdapter):
         cwd = _workspace(payload)
         raw = {"hook": hook_name, "payload": payload}
 
-        if ce_type == "bloodbank.v1.agent.session.ended":
+        if ce_type == "bloodbank.agent.session.ended":
             end_reason = "stop"
             if isinstance(payload, dict):
                 end_reason = str(payload.get("terminationReason") or end_reason)
@@ -109,7 +109,7 @@ class AntigravityAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.tool.completed":
+        if ce_type == "bloodbank.agent.tool.completed":
             # PostToolUse carries only stepIdx/error — no toolCall — so the
             # tool identity is unknowable; stepIdx still gives a stable call id.
             step = _value(payload, "stepIdx")
@@ -128,7 +128,7 @@ class AntigravityAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.invocation.started":
+        if ce_type == "bloodbank.agent.invocation.started":
             return {
                 "invocation_id": _invocation_id(session, payload),
                 "thread_id": _value(payload, "conversationId") or session.session_id,
@@ -137,7 +137,7 @@ class AntigravityAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.invocation.completed":
+        if ce_type == "bloodbank.agent.invocation.completed":
             return {
                 "invocation_id": _invocation_id(session, payload),
                 "stop_reason": "completed",
@@ -150,9 +150,9 @@ class AntigravityAdapter(ClientAdapter):
     def post_publish(
         self, session: SessionState, ce_type: str, payload: Any, argv: list[str]
     ) -> None:
-        if ce_type == "bloodbank.v1.agent.tool.completed":
+        if ce_type == "bloodbank.agent.tool.completed":
             session.bump_tool("unknown")
-        if ce_type == "bloodbank.v1.agent.session.ended" and self.sessions_dir:
+        if ce_type == "bloodbank.agent.session.ended" and self.sessions_dir:
             session.archive(self.sessions_dir)
 
 

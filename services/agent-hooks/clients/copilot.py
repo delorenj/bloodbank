@@ -35,13 +35,13 @@ class CopilotAdapter(ClientAdapter):
     error_log = None
 
     default_map = {
-        "sessionStart": ("bloodbank.v1.agent.session.started", "session"),
-        "sessionEnd": ("bloodbank.v1.agent.session.ended", "session"),
-        "userPromptSubmitted": ("bloodbank.v1.conversation.turn.started", "thread"),
-        "preToolUse": ("bloodbank.v1.agent.tool.requested", "invocation"),
-        "postToolUse": ("bloodbank.v1.agent.tool.completed", "invocation"),
-        "errorOccurred": ("bloodbank.v1.agent.invocation.failed", "invocation"),
-        "agentStop": ("bloodbank.v1.agent.invocation.completed", "invocation"),
+        "sessionStart": ("bloodbank.agent.session.started", "session"),
+        "sessionEnd": ("bloodbank.agent.session.ended", "session"),
+        "userPromptSubmitted": ("bloodbank.conversation.turn.started", "thread"),
+        "preToolUse": ("bloodbank.agent.tool.requested", "invocation"),
+        "postToolUse": ("bloodbank.agent.tool.completed", "invocation"),
+        "errorOccurred": ("bloodbank.agent.invocation.failed", "invocation"),
+        "agentStop": ("bloodbank.agent.invocation.completed", "invocation"),
     }
 
     @property
@@ -54,7 +54,7 @@ class CopilotAdapter(ClientAdapter):
     def get_event_id(
         self, session: SessionState, ce_type: str, correlation_id: str
     ) -> str | None:
-        if ce_type == "bloodbank.v1.agent.session.started":
+        if ce_type == "bloodbank.agent.session.started":
             return correlation_id
         return None
 
@@ -69,16 +69,16 @@ class CopilotAdapter(ClientAdapter):
         session_id = session.session_id
         raw = {"hook": hook_name, "payload": payload}
 
-        if ce_type == "bloodbank.v1.agent.session.started":
+        if ce_type == "bloodbank.agent.session.started":
             return {"session_id": session_id, **raw}
 
-        if ce_type == "bloodbank.v1.agent.session.ended":
+        if ce_type == "bloodbank.agent.session.ended":
             end_reason = None
             if isinstance(payload, dict):
                 end_reason = payload.get("reason") or payload.get("end_reason")
             return {"session_id": session_id, "end_reason": end_reason, **raw}
 
-        if ce_type == "bloodbank.v1.conversation.turn.started":
+        if ce_type == "bloodbank.conversation.turn.started":
             prompt_text = None
             if isinstance(payload, dict):
                 prompt_text = payload.get("prompt") or payload.get("prompt_text")
@@ -89,7 +89,7 @@ class CopilotAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type.startswith("bloodbank.v1.agent.tool."):
+        if ce_type.startswith("bloodbank.agent.tool."):
             tool_name = "unknown"
             arguments: dict[str, Any] | None = None
             if isinstance(payload, dict):
@@ -107,7 +107,7 @@ class CopilotAdapter(ClientAdapter):
             }
             if arguments is not None:
                 base["arguments"] = arguments
-            if ce_type == "bloodbank.v1.agent.tool.completed":
+            if ce_type == "bloodbank.agent.tool.completed":
                 outcome = "success"
                 if isinstance(payload, dict) and (
                     payload.get("is_error") or payload.get("error")
@@ -116,7 +116,7 @@ class CopilotAdapter(ClientAdapter):
                 base["outcome"] = outcome
             return base
 
-        if ce_type == "bloodbank.v1.agent.invocation.failed":
+        if ce_type == "bloodbank.agent.invocation.failed":
             err_msg = None
             err_code = None
             if isinstance(payload, dict):
@@ -129,7 +129,7 @@ class CopilotAdapter(ClientAdapter):
                 **raw,
             }
 
-        if ce_type == "bloodbank.v1.agent.invocation.completed":
+        if ce_type == "bloodbank.agent.invocation.completed":
             return {"invocation_id": session_id, **raw}
 
         return raw

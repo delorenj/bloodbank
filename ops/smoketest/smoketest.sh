@@ -3,7 +3,7 @@
 # Bloodbank canonical smoke test.
 #
 # Publishes a canonical CloudEvents envelope to
-# bloodbank.evt.v1.system.heartbeat.received on NATS JetStream, receives
+# bloodbank.evt.system.heartbeat.received on NATS JetStream, receives
 # it via a short-lived pull consumer, and validates the round-trip.
 # See ops/smoketest/README.md for scope.
 #
@@ -27,7 +27,7 @@ BLOODBANK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_PROJECT_NAME="bloodbank"
 COMPOSE_FILE="${BLOODBANK_ROOT}/compose/docker-compose.yml"
 STREAM="BLOODBANK_EVENTS"
-SUBJECT="bloodbank.evt.v1.system.heartbeat.received"
+SUBJECT="bloodbank.evt.system.heartbeat.received"
 CANONICAL_EVENT_TEMPLATE="${BLOODBANK_ROOT}/ops/smoketest/canonical-event.json"
 RECEIVE_TIMEOUT="10s"
 
@@ -205,8 +205,8 @@ except json.JSONDecodeError as e:
 problems = []
 if env.get("specversion") != "1.0":
     problems.append(f"specversion: expected 1.0, got {env.get('specversion')!r}")
-if env.get("type") != "bloodbank.v1.system.heartbeat.received":
-    problems.append(f"type: expected bloodbank.v1.system.heartbeat.received, got {env.get('type')!r}")
+if env.get("type") != "bloodbank.system.heartbeat.received":
+    problems.append(f"type: expected bloodbank.system.heartbeat.received, got {env.get('type')!r}")
 if env.get("kind") != "event":
     problems.append(f"kind: expected event, got {env.get('kind')!r}")
 if env.get("domain") != "system":

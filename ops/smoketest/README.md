@@ -8,10 +8,10 @@ Naming Contract v1 envelopes — see `docs/event-naming.md`.
 |--------------------------------------|----------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|
 | `smoketest-bloodbank-naming.sh`      | Stdlib-only contract verifier: §14 sequence × {claude, copilot, codex} + negative probes against `cli/bb.py` | python3                                                                                |
 | `smoketest.sh`                       | NATS JetStream reachable; `BLOODBANK_EVENTS` stream accepts a v1 envelope; round-trips unchanged          | `nats` + `nats-init`                                                                       |
-| `smoketest-command.sh`               | `BLOODBANK_COMMANDS` handles `bloodbank.cmd.v1.>` → `bloodbank.rpy.v1.>` with correlation preservation    | `nats` + `nats-init`                                                                       |
+| `smoketest-command.sh`               | `BLOODBANK_COMMANDS` handles `bloodbank.cmd.>` → `bloodbank.rpy.>` with correlation preservation    | `nats` + `nats-init`                                                                       |
 | `smoketest-dapr.sh`                  | Dapr `bloodbank-pubsub` loads; publish HTTP API works; Dapr→NATS routing hits the v1 subject              | `nats` + `nats-init` + `dapr-placement` + `daprd-smoketest`                                |
 | `smoketest-dapr-subscribe.sh`        | Dapr delivers a published v1 envelope back to an app callback (the full publish→subscribe loop)           | `nats` + `nats-init` + `dapr-placement` + `echo-sub` + `daprd-subscribe`                   |
-| `smoketest-heartbeat.sh`             | `heartbeat-tick` emits `bloodbank.v1.system.heartbeat.received` and `heartbeat-recorder` records them    | `heartbeat` compose profile                                                                |
+| `smoketest-heartbeat.sh`             | `heartbeat-tick` emits `bloodbank.system.heartbeat.received` and `heartbeat-recorder` records them    | `heartbeat` compose profile                                                                |
 | `smoketest-portfolio-contracts.py`   | Portfolio payload lineage, root/non-root causation, schema validity, and terminal retry invariants       | python3 + jsonschema                                                                        |
 | `smoketest-portfolio-transport.sh`   | Test publisher → live `BLOODBANK_EVENTS` JetStream → canonical full consumer validator                   | already-running `bloodbank-nats`, provisioned stream, Docker                                |
 
@@ -59,7 +59,7 @@ Director publisher, Candystore projection, or Dapr subscription.
 
 Talks to NATS JetStream directly via the `nats` CLI in `nats-box`. It proves:
 
-- `BLOODBANK_EVENTS` exists and accepts `bloodbank.evt.v1.system.heartbeat.received`.
+- `BLOODBANK_EVENTS` exists and accepts `bloodbank.evt.system.heartbeat.received`.
 - A canonical v1 envelope round-trips unchanged.
 - `correlationid` preservation works.
 - A durable consumer delivers the message once, and `--ack` removes it
@@ -79,9 +79,9 @@ NATS JetStream pull consumer. It proves:
 
 - The `pubsub.jetstream` component manifest is metadata-correct.
 - Topic-to-subject mapping holds: Dapr topic
-  `bloodbank.evt.v1.system.heartbeat.received` lands on the NATS subject of
+  `bloodbank.evt.system.heartbeat.received` lands on the NATS subject of
   the same name, captured by the `BLOODBANK_EVENTS` stream's
-  `bloodbank.evt.v1.>` binding.
+  `bloodbank.evt.>` binding.
 - Dapr adds `topic` and `pubsubname` envelope fields.
 - `correlationid`, `id`, and `data` payload round-trip unchanged.
 
@@ -94,7 +94,7 @@ pubsub.jetstream consumer → `/events/smoketest` callback).
 Proves:
 
 - `bloodbank-pubsub` subscribe path works end-to-end against
-  `BLOODBANK_EVENTS` (`bloodbank.evt.v1.>` binding).
+  `BLOODBANK_EVENTS` (`bloodbank.evt.>` binding).
 - Programmatic subscription contract (`GET /dapr/subscribe`,
   `POST <route>`) is wired correctly.
 - Dapr-added envelope fields (`topic`, `pubsubname`) survive to the app

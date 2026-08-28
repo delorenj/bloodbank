@@ -2,27 +2,27 @@
   "_do_not_edit": "GENERATED from hooks.master.json by sync.py — run `mise run hooks:sync`.",
   "map": {
     "session-start": [
-      "bloodbank.v1.agent.session.started",
+      "bloodbank.agent.session.started",
       "session"
     ],
     "prompt-submitted": [
-      "bloodbank.v1.conversation.turn.started",
+      "bloodbank.conversation.turn.started",
       "thread"
     ],
     "tool-request": [
-      "bloodbank.v1.agent.tool.requested",
+      "bloodbank.agent.tool.requested",
       "invocation"
     ],
     "tool-action": [
-      "bloodbank.v1.agent.tool.completed",
+      "bloodbank.agent.tool.completed",
       "invocation"
     ],
     "subagent-stopped": [
-      "bloodbank.v1.agent.invocation.completed",
+      "bloodbank.agent.invocation.completed",
       "invocation"
     ],
     "session-end": [
-      "bloodbank.v1.agent.session.ended",
+      "bloodbank.agent.session.ended",
       "session"
     ]
   },

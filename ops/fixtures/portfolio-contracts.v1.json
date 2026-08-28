@@ -1,5 +1,5 @@
 {
-  "bloodbank.v1.portfolio.intake.received": {
+  "bloodbank.portfolio.intake.received": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "delonet-director",
@@ -13,7 +13,7 @@
     "requester": "operator:jarad",
     "project": null
   },
-  "bloodbank.v1.portfolio.intake.triaged": {
+  "bloodbank.portfolio.intake.triaged": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "bloodbank-pm",
@@ -32,7 +32,7 @@
       "ticket_ref": "BB-29"
     }
   },
-  "bloodbank.v1.portfolio.work.delegated": {
+  "bloodbank.portfolio.work.delegated": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "bloodbank-pm",
@@ -54,7 +54,7 @@
       "ticket_ref": "BB-29"
     }
   },
-  "bloodbank.v1.portfolio.work.updated": {
+  "bloodbank.portfolio.work.updated": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "bloodbank-pm",
@@ -74,7 +74,7 @@
       "ticket_ref": "BB-29"
     }
   },
-  "bloodbank.v1.portfolio.receipt.recorded": {
+  "bloodbank.portfolio.receipt.recorded": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "bloodbank-pm",
@@ -100,7 +100,7 @@
       "ticket_ref": "BB-29"
     }
   },
-  "bloodbank.v1.portfolio.approval.requested": {
+  "bloodbank.portfolio.approval.requested": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "delonet-director",
@@ -122,7 +122,7 @@
       "ticket_ref": "BB-29"
     }
   },
-  "bloodbank.v1.portfolio.approval.resolved": {
+  "bloodbank.portfolio.approval.resolved": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "bloodbank-pm",
@@ -142,7 +142,7 @@
       "ticket_ref": "BB-29"
     }
   },
-  "bloodbank.v1.portfolio.escalation.raised": {
+  "bloodbank.portfolio.escalation.raised": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "delonet-director",
@@ -163,7 +163,7 @@
       "ticket_ref": "BB-29"
     }
   },
-  "bloodbank.v1.portfolio.escalation.resolved": {
+  "bloodbank.portfolio.escalation.resolved": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "bloodbank-pm",
@@ -183,7 +183,7 @@
       "ticket_ref": "BB-29"
     }
   },
-  "bloodbank.v1.portfolio.capacity.recorded": {
+  "bloodbank.portfolio.capacity.recorded": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "delonet-director",
@@ -198,7 +198,7 @@
     "capacity_available": 1,
     "active_lease_ids": ["lease-derivative-001"]
   },
-  "bloodbank.v1.portfolio.lease.granted": {
+  "bloodbank.portfolio.lease.granted": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "bloodbank-pm",
@@ -215,7 +215,7 @@
     "expires_at": "2026-08-15T11:02:00Z",
     "capacity_snapshot_id": "snapshot-001"
   },
-  "bloodbank.v1.portfolio.lease.released": {
+  "bloodbank.portfolio.lease.released": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "bloodbank-pm",
@@ -231,7 +231,7 @@
     "released_at": "2026-08-15T10:30:00Z",
     "release_reason": "completed"
   },
-  "bloodbank.v1.portfolio.lease.expired": {
+  "bloodbank.portfolio.lease.expired": {
     "schema_version": 1,
     "portfolio_id": "delonet",
     "target_agent_id": "bloodbank-pm",

@@ -22,7 +22,7 @@ from core.validate import (  # noqa: E402
 
 
 PAYLOADS = {
-    "bloodbank.v1.repo.maintenance.started": {
+    "bloodbank.repo.maintenance.started": {
         "schema_version": 1,
         "run_id": "tick-000001-20260715T060000Z",
         "repository": "delorenj/mcp-server-trello",
@@ -31,7 +31,7 @@ PAYLOADS = {
         "automerge": False,
         "outcome": {"status": "started", "success": None},
     },
-    "bloodbank.v1.repo.maintenance.completed": {
+    "bloodbank.repo.maintenance.completed": {
         "schema_version": 1,
         "run_id": "tick-000001-20260715T060000Z",
         "repository": "delorenj/mcp-server-trello",
@@ -48,7 +48,7 @@ PAYLOADS = {
             "merge_failures": 0,
         },
     },
-    "bloodbank.v1.repo.maintenance.failed": {
+    "bloodbank.repo.maintenance.failed": {
         "schema_version": 1,
         "run_id": "tick-000002-20260715T061000Z",
         "repository": "delorenj/mcp-server-trello",
@@ -72,34 +72,7 @@ PAYLOADS = {
             "redacted": True,
         },
     },
-    "bloodbank.v2.repo.maintenance.failed": {
-        "schema_version": 1,
-        "run_id": "tick-000003-20260716T012237Z",
-        "repository": "delorenj/mcp-server-trello",
-        "tick": 3,
-        "at": "2026-07-16T01:22:37Z",
-        "automerge": False,
-        "outcome": {
-            "status": "failed",
-            "success": False,
-            "provider": "provider-a",
-            "provider_returncode": 0,
-            "provider_status": "complete",
-            "merge_attempts": 0,
-            "merge_failures": 0,
-            "actions": [
-                {"type": "close", "status": "failed"},
-            ],
-        },
-        "failure": {
-            "phase": "action",
-            "code": "action_failed",
-            "summary": "1 runner-owned action(s) failed.",
-            "retryable": True,
-            "redacted": True,
-        },
-    },
-    "bloodbank.v1.reporting.report.started": {
+    "bloodbank.reporting.report.started": {
         "schema_version": 1,
         "run_id": "daily-2026-07-15",
         "report_date": "2026-07-15",
@@ -108,7 +81,7 @@ PAYLOADS = {
         "trigger": "scheduled",
         "expected_sections": ["executive-summary", "repo-maintenance"],
     },
-    "bloodbank.v1.reporting.report.completed": {
+    "bloodbank.reporting.report.completed": {
         "schema_version": 1,
         "run_id": "daily-2026-07-15",
         "report_date": "2026-07-15",
@@ -134,7 +107,7 @@ PAYLOADS = {
             "delivered_at": "2026-07-15T11:00:00Z",
         },
     },
-    "bloodbank.v1.reporting.report.failed": {
+    "bloodbank.reporting.report.failed": {
         "schema_version": 1,
         "run_id": "daily-2026-07-16",
         "report_date": "2026-07-16",
@@ -157,16 +130,48 @@ PAYLOADS = {
 }
 
 
-def envelope(ce_type: str) -> dict:
-    _, version, *body = ce_type.split(".")
-    suffix = ".".join(body)
+# The action-failure shape. It shares the (now version-free)
+# bloodbank.repo.maintenance.failed type with the provider-failure payload above:
+# the schema's `action` phase branch is what distinguishes it, not a version token.
+ACTION_FAILURE_PAYLOAD = {
+        "schema_version": 1,
+        "run_id": "tick-000003-20260716T012237Z",
+        "repository": "delorenj/mcp-server-trello",
+        "tick": 3,
+        "at": "2026-07-16T01:22:37Z",
+        "automerge": False,
+        "outcome": {
+            "status": "failed",
+            "success": False,
+            "provider": "provider-a",
+            "provider_returncode": 0,
+            "provider_status": "complete",
+            "merge_attempts": 0,
+            "merge_failures": 0,
+            "actions": [
+                {"type": "close", "status": "failed"},
+            ],
+        },
+        "failure": {
+            "phase": "action",
+            "code": "action_failed",
+            "summary": "1 runner-owned action(s) failed.",
+            "retryable": True,
+            "redacted": True,
+        },
+    }
+
+
+def envelope(ce_type: str, payload: dict | None = None) -> dict:
+    suffix = ce_type.split(".", 1)[1]
+    data = copy.deepcopy(PAYLOADS[ce_type] if payload is None else payload)
     event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, ce_type))
     return {
         "specversion": "1.0",
         "id": event_id,
         "source": "urn:33god:service:contract-smoketest",
         "type": ce_type,
-        "subject": f"bloodbank.evt.{version}.{suffix}",
+        "subject": f"bloodbank.evt.{suffix}",
         "time": "2026-07-15T11:00:00Z",
         "datacontenttype": "application/json",
         "dataschema": f"apicurio://holyfields/{ce_type}/versions/1",
@@ -174,15 +179,15 @@ def envelope(ce_type: str) -> dict:
         "causationid": event_id,
         "producer": "contract-smoketest",
         "service": "contract-smoketest",
-        "domain": ce_type.split(".")[2],
+        "domain": ce_type.split(".")[1],
         "schemaref": f"{ce_type}.v1",
         "kind": "event",
         "actor": {
             "type": "service",
             "agent_id": "bloodbank.test.maintenance-reporting",
         },
-        "ordering_key": f"run:{PAYLOADS[ce_type]['run_id']}",
-        "data": copy.deepcopy(PAYLOADS[ce_type]),
+        "ordering_key": f"run:{data['run_id']}",
+        "data": data,
     }
 
 
@@ -205,9 +210,9 @@ class MaintenanceReportingContractTests(unittest.TestCase):
 
     def test_each_envelope_rejects_wrong_contract_bindings(self) -> None:
         mutations = {
-            "subject": "bloodbank.evt.v1.system.heartbeat.received",
+            "subject": "bloodbank.evt.system.heartbeat.received",
             "dataschema": "apicurio://holyfields/wrong/versions/1",
-            "schemaref": "bloodbank.v1.system.heartbeat.received.v1",
+            "schemaref": "bloodbank.system.heartbeat.received.v1",
         }
         for ce_type in PAYLOADS:
             for field, value in mutations.items():
@@ -231,7 +236,7 @@ class MaintenanceReportingContractTests(unittest.TestCase):
                     validate_envelope(invalid)
 
     def test_setup_failure_without_provider_is_valid_and_consistent(self) -> None:
-        ce_type = "bloodbank.v1.repo.maintenance.failed"
+        ce_type = "bloodbank.repo.maintenance.failed"
         setup = envelope(ce_type)
         setup["data"]["failure"].update(
             phase="setup",
@@ -274,8 +279,8 @@ class MaintenanceReportingContractTests(unittest.TestCase):
         with self.assertRaises(self.failure_types):
             validate_envelope(merge_failure)
 
-    def test_v2_preserves_existing_failure_phases(self) -> None:
-        ce_type = "bloodbank.v2.repo.maintenance.failed"
+    def test_all_failure_phases_are_preserved(self) -> None:
+        ce_type = "bloodbank.repo.maintenance.failed"
         cases = {
             "setup": {
                 "provider": None,
@@ -308,7 +313,7 @@ class MaintenanceReportingContractTests(unittest.TestCase):
         }
         for phase, outcome in cases.items():
             with self.subTest(phase=phase):
-                event = envelope(ce_type)
+                event = envelope(ce_type, ACTION_FAILURE_PAYLOAD)
                 event["data"]["failure"].update(
                     phase=phase,
                     code=f"{phase}_failed",
@@ -318,15 +323,15 @@ class MaintenanceReportingContractTests(unittest.TestCase):
                 event["data"]["outcome"].pop("actions")
                 validate_envelope(event)
 
-    def test_v2_action_failure_contract_is_exact_and_noncontradictory(self) -> None:
-        ce_type = "bloodbank.v2.repo.maintenance.failed"
-        event = envelope(ce_type)
-        self.assertEqual(event["subject"], "bloodbank.evt.v2.repo.maintenance.failed")
+    def test_action_failure_contract_is_exact_and_noncontradictory(self) -> None:
+        ce_type = "bloodbank.repo.maintenance.failed"
+        event = envelope(ce_type, ACTION_FAILURE_PAYLOAD)
+        self.assertEqual(event["subject"], "bloodbank.evt.repo.maintenance.failed")
         self.assertEqual(
             event["dataschema"],
-            "apicurio://holyfields/bloodbank.v2.repo.maintenance.failed/versions/1",
+            "apicurio://holyfields/bloodbank.repo.maintenance.failed/versions/1",
         )
-        self.assertEqual(event["schemaref"], "bloodbank.v2.repo.maintenance.failed.v1")
+        self.assertEqual(event["schemaref"], "bloodbank.repo.maintenance.failed.v1")
         validate_envelope(event)
 
         mutations = (
@@ -338,12 +343,12 @@ class MaintenanceReportingContractTests(unittest.TestCase):
         )
         for container, field, value in mutations:
             with self.subTest(field=field, value=value):
-                invalid = envelope(ce_type)
+                invalid = envelope(ce_type, ACTION_FAILURE_PAYLOAD)
                 invalid["data"][container][field] = value
                 with self.assertRaises(self.failure_types):
                     validate_envelope(invalid)
 
-        missing = envelope(ce_type)
+        missing = envelope(ce_type, ACTION_FAILURE_PAYLOAD)
         missing["data"]["outcome"].pop("actions")
         with self.assertRaises(self.failure_types):
             validate_envelope(missing)
@@ -356,48 +361,42 @@ class MaintenanceReportingContractTests(unittest.TestCase):
         )
         for actions in invalid_actions:
             with self.subTest(actions=actions[:2]):
-                invalid = envelope(ce_type)
+                invalid = envelope(ce_type, ACTION_FAILURE_PAYLOAD)
                 invalid["data"]["outcome"]["actions"] = actions
                 with self.assertRaises(self.failure_types):
                     validate_envelope(invalid)
 
-        partial = envelope(ce_type)
+        partial = envelope(ce_type, ACTION_FAILURE_PAYLOAD)
         partial["data"]["outcome"]["actions"] = [
             {"type": "comment", "status": "success"},
             {"type": "close", "status": "failed"},
         ]
         validate_envelope(partial)
 
-        all_failed = envelope(ce_type)
+        all_failed = envelope(ce_type, ACTION_FAILURE_PAYLOAD)
         all_failed["data"]["outcome"]["actions"] = [
             {"type": "comment", "status": "failed"},
             {"type": "close", "status": "failed"},
         ]
         validate_envelope(all_failed)
 
-    def test_hybrid_v1_type_with_v2_schema_binding_is_rejected(self) -> None:
-        hybrid = envelope("bloodbank.v2.repo.maintenance.failed")
-        hybrid.update(
-            type="bloodbank.v1.repo.maintenance.failed",
-            subject="bloodbank.evt.v1.repo.maintenance.failed",
-            dataschema=(
-                "apicurio://holyfields/"
-                "bloodbank.v1.repo.maintenance.failed/versions/2"
-            ),
-            schemaref="bloodbank.v1.repo.maintenance.failed.v2",
-        )
-        with self.assertRaises(self.failure_types):
-            validate_envelope(hybrid)
+    def test_versioned_types_fail_before_schema_lookup(self) -> None:
+        """The retired 5-token shape must be rejected by the contract itself.
 
-    def test_unregistered_non_v1_types_fail_before_schema_lookup(self) -> None:
-        unregistered = (
-            "bloodbank.v2.reporting.report.failed",
-            "bloodbank.v2.agent.invocation.failed",
-            "bloodbank.v3.repo.maintenance.failed",
+        These were live type names until the version token was dropped; the
+        contract is the only thing standing between a stale producer and a
+        message nothing downstream can resolve a schema for.
+        """
+        retired = (
+            "bloodbank.v1.repo.maintenance.failed",
+            "bloodbank.v2.repo.maintenance.failed",
+            "bloodbank.v1.reporting.report.failed",
         )
-        for ce_type in unregistered:
+        for ce_type in retired:
             with self.subTest(ce_type=ce_type):
-                event = envelope("bloodbank.v2.repo.maintenance.failed")
+                event = envelope(
+                    "bloodbank.repo.maintenance.failed", ACTION_FAILURE_PAYLOAD
+                )
                 _, version, domain, entity, action = ce_type.split(".")
                 event.update(
                     type=ce_type,
@@ -411,44 +410,41 @@ class MaintenanceReportingContractTests(unittest.TestCase):
                 with self.assertRaises(ContractViolation):
                     validate_envelope(event)
 
-    def test_missing_v1_schema_is_normalized_to_envelope_invalid(self) -> None:
-        event = envelope("bloodbank.v1.repo.maintenance.failed")
+    def test_missing_schema_is_normalized_to_envelope_invalid(self) -> None:
+        event = envelope("bloodbank.repo.maintenance.failed")
         event.update(
-            type="bloodbank.v1.repo.maintenance.closed",
-            subject="bloodbank.evt.v1.repo.maintenance.closed",
+            type="bloodbank.repo.maintenance.closed",
+            subject="bloodbank.evt.repo.maintenance.closed",
         )
         assert_contract(event)
         with self.assertRaises(EnvelopeInvalid):
             validate_envelope(event)
 
-    def test_v2_subject_is_persisted_by_jetstream(self) -> None:
+    def test_maintenance_failure_subject_is_persisted_by_jetstream(self) -> None:
         topology = json.loads((ROOT / "compose/nats/streams.json").read_text())
         events = next(
             stream
             for stream in topology["streams"]
             if stream["name"] == "BLOODBANK_EVENTS"
         )
-        self.assertIn(
-            "bloodbank.evt.v2.repo.maintenance.failed",
-            events["subjects"],
-        )
+        self.assertIn("bloodbank.evt.>", events["subjects"])
 
     def test_completed_outcomes_reject_contradictory_states(self) -> None:
-        maintenance = envelope("bloodbank.v1.repo.maintenance.completed")
+        maintenance = envelope("bloodbank.repo.maintenance.completed")
         maintenance["data"]["outcome"]["provider_returncode"] = 1
         with self.assertRaises(self.failure_types):
             validate_envelope(maintenance)
-        maintenance = envelope("bloodbank.v1.repo.maintenance.completed")
+        maintenance = envelope("bloodbank.repo.maintenance.completed")
         maintenance["data"]["outcome"]["provider_status"] = "failed"
         with self.assertRaises(self.failure_types):
             validate_envelope(maintenance)
 
-        report = envelope("bloodbank.v1.reporting.report.completed")
+        report = envelope("bloodbank.reporting.report.completed")
         report["data"]["outcome"]["sections"]["executive-summary"] = "degraded"
         with self.assertRaises(self.failure_types):
             validate_envelope(report)
 
-        partial = envelope("bloodbank.v1.reporting.report.completed")
+        partial = envelope("bloodbank.reporting.report.completed")
         partial["data"]["outcome"]["status"] = "partial"
         with self.assertRaises(self.failure_types):
             validate_envelope(partial)
@@ -456,7 +452,7 @@ class MaintenanceReportingContractTests(unittest.TestCase):
         validate_envelope(partial)
 
     def test_delivery_branches_are_coherent(self) -> None:
-        completed_type = "bloodbank.v1.reporting.report.completed"
+        completed_type = "bloodbank.reporting.report.completed"
         delivered = envelope(completed_type)
         delivered["data"]["delivery"]["attempts"] = 0
         with self.assertRaises(self.failure_types):
@@ -484,7 +480,7 @@ class MaintenanceReportingContractTests(unittest.TestCase):
         with self.assertRaises(self.failure_types):
             validate_envelope(skipped)
 
-        failed_type = "bloodbank.v1.reporting.report.failed"
+        failed_type = "bloodbank.reporting.report.failed"
         not_attempted = envelope(failed_type)
         not_attempted["data"]["delivery"] = {
             "status": "not_attempted",
@@ -525,22 +521,21 @@ class MaintenanceReportingContractTests(unittest.TestCase):
                         validate_envelope(invalid)
 
     def test_private_or_secret_telemetry_is_rejected(self) -> None:
-        completed = envelope("bloodbank.v1.reporting.report.completed")
+        completed = envelope("bloodbank.reporting.report.completed")
         completed["data"]["artifacts"]["report_artifact_id"] = (
             "/home/operator/private/report.json"
         )
         with self.assertRaises(self.failure_types):
             validate_envelope(completed)
 
-        destination = envelope("bloodbank.v1.reporting.report.completed")
+        destination = envelope("bloodbank.reporting.report.completed")
         destination["data"]["delivery"]["destination_alias"] = "-100123456789"
         with self.assertRaises(self.failure_types):
             validate_envelope(destination)
 
         for ce_type in (
-            "bloodbank.v1.repo.maintenance.failed",
-            "bloodbank.v2.repo.maintenance.failed",
-            "bloodbank.v1.reporting.report.failed",
+            "bloodbank.repo.maintenance.failed",
+            "bloodbank.reporting.report.failed",
         ):
             for summary in (
                 "stderr dump contained raw process output",

@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = ROOT / "ops" / "fixtures" / "portfolio-contracts.v1.json"
 PAYLOADS = json.loads(FIXTURE_PATH.read_text())
-RECEIPT_TYPE = "bloodbank.v1.portfolio.receipt.recorded"
+RECEIPT_TYPE = "bloodbank.portfolio.receipt.recorded"
 
 
 def build_envelope(

@@ -9,42 +9,42 @@
   },
   "lifecycle": {
     "agent.session.started": {
-      "type": "bloodbank.v1.agent.session.started",
+      "type": "bloodbank.agent.session.started",
       "kind": "event",
       "ordering_bucket": "session",
       "role": "session_start",
       "description": "An agent CLI session began. Canonical (resolved 2026-06-07): agent.session.* supersedes cli.session.* for agent CLIs."
     },
     "agent.session.ended": {
-      "type": "bloodbank.v1.agent.session.ended",
+      "type": "bloodbank.agent.session.ended",
       "kind": "event",
       "ordering_bucket": "session",
       "role": "session_end",
       "description": "An agent CLI session ended."
     },
     "conversation.turn.started": {
-      "type": "bloodbank.v1.conversation.turn.started",
+      "type": "bloodbank.conversation.turn.started",
       "kind": "event",
       "ordering_bucket": "thread",
       "role": "prompt_submit",
       "description": "A user prompt started a conversation turn."
     },
     "conversation.turn.completed": {
-      "type": "bloodbank.v1.conversation.turn.completed",
+      "type": "bloodbank.conversation.turn.completed",
       "kind": "event",
       "ordering_bucket": "thread",
       "role": "turn_complete",
       "description": "A conversation turn reached a terminal state."
     },
     "agent.tool.requested": {
-      "type": "bloodbank.v1.agent.tool.requested",
+      "type": "bloodbank.agent.tool.requested",
       "kind": "event",
       "ordering_bucket": "invocation",
       "role": "pre_tool",
       "description": "A tool call was requested (pre-execution)."
     },
     "agent.tool.invoked": {
-      "type": "bloodbank.v1.agent.tool.invoked",
+      "type": "bloodbank.agent.tool.invoked",
       "kind": "event",
       "ordering_bucket": "invocation",
       "role": "tool_invoked",
@@ -52,28 +52,28 @@
       "description": "A tool was invoked. Defined for §14 fidelity but NOT bound to a post-tool hook: resolved 2026-06-07 to use agent.tool.completed for the single post-tool hook surface."
     },
     "agent.tool.completed": {
-      "type": "bloodbank.v1.agent.tool.completed",
+      "type": "bloodbank.agent.tool.completed",
       "kind": "event",
       "ordering_bucket": "invocation",
       "role": "post_tool",
       "description": "A tool call reached a terminal state (post-execution, carries outcome). Canonical post-tool event for ALL agents (resolved 2026-06-07)."
     },
     "agent.invocation.started": {
-      "type": "bloodbank.v1.agent.invocation.started",
+      "type": "bloodbank.agent.invocation.started",
       "kind": "event",
       "ordering_bucket": "invocation",
       "role": "invocation_start",
       "description": "A (sub)agent invocation started."
     },
     "agent.invocation.completed": {
-      "type": "bloodbank.v1.agent.invocation.completed",
+      "type": "bloodbank.agent.invocation.completed",
       "kind": "event",
       "ordering_bucket": "invocation",
       "role": "subagent_stop",
       "description": "A (sub)agent invocation completed. Canonical subagent-stop event for ALL agents (resolved 2026-06-07); supersedes the illegal agent.delegation.completed."
     },
     "agent.invocation.failed": {
-      "type": "bloodbank.v1.agent.invocation.failed",
+      "type": "bloodbank.agent.invocation.failed",
       "kind": "event",
       "ordering_bucket": "invocation",
       "role": "invocation_failed",

@@ -17,8 +17,8 @@ Architectural source of truth:
 - Dapr app ID prefix: `bloodbank-`
 - NATS events stream: `BLOODBANK_EVENTS`
 - NATS commands stream: `BLOODBANK_COMMANDS`
-- NATS subject prefixes: `bloodbank.evt.v1.`, `bloodbank.cmd.v1.`,
-  `bloodbank.rpy.v1.`
+- NATS subject prefixes: `bloodbank.evt.`, `bloodbank.cmd.`,
+  `bloodbank.rpy.`
 - Env var prefix: `BLOODBANK_`
 
 ## Layout
@@ -114,8 +114,8 @@ Each file in `components/` is loaded by the Bloodbank-owned Dapr sidecars.
 
 - **`pubsub.yaml`** — `bloodbank-pubsub`; `pubsub.jetstream` targeting
   `nats://nats:4222`, events stream `BLOODBANK_EVENTS`, events subject
-  scope `bloodbank.evt.v1.>`. Commands and replies are carried by
-  `BLOODBANK_COMMANDS` on `bloodbank.cmd.v1.>` and `bloodbank.rpy.v1.>`.
+  scope `bloodbank.evt.>`. Commands and replies are carried by
+  `BLOODBANK_COMMANDS` on `bloodbank.cmd.>` and `bloodbank.rpy.>`.
 - **`statestore.yaml`** — `bloodbank-statestore`; `state.in-memory` is
   the scaffold default. See "State store tradeoff" below.
 - **`secretstore.yaml`** — `bloodbank-secretstore`;
@@ -136,9 +136,9 @@ only; no code change is required.
 ## NATS topology
 
 See `nats/README.md` for subject conventions
-(`bloodbank.evt.v1.<domain>.<entity>.<action>`,
-`bloodbank.cmd.v1.<domain>.<entity>.<action>`, and
-`bloodbank.rpy.v1.<domain>.<entity>.<action>`), retention posture, and replay
+(`bloodbank.evt.<domain>.<entity>.<action>`,
+`bloodbank.cmd.<domain>.<entity>.<action>`, and
+`bloodbank.rpy.<domain>.<entity>.<action>`), retention posture, and replay
 metadata header names. See `nats/streams.json` for the machine-readable stream
 definitions.
 
