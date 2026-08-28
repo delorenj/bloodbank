@@ -110,6 +110,20 @@ async def run() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
+    # ntfy runs auth-default-access=deny-all, so an absent token is not a
+    # degraded mode -- it is a silent total outage. The compose file supplies
+    # this as ${BLOODBANK_TOASTER_NTFY_TOKEN:-}, which resolves to the empty
+    # string in any shell that does not export it, and format_toast() then
+    # simply omits the Authorization header. On 2026-08-28 a redeploy from a
+    # shell without the variable produced 346 consecutive 403s over ~4 minutes
+    # with nothing in the logs to say why. Refuse to start instead.
+    if not NTFY_TOKEN:
+        raise SystemExit(
+            "NTFY_TOKEN is empty. ntfy denies unauthenticated publishes, so every "
+            "toast would 403 silently. Supply BLOODBANK_TOASTER_NTFY_TOKEN "
+            "(op://DeLoSecrets/ntfy Access Token/credential) before starting."
+        )
+
     async with httpx.AsyncClient(timeout=5.0) as http_client:
         nc: NatsClient = await nats.connect(
             NATS_URL,
