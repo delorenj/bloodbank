@@ -57,13 +57,23 @@ REQUIRED_FIELDS = (
 
 # Bloodbank Event Naming Contract -- see bloodbank/docs/event-naming.md.
 # The `vN.` segment is OPTIONAL here on purpose: this is the one transitional
-# tolerance in the version-drop. Producers are being cut over one at a time, so
-# for the duration of the flip this forwarder must accept both the old
-# bloodbank.evt.v1.<domain>.<entity>.<action> and the new
-# bloodbank.evt.<domain>.<entity>.<action>. Drop the optional group once no
-# producer emits the versioned shape.
+# The version-drop flip is over: the last retired-shape publish was
+# 2026-08-28T16:20:23Z (traefik-deathwatch), and the two hours after it carried
+# 5,260 version-free events and zero versioned ones. The transitional
+# both-shapes tolerance is therefore retired with it.
+#
+# This matters more than tidiness. Dormant renders, scaffolds and skill docs
+# that still name the old grammar are scattered across the fleet, and while
+# this pattern accepted them a regressed producer was forwarded silently --
+# indistinguishable from success. Refusing here is the only place a regression
+# becomes loud at the door instead of becoming a consumer that hears nothing.
+# Arity is the load-bearing part, not the absence of a "v" -- an unanchored
+# token class happily matches "v1" as a domain and lets the 6-token shape
+# through while looking like it forbids it. Pin all five tokens, matching
+# core.validate.SUBJECT_REGEX exactly.
 SUBJECT_PATTERN = re.compile(
-    r"^bloodbank\.(?:evt|cmd|rpy)\.(?:v[1-9][0-9]*\.)?[a-z0-9]+(?:\.[a-z0-9_]+)+$"
+    r"^bloodbank\.(?:evt|cmd|rpy)"
+    r"\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
 )
 
 # Prefixes the BLOODBANK_EVENTS stream binds (bloodbank.evt.> / cmd.> / rpy.>,
