@@ -56,7 +56,6 @@ REQUIRED_FIELDS = (
 )
 
 # Bloodbank Event Naming Contract -- see bloodbank/docs/event-naming.md.
-# The `vN.` segment is OPTIONAL here on purpose: this is the one transitional
 # The version-drop flip is over: the last retired-shape publish was
 # 2026-08-28T16:20:23Z (traefik-deathwatch), and the two hours after it carried
 # 5,260 version-free events and zero versioned ones. The transitional
