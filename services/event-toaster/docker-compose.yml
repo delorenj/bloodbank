@@ -1,7 +1,11 @@
 # event-toaster — standalone compose
 #
-# Joins the existing bloodbank-network and shouts every `bloodbank.evt.v1.>`
-# envelope at ntfy.delo.sh. Independent of the broader bloodbank compose lifecycle.
+# Joins the existing bloodbank-network and shouts every `bloodbank.evt.>`
+# envelope at ntfy.delo.sh — the version-free grammar, matching SUBJECT_FILTER
+# below and the running container. There is no contract-version token in a
+# subject; the retired `bloodbank.evt.v1.>` wildcard named here would have
+# matched nothing that is published today.
+# Independent of the broader bloodbank compose lifecycle.
 # NTFY_TOKEN is required now that ntfy is auth-default-access=deny-all; supply it
 # via BLOODBANK_TOASTER_NTFY_TOKEN in the environment (never commit the token).
 #

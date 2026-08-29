@@ -23,6 +23,20 @@ stale caller fails loudly instead of publishing to a subject nobody binds.
 The `.v1` in `schemaref` is the schema revision — a different axis, still
 live; see docs/event-naming.md §3.1 and §13.
 
+Every event envelope carries an `actor` (§10, and REQUIRED_EVENT_FIELDS in
+core/validate.py). bb-emit shipped without one for months: NATS core PUB does
+no validation, so the bus accepted the envelopes and Candystore projected them
+with `actor IS NULL`, invisible to every `actor->>'cli'` / `actor->>'agent_id'`
+read side. A CLI emit is a service acting on its own behalf, so the default is
+derived from --service: {"type": "service", "agent_id": "bloodbank.service.<service>"}.
+Override with --actor-type / --actor-id, or hand a whole object to --actor.
+
+The envelope is now checked against core/validate.assert_contract before it is
+published, when that module is importable (it is stdlib-only, and it is the
+same check every other producer answers to). A contract violation is a
+caller-side bug, so it exits non-zero regardless of --strict — the same split
+that already applies to a malformed --type.
+
 Usage:
   echo '{"transcription_id":"42","file_path":"/x.mp3","transcript_text":""}' \
     | bb-emit --type bloodbank.audio.transcription.completed
@@ -33,6 +47,22 @@ import socket
 import sys
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
+
+# core/validate.py is stdlib-only and lives in the same repo as this script.
+# Importing it here is what closes the gap between "bb-emit published it" and
+# "the contract accepts it" -- the two used to be different questions. A copy
+# of bb-emit that has been lifted out of the repo tree simply skips the check
+# rather than failing to start.
+_ASSERT_CONTRACT = None
+_HOOKS_DIR = Path(__file__).resolve().parent.parent / "services" / "agent-hooks"
+if _HOOKS_DIR.is_dir():
+    if str(_HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(_HOOKS_DIR))
+    try:
+        from core.validate import ContractViolation, assert_contract as _ASSERT_CONTRACT
+    except Exception:  # noqa: BLE001 — validation is a bonus, never a hard dep
+        _ASSERT_CONTRACT = None
 
 # RFC 4122 URL namespace — deterministic correlationid so started/completed/failed
 # for one transcription_id share a causal chain without threading state through n8n.
@@ -70,6 +100,12 @@ def main():
     ap.add_argument("--producer", default="n8n")
     ap.add_argument("--service", default="inbox-transcribe")
     ap.add_argument("--correlation", help="explicit correlationid (uuid); default derived from transcription_id")
+    ap.add_argument("--actor-type", default="service",
+                    help="actor.type archetype: service|operator|scheduler|agent_cli|... (default: service)")
+    ap.add_argument("--actor-id",
+                    help="actor.agent_id (default: bloodbank.service.<--service>)")
+    ap.add_argument("--actor",
+                    help="whole actor object as JSON; overrides --actor-type/--actor-id")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=4222)
     ap.add_argument("--strict", action="store_true",
@@ -107,6 +143,31 @@ def main():
     tid = str(data.get("transcription_id") or data.get("id") or "").strip()
     correlationid = a.correlation or str(uuid.uuid5(_NS, tid or a.type))
 
+    # §10 actor. The invoking context bb-emit already knows about is --service,
+    # so that is what the identifier is built from; `bloodbank.service.<name>`
+    # matches what tiller and delonet-daily-report already publish.
+    if a.actor is not None:
+        try:
+            actor = json.loads(a.actor)
+        except json.JSONDecodeError as e:
+            print(f"bb-emit: invalid --actor JSON: {e}", file=sys.stderr)
+            return usage_rc
+        if not isinstance(actor, dict):
+            print("bb-emit: --actor must be a JSON object", file=sys.stderr)
+            return usage_rc
+    else:
+        actor = {
+            "type": a.actor_type,
+            "agent_id": a.actor_id or f"bloodbank.service.{a.service}",
+            "cli": None,
+            "provider": None,
+            "model": None,
+        }
+    for f in ("type", "agent_id"):
+        if not actor.get(f):
+            print(f"bb-emit: actor.{f} is required and must be non-empty (§10)", file=sys.stderr)
+            return usage_rc
+
     envelope = {
         "specversion": "1.0",
         "id": str(uuid.uuid4()),
@@ -121,9 +182,17 @@ def main():
         "domain": domain,
         "schemaref": f"{a.type}.v1",
         "kind": "event",
+        "actor": actor,
         "ordering_key": f"transcription:{tid}" if tid else f"{domain}:{uuid.uuid4()}",
         "data": data,
     }
+
+    if _ASSERT_CONTRACT is not None:
+        try:
+            _ASSERT_CONTRACT(envelope)
+        except ContractViolation as e:
+            print(f"bb-emit: envelope violates the naming contract: {e}", file=sys.stderr)
+            return usage_rc
 
     body = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
     try:
