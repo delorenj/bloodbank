@@ -31,7 +31,7 @@ alongside each service, using publishers generated from the local
 | `compose/`          | Self-hosted sandbox: NATS, Dapr placement, Apicurio, EventCatalog |
 | `compose/components/` | Dapr component manifests (pub/sub, state, secret store)         |
 | `compose/nats/`     | JetStream topology (`streams.json`) + init script                 |
-| `cli/bb.py`         | Operator CLI (`doctor`, `trace`, `replay`, `emit`)                |
+| `cli/bb.py`         | Operator CLI (`contract`, `doctor`, `trace`, `replay`, `emit`, `verify-envelope`) — run it as `bb` |
 | `ops/bootstrap/`    | Pre-boot platform validation                                      |
 | `ops/smoketest/`    | End-to-end smoke tests (NATS-direct, Dapr publish, subscribe, heartbeat) |
 | `ops/replay/`       | Operator-facing replay workflow                                   |
@@ -153,7 +153,25 @@ alongside each service, using publishers generated from the local
   `dataschema` / `schemaref` (§13); that axis is alive and expected to move.
 - Every domain, entity, and action must have an explicit allowlist entry in
   `services/agent-hooks/core/validate.py`; matching the type regex isn't
-  enough to register it.
+  enough to register it. **Shape-valid is not contract-valid.**
+- **Read the allowlists before you name anything — do not guess a token.**
+  Enforcement stays in `validate.py` (one source of truth, at the point of
+  enforcement); the CLI is the window onto it:
+
+  ```
+  bb contract                 # legal domains, entities, event + command actions
+  bb contract --json          # same, for generators and agent skills to CONSUME
+  bb emit --check --type bloodbank.evt.<domain>.<entity>.<action>
+  ```
+
+  `bb emit --check` is the dry run: it validates and prints the exact `type`,
+  `subject`, `schemaref` and `dataschema` that would be published, without
+  publishing. Run it while writing a producer, before the first real emit.
+
+  A generator that needs the vocabulary must read `bb contract --json` rather
+  than hardcoding literals. Nine event families were invented, shipped and
+  never consumed because the only way to learn a token was illegal was for the
+  event to silently not arrive — that is what these two commands exist to end.
 - Legacy `event.>` / `command.>` / `reply.>` subject prefixes and 3-token
   types (`agent.session.started`, `copilot.tool.pre`, etc.) are **deprecated**;
   removal is tracked by the §16 migration tickets in `docs/event-naming.md`.

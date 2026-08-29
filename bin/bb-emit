@@ -17,11 +17,23 @@ Envelope contract: bloodbank/schemas/_common/cloudevent_base.v1.json
 Subject binding : type `bloodbank.<domain>.<entity>.<action>`     (4 tokens)
                   -> subject `bloodbank.evt.<domain>.<entity>.<action>`
 
-There is no contract version token. A 5-token --type (the retired
-`bloodbank.v1.*` shape) is REJECTED outright rather than rewritten, so a
-stale caller fails loudly instead of publishing to a subject nobody binds.
-The `.v1` in `schemaref` is the schema revision — a different axis, still
-live; see docs/event-naming.md §3.1 and §13.
+There is no contract version token. A 5-token --type whose second token is
+NOT a kind marker (the retired `bloodbank.v1.*` shape) is REJECTED outright
+rather than rewritten, so a stale caller fails loudly instead of publishing
+to a subject nobody binds. The `.v1` in `schemaref` is the schema revision —
+a different axis, still live; see docs/event-naming.md §3.1 and §13.
+
+A 5-token --type whose second token IS a kind marker (`bloodbank.evt.…`,
+`bloodbank.cmd.…`, `bloodbank.rpy.…`) is a SUBJECT, not a stale type, and is
+accepted: the type and the kind are both recoverable from it, unambiguously.
+Authors read the subject off docs/event-naming.md, so refusing the string
+they are holding taught them nothing. The retired-version guard above is
+untouched — `bloodbank.v1.audio.transcription.completed` still fails loudly.
+
+--check is the dry run. It builds and validates the envelope and prints the
+type, subject, schemaref and dataschema that WOULD be published, then exits
+without touching NATS. This is the command to run while writing a producer:
+it answers "is my name legal" without putting anything on the bus.
 
 Every event envelope carries an `actor` (§10, and REQUIRED_EVENT_FIELDS in
 core/validate.py). bb-emit shipped without one for months: NATS core PUB does
@@ -40,6 +52,9 @@ that already applies to a malformed --type.
 Usage:
   echo '{"transcription_id":"42","file_path":"/x.mp3","transcript_text":""}' \
     | bb-emit --type bloodbank.audio.transcription.completed
+
+  bb-emit --check --type bloodbank.evt.repo.decision.recorded --data '{}'
+  bb contract            # the legal domains / entities / actions
 """
 import argparse
 import json
@@ -55,14 +70,31 @@ from pathlib import Path
 # of bb-emit that has been lifted out of the repo tree simply skips the check
 # rather than failing to start.
 _ASSERT_CONTRACT = None
+_IMPORT_ERROR = None
 _HOOKS_DIR = Path(__file__).resolve().parent.parent / "services" / "agent-hooks"
 if _HOOKS_DIR.is_dir():
     if str(_HOOKS_DIR) not in sys.path:
         sys.path.insert(0, str(_HOOKS_DIR))
     try:
         from core.validate import ContractViolation, assert_contract as _ASSERT_CONTRACT
-    except Exception:  # noqa: BLE001 — validation is a bonus, never a hard dep
+    except Exception as _e:  # noqa: BLE001
+        # In-repo and still unimportable means validate.py is BROKEN, which is
+        # a very different thing from "this copy of bb-emit was lifted out of
+        # the tree". Say so on every emit rather than silently degrading to the
+        # unvalidated behaviour this flag was added to end.
         _ASSERT_CONTRACT = None
+        _IMPORT_ERROR = _e
+
+# type <-> subject kind markers (§3/§4). Mirrored from core/validate.KIND_MARKERS
+# so a lifted-out copy can still compute a subject; asserted equal below when the
+# real module is importable, so the two can never drift apart unnoticed.
+_KIND_MARKERS = {"event": "evt", "command": "cmd", "reply": "rpy"}
+_MARKER_TO_KIND = {v: k for k, v in _KIND_MARKERS.items()}
+if _ASSERT_CONTRACT is not None:
+    from core.validate import KIND_MARKERS as _CANON_MARKERS
+    assert _KIND_MARKERS == dict(_CANON_MARKERS), (
+        "bb-emit's mirrored KIND_MARKERS drifted from core/validate.py"
+    )
 
 # RFC 4122 URL namespace — deterministic correlationid so started/completed/failed
 # for one transcription_id share a causal chain without threading state through n8n.
@@ -94,7 +126,16 @@ def _nats_publish(subject, body, host, port, timeout=3.0):
 def main():
     ap = argparse.ArgumentParser(description="Publish a Bloodbank v3 event to NATS.")
     ap.add_argument("--type", required=True,
-                    help="bloodbank.<domain>.<entity>.<action> (4 tokens, no version)")
+                    help="bloodbank.<domain>.<entity>.<action> (4 tokens), or the "
+                         "5-token subject form bloodbank.<evt|cmd|rpy>.<domain>."
+                         "<entity>.<action> (kind is then taken from the marker)")
+    ap.add_argument("--kind", default=None, choices=["event", "command", "reply"],
+                    help="envelope kind (default: event, or the marker in a subject-form --type)")
+    ap.add_argument("--check", action="store_true",
+                    help="dry run: validate and print the type/subject/schemaref/"
+                         "dataschema that WOULD be published, then exit without publishing")
+    ap.add_argument("--schema-version", type=int, default=1,
+                    help="schema revision N for schemaref/dataschema (§13; default: 1)")
     ap.add_argument("--data", help="data JSON as a string (default: read from stdin)")
     ap.add_argument("--source", default="urn:33god:service:n8n-inbox-transcribe")
     ap.add_argument("--producer", default="n8n")
@@ -122,7 +163,14 @@ def main():
     fail_rc = 1 if a.strict else 0   # bus-boundary failures only
     usage_rc = 1                     # caller-side errors, always loud
 
-    raw = a.data if a.data is not None else sys.stdin.read()
+    # An interactive operator running --check to ask "is this name legal" has no
+    # payload to pipe in; blocking on an empty tty read looked like a hang.
+    if a.data is not None:
+        raw = a.data
+    elif sys.stdin.isatty():
+        raw = ""
+    else:
+        raw = sys.stdin.read()
     try:
         data = json.loads(raw) if raw and raw.strip() else {}
     except json.JSONDecodeError as e:
@@ -132,16 +180,33 @@ def main():
         print("bb-emit: data must be a JSON object", file=sys.stderr)
         return usage_rc
 
+    # Resolve (type, kind) from --type, which may be given as either the 4-token
+    # type or the 5-token subject. The retired `bloodbank.v1.*` shape is still a
+    # hard rejection: only a real kind marker in slot 2 makes a 5-token string a
+    # subject rather than a stale versioned type.
     parts = a.type.split(".")
-    if len(parts) != 4 or parts[0] != "bloodbank":
-        print(f"bb-emit: --type must be bloodbank.<domain>.<entity>.<action>, got '{a.type}'",
-              file=sys.stderr)
+    kind = a.kind or "event"
+    if len(parts) == 5 and parts[0] == "bloodbank" and parts[1] in _MARKER_TO_KIND:
+        marker_kind = _MARKER_TO_KIND[parts[1]]
+        if a.kind is not None and a.kind != marker_kind:
+            print(f"bb-emit: --kind {a.kind!r} contradicts the '{parts[1]}' marker in "
+                  f"--type '{a.type}' (which means kind={marker_kind!r})", file=sys.stderr)
+            return usage_rc
+        kind = marker_kind
+        ce_type = "bloodbank." + ".".join(parts[2:])
+    elif len(parts) == 4 and parts[0] == "bloodbank":
+        ce_type = a.type
+    else:
+        print(f"bb-emit: --type must be bloodbank.<domain>.<entity>.<action> (4 tokens) "
+              f"or bloodbank.<evt|cmd|rpy>.<domain>.<entity>.<action> (5 tokens), "
+              f"got '{a.type}'", file=sys.stderr)
         return usage_rc
-    domain = parts[1]
-    subject = "bloodbank.evt." + a.type[len("bloodbank."):]
+
+    domain = ce_type.split(".")[1]
+    subject = f"bloodbank.{_KIND_MARKERS[kind]}." + ce_type[len("bloodbank."):]
 
     tid = str(data.get("transcription_id") or data.get("id") or "").strip()
-    correlationid = a.correlation or str(uuid.uuid5(_NS, tid or a.type))
+    correlationid = a.correlation or str(uuid.uuid5(_NS, tid or ce_type))
 
     # §10 actor. The invoking context bb-emit already knows about is --service,
     # so that is what the identifier is built from; `bloodbank.service.<name>`
@@ -168,11 +233,18 @@ def main():
             print(f"bb-emit: actor.{f} is required and must be non-empty (§10)", file=sys.stderr)
             return usage_rc
 
+    # §13: schemaref and dataschema are the SAME revision in two notations, and
+    # they are the only place a version is allowed to appear. bb-emit shipped
+    # schemaref alone; a consumer resolving schemas through Apicurio had nothing
+    # to resolve, so emit both and keep them derived from one --schema-version.
+    schemaref = f"{ce_type}.v{a.schema_version}"
+    dataschema = f"apicurio://holyfields/{ce_type}/versions/{a.schema_version}"
+
     envelope = {
         "specversion": "1.0",
         "id": str(uuid.uuid4()),
         "source": a.source,
-        "type": a.type,
+        "type": ce_type,
         "subject": subject,
         "time": _rfc3339_now(),
         "datacontenttype": "application/json",
@@ -180,19 +252,51 @@ def main():
         "producer": a.producer,
         "service": a.service,
         "domain": domain,
-        "schemaref": f"{a.type}.v1",
-        "kind": "event",
+        "schemaref": schemaref,
+        "dataschema": dataschema,
+        "kind": kind,
         "actor": actor,
         "ordering_key": f"transcription:{tid}" if tid else f"{domain}:{uuid.uuid4()}",
         "data": data,
     }
+    if kind == "command":
+        # §11.2 — a command envelope is not a contract-valid event envelope; it
+        # carries its own required fields. Without these a --kind command emit
+        # would fail assert_contract on a shape bb-emit itself chose.
+        command_id = str(uuid.uuid4())
+        envelope["command_id"] = command_id
+        envelope["idempotency_key"] = str(uuid.uuid5(_NS, f"{ce_type}:{correlationid}"))
+        envelope["delivery"] = "single_consumer"
 
     if _ASSERT_CONTRACT is not None:
         try:
             _ASSERT_CONTRACT(envelope)
         except ContractViolation as e:
             print(f"bb-emit: envelope violates the naming contract: {e}", file=sys.stderr)
+            print("bb-emit: run `bb contract` to see the legal domains, entities "
+                  "and actions.", file=sys.stderr)
             return usage_rc
+    elif _IMPORT_ERROR is not None:
+        print(f"bb-emit: WARNING — core/validate.py is present but failed to import "
+              f"({_IMPORT_ERROR!r}); publishing UNVALIDATED", file=sys.stderr)
+
+    if a.check:
+        # Dry run. Everything above already ran, so a PASS here means the very
+        # bytes printed are the ones a real emit would put on the bus.
+        print(f"PASS  {ce_type}")
+        print(f"  kind        {kind}")
+        print(f"  type        {ce_type}")
+        print(f"  subject     {subject}")
+        print(f"  schemaref   {schemaref}")
+        print(f"  dataschema  {dataschema}")
+        print(f"  domain      {domain}")
+        print(f"  actor       {json.dumps(actor, separators=(',', ':'))}")
+        if _ASSERT_CONTRACT is None:
+            print("  validated   NO — core/validate.py unavailable")
+        else:
+            print("  validated   yes (core.validate.assert_contract)")
+        print("bb-emit: --check, nothing published", file=sys.stderr)
+        return 0
 
     body = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
     try:
@@ -200,7 +304,7 @@ def main():
     except Exception as e:  # noqa: BLE001 — fail-open at the bus boundary
         print(f"bb-emit: publish FAILED ({e}); failing open", file=sys.stderr)
         return fail_rc
-    print(f"bb-emit: published {a.type} -> {subject} (corr={correlationid[:8]})", file=sys.stderr)
+    print(f"bb-emit: published {ce_type} -> {subject} (corr={correlationid[:8]})", file=sys.stderr)
     return 0
 
 

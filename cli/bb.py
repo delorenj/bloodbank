@@ -2,18 +2,23 @@
 """Bloodbank operator CLI (``bb``) — scaffold + operator snapshots.
 
 This module is the first-wave scaffold for the 33GOD operator CLI. It
-provides argparse-based subcommands (``doctor``, ``trace``, ``replay``,
-``emit``, ``repo-health``, ``verify-envelope``) that are intentionally
-low-risk in this wave:
+provides argparse-based subcommands (``contract``, ``doctor``, ``trace``,
+``replay``, ``emit``, ``repo-health``, ``verify-envelope``):
 
 * No third-party Python dependencies -- standard library only.
-* No publishing of events or commands.
 
 Notes:
 
+* ``contract`` prints the naming vocabulary -- the legal domains, entities,
+  event actions and command actions -- read live from
+  ``services/agent-hooks/core/validate.py``, which stays the one source of
+  truth because it is where enforcement happens. ``--json`` exists so
+  generators and agent skills consume the vocabulary rather than hardcoding
+  literals that drift out of it.
 * ``repo-health`` is read-only and may call ``gh``/``git`` to gather
   evidence snapshots (issues/PRs/checks + working-tree status).
-* ``emit`` remains guarded and does not publish in this wave.
+* ``emit`` is a passthrough to ``bin/bb-emit``; ``bb emit --check`` is the
+  dry run to reach for while writing a new producer.
 
 Architectural context:
 
@@ -193,32 +198,135 @@ def cmd_replay(_args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_emit(_args: argparse.Namespace) -> int:
-    """Stub: emit a handcrafted event for smoke-testing.
+def _load_validate():
+    """Import core.validate, the single source of truth for the allowlists.
 
-    Operator emission is only valid through a Dapr sidecar per ADR-0001.
-    The real implementation will require ``DAPR_HTTP_PORT`` to be set in
-    the environment and will refuse to publish via any other transport.
-    The check below documents and enforces that contract at the CLI
-    boundary: even the stub refuses to pretend it published when no Dapr
-    sidecar is advertised.
+    The vocabulary deliberately does NOT get copied into this file. Enforcement
+    lives in ``services/agent-hooks/core/validate.py`` and this CLI is a window
+    onto it -- a second copy here would be one more thing to drift, which is the
+    exact failure this command exists to end.
     """
-    dapr_http_port = os.environ.get("DAPR_HTTP_PORT", "")
-    if not dapr_http_port:
-        print(
-            "emit: refusing -- DAPR_HTTP_PORT is unset. Operator emission "
-            "requires a Dapr sidecar; run this under `dapr run` or set "
-            "DAPR_HTTP_PORT explicitly. See ADR-0001 Role reassignments."
-        )
+    sys.path.insert(0, str(bloodbank_root() / "services" / "agent-hooks"))
+    from core import validate  # noqa: WPS433
+    return validate
+
+
+def cmd_contract(args: argparse.Namespace) -> int:
+    """Print the naming vocabulary: domains, entities, event + command actions.
+
+    This is the discoverability half of the contract. The allowlists in
+    ``core/validate.py`` were reachable only by failing against them: an author
+    who guessed a token learned they were wrong when their event silently did
+    not arrive. Nine event families were invented and shipped that way. Printing
+    the vocabulary -- and, with ``--json``, letting generators and agent skills
+    CONSUME it instead of hard-coding literals -- is what makes the contract
+    answerable before the first publish rather than after it.
+    """
+    try:
+        validate = _load_validate()
+    except Exception as exc:  # noqa: BLE001
+        print(f"contract: cannot import validator: {exc!r}", file=sys.stderr)
         return 2
 
-    # Guardrail passed; implementation still pending.
-    print(
-        "emit: not yet implemented -- DAPR_HTTP_PORT is set "
-        f"(={dapr_http_port}); awaiting Holyfields SDK for envelope "
-        "construction (HOLYF-2)."
-    )
+    payload = {
+        "grammar": {
+            "type": "bloodbank.<domain>.<entity>.<action>",
+            "subject": "bloodbank.<kind>.<domain>.<entity>.<action>",
+            "kind_markers": dict(validate.KIND_MARKERS),
+            "schemaref": "bloodbank.<domain>.<entity>.<action>.v<n>",
+            "dataschema": (
+                "apicurio://holyfields/bloodbank.<domain>.<entity>.<action>/versions/<n>"
+            ),
+            "note": (
+                "Versioning lives ONLY in schemaref/dataschema. There is no version "
+                "token in a type or a subject. Identity (repo, agent) lives in the "
+                "payload -- data.* and actor.* -- never in a token."
+            ),
+        },
+        "domains": sorted(validate.ALLOWED_DOMAINS),
+        "entities": sorted(validate.ALLOWED_ENTITIES),
+        "event_actions": sorted(validate.EVENT_ACTIONS),
+        "command_actions": sorted(validate.COMMAND_ACTIONS),
+        "banned_tokens": sorted(validate.BANNED_TOKENS),
+        "source": "services/agent-hooks/core/validate.py",
+        "doc": "docs/event-naming.md",
+    }
+
+    if args.json_output:
+        print(json.dumps(payload, indent=2, sort_keys=False))
+        return 0
+
+    def _section(title: str, note: str, values: list[str]) -> None:
+        print(f"\n{title}  ({len(values)})")
+        print(f"  {note}")
+        line = "   "
+        for value in values:
+            if len(line) + len(value) + 1 > 78:
+                print(line)
+                line = "   "
+            line += f" {value}"
+        if line.strip():
+            print(line)
+
+    g = payload["grammar"]
+    print("Bloodbank Event Naming Contract -- the legal vocabulary")
+    print(f"  source: {payload['source']}")
+    print(f"  doc:    {payload['doc']}")
+    print()
+    print(f"  type     {g['type']}")
+    print(f"  subject  {g['subject']}")
+    markers = ", ".join(f"{k}={v}" for k, v in g["kind_markers"].items())
+    print(f"  kind     {markers}")
+    print(f"  version  {g['schemaref']}  /  {g['dataschema']}")
+    print()
+    print("  Versioning lives ONLY in schemaref/dataschema -- never as a token.")
+    print("  Identity (repo, agent) lives in data.* and actor.* -- never as a token.")
+
+    _section("DOMAINS", "type segment 2", payload["domains"])
+    _section("ENTITIES", "type segment 3", payload["entities"])
+    _section("EVENT ACTIONS", "type segment 4 when kind=event (past tense)",
+             payload["event_actions"])
+    _section("COMMAND ACTIONS",
+             "type segment 4 when kind=command or reply (imperative)",
+             payload["command_actions"])
+    _section("BANNED TOKENS", "never in a type; put these in actor.* (§9)",
+             payload["banned_tokens"])
+    print()
+    print("  Shape-valid is not contract-valid: a 4-token type whose action is")
+    print("  absent above is refused. Check a name before you write the producer:")
+    print("    bb emit --check --type bloodbank.evt.repo.decision.recorded")
+    print("    bb contract --json | jq -r '.event_actions[]'")
     return 0
+
+
+def cmd_emit(args: argparse.Namespace) -> int:
+    """Publish (or, with ``--check``, dry-run) via ``bin/bb-emit``.
+
+    This is a passthrough, not a reimplementation, and that is the whole point.
+    ``bin/bb-emit`` is the emitter that n8n, the agent hooks, tiller and
+    delonet-daily-report already call; it builds the envelope, derives the
+    subject, and runs ``assert_contract`` before publishing. A second envelope
+    builder living here would be a second thing to drift -- and two
+    half-emitters, one of them a stub that refused to run, is a large part of
+    why the contract was undiscoverable in the first place. So ``bb emit`` and
+    ``bb-emit`` are one code path, and ``bb emit --check`` is the dry run.
+
+    The prior stub refused unless ``DAPR_HTTP_PORT`` was set, citing ADR-0001.
+    ADR-0001 governs *production service* traffic, which flows through Dapr
+    publishers inside services; the host-side operator path is ``bb-emit``, over
+    NATS, and it has been carrying real traffic for months. Gating the operator
+    CLI on a sidecar it was never going to use meant ``bb emit`` did nothing at
+    all while its working twin sat in ``bin/`` unmentioned.
+    """
+    emitter = bloodbank_root() / "bin" / "bb-emit"
+    if not emitter.is_file():
+        print(f"emit: cannot find emitter at {emitter}", file=sys.stderr)
+        return 2
+    proc = subprocess.run(  # noqa: S603 -- fixed in-repo interpreter + script
+        [sys.executable, str(emitter), *args.emit_args],
+        check=False,
+    )
+    return proc.returncode
 
 
 def _run(root: Path, *argv: str) -> tuple[int, str, str]:
@@ -568,8 +676,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bb",
         description=(
-            "Bloodbank operator CLI (scaffold). Default commands are "
-            "side-effect free; repo-health is read-only evidence capture."
+            "Bloodbank operator CLI. `bb contract` prints the legal naming "
+            "vocabulary; `bb emit --check` dry-runs a name against it before "
+            "you write the producer. Everything but a bare `bb emit` is "
+            "side-effect free."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -592,11 +702,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_replay.set_defaults(func=cmd_replay)
 
-    p_emit = subparsers.add_parser(
-        "emit",
-        help="emit a handcrafted event (stub)",
+    p_contract = subparsers.add_parser(
+        "contract",
+        help="print the legal domains, entities, event actions and command actions",
+        description=(
+            "Print the naming vocabulary enforced by "
+            "services/agent-hooks/core/validate.py. Use --json to consume it "
+            "from a generator or an agent skill instead of hardcoding literals."
+        ),
     )
-    p_emit.set_defaults(func=cmd_emit)
+    p_contract.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="emit the vocabulary as JSON for machine consumption",
+    )
+    p_contract.set_defaults(func=cmd_contract)
+
+    # `emit` is registered only so it appears in `bb --help`; its arguments are
+    # never parsed here. main() intercepts `bb emit ...` before argparse runs and
+    # hands the tail to bin/bb-emit verbatim -- argparse.REMAINDER captures a
+    # LEADING option into the parent parser instead of the subcommand, so
+    # `bb emit --check --type X` died on "unrecognized arguments" while
+    # `bb emit --type X --check` worked. A passthrough must not have opinions
+    # about flag order.
+    subparsers.add_parser(
+        "emit",
+        help="publish an event/command via bin/bb-emit (--check to dry-run)",
+        add_help=False,
+    )
 
     p_repo_health = subparsers.add_parser(
         "repo-health",
@@ -629,7 +763,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_verify = subparsers.add_parser(
         "verify-envelope",
-        help="assert a Bloodbank v1 envelope against docs/event-naming.md",
+        help="assert an envelope against the naming contract (docs/event-naming.md)",
+        description=(
+            "Read a CloudEvents envelope from --file or stdin and assert it "
+            "against the Bloodbank Event Naming Contract: type "
+            "bloodbank.<domain>.<entity>.<action> (4 tokens), subject "
+            "bloodbank.<evt|cmd|rpy>.<domain>.<entity>.<action> (5 tokens), "
+            "with every token drawn from the allowlists `bb contract` prints. "
+            "There is no version token in either -- versioning lives in "
+            "schemaref/dataschema alone."
+        ),
     )
     p_verify.add_argument(
         "--file",
@@ -642,6 +785,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # Passthrough, before argparse can claim any of it. See build_parser().
+    if argv and argv[0] == "emit":
+        return cmd_emit(argparse.Namespace(emit_args=argv[1:]))
+
     parser = build_parser()
     args = parser.parse_args(argv)
     # argparse with required=True guarantees args.func is set.

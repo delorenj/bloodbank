@@ -209,6 +209,14 @@ run = "python3 services/agent-hooks/sync.py --check"
 description = "Validate the agent-hooks SSOT and generated publisher maps"
 run = "mise run hooks:check && python3 -m unittest discover -s services/agent-hooks/tests -p 'test_attention*.py'"
 
+[tasks."contract"]
+description = "Print the legal event-naming vocabulary (domains, entities, event + command actions). --json to consume it."
+run = "python3 cli/bb.py contract"
+
+[tasks."validate:contract-cli"]
+description = "Pin `bb contract` + `bb emit --check`: the contract must stay printable, parseable, and refuse phantom families"
+run = "python3 -m unittest discover -s cli/tests -p 'test_*.py'"
+
 [tasks."hooks:sync"]
 description = "Propagate services/agent-hooks/hooks.master.json (SSOT) to every agent's native hook config + event map"
 run = "python3 services/agent-hooks/sync.py --apply"

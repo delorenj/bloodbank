@@ -61,6 +61,11 @@ jobs:
         # Pure file-presence validator; no Docker, no network.
         run: bash ops/bootstrap/check-platform.sh
 
+      - name: Contract discoverability CLI
+        # `bb contract` must keep printing the vocabulary and `bb emit --check`
+        # must keep refusing the families that were invented against it.
+        run: python -m unittest discover -s cli/tests -p 'test_*.py'
+
       - name: bb doctor
         # Manifest-driven scaffold check. Should match bootstrap exactly.
         run: python3 cli/bb.py doctor

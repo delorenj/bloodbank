@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""bb — launcher for the Bloodbank operator CLI (cli/bb.py).
+
+cli/bb.py has been the operator CLI for months with no way to reach it: it was
+not on PATH under any name, and the interactive alias `bb='bloodbank'` pointed
+at a `bloodbank` command that has never existed on this machine (`type -a
+bloodbank` -> not found). So the CLI that knows the naming contract was, in
+practice, unrunnable -- which is a large part of why the contract went
+unpublished while nine phantom event families were invented against it.
+
+This file is the missing executable. It is installed under BOTH names:
+
+    ~/.local/bin/bb        -> the direct name
+    ~/.local/bin/bloodbank -> what the existing `alias bb='bloodbank'` resolves
+
+Installing the `bloodbank` name is deliberate: it repairs the dangling alias
+without editing the operator's zsh config, since a zsh alias shadows PATH and
+would otherwise keep winning. Nothing was repointed -- the alias always meant
+this, the target just was never built.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "cli"))
+
+from bb import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
