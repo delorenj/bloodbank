@@ -15,7 +15,7 @@
 attention alerts` (2026-08-26 08:50, another agent on this repo) independently
 implemented two things this plan called for: the `publish: false` binding flag,
 and moving deckard off its own hook — `core/publisher.py::_fanout_alert` now
-publishes `deckard.evt.v1.attention` from the agent-hooks publisher, using
+publishes `deckard.evt.attention` from the agent-hooks publisher, using
 `ZELLIJ_PANE_ID`/`ZELLIJ_SESSION_NAME` from the hook environment.
 
 Two consequences:
@@ -120,7 +120,7 @@ re-inventions of "one ingress for N CLIs" on this machine —
 | Bloodbank | NATS CloudEvents | `publish.py --client X --hook Y` (SSOT-generated) |
 | Orca | local HTTP `:port/hook/<cli>` | 6 per-CLI shims |
 | nlp (nanoleaf) | Redis | `nlp hook <event>` × 11 |
-| deckard | NATS `deckard.evt.v1.attention` | 3, already carries `ZELLIJ_PANE_ID` |
+| deckard | NATS `deckard.evt.attention` | 3, already carries `ZELLIJ_PANE_ID` |
 
 Three of the four independently concluded "normalize the event name, dispatch
 centrally." Bloodbank is the one with a locked schema contract, a live broker, and
@@ -540,7 +540,7 @@ leak risk.
   tests, mise tasks
 - `~/.agents` — the `bb-hook` + `handlers.toml` symlinks
 - `~/.claude` — `settings.json` at each phase
-- `~/code/deckard` — retire `install-hooks` and the `deckard.evt.v1.attention`
+- `~/code/deckard` — retire `install-hooks` and the `deckard.evt.attention`
   subject **(your call — flagging, not assuming)**
 - `project-notebook` (skillex) — retire its mini `hooks.master.json` +
   `claude.settings.json` **(your call)**

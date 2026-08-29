@@ -41,7 +41,7 @@ Two reasons, both load-bearing:
 
 **This daemon dispatches; it does not publish.** Envelope publishing stays in
 [`../agent-hooks/publish.py`](../agent-hooks/publish.py) until the cutover phase
-that moves it — notably so the `_fanout_alert` → `deckard.evt.v1.attention` path
+that moves it — notably so the `_fanout_alert` → `deckard.evt.attention` path
 added on 2026-08-26 is not duplicated here. Candystore, Holocene and the
 event-toaster are unaffected by this service.
 

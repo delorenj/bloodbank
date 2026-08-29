@@ -89,7 +89,7 @@
 #timeout_ms  = 1000
 
 # NOTE: deckard attention alerts are ALREADY fanned out by the agent-hooks
-# publisher (core/publisher.py::_fanout_alert -> deckard.evt.v1.attention, added
+# publisher (core/publisher.py::_fanout_alert -> deckard.evt.attention, added
 # 2026-08-26). Do not add a deckard row here until that path is retired, or the
 # amber key fires twice.
 

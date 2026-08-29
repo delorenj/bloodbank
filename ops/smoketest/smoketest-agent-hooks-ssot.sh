@@ -113,7 +113,7 @@ for agent_name, agent in master["agents"].items():
                         {"message": "waiting", "cwd": "/tmp/agent-hooks-smoketest"},
                     )
                     body = serialize_attention_envelope(envelope)
-                    assert DECKARD_ATTENTION_SUBJECT == "deckard.evt.v1.attention"
+                    assert DECKARD_ATTENTION_SUBJECT == "deckard.evt.attention"
                     assert DECKARD_ATTENTION_TYPE == "deckard.v1.agent.attention"
                     assert envelope["subject"] == DECKARD_ATTENTION_SUBJECT
                     assert envelope["type"] == DECKARD_ATTENTION_TYPE

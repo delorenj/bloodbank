@@ -31,7 +31,7 @@ from core.session import SessionState
 
 from clients.base import MAX_DIAGNOSTIC_BYTES, ClientAdapter, bounded_scalar
 
-DECKARD_ATTENTION_SUBJECT = "deckard.evt.v1.attention"
+DECKARD_ATTENTION_SUBJECT = "deckard.evt.attention"
 DECKARD_ATTENTION_TYPE = "deckard.v1.agent.attention"
 # Leave headroom beneath every supported hook runner's three-second ceiling.
 DECKARD_PUBLISH_TIMEOUT = 0.75

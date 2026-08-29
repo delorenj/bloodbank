@@ -185,7 +185,7 @@ Provider/CLI/model identity goes into `actor.cli`, `actor.provider`,
 
 Registry bindings with `"publish": false, "alert": "attention"` bypass the
 lifecycle schema path and shape one private exact-attribution envelope:
-`deckard.v1.agent.attention` on `deckard.evt.v1.attention`. The payload must
+`deckard.v1.agent.attention` on `deckard.evt.attention`. The payload must
 carry inherited `ZELLIJ_SESSION_NAME` + `ZELLIJ_PANE_ID`, normalized
 `data.alert_kind=attention`, and a fresh UUID per native invocation. Optional
 diagnostics are scalar-only and truncated; serialized envelopes are capped at

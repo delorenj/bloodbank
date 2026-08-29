@@ -80,7 +80,7 @@ class AttentionTransportTests(unittest.TestCase):
             clear=True,
         ):
             with self.assertRaisesRegex(RuntimeError, "EOF before PONG"):
-                nats_publish.publish("deckard.evt.v1.attention", b"{}", timeout=0.5)
+                nats_publish.publish("deckard.evt.attention", b"{}", timeout=0.5)
         server.join(timeout=2)
 
     def test_stalling_server_obeys_one_bounded_deadline(self) -> None:
@@ -93,7 +93,7 @@ class AttentionTransportTests(unittest.TestCase):
             began = time.monotonic()
             with self.assertRaises(TimeoutError):
                 nats_publish.publish(
-                    "deckard.evt.v1.attention", b"{}", timeout=0.08
+                    "deckard.evt.attention", b"{}", timeout=0.08
                 )
             self.assertLess(time.monotonic() - began, 0.5)
         server.join(timeout=2)
@@ -109,7 +109,7 @@ class AttentionTransportTests(unittest.TestCase):
             began = time.monotonic()
             with self.assertRaisesRegex(TimeoutError, "during DNS"):
                 nats_publish.publish(
-                    "deckard.evt.v1.attention", b"{}", timeout=0.05
+                    "deckard.evt.attention", b"{}", timeout=0.05
                 )
             self.assertLess(time.monotonic() - began, 0.2)
 

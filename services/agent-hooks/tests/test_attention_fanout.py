@@ -110,7 +110,7 @@ class AttentionFanoutTests(unittest.TestCase):
         self.assertEqual(publish.call_args.kwargs["timeout"], DECKARD_PUBLISH_TIMEOUT)
 
     def test_contract_literals_and_two_native_invocations_have_unique_uuid_ids(self) -> None:
-        self.assertEqual(DECKARD_ATTENTION_SUBJECT, "deckard.evt.v1.attention")
+        self.assertEqual(DECKARD_ATTENTION_SUBJECT, "deckard.evt.attention")
         self.assertEqual(DECKARD_ATTENTION_TYPE, "deckard.v1.agent.attention")
         with (
             mock.patch.dict(
