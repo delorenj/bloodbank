@@ -115,6 +115,12 @@ PYTHONPATH=src mise x -- uv run python scripts/dogfood_drumjangler.py
 
 The script resets only the dogfood lifecycle id, then runs four scenarios against live Postgres.
 
+**Not runnable on big-chungus as of 2026-08-30:** there is no `bloodbank-postgres`
+container on this host, so every statement fails with `No such container` and the
+run ends on `Outbox: empty`. The transcript below is therefore illustrative, not a
+capture — the event-type lines are taken from `reconciler.py`, which is the code
+that writes them. Stand the database up before trusting any output here.
+
 Expected high-level output:
 
 ```text
@@ -139,8 +145,8 @@ Current:  waiting / nominal
 Reason:   BLOCKING_GATE_OPEN
 
 📬 Outbox (6 unpublished):
-   bloodbank.v1.lifecycle.status.updated
-   bloodbank.v1.lifecycle.blocker.detected
+   bloodbank.lifecycle.status.updated
+   bloodbank.lifecycle.blocker.detected
 ...
 ✅ Dogfood complete!
 ```
