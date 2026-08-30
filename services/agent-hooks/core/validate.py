@@ -136,16 +136,40 @@ def _split_type(ce_type: str) -> tuple[str, str, str, str]:
     return parts[0], parts[1], parts[2], parts[3]
 
 
+def _banned_token_hint(token: str) -> str:
+    """The §9 lesson, appended to an allowlist refusal when the offending token is banned.
+
+    An allowlist check necessarily fires before assert_banned_tokens -- the
+    allowlists are what make the *position* meaningful -- so a producer writing
+    `bloodbank.evt.repo.claude.created` was told only "entity 'claude' not in
+    allowlist (§7)". That is true and useless: it invites them to try another
+    entity name, when the actual rule is that no entity name would ever have
+    worked. Identity is never a token. Teach that here rather than reordering
+    the pipeline, so EVERY caller of assert_type_shape gets the lesson -- not
+    just the ones that go on to call assert_banned_tokens afterwards.
+    """
+    if token in BANNED_TOKENS:
+        return (
+            f"; and {token!r} is a BANNED TOKEN (§9) -- provider/CLI/model/repo "
+            f"identity NEVER appears in a type or subject, under any position. "
+            f"It belongs in actor.* (actor.cli, actor.provider, actor.model, "
+            f"actor.agent_id) or data.*. No allowlisted name will fix this"
+        )
+    return ""
+
+
 def assert_type_shape(ce_type: str) -> tuple[str, str, str]:
     """Assert §2. Returns (domain, entity, action) on success."""
     _, domain, entity, action = _split_type(ce_type)
     if domain not in ALLOWED_DOMAINS:
         raise ContractViolation(
-            f"domain {domain!r} not in allowlist (§6); see docs/event-naming.md"
+            f"domain {domain!r} not in allowlist (§6)"
+            f"{_banned_token_hint(domain)}; see docs/event-naming.md"
         )
     if entity not in ALLOWED_ENTITIES:
         raise ContractViolation(
-            f"entity {entity!r} not in allowlist (§7); see docs/event-naming.md"
+            f"entity {entity!r} not in allowlist (§7)"
+            f"{_banned_token_hint(entity)}; see docs/event-naming.md"
         )
     return domain, entity, action
 

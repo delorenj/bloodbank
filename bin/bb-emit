@@ -302,7 +302,16 @@ def main():
     try:
         _nats_publish(subject, body, a.host, a.port)
     except Exception as e:  # noqa: BLE001 — fail-open at the bus boundary
-        print(f"bb-emit: publish FAILED ({e}); failing open", file=sys.stderr)
+        # The message must describe what THIS invocation actually did, because
+        # the two modes do opposite things. It used to say "failing open"
+        # unconditionally while --strict returned 1 -- so an operator reading
+        # logs during a bus outage concluded the event was dropped harmlessly
+        # at the exact moment the caller had in fact died.
+        if a.strict:
+            outcome = "--strict: NOT published, exiting 1 (caller fails too)"
+        else:
+            outcome = "failing open: NOT published, exiting 0 (caller continues)"
+        print(f"bb-emit: publish FAILED ({e}); {outcome}", file=sys.stderr)
         return fail_rc
     print(f"bb-emit: published {ce_type} -> {subject} (corr={correlationid[:8]})", file=sys.stderr)
     return 0
