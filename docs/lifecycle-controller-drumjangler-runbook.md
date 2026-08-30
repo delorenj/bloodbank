@@ -254,10 +254,22 @@ ORDER BY id;
 "
 ```
 
-Expected event types:
+Expected event types (as written into `lifecycle_event_outbox.event_type` by
+`services/lifecycle-controller/src/reconciler.py`):
 
-- `bloodbank.v1.lifecycle.status.updated`
-- `bloodbank.v1.lifecycle.blocker.detected`
+- `bloodbank.lifecycle.status.updated` — contract-valid.
+- `bloodbank.lifecycle.blocker.detected` — **NOT contract-valid.** `blocker` is
+  not in the §7 entity allowlist, so `bb emit --check --type
+  bloodbank.evt.lifecycle.blocker.detected` exits 1 with "entity 'blocker' not
+  in allowlist (§7)". The reconciler still stages these rows, and they are
+  invisible today only because the publisher below is a placeholder; the moment
+  it is wired to `bb-emit` they will be refused. Registering an entity (or
+  reusing `escalation`/`gate`) is a contract decision, not a rename — do not
+  invent a token to make the row pass.
+
+Types are four tokens, `bloodbank.<domain>.<entity>.<action>`; there is no
+version segment. This list previously read `bloodbank.v1.lifecycle.*`, which
+`bb-emit` refuses outright. Schema revision lives in `schemaref`/`dataschema`.
 
 What this proves:
 
