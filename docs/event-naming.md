@@ -273,6 +273,7 @@ Segment 3 of `type` MUST be one of:
 | `curator`      | Purpose-driven curation of a watched directory — classify, enrich, rename, and route incoming files (the `folder-curator` skill). | active   |
 | `reporting`    | Company reporting runs, archives, and delivery outcomes.             | active   |
 | `portfolio`    | Company-level intake, delegation receipts, approvals, escalations, and capacity facts. | active   |
+| `project`      | Project-scoped facts keyed by the pjangler project slug: periodic activity reports and other whole-project outcomes that span a project's repos and boards. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration.                                 | reserved |
@@ -334,6 +335,7 @@ Segment 4 of `type` MUST be one of:
 | `escalation`       | `portfolio`              | Exception raised to and resolved by the Director.            |
 | `capacity`         | `portfolio`              | Snapshot of global pipeline or derivative delegation slots.  |
 | `lease`            | `portfolio`              | Time-bounded ownership of one global delegation slot.        |
+| `activity`         | `project`                | One audience-specific activity report over a bounded window of a project's repos, boards and agent sessions. |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -467,6 +469,7 @@ transaction:<txn_id>
 subscription:<series_id>         # finance: recurring-series lifecycle incl. zombie strikes
 projection:liquid                # finance: single household-wide projection bucket
 clock:<clock_system>:<principal> # attendance: one worker/system time-clock state bucket
+project:<project_slug>           # project: one bucket per pjangler project; both audiences share it
 ```
 
 Pick the narrowest bucket that captures the event's natural ordering.
@@ -474,7 +477,9 @@ A `conversation.message.appended` uses `turn:<turn_id>`. A
 `cli.stdout.appended` uses `process:<process_id>`. An
 `audio.transcription.completed` uses `transcription:<transcription_id>`;
 an `audio.file.received` uses `file:<sha256(file_path)>` so re-detections
-of the same artifact form a stable bucket.
+of the same artifact form a stable bucket. A `project.activity.recorded`
+uses `project:<project_slug>` — the slug from the project's `.project.json`
+— never `activity:<slug>`; the bucket names the aggregate, not the entity.
 
 ### 11.2 `idempotency_key` rules
 
@@ -502,6 +507,33 @@ other portfolio event has a non-null causation UUID identifying its immediate
 parent event or command. The correlation UUID remains unchanged for the full
 intake-to-terminal chain.
 
+### 11.4 Project activity audience rule
+
+`bloodbank.project.activity.recorded` carries its audience in
+`data.audience` (`internal` | `external`), never in the type: §5 makes the
+action a past-tense verb and §7 makes the entity a noun, so an adjective
+cannot be an address. One type, one schema, one ordering bucket
+(`project:<slug>`); consumers that want only client-safe reports filter on
+`data.audience == "external"`, exactly as they filter on `actor.provider`.
+
+The schema and `assert_project_invariants` (validate.py) together enforce:
+
+- `ordering_key == "project:" + data.project.slug`
+- `correlationid == data.generator.run_id` (one skill run is one correlation;
+  the internal and external events of a run share it)
+- `data.window`: `end > start`, `duration_seconds == end - start`,
+  `basis == cap_24h` ⇒ 86400 s, `basis == previous_report` ⇒
+  `previous_event_id` is the prior event of the SAME audience
+- `data.tokens`: every `by_agent` bucket sums, and `total` is the sum of buckets
+- `audience == external` ⇒ `sources` and `tickets` are absent, and
+  `report.title|raw|markdown` contain no `<identifier>-<n>` ticket key,
+  no commit sha, no absolute workstation path; `report.html` contains no ticket key
+- `audience == internal` ⇒ `sources` and `tickets` are present
+
+Hygiene inherited from `reporting`: no credentials, no stderr dumps, no
+absolute filesystem paths anywhere in `data`; `additionalProperties: false`
+at every level.
+
 ---
 
 ## 12. Schema directory layout
@@ -526,9 +558,9 @@ JSON Schema documents with their own revision line (§13's `<n>`), not event
 types. Everything under `bloodbank/<domain>/` is named for the fact it
 describes and nothing else.
 
-There are 13 live domains — `agent`, `attendance`, `audio`, `cli`,
+There are 14 live domains — `agent`, `attendance`, `audio`, `cli`,
 `conversation`, `curator`, `finance`, `lifecycle`, `llm`, `portfolio`,
-`repo`, `reporting`, `system` — matching the active half of
+`project`, `repo`, `reporting`, `system` — matching the active half of
 `ALLOWED_DOMAINS` in `services/agent-hooks/core/validate.py`. A domain
 directory appears when its first schema does.
 

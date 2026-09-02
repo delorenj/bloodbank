@@ -58,7 +58,7 @@ SUBJECT_REGEX = re.compile(
 ALLOWED_DOMAINS = frozenset({
     # active
     "conversation", "agent", "llm", "cli", "system", "audio", "repo", "lifecycle",
-    "finance", "attendance", "curator", "reporting", "portfolio",
+    "finance", "attendance", "curator", "reporting", "portfolio", "project",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "workflow", "memory",
 })
@@ -78,6 +78,7 @@ ALLOWED_ENTITIES = frozenset({
     "sync", "account", "transaction", "subscription", "zombie_charge", "paycheck", "projection",
     "clock", "report",
     "work", "receipt", "approval", "escalation", "capacity", "lease",
+    "activity",
 })
 
 EVENT_ACTIONS = frozenset({
@@ -395,6 +396,168 @@ def assert_terminal_receipt_retry(prior: dict, candidate: dict) -> None:
         )
 
 
+# --------------------------------------------------------------------------
+# §11.4 - project domain invariants
+# --------------------------------------------------------------------------
+
+PROJECT_ACTIVITY_TYPE = "bloodbank.project.activity.recorded"
+PROJECT_AUDIENCES = frozenset({"internal", "external"})
+PROJECT_INTERNAL_ONLY_FIELDS = ("sources", "tickets")
+PROJECT_WINDOW_BASES = frozenset({"previous_report", "cap_24h", "explicit"})
+PROJECT_TOKEN_PARTS = ("input", "output", "cache_read", "cache_write")
+
+# A sha must carry both a digit and a letter, or hex-alphabet English
+# ("defaced", "effaced") is refused. The lookbehind keeps a '#abc123' CSS
+# colour from reading as a commit.
+_PROJECT_SHA = re.compile(
+    r"(?<![#\w])(?=[0-9a-f]{7,40}\b)(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b"
+)
+# A workstation path, not a URL path: the slash must not follow a word char
+# or a dot, so 'https://x/home/' and 'a.b/tmp/' do not match.
+_PROJECT_ABS_PATH = re.compile(r"(?<![\w.])/(?:home|Users|root|tmp|var|etc|opt|srv|mnt)/")
+
+
+def _project_window_seconds(start: object, end: object) -> int:
+    """Seconds from window.start to window.end; both must be RFC 3339."""
+    for name, value in (("start", start), ("end", end)):
+        if not _is_rfc3339_datetime(value):
+            raise ContractViolation(f"project data.window.{name} must be an RFC 3339 date-time")
+
+    def _parse(value: str) -> datetime:
+        return datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+
+    return int((_parse(end) - _parse(start)).total_seconds())
+
+
+def _project_refuse_markers(field: str, text: str, markers) -> None:
+    for pattern, what in markers:
+        hit = pattern.search(text)
+        if hit:
+            raise ContractViolation(
+                f"project external report.{field} contains {what} ({hit.group(0)!r}); "
+                "that fact belongs on the audience=internal event"
+            )
+
+
+def assert_project_invariants(envelope: dict) -> None:
+    """Enforce cross-field invariants for the project domain (§11.4).
+
+    JSON Schema fixes the shape; this fixes what the schema cannot see across
+    fields: the ordering bucket is the project's slug, the correlation is the
+    run, the window and token arithmetic add up, and an external report cannot
+    carry the project's own ticket keys, commit shas or workstation paths.
+    """
+    if envelope.get("domain") != "project":
+        return
+
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        raise ContractViolation("project event data must be an object")
+    if data.get("schema_version") != 1:
+        raise ContractViolation("project data.schema_version must be 1")
+
+    project = data.get("project")
+    if not isinstance(project, dict):
+        raise ContractViolation("project data.project must be an object")
+    slug = project.get("slug")
+    if not isinstance(slug, str) or not slug.strip():
+        raise ContractViolation("project data.project.slug must be a non-empty string")
+    if envelope.get("ordering_key") != f"project:{slug}":
+        raise ContractViolation(
+            f"project envelope.ordering_key must be 'project:{slug}' (§11.1), "
+            f"got {envelope.get('ordering_key')!r}"
+        )
+
+    audience = data.get("audience")
+    if audience not in PROJECT_AUDIENCES:
+        raise ContractViolation("project data.audience must be 'internal' or 'external'")
+
+    generator = data.get("generator")
+    if not isinstance(generator, dict):
+        raise ContractViolation("project data.generator must be an object")
+    if envelope.get("correlationid") != generator.get("run_id"):
+        raise ContractViolation(
+            "project envelope.correlationid must equal data.generator.run_id "
+            "(one skill run is one correlation; both audiences share it)"
+        )
+
+    window = data.get("window")
+    if not isinstance(window, dict):
+        raise ContractViolation("project data.window must be an object")
+    seconds = _project_window_seconds(window.get("start"), window.get("end"))
+    if seconds <= 0:
+        raise ContractViolation("project data.window.end must be after data.window.start")
+    duration = window.get("duration_seconds")
+    if not isinstance(duration, int) or isinstance(duration, bool) or duration != seconds:
+        raise ContractViolation(
+            f"project data.window.duration_seconds must equal end - start ({seconds}s)"
+        )
+    basis = window.get("basis")
+    if basis not in PROJECT_WINDOW_BASES:
+        raise ContractViolation(
+            "project data.window.basis must be previous_report, cap_24h or explicit"
+        )
+    if basis == "cap_24h" and seconds != 86400:
+        raise ContractViolation("project data.window.basis cap_24h requires an 86400s window")
+    if basis == "previous_report" and not window.get("previous_event_id"):
+        raise ContractViolation(
+            "project data.window.basis previous_report requires previous_event_id"
+        )
+
+    tokens = data.get("tokens")
+    if not isinstance(tokens, dict) or not isinstance(tokens.get("by_agent"), dict):
+        raise ContractViolation("project data.tokens must be an object carrying by_agent")
+    grand = 0
+    for agent, bucket in tokens["by_agent"].items():
+        if bucket is None:
+            continue
+        if not isinstance(bucket, dict):
+            raise ContractViolation(f"project data.tokens.by_agent.{agent} must be an object or null")
+        values = [bucket.get(part) for part in PROJECT_TOKEN_PARTS] + [bucket.get("total")]
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in values):
+            raise ContractViolation(f"project data.tokens.by_agent.{agent} values must be integers")
+        if sum(values[:-1]) != bucket["total"]:
+            raise ContractViolation(
+                f"project data.tokens.by_agent.{agent}.total must equal "
+                "input + output + cache_read + cache_write"
+            )
+        grand += bucket["total"]
+    if tokens.get("total") != grand:
+        raise ContractViolation(
+            f"project data.tokens.total must equal the sum of by_agent totals ({grand})"
+        )
+
+    report = data.get("report")
+    if not isinstance(report, dict):
+        raise ContractViolation("project data.report must be an object")
+
+    if audience == "external":
+        present = [f for f in PROJECT_INTERNAL_ONLY_FIELDS if f in data]
+        if present:
+            raise ContractViolation(f"project external report must not carry {present}")
+        ticket_markers = []
+        identifier = project.get("identifier")
+        if isinstance(identifier, str) and identifier:
+            ticket_markers.append(
+                (re.compile(rf"\b{re.escape(identifier)}-\d+\b"), "a ticket key")
+            )
+        text_markers = ticket_markers + [
+            (_PROJECT_SHA, "a commit sha"),
+            (_PROJECT_ABS_PATH, "an absolute filesystem path"),
+        ]
+        for field in ("title", "raw", "markdown"):
+            value = report.get(field)
+            if isinstance(value, str):
+                _project_refuse_markers(field, value, text_markers)
+        html = report.get("html")
+        if isinstance(html, str):
+            _project_refuse_markers("html", html, ticket_markers)
+    else:
+        missing = [f for f in PROJECT_INTERNAL_ONLY_FIELDS if f not in data]
+        if missing:
+            raise ContractViolation(f"project internal report must carry {missing}")
+
+
 def assert_contract(envelope: dict) -> None:
     """Run all stdlib-only contract checks on an envelope. Raises ContractViolation on first failure."""
     if not isinstance(envelope, dict):
@@ -456,6 +619,7 @@ def assert_contract(envelope: dict) -> None:
         )
 
     assert_portfolio_invariants(envelope)
+    assert_project_invariants(envelope)
 
 
 # --------------------------------------------------------------------------
@@ -623,6 +787,8 @@ __all__ = [
     "EnvelopeInvalid",
     "KIND_MARKERS",
     "MARKER_TO_KIND",
+    "PROJECT_ACTIVITY_TYPE",
+    "PROJECT_AUDIENCES",
     "SUBJECT_REGEX",
     "TYPE_REGEX",
     "ValidationUnavailable",
@@ -630,6 +796,7 @@ __all__ = [
     "assert_banned_tokens",
     "assert_contract",
     "assert_portfolio_invariants",
+    "assert_project_invariants",
     "assert_subject_matches",
     "assert_terminal_receipt_retry",
     "assert_type_shape",

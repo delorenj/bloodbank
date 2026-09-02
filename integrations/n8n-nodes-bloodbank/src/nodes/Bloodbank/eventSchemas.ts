@@ -2187,6 +2187,69 @@ const schemas: EventSchema[] = [
     "dataFields": []
   },
   {
+    "type": "bloodbank.project.activity.recorded",
+    "kind": "event",
+    "domain": "project",
+    "title": "Project Activity Recorded Event",
+    "description": "A periodic activity report over a bounded window of one pjangler project (its repos, boards and agent sessions) was composed for one audience. The report text travels in data; the rendered HTML in data.report.html is the durable artifact.",
+    "dataFields": [
+      {
+        "name": "schema_version",
+        "jsonType": "string",
+        "required": true,
+        "description": ""
+      },
+      {
+        "name": "project",
+        "jsonType": "string",
+        "required": true,
+        "description": "The pjangler project this report covers, copied from its .project.json."
+      },
+      {
+        "name": "audience",
+        "jsonType": "string",
+        "required": true,
+        "description": "internal = the team's exhaustive log; external = the client-safe narrative. External events cannot carry sources or tickets."
+      },
+      {
+        "name": "window",
+        "jsonType": "string",
+        "required": true,
+        "description": "The bounded interval the report describes and how its start was chosen."
+      },
+      {
+        "name": "report",
+        "jsonType": "string",
+        "required": true,
+        "description": "The report in three forms: raw (portal plain-text grammar), markdown, and a self-contained HTML document."
+      },
+      {
+        "name": "tokens",
+        "jsonType": "string",
+        "required": true,
+        "description": "LLM token usage attributed to the window, per agent CLI."
+      },
+      {
+        "name": "generator",
+        "jsonType": "string",
+        "required": true,
+        "description": "The skill run that produced this report; run_id is the envelope correlationid."
+      },
+      {
+        "name": "sources",
+        "jsonType": "string",
+        "required": false,
+        "description": "Internal only: the collected facts the narrative was written from."
+      },
+      {
+        "name": "tickets",
+        "jsonType": "string",
+        "required": false,
+        "description": "Internal only: board tickets that moved inside the window."
+      }
+    ]
+  },
+  {
     "type": "bloodbank.repo.board.created",
     "kind": "event",
     "domain": "repo",

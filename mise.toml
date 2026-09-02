@@ -189,6 +189,10 @@ run = "python3 ops/smoketest/smoketest-maintenance-reporting-contracts.py"
 description = "Full-envelope schema and retry-invariant tests for portfolio orchestration events"
 run = "python3 ops/smoketest/smoketest-portfolio-contracts.py"
 
+[tasks."smoketest:project-contracts"]
+description = "Full-envelope, audience-invariant and bb-emit tests for project activity reports"
+run = "python3 ops/smoketest/smoketest-project-contracts.py"
+
 [tasks."smoketest:portfolio-transport"]
 description = "Live portfolio test publisher -> Bloodbank JetStream -> canonical consumer validator"
 run = "bash ops/smoketest/smoketest-portfolio-transport.sh"
@@ -251,7 +255,7 @@ run = "bash ops/smoketest/smoketest-agent-hooks-ssot.sh"
 
 [tasks."smoketest:schemas"]
 description = "Schema tree validation + drift detector + contract verifier + agent-hooks SSOT (no Docker)"
-run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming && mise run smoketest:maintenance-reporting-contracts && mise run smoketest:portfolio-contracts && mise run smoketest:plane-binding && mise run smoketest:agent-hooks-ssot"
+run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming && mise run smoketest:maintenance-reporting-contracts && mise run smoketest:portfolio-contracts && mise run smoketest:project-contracts && mise run smoketest:plane-binding && mise run smoketest:agent-hooks-ssot"
 
 [tasks."smoketest:repo-health-cleanup"]
 description = "Local smoke test for cleanup helper + strict worktree mode"

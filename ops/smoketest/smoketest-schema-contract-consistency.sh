@@ -91,6 +91,14 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
         env["causationid"] = payload["causation_id"]
         if ce_type == "bloodbank.portfolio.receipt.recorded":
             env["id"] = payload["receipt_id"]
+    if domain == "project":
+        # data: {} cannot satisfy assert_project_invariants; use the internal
+        # fixture and bind the two cross-field keys the validator checks.
+        fixtures = json.loads(Path("ops/fixtures/project-contracts.v1.json").read_text())
+        payload = fixtures[ce_type]["internal"]
+        env["data"] = payload
+        env["ordering_key"] = f"project:{payload['project']['slug']}"
+        env["correlationid"] = payload["generator"]["run_id"]
     return env
 
 

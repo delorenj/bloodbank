@@ -31,9 +31,20 @@ they are holding taught them nothing. The retired-version guard above is
 untouched — `bloodbank.v1.audio.transcription.completed` still fails loudly.
 
 --check is the dry run. It builds and validates the envelope and prints the
-type, subject, schemaref and dataschema that WOULD be published, then exits
-without touching NATS. This is the command to run while writing a producer:
-it answers "is my name legal" without putting anything on the bus.
+type, subject, schemaref, dataschema, ordering_key, correlationid and
+causationid that WOULD be published, then exits without touching NATS. This
+is the command to run while writing a producer: it answers "is my name legal"
+without putting anything on the bus. When a payload is piped in, --check also
+holds the whole envelope to its JSON Schema (core.validate.validate_envelope)
+and exits 1 if it fails, so a producer proves its data before the real emit.
+An empty payload is the name question alone and skips the schema. The publish
+path itself stays stdlib-only and fail-open; it is not held to the schema.
+
+Lineage and ordering: causationid is always emitted (null unless --causation
+is given -- a root event). ordering_key is --ordering-key when given, else the
+narrowest §11.1 bucket the payload names: transcription:<id> when the data
+carries a transcription_id/id, project:<data.project.slug> for the project
+domain, else <domain>:<uuid4>.
 
 Every event envelope carries an `actor` (§10, and REQUIRED_EVENT_FIELDS in
 core/validate.py). bb-emit shipped without one for months: NATS core PUB does
@@ -54,6 +65,7 @@ Usage:
     | bb-emit --type bloodbank.audio.transcription.completed
 
   bb-emit --check --type bloodbank.evt.repo.decision.recorded --data '{}'
+  bb-emit --check --type bloodbank.project.activity.recorded --correlation <run_id> < data.json
   bb contract            # the legal domains / entities / actions
 """
 import argparse
@@ -70,19 +82,27 @@ from pathlib import Path
 # of bb-emit that has been lifted out of the repo tree simply skips the check
 # rather than failing to start.
 _ASSERT_CONTRACT = None
+_VALIDATE_ENVELOPE = None
 _IMPORT_ERROR = None
 _HOOKS_DIR = Path(__file__).resolve().parent.parent / "services" / "agent-hooks"
 if _HOOKS_DIR.is_dir():
     if str(_HOOKS_DIR) not in sys.path:
         sys.path.insert(0, str(_HOOKS_DIR))
     try:
-        from core.validate import ContractViolation, assert_contract as _ASSERT_CONTRACT
+        from core.validate import (
+            ContractViolation,
+            EnvelopeInvalid,
+            ValidationUnavailable,
+            assert_contract as _ASSERT_CONTRACT,
+            validate_envelope as _VALIDATE_ENVELOPE,
+        )
     except Exception as _e:  # noqa: BLE001
         # In-repo and still unimportable means validate.py is BROKEN, which is
         # a very different thing from "this copy of bb-emit was lifted out of
         # the tree". Say so on every emit rather than silently degrading to the
         # unvalidated behaviour this flag was added to end.
         _ASSERT_CONTRACT = None
+        _VALIDATE_ENVELOPE = None
         _IMPORT_ERROR = _e
 
 # type <-> subject kind markers (§3/§4). Mirrored from core/validate.KIND_MARKERS
@@ -123,6 +143,15 @@ def _nats_publish(subject, body, host, port, timeout=3.0):
                 raise IOError("NATS -ERR: " + line.decode(errors="replace").strip())
 
 
+def _derive_ordering_key(domain, data, tid):
+    """§11.1 bucket when the caller gave none: the narrowest one the payload names."""
+    if tid:
+        return f"transcription:{tid}"
+    if domain == "project" and isinstance(data.get("project"), dict) and data["project"].get("slug"):
+        return f"project:{data['project']['slug']}"
+    return f"{domain}:{uuid.uuid4()}"
+
+
 def main():
     ap = argparse.ArgumentParser(description="Publish a Bloodbank v3 event to NATS.")
     ap.add_argument("--type", required=True,
@@ -141,6 +170,10 @@ def main():
     ap.add_argument("--producer", default="n8n")
     ap.add_argument("--service", default="inbox-transcribe")
     ap.add_argument("--correlation", help="explicit correlationid (uuid); default derived from transcription_id")
+    ap.add_argument("--causation", help="explicit causationid (uuid); default null = root event")
+    ap.add_argument("--ordering-key",
+                    help="explicit §11.1 ordering bucket (default derived from data: "
+                         "transcription:<id>, project:<data.project.slug>, else <domain>:<uuid4>)")
     ap.add_argument("--actor-type", default="service",
                     help="actor.type archetype: service|operator|scheduler|agent_cli|... (default: service)")
     ap.add_argument("--actor-id",
@@ -249,6 +282,7 @@ def main():
         "time": _rfc3339_now(),
         "datacontenttype": "application/json",
         "correlationid": correlationid,
+        "causationid": a.causation,
         "producer": a.producer,
         "service": a.service,
         "domain": domain,
@@ -256,7 +290,7 @@ def main():
         "dataschema": dataschema,
         "kind": kind,
         "actor": actor,
-        "ordering_key": f"transcription:{tid}" if tid else f"{domain}:{uuid.uuid4()}",
+        "ordering_key": a.ordering_key or _derive_ordering_key(domain, data, tid),
         "data": data,
     }
     if kind == "command":
@@ -283,6 +317,24 @@ def main():
     if a.check:
         # Dry run. Everything above already ran, so a PASS here means the very
         # bytes printed are the ones a real emit would put on the bus.
+        #
+        # The JSON Schema runs here and only here: the publish path stays
+        # stdlib-only and fail-open by contract, so a producer proves its
+        # payload with --check before the real emit. An empty payload is the
+        # "is this name legal" question and has nothing to hold to a schema.
+        if not data:
+            schema_note = "skipped (empty payload; pipe the data in to validate it)"
+        elif _VALIDATE_ENVELOPE is None:
+            schema_note = "no (core/validate.py unavailable)"
+        else:
+            try:
+                _VALIDATE_ENVELOPE(envelope)
+                schema_note = "yes (core.validate.validate_envelope)"
+            except EnvelopeInvalid as e:
+                print(f"bb-emit: envelope fails its JSON Schema: {e}", file=sys.stderr)
+                return usage_rc
+            except ValidationUnavailable as e:
+                schema_note = f"no ({e})"
         print(f"PASS  {ce_type}")
         print(f"  kind        {kind}")
         print(f"  type        {ce_type}")
@@ -291,10 +343,14 @@ def main():
         print(f"  dataschema  {dataschema}")
         print(f"  domain      {domain}")
         print(f"  actor       {json.dumps(actor, separators=(',', ':'))}")
+        print(f"  ordering_key  {envelope['ordering_key']}")
+        print(f"  correlationid {correlationid}")
+        print(f"  causationid   {envelope['causationid']}")
         if _ASSERT_CONTRACT is None:
             print("  validated   NO — core/validate.py unavailable")
         else:
             print("  validated   yes (core.validate.assert_contract)")
+        print(f"  schema      {schema_note}")
         print("bb-emit: --check, nothing published", file=sys.stderr)
         return 0
 

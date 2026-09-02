@@ -34,6 +34,9 @@ workflows (bootstrap, smoketest, replay, trace).
 - **Portfolio coordination:** Director and child-PM event contracts live under
   `schemas/bloodbank/portfolio/`; producer, consumer, retry, and compatibility
   rules are in [`docs/portfolio-orchestration-contracts.md`](docs/portfolio-orchestration-contracts.md).
+- **Project activity reports:** the per-project, per-audience report contract
+  lives at `schemas/bloodbank/project/`; producer, audience and read-back
+  rules are in [`docs/project-activity-contract.md`](docs/project-activity-contract.md).
 - **Fleet command dispatch:** the Bloodbank-owned Hermes gateway consumes the
   canonical invocation command once for the fleet and default-denies registry
   routes unless their Bloodbank metadata is explicitly active and identity
@@ -58,6 +61,7 @@ mise run smoketest:dapr
 mise run smoketest:dapr-subscribe
 mise run smoketest:heartbeat
 mise run smoketest:portfolio-contracts
+mise run smoketest:project-contracts
 mise run smoketest:portfolio-transport  # requires the already-running NATS stack
 ```
 
