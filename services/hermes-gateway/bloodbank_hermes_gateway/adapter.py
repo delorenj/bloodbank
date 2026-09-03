@@ -33,12 +33,21 @@ from .contract import (
     Invocation,
     ProfileResolver,
     RegistryInvalid,
+    ResolvedContractorContext,
     RouteInvalid,
+    contractor_context_from_envelope,
     decode_command,
     started_events,
     terminal_events,
 )
-from .execution_state import ExecutionRecord, ExecutionStateStore, envelope_digest
+from .execution_state import (
+    ExecutionEnvelopeCollision,
+    ExecutionRecord,
+    ExecutionSemanticCollision,
+    ExecutionStateStore,
+    envelope_digest,
+    execution_semantic_digest,
+)
 
 logger = logging.getLogger(__name__)
 ROUTE_REJECTION_REASON = "route_policy_invalid_before_dispatch"
@@ -88,6 +97,7 @@ class PendingInvocation:
     broker_message: Any
     completion: asyncio.Future[None]
     envelope_digest: str
+    contractor_context: ResolvedContractorContext | None = None
 
 
 class BloodbankAdapter(BasePlatformAdapter):
@@ -387,6 +397,11 @@ class BloodbankAdapter(BasePlatformAdapter):
             envelope = decode_command(message.data, max_bytes=self.max_command_bytes)
             command_id = envelope["command_id"]
             digest = envelope_digest(envelope)
+            semantic_digest = execution_semantic_digest(envelope)
+            target_agent_id = envelope["data"]["target_agent_id"].strip()
+            idempotency_key = envelope["idempotency_key"].strip()
+            wire_contractor = contractor_context_from_envelope(envelope)
+            resolved_contractor: ResolvedContractorContext | None = None
             # Serialize the short durable-claim section so a concurrent local
             # redelivery cannot observe the same pending row and dispatch a
             # second Hermes turn. Different commands still execute concurrently.
@@ -402,29 +417,76 @@ class BloodbankAdapter(BasePlatformAdapter):
                     raise CommandInvalid(
                         "command_id collides with a different command envelope"
                     )
+                alias_delivery = False
                 if persisted is None:
-                    profile = await asyncio.to_thread(
-                        self.profile_resolver.resolve,
-                        envelope["data"]["target_agent_id"],
-                    )
-                    invocation = Invocation.from_envelope(envelope, profile)
                     persisted = await asyncio.to_thread(
-                        self.execution_state.claim_pending,
-                        command_id=command_id,
-                        digest=digest,
-                        profile=profile,
-                        started_events=started_events(invocation),
+                        self.execution_state.get_by_identity,
+                        target_agent_id,
+                        idempotency_key,
                     )
-                    if persisted.envelope_digest != digest:
-                        raise CommandInvalid(
-                            "command_id collides with a different command envelope"
+                    if persisted is not None:
+                        alias_delivery = persisted.command_id != command_id
+                        if persisted.semantic_digest != semantic_digest:
+                            raise CommandInvalid(
+                                "target_agent_id and idempotency_key collide with "
+                                "different execution intent"
+                            )
+                if persisted is None:
+                    resolved_contractor = None
+                    if wire_contractor is not None:
+                        resolved_contractor = await asyncio.to_thread(
+                            self.profile_resolver.resolve_contractor,
+                            target_agent_id,
+                            wire_contractor,
                         )
+                        profile = resolved_contractor.profile_name
+                    else:
+                        profile = await asyncio.to_thread(
+                            self.profile_resolver.resolve,
+                            target_agent_id,
+                        )
+                    invocation = Invocation.from_envelope(envelope, profile)
+                    try:
+                        persisted = await asyncio.to_thread(
+                            self.execution_state.claim_pending,
+                            command_id=command_id,
+                            digest=digest,
+                            semantic_digest=semantic_digest,
+                            target_agent_id=target_agent_id,
+                            idempotency_key=idempotency_key,
+                            profile=profile,
+                            started_events=started_events(invocation),
+                        )
+                    except (
+                        ExecutionEnvelopeCollision,
+                        ExecutionSemanticCollision,
+                    ) as exc:
+                        raise CommandInvalid(str(exc)) from exc
+                    alias_delivery = persisted.command_id != command_id
+                    if alias_delivery and persisted.semantic_digest != semantic_digest:
+                        raise CommandInvalid(
+                            "target_agent_id and idempotency_key collide with "
+                            "different execution intent"
+                        )
+
+                # An alias cannot take over an in-flight canonical command.
+                # NAK leaves the original delivery responsible for lifecycle
+                # publication and prevents two local Hermes turns.
+                if alias_delivery and persisted.state in {"pending", "started"}:
+                    await message.nak(delay=self.nak_delay_seconds)
+                    return
 
                 if persisted.state in {"pending", "started"}:
                     invocation = Invocation.from_envelope(envelope, persisted.profile)
                     completion = asyncio.get_running_loop().create_future()
-                    record = PendingInvocation(invocation, message, completion, digest)
-                    self._records[invocation.invocation_id] = record
+                    record = PendingInvocation(
+                        invocation,
+                        message,
+                        completion,
+                        persisted.envelope_digest,
+                        resolved_contractor if persisted.command_id == command_id else None,
+                    )
+                    self._records[persisted.command_id] = record
 
             if persisted.state == "completed":
                 progress_task = asyncio.create_task(self._ack_progress(message))
@@ -435,12 +497,20 @@ class BloodbankAdapter(BasePlatformAdapter):
             if persisted.state == "rejected_pre_start":
                 await message.term()
                 return
-            if persisted.state in {"rejected_closing", "rejected_closed"}:
+            if persisted.state == "rejected_closed":
                 progress_task = asyncio.create_task(self._ack_progress(message))
-                invocation = Invocation.from_envelope(envelope, persisted.profile)
+                await self._publish_many(persisted.started_events)
+                await self._publish_many(persisted.terminal_events)
+                await message.term()
+                return
+            if persisted.state == "rejected_closing":
+                progress_task = asyncio.create_task(self._ack_progress(message))
+                invocation = self._invocation_for_persisted_record(
+                    envelope, persisted
+                )
                 await self._persist_and_publish_route_rejection(
                     invocation=invocation,
-                    digest=digest,
+                    digest=persisted.envelope_digest,
                     persisted=persisted,
                     replay_started=True,
                 )
@@ -458,11 +528,19 @@ class BloodbankAdapter(BasePlatformAdapter):
             )
             try:
                 async with lock:
-                    await self._assert_dispatch_route(invocation)
+                    resolved_before_start = await self._assert_dispatch_route(invocation)
+                    if (
+                        record.contractor_context is not None
+                        and resolved_before_start != record.contractor_context
+                    ):
+                        raise RouteInvalid(
+                            "contractor registry route changed after durable claim"
+                        )
+                    record.contractor_context = resolved_before_start
                     if persisted.state == "pending":
                         persisted = await asyncio.to_thread(
                             self.execution_state.mark_started,
-                            command_id=invocation.invocation_id,
+                            command_id=persisted.command_id,
                             digest=record.envelope_digest,
                         )
                     if persisted.state != "started":
@@ -501,7 +579,16 @@ class BloodbankAdapter(BasePlatformAdapter):
                     # Re-read the registry after all pre-dispatch awaits. A
                     # claimed or restarted pending command must not execute on
                     # a route disabled while lifecycle publication was in flight.
-                    await self._assert_dispatch_route(invocation)
+                    resolved_at_dispatch = await self._assert_dispatch_route(invocation)
+                    if resolved_at_dispatch != record.contractor_context:
+                        raise RouteInvalid(
+                            "contractor registry route changed before dispatch"
+                        )
+                    if resolved_at_dispatch is not None:
+                        event.contractor_context = self._hermes_contractor_context(
+                            resolved_at_dispatch
+                        )
+                        event.allow_gateway_control = False
                     await super().handle_message(event)
                     await completion
             finally:
@@ -559,9 +646,97 @@ class BloodbankAdapter(BasePlatformAdapter):
                 progress_task.cancel()
                 await asyncio.gather(progress_task, return_exceptions=True)
             if record is not None:
-                self._records.pop(record.invocation.invocation_id, None)
+                self._records.pop(persisted.command_id if persisted else "", None)
 
-    async def _assert_dispatch_route(self, invocation: Invocation) -> None:
+    @staticmethod
+    def _invocation_for_persisted_record(
+        envelope: dict[str, Any],
+        persisted: ExecutionRecord,
+    ) -> Invocation:
+        """Rebuild canonical identity from stored started-event facts."""
+        if len(persisted.started_events) != 2:
+            raise RuntimeError("execution journal is missing canonical started events")
+        turn_started = persisted.started_events[0]
+        turn_data = turn_started.get("data")
+        if not isinstance(turn_data, dict):
+            raise RuntimeError("execution journal contains invalid started event data")
+        stored_target = turn_data.get("target_agent_id")
+        stored_idempotency = turn_data.get("idempotency_key")
+        if not isinstance(stored_target, str) or not stored_target.strip():
+            raise RuntimeError("execution journal is missing canonical target identity")
+        if not isinstance(stored_idempotency, str) or not stored_idempotency.strip():
+            raise RuntimeError(
+                "execution journal is missing canonical idempotency identity"
+            )
+        canonical = dict(envelope)
+        canonical["id"] = turn_started.get("causationid") or envelope["id"]
+        canonical["command_id"] = persisted.command_id
+        canonical["correlationid"] = turn_started.get("correlationid")
+        canonical["idempotency_key"] = stored_idempotency
+        canonical_data = dict(envelope["data"])
+        canonical_data["target_agent_id"] = stored_target
+        stored_thread_id = turn_data.get("thread_id")
+        stored_turn_id = turn_data.get("turn_id")
+        if contractor_context_from_envelope(envelope) is not None:
+            # Stateless contractor callers are forbidden from supplying either
+            # lifecycle identity. Let Invocation rebuild both from the stored
+            # canonical command/correlation IDs, then verify those derivations
+            # against the journal facts below.
+            canonical_data["thread_id"] = None
+            canonical_data["turn_id"] = None
+        else:
+            canonical_data["thread_id"] = stored_thread_id
+            canonical_data["turn_id"] = stored_turn_id
+        canonical["data"] = canonical_data
+        invocation = Invocation.from_envelope(canonical, persisted.profile)
+        if (
+            invocation.thread_id != stored_thread_id
+            or invocation.turn_id != stored_turn_id
+        ):
+            raise RuntimeError(
+                "execution journal lifecycle identity does not match canonical command"
+            )
+        return invocation
+
+    @staticmethod
+    def _hermes_contractor_context(
+        resolved: ResolvedContractorContext,
+    ) -> Any:
+        try:
+            from gateway.platforms.base import ContractorTurnContext
+        except ImportError as exc:
+            raise RouteInvalid(
+                "Hermes runtime does not support contractor turn context"
+            ) from exc
+        try:
+            return ContractorTurnContext(
+                contractor_id=resolved.contractor_id,
+                contractor_version=resolved.contractor_version,
+                memory_policy=resolved.memory_policy,
+                continuity=resolved.continuity,
+                required_skills=resolved.required_skills,
+                profile_name=resolved.profile_name,
+                project_root=resolved.project_root,
+            )
+        except (TypeError, ValueError) as exc:
+            raise RouteInvalid("Hermes rejected the resolved contractor route") from exc
+
+    async def _assert_dispatch_route(
+        self, invocation: Invocation
+    ) -> ResolvedContractorContext | None:
+        if invocation.contractor_context is not None:
+            resolved = await asyncio.to_thread(
+                self.profile_resolver.resolve_contractor,
+                invocation.target_agent_id,
+                invocation.contractor_context,
+            )
+            if resolved.profile_name != invocation.profile:
+                raise RouteInvalid(
+                    f"target_agent_id {invocation.target_agent_id!r} changed profile "
+                    "after durable claim"
+                )
+            return resolved
+
         resolved_profile = await asyncio.to_thread(
             self.profile_resolver.resolve,
             invocation.target_agent_id,
@@ -571,6 +746,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 f"target_agent_id {invocation.target_agent_id!r} changed profile "
                 "after durable claim"
             )
+        return None
 
     async def _persist_and_publish_route_rejection(
         self,

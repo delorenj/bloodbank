@@ -37,6 +37,17 @@ _RFC3339 = re.compile(
 # Registry keys are evidence, not user input, so noncanonical spellings must
 # invalidate the snapshot rather than be silently normalized into an identity.
 _CANONICAL_AGENT_ID = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
+_CONTRACTOR_CONTEXT_KEYS = frozenset(
+    {
+        "type",
+        "contractor_id",
+        "contractor_version",
+        "memory_policy",
+        "continuity",
+        "required_skills",
+    }
+)
+_CONTRACTOR_CONTEXT_MARKERS = _CONTRACTOR_CONTEXT_KEYS - {"type"}
 
 
 class CommandInvalid(ValueError):
@@ -49,6 +60,119 @@ class RouteInvalid(CommandInvalid):
 
 class RegistryInvalid(RuntimeError):
     """The configured fleet registry cannot be read safely."""
+
+
+@dataclass(frozen=True)
+class ContractorContext:
+    """Strict caller-supplied policy for a stateless contractor invocation."""
+
+    contractor_id: str
+    contractor_version: int
+    memory_policy: str
+    continuity: bool
+    required_skills: tuple[str, ...]
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "ContractorContext":
+        if not isinstance(value, dict):
+            raise CommandInvalid("data.context contractor policy must be an object")
+        keys = set(value)
+        unsupported = sorted(keys - _CONTRACTOR_CONTEXT_KEYS)
+        if unsupported:
+            raise CommandInvalid(
+                "data.context contains unsupported contractor field(s): "
+                + ", ".join(unsupported)
+            )
+        missing = sorted(_CONTRACTOR_CONTEXT_KEYS - keys)
+        if missing:
+            raise CommandInvalid(
+                "data.context is missing required contractor field(s): "
+                + ", ".join(missing)
+            )
+        if value.get("type") != "contractor":
+            raise CommandInvalid("data.context.type must be exactly 'contractor'")
+        contractor_id = _nonempty_string(
+            value.get("contractor_id"), "data.context.contractor_id"
+        )
+        if (
+            contractor_id != value.get("contractor_id")
+            or _CANONICAL_AGENT_ID.fullmatch(contractor_id) is None
+        ):
+            raise CommandInvalid(
+                "data.context.contractor_id must be a canonical lowercase slug"
+            )
+        version = value.get("contractor_version")
+        if type(version) is not int or version < 1:
+            raise CommandInvalid(
+                "data.context.contractor_version must be a positive integer"
+            )
+        if value.get("memory_policy") != "none":
+            raise CommandInvalid("data.context.memory_policy must be exactly 'none'")
+        if value.get("continuity") is not False:
+            raise CommandInvalid("data.context.continuity must be exactly false")
+        skills = value.get("required_skills")
+        if not isinstance(skills, list) or not skills:
+            raise CommandInvalid(
+                "data.context.required_skills must be a non-empty ordered list"
+            )
+        required_skills: list[str] = []
+        for skill in skills:
+            if (
+                not isinstance(skill, str)
+                or not skill.strip()
+                or skill != skill.strip()
+            ):
+                raise CommandInvalid(
+                    "data.context.required_skills entries must be non-empty "
+                    "canonical strings"
+                )
+            required_skills.append(skill)
+        if len(set(required_skills)) != len(required_skills):
+            raise CommandInvalid(
+                "data.context.required_skills must not contain duplicates"
+            )
+        return cls(
+            contractor_id=contractor_id,
+            contractor_version=version,
+            memory_policy="none",
+            continuity=False,
+            required_skills=tuple(required_skills),
+        )
+
+
+@dataclass(frozen=True)
+class ResolvedContractorContext:
+    """Registry-owned execution identity passed to the Hermes adapter seam."""
+
+    contractor_id: str
+    contractor_version: int
+    memory_policy: str
+    continuity: bool
+    required_skills: tuple[str, ...]
+    profile_name: str
+    project_root: str
+
+
+def contractor_context_from_envelope(
+    envelope: Mapping[str, Any],
+) -> ContractorContext | None:
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        return None
+    context = data.get("context")
+    if not isinstance(context, dict):
+        return None
+    if context.get("type") != "contractor" and not (
+        set(context) & _CONTRACTOR_CONTEXT_MARKERS
+    ):
+        return None
+    contractor = ContractorContext.from_mapping(context)
+    for field in ("thread_id", "turn_id"):
+        if data.get(field) is not None:
+            raise CommandInvalid(
+                f"data.{field} must be null or absent for a stateless contractor turn"
+            )
+    return contractor
 
 
 def _nonempty_string(value: Any, field: str) -> str:
@@ -153,6 +277,7 @@ def decode_command(payload: bytes, *, max_bytes: int = 262_144) -> dict[str, Any
     context = data.get("context")
     if context is not None and not isinstance(context, dict):
         raise CommandInvalid("data.context must be null or an object")
+    contractor_context_from_envelope(envelope)
 
     expected_schema = f"apicurio://holyfields/{COMMAND_TYPE}/versions/1"
     if "dataschema" in envelope and envelope["dataschema"] != expected_schema:
@@ -184,7 +309,7 @@ class ProfileResolver:
         self.validate_profile_name = validate_profile_name
         self.profile_exists = profile_exists
 
-    def _fleet_mapping(self) -> tuple[dict[str, str], frozenset[str]]:
+    def _registry_agents(self) -> dict[str, dict[str, Any]]:
         if not self.fleet_registry.exists():
             raise RegistryInvalid("fleet registry is missing")
         try:
@@ -198,8 +323,7 @@ class ProfileResolver:
             raise RegistryInvalid("fleet registry schema_version must be exactly 1")
         if "agents" not in parsed or not isinstance(parsed["agents"], dict):
             raise RegistryInvalid("fleet registry agents must be a mapping")
-        mapping: dict[str, str] = {}
-        registered_targets: set[str] = set()
+        agents: dict[str, dict[str, Any]] = {}
         for agent_id, metadata in parsed["agents"].items():
             if not isinstance(agent_id, str) or not agent_id.strip():
                 raise RegistryInvalid(
@@ -213,11 +337,19 @@ class ProfileResolver:
                 raise RegistryInvalid(
                     "fleet registry agent identifiers must be canonical lowercase slugs"
                 )
-            registered_targets.add(agent_id)
             if not isinstance(metadata, dict):
                 raise RegistryInvalid(
                     f"fleet registry metadata for {agent_id!r} must be a mapping"
                 )
+            agents[agent_id] = metadata
+        return agents
+
+    def _fleet_mapping(self) -> tuple[dict[str, str], frozenset[str]]:
+        agents = self._registry_agents()
+        mapping: dict[str, str] = {}
+        registered_targets: set[str] = set()
+        for agent_id, metadata in agents.items():
+            registered_targets.add(agent_id)
             profile = metadata.get("profile_name")
             bloodbank = metadata.get("bloodbank")
             if (
@@ -230,6 +362,20 @@ class ProfileResolver:
             ):
                 mapping[agent_id] = profile.strip()
         return mapping, frozenset(registered_targets)
+
+    def _validate_profile(self, target: str, mapped: Any) -> str:
+        if not isinstance(mapped, str) or not mapped.strip():
+            raise RouteInvalid(f"target_agent_id {target!r} maps to an invalid profile")
+        normalized = self.normalize_profile_name(mapped.strip())
+        try:
+            self.validate_profile_name(normalized)
+        except Exception as exc:
+            raise RouteInvalid(
+                f"target_agent_id {target!r} maps to an invalid profile"
+            ) from exc
+        if not self.profile_exists(normalized):
+            raise RouteInvalid(f"target_agent_id {target!r} maps to a missing profile")
+        return normalized
 
     def resolve(self, target_agent_id: str) -> str:
         target = _nonempty_string(target_agent_id, "data.target_agent_id")
@@ -251,19 +397,107 @@ class ProfileResolver:
             raise RouteInvalid(
                 f"target_agent_id {target!r} has no configured profile route"
             )
-        if not isinstance(mapped, str) or not mapped.strip():
-            raise RouteInvalid(f"target_agent_id {target!r} maps to an invalid profile")
+        return self._validate_profile(target, mapped)
 
-        normalized = self.normalize_profile_name(mapped.strip())
-        try:
-            self.validate_profile_name(normalized)
-        except Exception as exc:
+    def resolve_contractor(
+        self,
+        target_agent_id: str,
+        context: ContractorContext,
+    ) -> ResolvedContractorContext:
+        """Resolve contractor execution only from the fleet registry.
+
+        Static profile mappings and direct-profile fallback intentionally do
+        not participate: neither source owns a project root or contractor
+        version, so accepting them would widen caller-selected execution.
+        """
+        if not isinstance(context, ContractorContext):
+            raise CommandInvalid("contractor context has an invalid type")
+        target = _nonempty_string(target_agent_id, "data.target_agent_id")
+        agents = self._registry_agents()
+        metadata = agents.get(target)
+        if metadata is None:
             raise RouteInvalid(
-                f"target_agent_id {target!r} maps to an invalid profile"
+                f"target_agent_id {target!r} is not registered for contractor execution"
+            )
+        bloodbank = metadata.get("bloodbank")
+        if not (
+            isinstance(bloodbank, dict)
+            and bloodbank.get("enabled") is True
+            and bloodbank.get("gateway_scope") == "fleet"
+            and bloodbank.get("target_agent_id") == target
+        ):
+            raise RouteInvalid(
+                f"target_agent_id {target!r} is not eligible for contractor execution"
+            )
+        profile = self._validate_profile(target, metadata.get("profile_name"))
+        contractors = bloodbank.get("contractors")
+        if contractors is None:
+            raise RouteInvalid(
+                f"contractor_id {context.contractor_id!r} is not registered for "
+                f"target_agent_id {target!r}"
+            )
+        if not isinstance(contractors, dict):
+            raise RegistryInvalid(
+                f"fleet registry contractors for {target!r} must be a mapping"
+            )
+        registration = contractors.get(context.contractor_id)
+        if registration is None:
+            raise RouteInvalid(
+                f"contractor_id {context.contractor_id!r} is not registered for "
+                f"target_agent_id {target!r}"
+            )
+        if not isinstance(registration, dict):
+            raise RegistryInvalid(
+                f"fleet registry contractor {context.contractor_id!r} must be a mapping"
+            )
+        registered_version = registration.get("version")
+        if type(registered_version) is not int or registered_version < 1:
+            raise RegistryInvalid(
+                f"fleet registry contractor {context.contractor_id!r} version must "
+                "be a positive integer"
+            )
+        if registered_version != context.contractor_version:
+            raise RouteInvalid(
+                f"contractor_id {context.contractor_id!r} version "
+                f"{context.contractor_version} is not registered"
+            )
+        # The agent registry already owns the project's canonical checkout.
+        # Contractor registrations only authorize an id/version; duplicating a
+        # writable root inside that nested record would create two competing
+        # route authorities and make drift a privilege-escalation surface.
+        root_value = metadata.get("project_path")
+        if not isinstance(root_value, str) or not root_value.strip():
+            raise RegistryInvalid(
+                f"fleet registry target {target!r} project_path "
+                "must be an absolute directory"
+            )
+        root = Path(root_value.strip()).expanduser()
+        if not root.is_absolute():
+            raise RegistryInvalid(
+                f"fleet registry target {target!r} project_path "
+                "must be an absolute directory"
+            )
+        try:
+            resolved_root = root.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise RegistryInvalid(
+                f"fleet registry target {target!r} project_path "
+                "is unavailable"
             ) from exc
-        if not self.profile_exists(normalized):
-            raise RouteInvalid(f"target_agent_id {target!r} maps to a missing profile")
-        return normalized
+        if not resolved_root.is_dir():
+            raise RegistryInvalid(
+                f"fleet registry target {target!r} project_path "
+                "must be a directory"
+            )
+        return ResolvedContractorContext(
+            contractor_id=context.contractor_id,
+            contractor_version=context.contractor_version,
+            memory_policy=context.memory_policy,
+            continuity=context.continuity,
+            required_skills=context.required_skills,
+            profile_name=profile,
+            project_root=str(resolved_root),
+        )
 
 
 @dataclass(frozen=True)
@@ -275,6 +509,7 @@ class Invocation:
     thread_id: str
     turn_id: str
     invocation_id: str
+    contractor_context: ContractorContext | None = None
 
     @classmethod
     def from_envelope(cls, envelope: dict[str, Any], profile: str) -> "Invocation":
@@ -289,6 +524,7 @@ class Invocation:
             thread_id=(data.get("thread_id") or f"bloodbank:{correlation_id}").strip(),
             turn_id=(data.get("turn_id") or command_id).strip(),
             invocation_id=command_id,
+            contractor_context=contractor_context_from_envelope(envelope),
         )
 
     def event_id(self, event_type: str) -> str:

@@ -27,6 +27,25 @@ def envelope_digest(envelope: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def execution_semantic_digest(envelope: dict[str, Any]) -> str:
+    """Hash executable intent while excluding broker delivery identities."""
+    semantic = {
+        key: value
+        for key, value in envelope.items()
+        if key not in {"id", "command_id", "time", "correlationid", "causationid"}
+    }
+    payload = json.dumps(semantic, separators=(",", ":"), sort_keys=True).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+class ExecutionSemanticCollision(RuntimeError):
+    """A target/idempotency identity was reused for different intent."""
+
+
+class ExecutionEnvelopeCollision(RuntimeError):
+    """A command identity was reused for a different exact envelope."""
+
+
 def _events_json(events: tuple[dict[str, Any], ...]) -> str:
     return json.dumps(events, separators=(",", ":"), sort_keys=True)
 
@@ -46,6 +65,9 @@ def _decode_events(value: str | None) -> tuple[dict[str, Any], ...]:
 class ExecutionRecord:
     command_id: str
     envelope_digest: str
+    semantic_digest: str
+    target_agent_id: str
+    idempotency_key: str
     profile: str
     state: str
     outcome: str | None
@@ -79,12 +101,18 @@ class ExecutionStateStore:
                 self._create_schema(db)
             else:
                 version = int(db.execute("PRAGMA user_version").fetchone()[0])
-                if version > 3:
+                if version > 4:
                     raise RuntimeError(
                         f"execution journal schema version {version} is unsupported"
                     )
-                if version != 3 or "rejected_at" not in columns:
-                    self._migrate_to_current_schema(db, columns)
+                required_columns = {
+                    "rejected_at",
+                    "semantic_digest",
+                    "target_agent_id",
+                    "idempotency_key",
+                }
+                if version != 4 or not required_columns.issubset(columns):
+                    self._migrate_to_current_schema(db, columns, version=version)
         os.chmod(self.path, 0o600)
 
     @staticmethod
@@ -94,6 +122,9 @@ class ExecutionStateStore:
             CREATE TABLE executions (
                 command_id TEXT PRIMARY KEY,
                 envelope_digest TEXT NOT NULL,
+                semantic_digest TEXT NOT NULL,
+                target_agent_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
                 profile TEXT NOT NULL,
                 state TEXT NOT NULL CHECK (
                     state IN (
@@ -144,30 +175,38 @@ class ExecutionStateStore:
                         AND terminal_events IS NOT NULL AND rejection_reason IS NOT NULL
                         AND rejected_at IS NOT NULL
                     )
-                )
+                ),
+                UNIQUE (target_agent_id, idempotency_key)
             )
             """
         )
-        db.execute("PRAGMA user_version = 3")
+        db.execute("PRAGMA user_version = 4")
 
     @classmethod
     def _migrate_to_current_schema(
-        cls, db: sqlite3.Connection, columns: set[str]
+        cls,
+        db: sqlite3.Connection,
+        columns: set[str],
+        *,
+        version: int,
     ) -> None:
-        """Upgrade v1/v2 journals without assuming pending starts never escaped."""
+        """Upgrade legacy journals while preserving every lifecycle fact."""
 
         db.execute("BEGIN IMMEDIATE")
         try:
-            rejection_column = (
-                "rejection_reason" if "rejection_reason" in columns else "NULL"
-            )
+            rejection_column = "rejection_reason" if "rejection_reason" in columns else "NULL"
+            rejected_at_column = "rejected_at" if "rejected_at" in columns else "NULL"
+            semantic_column = "semantic_digest" if "semantic_digest" in columns else "NULL"
+            target_column = "target_agent_id" if "target_agent_id" in columns else "NULL"
+            idempotency_column = "idempotency_key" if "idempotency_key" in columns else "NULL"
             rows = db.execute(
                 f"""SELECT command_id, envelope_digest, profile, state, outcome,
                            started_events, terminal_events, {rejection_column},
-                           created_at, updated_at
-                    FROM executions"""  # noqa: S608 - column is selected from a constant
+                           {rejected_at_column}, created_at, updated_at,
+                           {semantic_column}, {target_column}, {idempotency_column}
+                    FROM executions"""  # noqa: S608 - columns come from constants
             ).fetchall()
-            db.execute("ALTER TABLE executions RENAME TO executions_v1")
+            db.execute("ALTER TABLE executions RENAME TO executions_legacy")
             cls._create_schema(db)
             migrated_at = _now()
             for row in rows:
@@ -188,27 +227,55 @@ class ExecutionStateStore:
                     rejection_reason = row[7] or "route_policy_invalid_before_dispatch"
                     rejected_at = migrated_at
                 elif old_state == "pending":
-                    # v1/v2 published starts without a durable phase marker.
-                    # Treat them as possibly escaped so a later rejection closes
-                    # the lifecycle instead of recreating the historical orphan.
+                    # v1/v2 published starts without a durable phase marker;
+                    # v3 made pending a proven pre-publication state.
+                    state = "pending" if version >= 3 else "started"
+                    outcome = None
+                    terminal = None
+                    rejection_reason = None
+                    rejected_at = None
+                elif old_state == "started":
                     state = "started"
                     outcome = None
                     terminal = None
                     rejection_reason = None
                     rejected_at = None
+                elif old_state == "rejected_pre_start":
+                    state = old_state
+                    outcome = None
+                    terminal = None
+                    rejection_reason = row[7]
+                    rejected_at = row[8] or migrated_at
+                elif old_state == "rejected_closing":
+                    state = old_state
+                    outcome = None
+                    terminal = None
+                    rejection_reason = row[7]
+                    rejected_at = row[8] or migrated_at
+                elif old_state == "rejected_closed":
+                    state = old_state
+                    outcome = None
+                    terminal = row[6]
+                    rejection_reason = row[7]
+                    rejected_at = row[8] or migrated_at
                 else:
                     raise RuntimeError(
                         f"execution journal contains unsupported state {old_state!r}"
                     )
+                legacy_identity = f"legacy:{row[0]}"
                 db.execute(
                     """INSERT INTO executions(
-                           command_id, envelope_digest, profile, state, outcome,
-                           started_events, terminal_events, rejection_reason,
-                           rejected_at, created_at, updated_at
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           command_id, envelope_digest, semantic_digest,
+                           target_agent_id, idempotency_key, profile, state,
+                           outcome, started_events, terminal_events,
+                           rejection_reason, rejected_at, created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         row[0],
                         row[1],
+                        row[11] or row[1],
+                        row[12] or legacy_identity,
+                        row[13] or legacy_identity,
                         row[2],
                         state,
                         outcome,
@@ -216,11 +283,11 @@ class ExecutionStateStore:
                         terminal,
                         rejection_reason,
                         rejected_at,
-                        row[8],
                         row[9],
+                        row[10],
                     ),
                 )
-            db.execute("DROP TABLE executions_v1")
+            db.execute("DROP TABLE executions_legacy")
             db.commit()
         except Exception:
             db.rollback()
@@ -239,29 +306,52 @@ class ExecutionStateStore:
         return ExecutionRecord(
             command_id=str(row[0]),
             envelope_digest=str(row[1]),
-            profile=str(row[2]),
-            state=str(row[3]),
-            outcome=str(row[4]) if row[4] is not None else None,
-            started_events=_decode_events(row[5]),
-            terminal_events=_decode_events(row[6]),
-            rejection_reason=str(row[7]) if row[7] is not None else None,
-            rejected_at=str(row[8]) if row[8] is not None else None,
+            semantic_digest=str(row[2]),
+            target_agent_id=str(row[3]),
+            idempotency_key=str(row[4]),
+            profile=str(row[5]),
+            state=str(row[6]),
+            outcome=str(row[7]) if row[7] is not None else None,
+            started_events=_decode_events(row[8]),
+            terminal_events=_decode_events(row[9]),
+            rejection_reason=str(row[10]) if row[10] is not None else None,
+            rejected_at=str(row[11]) if row[11] is not None else None,
         )
 
     @classmethod
     def _select(cls, db: sqlite3.Connection, command_id: str) -> ExecutionRecord | None:
         row = db.execute(
-            """SELECT command_id, envelope_digest, profile, state, outcome,
+            """SELECT command_id, envelope_digest, semantic_digest,
+                      target_agent_id, idempotency_key, profile, state, outcome,
                       started_events, terminal_events, rejection_reason, rejected_at
                FROM executions WHERE command_id = ?""",
             (command_id,),
         ).fetchone()
         return cls._record(row)
 
+    @classmethod
+    def _select_identity(
+        cls,
+        db: sqlite3.Connection,
+        target_agent_id: str,
+        idempotency_key: str,
+    ) -> ExecutionRecord | None:
+        row = db.execute(
+            """SELECT command_id, envelope_digest, semantic_digest,
+                      target_agent_id, idempotency_key, profile, state, outcome,
+                      started_events, terminal_events, rejection_reason, rejected_at
+               FROM executions
+               WHERE target_agent_id = ? AND idempotency_key = ?""",
+            (target_agent_id, idempotency_key),
+        ).fetchone()
+        return cls._record(row)
+
     @staticmethod
     def _require_digest(current: ExecutionRecord, digest: str) -> None:
         if current.envelope_digest != digest:
-            raise RuntimeError("command_id collides with a different command envelope")
+            raise ExecutionEnvelopeCollision(
+                "command_id collides with a different command envelope"
+            )
 
     @staticmethod
     def _reason(reason: str) -> str:
@@ -274,26 +364,69 @@ class ExecutionStateStore:
         with self._connect() as db:
             return self._select(db, command_id)
 
+    def get_by_identity(
+        self,
+        target_agent_id: str,
+        idempotency_key: str,
+    ) -> ExecutionRecord | None:
+        with self._connect() as db:
+            return self._select_identity(db, target_agent_id, idempotency_key)
+
     def claim_pending(
         self,
         *,
         command_id: str,
         digest: str,
+        semantic_digest: str | None = None,
+        target_agent_id: str | None = None,
+        idempotency_key: str | None = None,
         profile: str,
         started_events: tuple[dict[str, Any], ...],
     ) -> ExecutionRecord:
+        semantic = semantic_digest or digest
+        target = target_agent_id or f"legacy:{command_id}"
+        idempotency = idempotency_key or f"legacy:{command_id}"
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            db.execute(
-                """INSERT OR IGNORE INTO executions
-                   (command_id, envelope_digest, profile, state, outcome,
-                    started_events, terminal_events, created_at, updated_at)
-                   VALUES (?, ?, ?, 'pending', NULL, ?, NULL, ?, ?)""",
-                (command_id, digest, profile, _events_json(started_events), now, now),
-            )
-            record = self._select(db, command_id)
-            db.commit()
+            try:
+                record = self._select(db, command_id)
+                if record is not None:
+                    self._require_digest(record, digest)
+                    db.commit()
+                    return record
+                record = self._select_identity(db, target, idempotency)
+                if record is not None:
+                    if record.semantic_digest != semantic:
+                        raise ExecutionSemanticCollision(
+                            "target_agent_id and idempotency_key collide with "
+                            "different execution intent"
+                        )
+                    db.commit()
+                    return record
+                db.execute(
+                    """INSERT INTO executions
+                       (command_id, envelope_digest, semantic_digest,
+                        target_agent_id, idempotency_key, profile, state, outcome,
+                        started_events, terminal_events, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL, ?, ?)""",
+                    (
+                        command_id,
+                        digest,
+                        semantic,
+                        target,
+                        idempotency,
+                        profile,
+                        _events_json(started_events),
+                        now,
+                        now,
+                    ),
+                )
+                record = self._select(db, command_id)
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
         if record is None:
             raise RuntimeError("execution journal failed to persist pending command")
         return record

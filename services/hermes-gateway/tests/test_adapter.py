@@ -858,7 +858,7 @@ def test_execution_journal_migrates_legacy_pending_as_possibly_started(tmp_path)
     assert rejected.rejection_reason == ROUTE_REJECTION_REASON
     assert rejected.rejected_at is not None
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 @pytest.mark.asyncio
@@ -931,6 +931,15 @@ async def test_v2_rejected_row_migrates_to_closure_without_execution(
         "bloodbank.agent.invocation.failed",
         "bloodbank.conversation.turn.completed",
     ]
+    assert all(
+        event["data"]["target_agent_id"]
+        == valid_command["data"]["target_agent_id"]
+        for event in adapter._js.events
+    )
+    assert all(
+        event["data"]["idempotency_key"] == valid_command["idempotency_key"]
+        for event in adapter._js.events
+    )
     migrated = adapter.execution_state.get(valid_command["command_id"])
     assert migrated is not None and migrated.state == "rejected_closed"
 
