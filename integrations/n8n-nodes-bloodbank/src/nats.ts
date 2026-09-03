@@ -1,8 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
 
+import Ajv2020 from 'ajv/dist/2020';
+import addFormats from 'ajv-formats';
 import {
   connect,
 } from '@nats-io/transport-node';
+
+import {
+  canonicalSchemaDocuments,
+  commandSchemas,
+  eventSchemas,
+} from './nodes/Bloodbank/eventSchemas';
 
 type NatsConnection = Awaited<ReturnType<typeof connect>>;
 type Subscription = ReturnType<NatsConnection['subscribe']>;
@@ -14,8 +22,10 @@ export interface NatsConnectionOptions {
 }
 
 export interface EmitOptions extends NatsConnectionOptions {
-  /** bloodbank.v<N>.<domain>.<entity>.<action> */
+  /** bloodbank.<domain>.<entity>.<action> */
   type: string;
+  /** Explicit publisher mode. Omitted only for backward-compatible event callers. */
+  kind?: 'event' | 'command';
   data: Record<string, unknown>;
   source?: string;
   producer?: string;
@@ -25,6 +35,8 @@ export interface EmitOptions extends NatsConnectionOptions {
   correlationId?: string;
   causationId?: string | null;
   orderingKey?: string;
+  commandId?: string;
+  idempotencyKey?: string;
   actor?: Record<string, unknown>;
   extensions?: Record<string, string | number | boolean | null>;
 }
@@ -70,8 +82,38 @@ const RESERVED_ENVELOPE_KEYS = new Set([
   'kind',
   'actor',
   'ordering_key',
+  'command_id',
+  'idempotency_key',
+  'delivery',
   'data',
 ]);
+
+let canonicalValidator: Ajv2020 | undefined;
+
+function validator(): Ajv2020 {
+  if (canonicalValidator) return canonicalValidator;
+  const next = new Ajv2020({ allErrors: true, strict: false });
+  addFormats(next);
+  for (const schema of canonicalSchemaDocuments) next.addSchema(schema as never);
+  canonicalValidator = next;
+  return next;
+}
+
+/** Validate a finished envelope against its generated canonical JSON Schema. */
+export function validateEnvelope(type: string, envelope: Record<string, unknown>): void {
+  const schema = [...eventSchemas, ...commandSchemas].find((candidate) => candidate.type === type);
+  if (!schema) throw new Error(`no generated canonical schema for ${type}`);
+  const ajv = validator();
+  const validate = ajv.getSchema(schema.schemaId);
+  if (!validate) throw new Error(`generated canonical schema is unavailable for ${type}`);
+  if (validate(envelope)) return;
+  throw new Error(
+    `Bloodbank schema validation failed for ${type}: ${ajv.errorsText(validate.errors, {
+      dataVar: 'envelope',
+      separator: '; ',
+    })}`,
+  );
+}
 
 /** Deterministic RFC 4122 v5 UUID for retry-stable provider observations. */
 export function deterministicUuid(name: string): string {
@@ -118,14 +160,18 @@ export function buildEnvelope(opts: EmitOptions): {
   envelope: Record<string, unknown>;
 } {
   const [, domain] = typeParts(opts.type);
-  const subject = subjectFor(opts.type, 'event');
+  const kind = opts.kind ?? 'event';
+  const subject = subjectFor(opts.type, kind);
   const identity = entityIdentity(opts.data);
-  const eventId = opts.eventId || randomUUID();
-  const correlationid =
-    opts.correlationId || deterministicUuid(`${opts.type}:${identity || eventId}`);
-  const causationid = opts.causationId === undefined ? eventId : opts.causationId;
+  const eventId = opts.eventId || (kind === 'command' ? opts.commandId : undefined) || randomUUID();
+  const commandId = kind === 'command' ? opts.commandId || eventId : undefined;
+  const correlationid = opts.correlationId || (kind === 'command'
+    ? commandId
+    : deterministicUuid(`${opts.type}:${identity || eventId}`));
+  const causationid = opts.causationId === undefined
+    ? kind === 'command' ? null : eventId
+    : opts.causationId;
   const observedAt = opts.observedAt || new Date().toISOString();
-  const orderingKey = opts.orderingKey || (identity ? `${domain}:${identity}` : `${domain}:${eventId}`);
   const actor = opts.actor || { type: 'service', agent_id: 'bloodbank.integration.n8n' };
   const envelope: Record<string, unknown> = {
     specversion: '1.0',
@@ -143,10 +189,21 @@ export function buildEnvelope(opts: EmitOptions): {
     domain,
     schemaref: `${opts.type}.v1`,
     traceparent: '00-00000000000000000000000000000000-0000000000000000-00',
-    kind: 'event',
+    kind,
     actor,
-    ordering_key: orderingKey,
   };
+  if (kind === 'event') {
+    envelope.ordering_key =
+      opts.orderingKey || (identity ? `${domain}:${identity}` : `${domain}:${eventId}`);
+  } else {
+    const target = typeof opts.data.target_agent_id === 'string'
+      ? opts.data.target_agent_id.trim()
+      : '';
+    envelope.command_id = commandId;
+    envelope.idempotency_key = opts.idempotencyKey ||
+      `${opts.type.slice('bloodbank.'.length)}:target:${target}:command:${commandId}`;
+    envelope.delivery = 'single_consumer';
+  }
   for (const [key, value] of Object.entries(opts.extensions || {})) {
     if (RESERVED_ENVELOPE_KEYS.has(key)) {
       throw new Error(`extension "${key}" cannot replace a canonical envelope field`);
@@ -226,12 +283,15 @@ export async function publishReply(
   return { subject: destination, replyId: String(reply.envelope.reply_id) };
 }
 
-/** Publish a canonical event through the official NATS client. */
+/** Publish a canonical event or command through the official NATS client. */
 export async function publish(
   opts: EmitOptions,
-): Promise<{ subject: string; correlationid: string; eventId: string }> {
+  connectNats?: typeof connect,
+): Promise<{ subject: string; correlationid: string; eventId: string; commandId?: string }> {
   const { subject, envelope } = buildEnvelope(opts);
-  const connection = await connect({
+  const commandType = commandSchemas.some((schema) => schema.type === opts.type);
+  if (opts.kind === 'command' || commandType) validateEnvelope(opts.type, envelope);
+  const connection = await (connectNats ?? connect)({
     servers: serverUrl(opts.host, opts.port),
     name: 'n8n-bloodbank-publisher',
     timeout: opts.timeoutMs ?? 3000,
@@ -245,6 +305,7 @@ export async function publish(
     subject,
     correlationid: String(envelope.correlationid),
     eventId: String(envelope.id),
+    commandId: typeof envelope.command_id === 'string' ? envelope.command_id : undefined,
   };
 }
 

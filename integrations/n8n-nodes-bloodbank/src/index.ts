@@ -14,8 +14,10 @@ export {
   publishReply,
   subjectFor,
   subscribe,
+  validateEnvelope,
 } from './nats';
 export type { EmitOptions, NatsConnectionOptions, SubscribeOptions } from './nats';
+export { resolveFleetTargetForRepo } from './registry';
 export {
   normalizePlaneWebhook,
   planeBindingMatches,

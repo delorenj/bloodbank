@@ -173,7 +173,7 @@
       "minLength": 1,
       "description": "Stable key for the message effect. Required for kind=command; portfolio event schemas also require it for retry-safe projection and terminal-receipt handling. Commands dedupe on (idempotency_key, command_id).",
       "examples": [
-        "agent.invocation.start:thread:thr_123:turn:turn_456",
+        "agent.invocation.start:target:bloodbank-pm:command:550e8400-e29b-41d4-a716-446655440000",
         "cli.process.spawn:cli_session:sess_abc:cmd:<sha256>"
       ]
     },

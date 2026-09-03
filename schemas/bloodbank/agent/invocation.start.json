@@ -19,8 +19,22 @@
     "domain": {
       "const": "agent"
     },
+    "subject": {
+      "const": "bloodbank.cmd.agent.invocation.start"
+    },
+    "dataschema": {
+      "const": "apicurio://holyfields/bloodbank.agent.invocation.start/versions/1"
+    },
+    "schemaref": {
+      "const": "bloodbank.agent.invocation.start.v1"
+    },
     "delivery": {
       "const": "single_consumer"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "data": {
       "type": "object",
@@ -29,18 +43,25 @@
         "target_agent_id": {
           "type": "string",
           "minLength": 1,
+          "pattern": "\\S",
           "description": "Routing key identifying which agent should execute the invocation."
         },
         "thread_id": {
           "type": ["string", "null"],
+          "minLength": 1,
+          "pattern": "\\S",
           "description": "Optional existing thread identifier for continuation."
         },
         "turn_id": {
           "type": ["string", "null"],
+          "minLength": 1,
+          "pattern": "\\S",
           "description": "Optional caller-assigned turn identifier."
         },
         "prompt": {
-          "type": ["string", "null"],
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
           "description": "Prompt/content for the target agent to execute."
         },
         "context": {
@@ -49,7 +70,7 @@
           "additionalProperties": true
         }
       },
-      "required": ["target_agent_id"],
+      "required": ["target_agent_id", "prompt"],
       "additionalProperties": true
     }
   },
@@ -59,6 +80,11 @@
     "domain",
     "data",
     "actor",
+    "subject",
+    "datacontenttype",
+    "dataschema",
+    "schemaref",
+    "causationid",
     "command_id",
     "idempotency_key",
     "delivery"

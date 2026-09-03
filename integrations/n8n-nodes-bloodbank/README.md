@@ -13,13 +13,27 @@ Schema-backed publisher, consumer trigger, and Plane webhook ingress for the
 
 | Node | Group | What it does |
 | --- | --- | --- |
-| **Bloodbank** | output | Publishes a selected canonical event. Also usable as an agent tool. |
+| **Bloodbank** | output | Publishes a canonical event or registry-routed invocation command. Also usable as an agent tool. |
 | **Bloodbank Trigger** | trigger | Starts workflows from events or single-consumer commands. |
 | **Plane → Bloodbank** | transform | Verifies, normalizes, and publishes Plane webhooks. |
 
 Each node carries the Bloodbank mark as a light/dark icon pair, so the canvas
 reads correctly in either n8n theme. Plane → Bloodbank adds an inbound arrow to
 mark it as the edge where outside traffic enters the bus.
+
+## Bloodbank publisher
+
+Event mode remains the default for existing workflows. Command mode publishes
+`bloodbank.agent.invocation.start` to
+`bloodbank.cmd.agent.invocation.start`. It requires a repository, non-empty
+prompt, and retry-stable command UUID, then resolves exactly one eligible agent
+from `~/.hermes/agents-registry.yaml`. Profile names remain inside the registry
+and are never embedded in workflow data or the command envelope.
+
+The finished command envelope is validated against the canonical JSON Schema
+before a NATS connection is opened. Its generated idempotency key is scoped to
+the resolved target and command UUID; malformed schemas, registry routes, or
+command inputs therefore make zero transport attempts.
 
 ## Bloodbank Trigger
 
@@ -93,8 +107,9 @@ outside the drop on a light canvas.
     npm run test:live
     npm run deploy
 
-npm test covers schema generation, trigger configuration, canonical envelopes,
-Plane creation/transition/comment normalization, provenance alias filters, and
-the node icon contract. npm run test:live proves multi-event subscriptions,
-command queue competition, and synchronous command replies against the live
-NATS service.
+npm test covers schema generation, trigger and publisher configuration,
+canonical envelopes, fail-closed invocation routing, Plane
+creation/transition/comment normalization, provenance alias filters, and the
+node icon contract. npm run test:live proves multi-event subscriptions, command
+queue competition, and synchronous command replies against the live NATS
+service.

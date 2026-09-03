@@ -486,7 +486,7 @@ uses `project:<project_slug>` — the slug from the project's `.project.json`
 For commands, idempotency is `<action>:<entity-scope>`:
 
 ```
-agent.invocation.start : thread:<thread_id>:turn:<turn_id>
+agent.invocation.start : target:<target_agent_id>:command:<command_id>
 cli.process.spawn      : cli_session:<session_id>:cmd:<sha256(args)>
 agent.tool.invoke      : invocation:<invocation_id>:tool_call:<id>
 ```
