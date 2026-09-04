@@ -54,20 +54,20 @@ def load_payload(raw: str) -> dict:
 
 
 def resolve_agent(registry_path: pathlib.Path, board_id: str, repo: str) -> tuple:
-    """Return (agent_id, profile_name, eligible, why)."""
+    """Return (agent_id, profile_name, eligible, why, project_path)."""
     fallback = f"{repo}-pm" if repo else ""
     try:
         import yaml
     except ImportError:
-        return fallback, None, False, "PyYAML unavailable; cannot read registry"
+        return fallback, None, False, "PyYAML unavailable; cannot read registry", ""
     try:
         parsed = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
     except OSError as exc:
-        return fallback, None, False, f"registry unreadable: {exc}"
+        return fallback, None, False, f"registry unreadable: {exc}", ""
 
     agents = parsed.get("agents")
     if not isinstance(agents, dict):
-        return fallback, None, False, "registry has no agents mapping"
+        return fallback, None, False, "registry has no agents mapping", ""
 
     chosen = None
     for agent_id, entry in agents.items():
@@ -91,38 +91,59 @@ def resolve_agent(registry_path: pathlib.Path, board_id: str, repo: str) -> tupl
             return fallback, None, False, (
                 f"no registry entry matches board {board_id!r} and no fallback "
                 f"agent {fallback!r} exists"
-            )
+            ), ""
         chosen = (fallback, entry)
 
     agent_id, entry = chosen
     meta = entry if isinstance(entry, dict) else {}
     profile = meta.get("profile_name")
     bb = meta.get("bloodbank")
+    project_path = str(meta.get("project_path") or meta.get("repo_path") or "").strip()
     if not (isinstance(profile, str) and profile.strip()):
-        return agent_id, None, False, f"{agent_id} has no profile_name"
+        return agent_id, None, False, f"{agent_id} has no profile_name", project_path
     if not isinstance(bb, dict):
-        return agent_id, profile, False, f"{agent_id} has no bloodbank block"
+        return agent_id, profile, False, f"{agent_id} has no bloodbank block", project_path
     if bb.get("enabled") is not True:
         return agent_id, profile, False, (
             f"{agent_id} is registry-defined but bloodbank.enabled is not true"
-        )
+        ), project_path
     if bb.get("gateway_scope") != "fleet":
-        return agent_id, profile, False, f"{agent_id} gateway_scope is not 'fleet'"
+        return agent_id, profile, False, f"{agent_id} gateway_scope is not 'fleet'", project_path
     if bb.get("target_agent_id") != agent_id:
         return agent_id, profile, False, (
             f"{agent_id} target_agent_id mismatch ({bb.get('target_agent_id')!r})"
-        )
-    return agent_id, profile, True, "eligible"
+        ), project_path
+    return agent_id, profile, True, "eligible", project_path
 
 
-def build_prompt(d: dict) -> str:
+def build_prompt(d: dict, repo_path: str = "") -> str:
     key = d.get("ticket_key") or d.get("ticket_id") or "(unknown)"
     title = d.get("title") or (d.get("ticket") or {}).get("name") or ""
     repo = d.get("repo") or ""
     workspace = d.get("workspace") or ""
+    board_id = d.get("board_id") or d.get("project_id") or ""
+
+    # The agent has no way to derive either of these, and guessing costs a
+    # failed tool call each: the checkout path came from the registry, and the
+    # board id is what tells a multi-workspace Plane which tenant to talk to.
+    # A ticket-key-only call resolves against the gateway's default workspace,
+    # which is the wrong one for every board but 33GOD's.
+    where = f"Repo checkout: {repo_path}\n" if repo_path else ""
+    where += f"Plane board id: {board_id}\n" if board_id else ""
+    if where:
+        where = (
+            "\nWhere things are — use these verbatim, do not guess or search for "
+            "them:\n" + where +
+            "Pass that board id as `project_id` on every Plane tool call. The "
+            "board lives in a workspace that is not the default one, and a call "
+            "addressed only by ticket key is answered by the wrong workspace "
+            "(HTTP 403).\n"
+        )
+
     return (
         f"Groom the ticket that was just created on the {repo} board: "
-        f"{key} — {title!r}.\n\n"
+        f"{key} — {title!r}.\n"
+        f"{where}\n"
         "This is a GROOMING pass on one existing ticket. Improve that ticket in "
         "place. Do NOT create, split, or decompose it into new tickets, and do "
         "not change its state or work the task.\n\n"
@@ -145,8 +166,7 @@ def build_prompt(d: dict) -> str:
         "and do not invent scope or commitments. If you genuinely cannot tell "
         "what the ticket means, comment asking for the detail you need instead "
         "of guessing.\n\n"
-        f"Provider provenance: workspace {workspace!r}, board "
-        f"{d.get('board_id') or d.get('project_id')!r}."
+        f"Provider provenance: workspace {workspace!r}, board {board_id!r}."
     )
 
 
@@ -181,7 +201,7 @@ def emit(d: dict, env: dict, args) -> int:
         die("payload carries neither data.repo nor a board id")
 
     registry = pathlib.Path(args.registry).expanduser()
-    agent_id, profile, eligible, why = resolve_agent(registry, board_id, repo)
+    agent_id, profile, eligible, why, project_path = resolve_agent(registry, board_id, repo)
 
     print(f"resolved board={board_id or '(none)'} repo={repo or '(none)'} "
           f"-> agent={agent_id or '(none)'} profile={profile or '(none)'} "
@@ -193,7 +213,7 @@ def emit(d: dict, env: dict, args) -> int:
 
     command_data = {
         "target_agent_id": agent_id,
-        "prompt": build_prompt(d),
+        "prompt": build_prompt(d, project_path),
         "context": {
             "reason": "ticket-grooming",
             "repo": repo,
