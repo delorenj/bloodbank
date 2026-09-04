@@ -52,6 +52,42 @@ def _bounded_actor(actor: Any) -> dict[str, Any]:
     return out
 
 
+def zellij_origin() -> dict[str, Any]:
+    """Which zellij pane produced this event, when there is one.
+
+    Attribution on the agent stream was `working_directory` + `actor.cli` only,
+    which cannot separate two tabs sitting in the same repo -- the normal case
+    on this machine. The dedicated Deckard attention envelope already carried an
+    exact pane id; every OTHER lifecycle event (session.started, tool.requested,
+    ...) did not, so nothing downstream could build a per-tab state machine.
+
+    Injected here, at the one seam between `shape_data` and `build_envelope`,
+    rather than in any adapter: five clients override `shape_data`, so patching
+    the base class would miss claude and codex. And deliberately NOT in
+    `core/envelope.py`, which is the generic CloudEvents builder shared with
+    producers that have no terminal at all.
+
+    Absent outside zellij, and silently absent on a malformed pane id -- a
+    telemetry field must never be able to fail a hook.
+    """
+    pane = os.environ.get("ZELLIJ_PANE_ID", "")
+    session_name = os.environ.get("ZELLIJ_SESSION_NAME", "")
+    if not pane or not session_name:
+        return {}
+    try:
+        pane_number = int(pane)
+    except (TypeError, ValueError):
+        return {}
+    if pane_number < 0 or pane_number > 0xFFFF_FFFF:
+        return {}
+    if len(session_name.encode("utf-8")) > MAX_ATTENTION_SESSION_BYTES:
+        return {}
+    return {
+        "zellij_pane_id": pane_number,
+        "zellij_session_name": session_name,
+    }
+
+
 def build_attention_envelope(
     adapter: ClientAdapter, hook_name: str, payload: Any
 ) -> dict[str, Any]:
@@ -133,6 +169,11 @@ def run(adapter: ClientAdapter, argv: list[str]) -> int:
 
     try:
         data = adapter.shape_data(session, ce_type, hook_name, payload, argv)
+        # Stamp the originating pane so consumers can attribute per TAB, not
+        # merely per working directory. Never overwrites what an adapter set.
+        if isinstance(data, dict):
+            for key, value in zellij_origin().items():
+                data.setdefault(key, value)
         envelope = build_envelope(
             ce_type=ce_type,
             kind="event",
