@@ -1,0 +1,119 @@
+[
+  {
+    "id": "6wAGA5pdrmHLyhs2",
+    "name": "Ticket Grooming",
+    "active": true,
+    "nodes": [
+      {
+        "parameters": {
+          "topic": "lifecycle",
+          "message": "=# New Ticket\n{{ $json.data.ticket.name }}\nhttps://plane.delo.sh/{{ $json.data.workspace }}/browse/{{ $json.data.ticket_key }}",
+          "title": "New Ticket Detected: Triage Started",
+          "tags": "=ticket:created,memo,workspace:{{ $json.data.workspace }},repo:{{ $json.data.repo }}"
+        },
+        "type": "n8n-nodes-ntfy-client.ntfySend",
+        "typeVersion": 1,
+        "position": [
+          208,
+          0
+        ],
+        "id": "a4a2fcef-be22-4c5b-abc1-a8a0937a0cf0",
+        "name": "Ntfy Send",
+        "credentials": {
+          "ntfyApi": {
+            "id": "ECaXcIDDi0FvW6AB",
+            "name": "Ntfy account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "events": [
+            "plane.ticket.created"
+          ],
+          "connection": {}
+        },
+        "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          0
+        ],
+        "id": "f830070b-2b40-4edd-9d27-687e20fc304d",
+        "name": "onTicketCreated"
+      },
+      {
+        "parameters": {
+          "command": "=/usr/bin/python3 /home/delorenj/code/33GOD/bloodbank/bin/bb-triage-invoke --repo '{{ $json.data.repo }}' --board-id '{{ $json.data.board_id }}' --ticket-key '{{ $json.data.ticket_key }}'"
+        },
+        "type": "n8n-nodes-base.executeCommand",
+        "typeVersion": 1,
+        "position": [
+          208,
+          176
+        ],
+        "id": "c4ffd75f-2742-4622-8b41-e12a990cc1dc",
+        "name": "Invoke Grooming Agent"
+      }
+    ],
+    "connections": {
+      "onTicketCreated": {
+        "main": [
+          [
+            {
+              "node": "Invoke Grooming Agent",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Ntfy Send",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "binaryMode": "separate"
+    },
+    "staticData": null,
+    "pinData": {},
+    "versionId": "353ba66d-c7e9-48df-a625-9537a891ea71",
+    "triggerCount": 1,
+    "tags": [
+      {
+        "updatedAt": "2025-10-12T06:44:16.038Z",
+        "createdAt": "2025-10-12T06:44:16.038Z",
+        "id": "6vMYaFRLOHXXq3G5",
+        "name": "33GOD"
+      },
+      {
+        "updatedAt": "2026-08-26T23:49:48.115Z",
+        "createdAt": "2026-08-26T23:49:48.115Z",
+        "id": "Hgex1M1TJuQ3HccH",
+        "name": "lifecycle"
+      },
+      {
+        "updatedAt": "2026-08-26T23:51:00.719Z",
+        "createdAt": "2026-08-26T23:51:00.719Z",
+        "id": "TdL6KghznPOSAJZy",
+        "name": "new ticket"
+      },
+      {
+        "updatedAt": "2026-08-26T23:49:26.698Z",
+        "createdAt": "2026-08-26T23:49:26.698Z",
+        "id": "UArKOM4NFnfz94g3",
+        "name": "plane"
+      },
+      {
+        "updatedAt": "2026-08-26T23:51:05.274Z",
+        "createdAt": "2026-08-26T23:51:05.274Z",
+        "id": "vitklUaf6PPMmcCF",
+        "name": "new task"
+      }
+    ]
+  }
+]

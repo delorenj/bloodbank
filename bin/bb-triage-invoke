@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""Turn a `bloodbank.repo.task.created` fact into an agent invocation command.
+
+Reads the normalized task-created payload on stdin (either the whole envelope
+or just its `data` object) and publishes
+`bloodbank.agent.invocation.start` as a command, addressed to the PM agent that
+owns the ticket's board.
+
+Board -> agent resolution is registry-driven, so this is project-agnostic: any
+repo whose Hermes registry entry carries a matching `plane.project_id` gets its
+own PM agent, and a repo with no entry falls back to `<repo>-pm`.
+
+The registry's `bloodbank.enabled` flag stays the on/off switch. When the
+resolved agent is not eligible this exits 0 after printing SKIP, so a shared
+trigger that sees every project's tickets does not turn 27 disabled projects
+into 27 failing executions.
+
+Exit codes: 0 published or deliberately skipped, 2 bad input, 3 publish failed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import uuid
+
+REGISTRY_DEFAULT = "~/.hermes/agents-registry.yaml"
+BB_EMIT = pathlib.Path(__file__).resolve().parent / "bb-emit"
+COMMAND_TYPE = "bloodbank.agent.invocation.start"
+# RFC 4122 URL namespace, the same one bb-emit uses for derived ids.
+CORRELATION_NS = uuid.UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
+
+
+def die(msg: str, code: int = 2) -> "None":
+    print(f"bb-triage-invoke: {msg}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def load_payload(raw: str) -> dict:
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        die(f"stdin is not JSON: {exc}")
+    if not isinstance(obj, dict):
+        die("stdin must be a JSON object")
+    # Accept the full CloudEvent envelope or a bare data object.
+    data = obj.get("data") if isinstance(obj.get("data"), dict) else obj
+    return {"envelope": obj, "data": data}
+
+
+def resolve_agent(registry_path: pathlib.Path, board_id: str, repo: str) -> tuple:
+    """Return (agent_id, profile_name, eligible, why)."""
+    fallback = f"{repo}-pm" if repo else ""
+    try:
+        import yaml
+    except ImportError:
+        return fallback, None, False, "PyYAML unavailable; cannot read registry"
+    try:
+        parsed = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
+    except OSError as exc:
+        return fallback, None, False, f"registry unreadable: {exc}"
+
+    agents = parsed.get("agents")
+    if not isinstance(agents, dict):
+        return fallback, None, False, "registry has no agents mapping"
+
+    chosen = None
+    for agent_id, entry in agents.items():
+        if not isinstance(entry, dict):
+            continue
+        plane = entry.get("plane")
+        if not isinstance(plane, dict):
+            continue
+        ids = {
+            str(plane.get(k))
+            for k in ("project_id", "board_id")
+            if plane.get(k)
+        }
+        if board_id and board_id in ids:
+            chosen = (agent_id, entry)
+            break
+
+    if chosen is None:
+        entry = agents.get(fallback)
+        if not isinstance(entry, dict):
+            return fallback, None, False, (
+                f"no registry entry matches board {board_id!r} and no fallback "
+                f"agent {fallback!r} exists"
+            )
+        chosen = (fallback, entry)
+
+    agent_id, entry = chosen
+    meta = entry if isinstance(entry, dict) else {}
+    profile = meta.get("profile_name")
+    bb = meta.get("bloodbank")
+    if not (isinstance(profile, str) and profile.strip()):
+        return agent_id, None, False, f"{agent_id} has no profile_name"
+    if not isinstance(bb, dict):
+        return agent_id, profile, False, f"{agent_id} has no bloodbank block"
+    if bb.get("enabled") is not True:
+        return agent_id, profile, False, (
+            f"{agent_id} is registry-defined but bloodbank.enabled is not true"
+        )
+    if bb.get("gateway_scope") != "fleet":
+        return agent_id, profile, False, f"{agent_id} gateway_scope is not 'fleet'"
+    if bb.get("target_agent_id") != agent_id:
+        return agent_id, profile, False, (
+            f"{agent_id} target_agent_id mismatch ({bb.get('target_agent_id')!r})"
+        )
+    return agent_id, profile, True, "eligible"
+
+
+def build_prompt(d: dict) -> str:
+    key = d.get("ticket_key") or d.get("ticket_id") or "(unknown)"
+    title = d.get("title") or (d.get("ticket") or {}).get("name") or ""
+    repo = d.get("repo") or ""
+    workspace = d.get("workspace") or ""
+    return (
+        f"Groom the ticket that was just created on the {repo} board: "
+        f"{key} — {title!r}.\n\n"
+        "This is a GROOMING pass on one existing ticket. Improve that ticket in "
+        "place. Do NOT create, split, or decompose it into new tickets, and do "
+        "not change its state or work the task.\n\n"
+        "Read the repo's `.project.json` and the board's own conventions, then "
+        "look at what is already in flight so this ticket agrees with its "
+        "neighbours rather than inventing a parallel vocabulary. Apply the 33GOD "
+        "standards you find there:\n"
+        "  - labels, using the label names the board already uses\n"
+        "  - the exposure label, whose two names come from "
+        "`.project.json` `activity_report.board.exposure_labels` "
+        "(external -> the client's board, internal -> the client-admin board). "
+        "Apply one ONLY when the ticket genuinely belongs in front of that "
+        "audience; most tickets get neither, and neither is the default.\n"
+        "  - cycle assignment per the board's cycle rules\n"
+        "  - module attachment\n"
+        "  - priority\n"
+        "  - start date where the board's rules imply one\n\n"
+        "If the description is one thin sentence, expand it into something a "
+        "person who just walked in could act on — but keep the author's meaning "
+        "and do not invent scope or commitments. If you genuinely cannot tell "
+        "what the ticket means, comment asking for the detail you need instead "
+        "of guessing.\n\n"
+        f"Provider provenance: workspace {workspace!r}, board "
+        f"{d.get('board_id') or d.get('project_id')!r}."
+    )
+
+
+RE_REPO = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+RE_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+RE_KEY = re.compile(r"^[A-Z][A-Z0-9]{0,15}-[0-9]{1,7}$")
+
+
+def checked(value: str, pattern, label: str) -> str:
+    """Args mode reaches us through a shell command line, so every value that
+    crosses that boundary is shape-checked here rather than trusted."""
+    v = (value or "").strip()
+    if not v:
+        die(f"--{label} is required in args mode")
+    if not pattern.match(v):
+        die(f"--{label} value {v!r} is not a well-formed {label}")
+    return v
+
+
+def emit(d: dict, env: dict, args) -> int:
+    """Resolve the ticket's owning agent and publish the invocation command."""
+
+    provider_event = d.get("provider_event_type")
+    if provider_event and provider_event != "plane.ticket.created":
+        print(f"SKIP: provider_event_type is {provider_event!r}, not plane.ticket.created")
+        return 0
+
+    repo = str(d.get("repo") or "").strip()
+    board_id = str(d.get("board_id") or d.get("project_id") or "").strip()
+    ticket_key = str(d.get("ticket_key") or "").strip()
+    if not repo and not board_id:
+        die("payload carries neither data.repo nor a board id")
+
+    registry = pathlib.Path(args.registry).expanduser()
+    agent_id, profile, eligible, why = resolve_agent(registry, board_id, repo)
+
+    print(f"resolved board={board_id or '(none)'} repo={repo or '(none)'} "
+          f"-> agent={agent_id or '(none)'} profile={profile or '(none)'} "
+          f"eligible={eligible} ({why})")
+
+    if not eligible:
+        print(f"SKIP: {why}")
+        return 0
+
+    command_data = {
+        "target_agent_id": agent_id,
+        "prompt": build_prompt(d),
+        "context": {
+            "reason": "ticket-grooming",
+            "repo": repo,
+            "ticket_key": ticket_key,
+            "ticket_id": d.get("ticket_id") or d.get("task_id"),
+            "board_id": board_id,
+            "workspace": d.get("workspace"),
+            "title": d.get("title"),
+            "phase": d.get("phase"),
+            "provider_event_type": provider_event,
+        },
+    }
+
+    cmd = [
+        sys.executable, str(BB_EMIT),
+        "--type", COMMAND_TYPE,
+        "--kind", "command",
+        "--actor-type", "service",
+        "--service", args.service,
+        "--strict",
+    ]
+    causation = env.get("id")
+    if isinstance(causation, str) and causation.strip():
+        cmd += ["--causation", causation.strip()]
+
+    # bb-emit derives correlationid as uuid5(ns, transcription_id or ce_type). A
+    # ticket payload has no transcription id, so that fallback hashes the event
+    # TYPE and every invocation command would share one correlationid — and
+    # therefore one thread_id and one idempotency_key. Distinct tickets would
+    # collapse into a single conversation and collide on dedup. Derive it from
+    # the ticket instead: one thread per ticket, and a replayed webhook for the
+    # same ticket still dedupes, which is the behaviour we actually want.
+    correlation = env.get("correlationid")
+    if not (isinstance(correlation, str) and correlation.strip()):
+        ident = f"plane:{board_id}:{ticket_key or d.get('ticket_id') or ''}"
+        correlation = str(uuid.uuid5(CORRELATION_NS, ident))
+    cmd += ["--correlation", correlation.strip()]
+    if args.check:
+        cmd.append("--check")
+
+    proc = subprocess.run(
+        cmd, input=json.dumps(command_data), text=True, capture_output=True
+    )
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
+    if proc.returncode != 0:
+        return 3
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--registry", default=os.environ.get("HERMES_AGENTS_REGISTRY", REGISTRY_DEFAULT))
+    ap.add_argument("--check", action="store_true", help="resolve and print, publish nothing")
+    ap.add_argument("--service", default="n8n-ticket-grooming")
+    ap.add_argument("--repo", help="args mode: project slug (data.repo)")
+    ap.add_argument("--board-id", help="args mode: Plane board/project uuid")
+    ap.add_argument("--ticket-key", help="args mode: e.g. JIMB-270")
+    ap.add_argument("--title", default="", help="args mode: optional; the agent reads the ticket itself")
+    args = ap.parse_args()
+
+    # Args mode exists for callers that cannot give us stdin (n8n's Execute
+    # Command node). It deliberately takes only structured fields, so no
+    # client-authored free text ever reaches a shell command line.
+    if args.repo or args.board_id or args.ticket_key:
+        d = {
+            "repo": checked(args.repo, RE_REPO, "repo"),
+            "board_id": checked(args.board_id, RE_UUID, "board-id"),
+            "ticket_key": checked(args.ticket_key, RE_KEY, "ticket-key"),
+            "provider_event_type": "plane.ticket.created",
+        }
+        if args.title.strip():
+            d["title"] = args.title.strip()
+        return emit(d, {}, args)
+
+    raw = sys.stdin.read()
+    if not raw.strip():
+        die("no payload on stdin")
+    parsed = load_payload(raw)
+    env, d = parsed["envelope"], parsed["data"]
+    return emit(d, env, args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
