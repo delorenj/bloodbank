@@ -1,7 +1,7 @@
 {
   "name": "n8n-nodes-bloodbank",
-  "version": "0.3.0",
-  "description": "Schema-backed n8n publisher, consumer trigger, and Plane webhook ingress for the 33GOD Bloodbank NATS bus",
+  "version": "0.4.0",
+  "description": "Schema-backed n8n publisher, consumer trigger, Plane webhook ingress and agent-fleet dispatch for the 33GOD Bloodbank NATS bus",
   "keywords": [
     "n8n-community-node-package",
     "n8n",
@@ -28,6 +28,7 @@
     "nodes": [
       "dist/nodes/Bloodbank/Bloodbank.node.js",
       "dist/nodes/BloodbankTrigger/BloodbankTrigger.node.js",
+      "dist/nodes/Fleet/Fleet.node.js",
       "dist/nodes/PlaneBloodbank/PlaneBloodbank.node.js"
     ]
   },

@@ -4,8 +4,8 @@
 
 # n8n Bloodbank nodes
 
-Schema-backed publisher, consumer trigger, and Plane webhook ingress for the
-33GOD Bloodbank NATS bus.
+Schema-backed publisher, consumer trigger, Plane webhook ingress, and
+agent-fleet dispatch for the 33GOD Bloodbank NATS bus.
 
 </div>
 
@@ -16,10 +16,12 @@ Schema-backed publisher, consumer trigger, and Plane webhook ingress for the
 | **Bloodbank** | output | Publishes a canonical event or registry-routed invocation command. Also usable as an agent tool. |
 | **Bloodbank Trigger** | trigger | Starts workflows from events or single-consumer commands. |
 | **Plane → Bloodbank** | transform | Verifies, normalizes, and publishes Plane webhooks. |
+| **33GOD Agent Fleet** | output | Hands a ticket to the fleet agent that owns its board. Also usable as an agent tool. |
 
 Each node carries the Bloodbank mark as a light/dark icon pair, so the canvas
 reads correctly in either n8n theme. Plane → Bloodbank adds an inbound arrow to
-mark it as the edge where outside traffic enters the bus.
+mark it as the edge where outside traffic enters the bus; 33GOD Agent Fleet adds
+an outbound fan to mark it as the edge where work leaves for an agent.
 
 ## Bloodbank publisher
 
@@ -79,6 +81,58 @@ The registry entry must match the repo-root `.project.json` ticket-provider
 binding. Re-run the PM fleet-registry reconciliation after a board migration;
 an unknown board is acknowledged as unrouted and is never guessed from the
 workspace alone.
+
+## 33GOD Agent Fleet
+
+Publishes one `bloodbank.agent.invocation.start` command addressed to the fleet
+agent that owns a ticket's board. It replaces a shell-out to
+`bin/bb-triage-invoke`, so the lifecycle workflows now run on the same
+schema-validated transport as everything else on the bus.
+
+| Operation | What the agent is asked to do |
+| --- | --- |
+| **Groom Ticket** | Enrich one new ticket in place — labels, module, priority, cycle, exposure label, a description someone who just walked in could act on — then stamp the completion label. It is told not to split the ticket or change its state. |
+| **Delegate Ticket** | Pick up a groomed ticket that reached Todo, judge its acceptance criteria, delegate the work to a worker agent, and move it to In Progress with a start date. |
+| **Invoke Agent** | Send your own prompt to the agent that owns the board. |
+
+Every field is lifted from the Bloodbank envelope on the input, so a trigger
+feeds this node with no field mapping at all. The Ticket collection overrides any
+of them when the input is not an envelope.
+
+**Board id resolves the agent, not the repo slug.** The board id is the one
+identifier a provider webhook always carries, and it is what tells a
+multi-tenant Plane which workspace to answer as. A board with no `plane` entry in
+the registry falls back to `<repo>-pm` by convention, so a project works with no
+code change.
+
+**An ineligible project is a green skip.** Eligibility mirrors hermes-gateway's
+own four conditions — `profile_name`, `bloodbank.enabled`, `gateway_scope: fleet`
+and a matching `target_agent_id`. When any fails, the node reports the reason and
+publishes nothing rather than failing, so one shared trigger over every project's
+tickets does not turn the switched-off ones into red executions. Set On
+Ineligible Agent to Error to invert that.
+
+**One thread per ticket.** A command's correlation id would otherwise default to
+its own command id, giving every invocation a fresh thread — and the generic
+derivation hashes the event type, which is a constant, collapsing every ticket
+into one conversation. This node derives it as
+`uuid5(url_ns, "plane:<board>:<ticket>")`, so a ticket is a conversation and a
+redelivered webhook lands on the same idempotency key. The port is asserted
+byte-identical to the Python publisher it replaces.
+
+### The lifecycle lane
+
+Two versioned workflows chain through it:
+
+    n8n import:workflow --input=../n8n-workflows/ticket-grooming.v1.json
+    n8n import:workflow --input=../n8n-workflows/ticket-delegation.v1.json
+
+`plane.ticket.created` → **Groom Ticket**, which finishes by labelling the ticket
+`lifecycle:triaged`. A person then promotes the ticket to Todo, and
+`plane.ticket.transitioned` → **Delegate Ticket** picks it up. The label is the
+handshake between the two: grooming is automatic, promotion to Todo is the human
+decision, and delegation requires both. Delegate Ticket grooms a ticket itself
+when the label is missing rather than delegating unreviewed work.
 
 ## Branding
 

@@ -1,0 +1,228 @@
+[
+  {
+    "id": "8mmqdMwQYA28ZwUj",
+    "name": "Ticket Delegation",
+    "description": null,
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "events": [
+            "plane.ticket.transitioned"
+          ],
+          "connection": {}
+        },
+        "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          0
+        ],
+        "id": "d1000000-0000-4000-8000-000000000001",
+        "name": "onTicketTransitioned"
+      },
+      {
+        "parameters": {
+          "operation": "delegateTicket",
+          "providerEventGuard": "plane.ticket.transitioned",
+          "requiredLabel": "lifecycle:triaged",
+          "phaseGuard": "Todo,unstarted",
+          "onIneligible": "skip",
+          "registryFile": "~/.hermes/agents-registry.yaml",
+          "service": "n8n-ticket-delegation",
+          "ticket": {},
+          "connection": {}
+        },
+        "type": "n8n-nodes-bloodbank.bloodbankFleet",
+        "typeVersion": 1,
+        "position": [
+          224,
+          0
+        ],
+        "id": "d1000000-0000-4000-8000-000000000002",
+        "name": "Delegate Ticket"
+      },
+      {
+        "parameters": {
+          "topic": "lifecycle",
+          "message": "=# Delegated\n{{ $json.ticketKey }} -> {{ $json.agentId }}\nhttps://plane.delo.sh/{{ $json.workspace || 'automaticai' }}/browse/{{ $json.ticketKey }}",
+          "title": "Ticket Picked Up by the Project PM",
+          "tags": "=ticket:delegated,memo,repo:{{ $json.repo }}"
+        },
+        "type": "n8n-nodes-ntfy-client.ntfySend",
+        "typeVersion": 1,
+        "position": [
+          464,
+          0
+        ],
+        "id": "d1000000-0000-4000-8000-000000000003",
+        "name": "Ntfy Send",
+        "credentials": {
+          "ntfyApi": {
+            "id": "ECaXcIDDi0FvW6AB",
+            "name": "Ntfy account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      }
+    ],
+    "connections": {
+      "onTicketTransitioned": {
+        "main": [
+          [
+            {
+              "node": "Delegate Ticket",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Delegate Ticket": {
+        "main": [
+          [
+            {
+              "node": "Ntfy Send",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "staticData": null,
+    "pinData": null,
+    "activeVersionId": "8dd227f9-b156-4aeb-aed6-8a63462dc32e",
+    "versionCounter": 3,
+    "tags": [
+      {
+        "updatedAt": "2025-10-12T06:44:16.038Z",
+        "createdAt": "2025-10-12T06:44:16.038Z",
+        "id": "6vMYaFRLOHXXq3G5",
+        "name": "33GOD"
+      },
+      {
+        "updatedAt": "2026-08-26T23:49:48.115Z",
+        "createdAt": "2026-08-26T23:49:48.115Z",
+        "id": "Hgex1M1TJuQ3HccH",
+        "name": "lifecycle"
+      },
+      {
+        "updatedAt": "2026-08-26T23:49:26.698Z",
+        "createdAt": "2026-08-26T23:49:26.698Z",
+        "id": "UArKOM4NFnfz94g3",
+        "name": "plane"
+      }
+    ],
+    "activeVersion": {
+      "updatedAt": "2026-09-04T19:20:58.099Z",
+      "createdAt": "2026-09-04T19:20:58.099Z",
+      "versionId": "8dd227f9-b156-4aeb-aed6-8a63462dc32e",
+      "workflowId": "8mmqdMwQYA28ZwUj",
+      "nodes": [
+        {
+          "parameters": {
+            "events": [
+              "plane.ticket.transitioned"
+            ],
+            "connection": {}
+          },
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "id": "d1000000-0000-4000-8000-000000000001",
+          "name": "onTicketTransitioned"
+        },
+        {
+          "parameters": {
+            "operation": "delegateTicket",
+            "providerEventGuard": "plane.ticket.transitioned",
+            "requiredLabel": "lifecycle:triaged",
+            "phaseGuard": "Todo,unstarted",
+            "onIneligible": "skip",
+            "registryFile": "~/.hermes/agents-registry.yaml",
+            "service": "n8n-ticket-delegation",
+            "ticket": {},
+            "connection": {}
+          },
+          "type": "n8n-nodes-bloodbank.bloodbankFleet",
+          "typeVersion": 1,
+          "position": [
+            224,
+            0
+          ],
+          "id": "d1000000-0000-4000-8000-000000000002",
+          "name": "Delegate Ticket"
+        },
+        {
+          "parameters": {
+            "topic": "lifecycle",
+            "message": "=# Delegated\n{{ $json.ticketKey }} -> {{ $json.agentId }}\nhttps://plane.delo.sh/{{ $json.workspace || 'automaticai' }}/browse/{{ $json.ticketKey }}",
+            "title": "Ticket Picked Up by the Project PM",
+            "tags": "=ticket:delegated,memo,repo:{{ $json.repo }}"
+          },
+          "type": "n8n-nodes-ntfy-client.ntfySend",
+          "typeVersion": 1,
+          "position": [
+            464,
+            0
+          ],
+          "id": "d1000000-0000-4000-8000-000000000003",
+          "name": "Ntfy Send",
+          "credentials": {
+            "ntfyApi": {
+              "id": "ECaXcIDDi0FvW6AB",
+              "name": "Ntfy account"
+            }
+          },
+          "onError": "continueRegularOutput"
+        }
+      ],
+      "connections": {
+        "onTicketTransitioned": {
+          "main": [
+            [
+              {
+                "node": "Delegate Ticket",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Delegate Ticket": {
+          "main": [
+            [
+              {
+                "node": "Ntfy Send",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      },
+      "authors": "Jarad DeLorenzo",
+      "name": null,
+      "description": null,
+      "autosaved": false,
+      "workflowPublishHistory": [
+        {
+          "createdAt": "2026-09-04T19:20:58.424Z",
+          "id": 223,
+          "workflowId": "8mmqdMwQYA28ZwUj",
+          "versionId": "8dd227f9-b156-4aeb-aed6-8a63462dc32e",
+          "event": "activated",
+          "userId": "8c250a0b-e8f9-442d-befe-2da3176bbdd9"
+        }
+      ]
+    }
+  }
+]

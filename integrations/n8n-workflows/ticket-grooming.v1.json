@@ -2,7 +2,9 @@
   {
     "id": "6wAGA5pdrmHLyhs2",
     "name": "Ticket Grooming",
+    "description": null,
     "active": true,
+    "isArchived": false,
     "nodes": [
       {
         "parameters": {
@@ -45,16 +47,23 @@
       },
       {
         "parameters": {
-          "command": "=/usr/bin/python3 /home/delorenj/code/33GOD/bloodbank/bin/bb-triage-invoke --repo '{{ $json.data.repo }}' --board-id '{{ $json.data.board_id }}' --ticket-key '{{ $json.data.ticket_key }}'"
+          "operation": "groomTicket",
+          "providerEventGuard": "plane.ticket.created",
+          "groomedLabel": "lifecycle:triaged",
+          "onIneligible": "skip",
+          "registryFile": "~/.hermes/agents-registry.yaml",
+          "service": "n8n-ticket-grooming",
+          "ticket": {},
+          "connection": {}
         },
-        "type": "n8n-nodes-base.executeCommand",
+        "type": "n8n-nodes-bloodbank.bloodbankFleet",
         "typeVersion": 1,
         "position": [
           208,
           176
         ],
         "id": "c4ffd75f-2742-4622-8b41-e12a990cc1dc",
-        "name": "Invoke Grooming Agent"
+        "name": "Groom Ticket"
       }
     ],
     "connections": {
@@ -62,7 +71,7 @@
         "main": [
           [
             {
-              "node": "Invoke Grooming Agent",
+              "node": "Groom Ticket",
               "type": "main",
               "index": 0
             },
@@ -81,8 +90,8 @@
     },
     "staticData": null,
     "pinData": {},
-    "versionId": "353ba66d-c7e9-48df-a625-9537a891ea71",
-    "triggerCount": 1,
+    "activeVersionId": "bc5d6d6e-7a18-4f55-842d-588c191eb51f",
+    "versionCounter": 72,
     "tags": [
       {
         "updatedAt": "2025-10-12T06:44:16.038Z",
@@ -114,6 +123,129 @@
         "id": "vitklUaf6PPMmcCF",
         "name": "new task"
       }
-    ]
+    ],
+    "activeVersion": {
+      "updatedAt": "2026-09-04T19:20:13.317Z",
+      "createdAt": "2026-09-04T19:20:13.317Z",
+      "versionId": "bc5d6d6e-7a18-4f55-842d-588c191eb51f",
+      "workflowId": "6wAGA5pdrmHLyhs2",
+      "nodes": [
+        {
+          "parameters": {
+            "topic": "lifecycle",
+            "message": "=# New Ticket\n{{ $json.data.ticket.name }}\nhttps://plane.delo.sh/{{ $json.data.workspace }}/browse/{{ $json.data.ticket_key }}",
+            "title": "New Ticket Detected: Triage Started",
+            "tags": "=ticket:created,memo,workspace:{{ $json.data.workspace }},repo:{{ $json.data.repo }}"
+          },
+          "type": "n8n-nodes-ntfy-client.ntfySend",
+          "typeVersion": 1,
+          "position": [
+            208,
+            0
+          ],
+          "id": "a4a2fcef-be22-4c5b-abc1-a8a0937a0cf0",
+          "name": "Ntfy Send",
+          "credentials": {
+            "ntfyApi": {
+              "id": "ECaXcIDDi0FvW6AB",
+              "name": "Ntfy account"
+            }
+          },
+          "onError": "continueRegularOutput"
+        },
+        {
+          "parameters": {
+            "events": [
+              "plane.ticket.created"
+            ],
+            "connection": {}
+          },
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "id": "f830070b-2b40-4edd-9d27-687e20fc304d",
+          "name": "onTicketCreated"
+        },
+        {
+          "parameters": {
+            "operation": "groomTicket",
+            "providerEventGuard": "plane.ticket.created",
+            "groomedLabel": "lifecycle:triaged",
+            "onIneligible": "skip",
+            "registryFile": "~/.hermes/agents-registry.yaml",
+            "service": "n8n-ticket-grooming",
+            "ticket": {},
+            "connection": {}
+          },
+          "type": "n8n-nodes-bloodbank.bloodbankFleet",
+          "typeVersion": 1,
+          "position": [
+            208,
+            176
+          ],
+          "id": "c4ffd75f-2742-4622-8b41-e12a990cc1dc",
+          "name": "Groom Ticket"
+        }
+      ],
+      "connections": {
+        "onTicketCreated": {
+          "main": [
+            [
+              {
+                "node": "Groom Ticket",
+                "type": "main",
+                "index": 0
+              },
+              {
+                "node": "Ntfy Send",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      },
+      "authors": "Jarad DeLorenzo",
+      "name": null,
+      "description": null,
+      "autosaved": false,
+      "workflowPublishHistory": [
+        {
+          "createdAt": "2026-09-04T19:20:13.368Z",
+          "id": 220,
+          "workflowId": "6wAGA5pdrmHLyhs2",
+          "versionId": "bc5d6d6e-7a18-4f55-842d-588c191eb51f",
+          "event": "activated",
+          "userId": "8c250a0b-e8f9-442d-befe-2da3176bbdd9"
+        },
+        {
+          "createdAt": "2026-09-04T19:20:13.515Z",
+          "id": 222,
+          "workflowId": "6wAGA5pdrmHLyhs2",
+          "versionId": "bc5d6d6e-7a18-4f55-842d-588c191eb51f",
+          "event": "activated",
+          "userId": "8c250a0b-e8f9-442d-befe-2da3176bbdd9"
+        },
+        {
+          "createdAt": "2026-09-04T19:20:13.353Z",
+          "id": 219,
+          "workflowId": "6wAGA5pdrmHLyhs2",
+          "versionId": "bc5d6d6e-7a18-4f55-842d-588c191eb51f",
+          "event": "deactivated",
+          "userId": "8c250a0b-e8f9-442d-befe-2da3176bbdd9"
+        },
+        {
+          "createdAt": "2026-09-04T19:20:13.501Z",
+          "id": 221,
+          "workflowId": "6wAGA5pdrmHLyhs2",
+          "versionId": "bc5d6d6e-7a18-4f55-842d-588c191eb51f",
+          "event": "deactivated",
+          "userId": "8c250a0b-e8f9-442d-befe-2da3176bbdd9"
+        }
+      ]
+    }
   }
 ]

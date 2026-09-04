@@ -3,13 +3,14 @@ const test = require('node:test');
 const { existsSync, readFileSync } = require('node:fs');
 const { join } = require('node:path');
 
-const { Bloodbank, BloodbankTrigger, PlaneBloodbank } = require('../src/index.ts');
+const { Bloodbank, BloodbankTrigger, Fleet, PlaneBloodbank } = require('../src/index.ts');
 
 const iconsDir = join(__dirname, '..', 'src', 'icons');
 const nodes = [
   ['Bloodbank', new Bloodbank(), 'bloodbank'],
   ['BloodbankTrigger', new BloodbankTrigger(), 'bloodbank'],
   ['PlaneBloodbank', new PlaneBloodbank(), 'planeBloodbank'],
+  ['Fleet', new Fleet(), 'fleet'],
 ];
 
 test('every node ships a themed icon pair drawn from the brand mark', () => {

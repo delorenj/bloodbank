@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="33GOD Agent Fleet">
+  <title>33GOD Agent Fleet</title>
+  <defs>
+    <linearGradient id="bb-fill-d" x1="16" y1="8" x2="50" y2="60" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#D2242F"/><stop offset="1" stop-color="#9C1820"/></linearGradient>
+  </defs>
+  <path d="M32 5C33 17 53 25 51.5 42A19.5 19.5 0 0 1 12.5 42C11 25 31 17 32 5Z" fill="url(#bb-fill-d)"/>
+  <g>
+    <ellipse cx="32" cy="44" rx="26" ry="8.5" transform="rotate(-18 32 44)" fill="none" stroke="#FAF8F7" stroke-width="1.9"/>
+    <path d="M18 41.5H23l3-2 3 4.5 4-17 4 19 3.5-11 3.5 6.5H48" fill="none" stroke="#FAF8F7" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#FAF8F7"><circle cx="55.2" cy="34.15" r="2.1"/><circle cx="47.62" cy="32.6" r="2.1"/><circle cx="11.89" cy="55.0" r="2.1"/><circle cx="23.93" cy="54.72" r="2.1"/></g>
+    <path d="M7.5 16.5H12.5M12.5 16.5L18 10.5M12.5 16.5L18 22.5" fill="none" stroke="#FAF8F7" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#FAF8F7"><circle cx="6" cy="16.5" r="2.6"/><circle cx="19.4" cy="9.4" r="2.6"/><circle cx="19.4" cy="23.6" r="2.6"/></g>
+  </g>
+</svg>
