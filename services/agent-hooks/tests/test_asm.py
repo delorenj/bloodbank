@@ -506,6 +506,12 @@ class SweeperTest(unittest.TestCase):
             ttl = conn.command("TTL", sweep.HOLOCENE_STAT_KEY)
         payload = json.loads(raw)
         self.assertEqual(payload["id"], "agent-state-machine")
+        # normalizeSnapshot() in holocene/apps/api/src/tooling.ts accepts only
+        # these four and silently falls back to "unknown" for anything else,
+        # which is how the card first shipped reading `unknown` while fully
+        # populated.
+        self.assertIn(payload["status"],
+                      ("healthy", "warning", "critical", "unknown"))
         self.assertEqual(payload["value"]["view"]["kind"], "collection")
         self.assertGreaterEqual(count, 1)
         item = payload["value"]["items"][0]
@@ -517,6 +523,17 @@ class SweeperTest(unittest.TestCase):
         self.assertGreater(ttl, 0)
         self.assertLessEqual(ttl, sweep.HOLOCENE_STAT_TTL)
         self.assertLess(sweep.HOLOCENE_STAT_TTL, 15 * 2 + 90)
+
+    def test_board_health_ignores_the_discovered_only_rollup(self):
+        """An agent we have merely found is not evidence of anything wrong, so
+        the rollup must not drag a healthy board to `unknown`."""
+        me = os.getpid()
+        self.seed("prompt", pid=me, starttime=asm.proc_stat(me)[2])
+        with Connection(URL) as conn:
+            conn.command("ZADD", "asm:live", "1", self.scope)
+            sweep.write_holocene_stat(conn)
+            payload = json.loads(conn.command("GET", sweep.HOLOCENE_STAT_KEY))
+        self.assertEqual(payload["status"], "healthy")
 
     def test_severity_covers_every_state_the_machine_can_emit(self):
         emitted = {"starting", "working", "tool_running", "delegating",

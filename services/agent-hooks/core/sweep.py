@@ -321,9 +321,24 @@ def write_holocene_stat(conn: Connection, *, now_ms: float | None = None) -> int
             "detail": {"count": discovered},
         })
 
+    # Overall card health, derived from OBSERVED agents only -- the
+    # discovered-only rollup must not drag the whole board to `unknown`, and an
+    # agent we have merely found is not evidence of anything being wrong.
+    # normalizeSnapshot() reads this and falls back to "unknown" when absent.
+    severities = {i["severity"] for i in items if i["id"] != "discovered-only"}
+    if "critical" in severities:
+        status = "critical"          # something is stale or failed
+    elif "warning" in severities:
+        status = "warning"           # something is waiting on a human
+    elif severities:
+        status = "healthy"
+    else:
+        status = "unknown"           # nothing observed yet
+
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     payload = {
         "id": "agent-state-machine",
+        "status": status,
         "observedAt": now_iso,
         "value": {
             "view": {"kind": "collection", "layout": "list",
