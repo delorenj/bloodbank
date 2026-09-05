@@ -1,0 +1,23 @@
+[Unit]
+Description=Bloodbank agent-state projector (bus + reality -> Redis)
+Documentation=https://github.com/delorenj/bloodbank/tree/main/services/agent-state
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/agent-state/main.py
+# Host service on purpose: reconciliation reads the process table and the
+# zellij CLI, neither of which exists in a container.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=ZELLIJ_BIN=%h/.local/bin/zellij
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=3
+# A crash must not leave a confident lie on the tab bar. Keys carry a TTL, so
+# state expires on its own if this never comes back.
+TimeoutStopSec=10
+Nice=5
+
+[Install]
+WantedBy=default.target
