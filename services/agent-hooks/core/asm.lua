@@ -173,7 +173,8 @@ redis.call('HSET', hkey,
   'zellij_pane',    s(meta.zellij_pane),
   'correlationid',  s(meta.correlationid),
   'session_id',     s(meta.session_id),
-  'last_role',      s(meta.last_role))
+  'last_role',      s(meta.last_role),
+  'profile',        s(meta.profile))
 
 -- Every key carries its own TTL. maxmemory-policy is `noeviction` with
 -- maxmemory 0 on the box's ONLY Redis, shared with the live nanoleaf wall and
@@ -225,6 +226,7 @@ local tr = {
   zellij_session = s(meta.zellij_session),
   zellij_pane    = s(meta.zellij_pane),
   basis          = s(meta.basis),
+  profile        = s(meta.profile),
   tools          = tools,
   subs           = subs,
   turn           = turn,

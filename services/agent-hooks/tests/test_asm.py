@@ -336,6 +336,47 @@ class SweeperTest(unittest.TestCase):
         self.assertEqual(summary["gone"], 0)
         self.assertEqual(self.state(), "working")
 
+    def test_a_hermes_profile_is_gone_when_its_gateway_unit_is_stopped(self):
+        """The per-profile gateway IS the pid for a Hermes agent. A unit that
+        exists with MainPID 0 is an observation, so the PM is reportably down --
+        unlike a profile with no unit, which is merely unobservable."""
+        self.seed("prompt", pid=0, starttime=0)
+        with Connection(URL) as conn:
+            conn.command("HSET", self.keys[0], "basis", "agent-env",
+                         "profile", "stopped-pm")
+            with mock.patch.object(sweep, "gateway_pids",
+                                   return_value={"stopped-pm": (0, 0)}):
+                summary = sweep.sweep_once(conn, live_key=self.live)
+        self.assertEqual(summary["gone"], 1)
+        with Connection(URL) as conn:
+            self.assertEqual(conn.command("EXISTS", self.keys[0]), 0)
+
+    def test_a_hermes_profile_with_no_gateway_unit_is_only_unobservable(self):
+        """Never claim `gone` for something you merely cannot see."""
+        self.seed("prompt", pid=0, starttime=0)
+        with Connection(URL) as conn:
+            conn.command("HSET", self.keys[0], "basis", "agent-env",
+                         "profile", "never-deployed-pm")
+            with mock.patch.object(sweep, "gateway_pids", return_value={}):
+                summary = sweep.sweep_once(conn, live_key=self.live)
+        self.assertEqual(summary["gone"], 0)
+        with Connection(URL) as conn:
+            self.assertEqual(conn.command("EXISTS", self.keys[0]), 1)
+
+    def test_a_live_gateway_keeps_its_profile_row(self):
+        me = os.getpid()
+        self.seed("prompt", pid=0, starttime=0)
+        with Connection(URL) as conn:
+            conn.command("HSET", self.keys[0], "basis", "agent-env",
+                         "profile", "live-pm")
+            with mock.patch.object(
+                sweep, "gateway_pids",
+                return_value={"live-pm": (me, asm.proc_stat(me)[2])},
+            ):
+                summary = sweep.sweep_once(conn, live_key=self.live)
+        self.assertEqual(summary["gone"], 0)
+        self.assertEqual(self.state(), "working")
+
     def test_headless_agents_are_never_claimed_gone(self):
         """A sid-based scope (the Hermes fleet) has no pid to observe. Claiming
         `gone` for it would be a guess wearing an observation's clothes."""
@@ -398,6 +439,106 @@ class SweeperTest(unittest.TestCase):
             sweep.sweep_once(conn, live_key=self.live)
             self.assertTrue(conn.command("GET", "asm:sweeper"))
             self.assertGreater(conn.command("TTL", "asm:sweeper"), 0)
+
+
+class HermesIdentityTest(unittest.TestCase):
+    """A Hermes agent is a PROFILE, not a process."""
+
+    def test_hermes_home_gives_one_stable_scope_per_profile(self):
+        """One profile runs as a long-lived per-profile gateway AND as N
+        transient hermes-worker-proc_*.scope units. Keying on the process files
+        one PM as many agents -- 9 concurrent james-brennan-pm workers were live
+        on this box while this was written."""
+        with mock.patch.dict(os.environ, {
+            "HERMES_HOME": "/home/delorenj/.hermes/profiles/james-brennan-pm"
+        }):
+            scope, basis, pid, st = asm.resolve_scope("hermes", {})
+        self.assertEqual(scope, "hermes:a:james-brennan-pm")
+        self.assertEqual(basis, "agent-env")
+        self.assertEqual((pid, st), (0, 0),
+                         "identity must carry no pid; liveness is the unit's job")
+
+    def test_a_trailing_slash_does_not_change_identity(self):
+        with mock.patch.dict(os.environ, {
+            "HERMES_HOME": "/home/delorenj/.hermes/profiles/infra-pm/"
+        }):
+            self.assertEqual(asm.resolve_scope("hermes", {})[0],
+                             "hermes:a:infra-pm")
+
+    def test_the_fleet_router_is_never_an_agent(self):
+        """hermes-fleet-bloodbank-gateway.service presents exactly like a
+        profile but is ONE unit representing all 25 PMs. Keying anything on it
+        collapses the whole fleet into a single row and marks every PM gone on
+        one restart."""
+        with mock.patch.dict(os.environ, {
+            "HERMES_HOME": "/home/delorenj/.hermes/profiles/fleet-bloodbank-gateway"
+        }):
+            scope, basis, _, _ = asm.resolve_scope("hermes", {})
+        self.assertNotIn(":a:", scope)
+        self.assertNotEqual(basis, "agent-env")
+
+    def test_the_env_rung_outranks_the_ancestry_walk(self):
+        """A worker scope's ancestry DOES contain a `hermes` process, but a
+        transient per-invocation one. The env rung must win or every cron tick
+        mints a new agent."""
+        keys = list(asm.IDENTITY_ENV_FOR_CLI)
+        self.assertIn("hermes", keys)
+        with mock.patch.dict(os.environ, {
+            "HERMES_HOME": "/home/delorenj/.hermes/profiles/deckard-pm"
+        }):
+            self.assertEqual(asm.resolve_scope("hermes", {})[1], "agent-env")
+
+    def test_other_clis_are_unaffected(self):
+        with mock.patch.dict(os.environ, {
+            "HERMES_HOME": "/home/delorenj/.hermes/profiles/infra-pm"
+        }):
+            scope, basis, _, _ = asm.resolve_scope("no-such-cli", {})
+        self.assertNotIn(":a:", scope)
+
+
+class GatewayPidParseTest(unittest.TestCase):
+    """The off-by-one that reported live PMs as gone."""
+
+    SHOW_OUTPUT = (
+        "MainPID=772171\n"
+        "Id=hermes-keepy-money-pm-gateway.service\n"
+        "\n"
+        "MainPID=1892314\n"
+        "Id=hermes-fleet-bloodbank-gateway.service\n"
+        "\n"
+        "MainPID=749200\n"
+        "Id=hermes-bloodbank-pm-gateway.service\n"
+        "\n"
+        "MainPID=0\n"
+        "Id=hermes-tonnybox-pm-gateway.service\n"
+    )
+
+    def test_properties_are_matched_by_block_not_by_order(self):
+        """systemd emits MainPID BEFORE Id here and guarantees no ordering.
+        Assuming Id-then-MainPID paired every unit with the NEXT unit's pid."""
+        with mock.patch("core.sweep.subprocess.run") as run:
+            run.return_value = mock.Mock(stdout=self.SHOW_OUTPUT)
+            with mock.patch.object(asm, "proc_stat", return_value=("hermes", 1, 42)):
+                got = sweep.gateway_pids()
+
+        self.assertEqual(got["keepy-money-pm"][0], 772171)
+        self.assertEqual(got["bloodbank-pm"][0], 749200)
+        self.assertNotIn("fleet-bloodbank-gateway", got,
+                         "the fleet router is not an agent")
+
+    def test_a_stopped_gateway_is_an_observation_not_an_absence(self):
+        """MainPID 0 on a unit that EXISTS means the agent is down -- reportable
+        as gone. A profile with no unit at all is merely unobservable."""
+        with mock.patch("core.sweep.subprocess.run") as run:
+            run.return_value = mock.Mock(stdout=self.SHOW_OUTPUT)
+            got = sweep.gateway_pids()
+        self.assertIn("tonnybox-pm", got)
+        self.assertEqual(got["tonnybox-pm"], (0, 0))
+        self.assertNotIn("never-deployed-pm", got)
+
+    def test_systemctl_failure_degrades_to_unobservable(self):
+        with mock.patch("core.sweep.subprocess.run", side_effect=OSError):
+            self.assertEqual(sweep.gateway_pids(), {})
 
 
 class ScriptShaTest(unittest.TestCase):

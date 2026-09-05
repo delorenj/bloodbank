@@ -81,8 +81,29 @@ COMM_FOR_CLI = {
     "antigravity": ("antigravity",),
 }
 
-# Native session id inside the raw payload, per CLI. Rung 3.
+# Native session id inside the raw payload, per CLI. Rung 4.
 SID_KEYS = ("session_id", "sessionId", "conversationId")
+
+# Rung 2 -- an env var that names the AGENT rather than the process.
+#
+# Hermes needs this and the other CLIs do not, because a Hermes agent is not a
+# process: one profile runs as a long-lived per-profile gateway service AND as N
+# transient `hermes-worker-proc_*.scope` units (systemd-run) for cron and tool
+# invocations. Keying on the process would file one PM as many agents -- there
+# are 9 concurrent james-brennan-pm workers on this box right now, which is one
+# agent doing nine things, not nine agents.
+#
+# HERMES_HOME is present in every one of those processes and names the profile
+# exactly, so it is a better identity than any pid. Liveness for these scopes is
+# resolved separately, from the per-profile gateway unit -- see core/sweep.py.
+IDENTITY_ENV_FOR_CLI = {
+    "hermes": "HERMES_HOME",
+}
+
+# HERMES_HOME shapes that are infrastructure, not an agent. The single
+# fleet-shared command router presents exactly like a profile but represents all
+# 25 PMs at once; keying anything on it would collapse the fleet into one row.
+NOT_AN_AGENT_PROFILE = frozenset({"fleet-bloodbank-gateway"})
 
 
 def _redis_url() -> str:
@@ -153,7 +174,17 @@ def resolve_scope(cli: str, payload: object) -> tuple[str, str, int, int]:
             if st is not None:
                 return f"{cli}:p:{raw}.{st[2]}", "proc-env", int(raw), st[2]
 
-    # Rung 2 -- walk up the ancestry to the first process that IS the CLI.
+    # Rung 2 -- an env var that names the agent. Ahead of the ancestry walk on
+    # purpose: for a Hermes worker scope the walk WOULD find a `hermes` process,
+    # but a transient per-invocation one, producing a fresh row every cron tick.
+    env_var = IDENTITY_ENV_FOR_CLI.get(cli)
+    if env_var:
+        raw = os.environ.get(env_var, "").rstrip("/")
+        profile = os.path.basename(raw) if raw else ""
+        if profile and profile not in NOT_AN_AGENT_PROFILE:
+            return f"{cli}:a:{profile[:96]}", "agent-env", 0, 0
+
+    # Rung 3 -- walk up the ancestry to the first process that IS the CLI.
     pid = os.getpid()
     for _ in range(12):
         st = proc_stat(pid)
@@ -166,15 +197,14 @@ def resolve_scope(cli: str, payload: object) -> tuple[str, str, int, int]:
             break
         pid = ppid
 
-    # Rung 3 -- a native session id, for a daemon whose comm never matches
-    # (the headless hermes fleet lands here).
+    # Rung 4 -- a native session id, for a daemon whose comm never matches.
     if isinstance(payload, dict):
         for key in SID_KEYS:
             val = payload.get(key)
             if isinstance(val, str) and val:
                 return f"{cli}:s:{val[:96]}", "sid", 0, 0
 
-    # Rung 4 -- the floor. Always available.
+    # Rung 5 -- the floor. Always available.
     ppid = os.getppid()
     st = proc_stat(ppid)
     starttime = st[2] if st else 0
@@ -339,6 +369,9 @@ def record(cli: str, ce_type: str | None, alert_kind: str | None,
             "basis": basis, "zellij_session": zsess, "zellij_pane": zpane,
             "correlationid": "", "session_id": "",
             "last_role": ce_type or alert_kind or "",
+            # Only set for an agent-env scope; the sweeper resolves liveness
+            # from this profile's gateway unit rather than from a pid.
+            "profile": scope.split(":a:", 1)[1] if ":a:" in scope else "",
         }
         # The pane is carried as a FIELD and a secondary index, never as
         # identity -- see resolve_scope().

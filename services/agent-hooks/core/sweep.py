@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -42,6 +43,60 @@ def boot_id() -> str:
         return Path("/proc/sys/kernel/random/boot_id").read_text().strip()[:8]
     except OSError:
         return "unknown"
+
+
+def gateway_pids() -> dict[str, tuple[int, int]]:
+    """profile -> (pid, starttime) for every per-profile Hermes gateway unit.
+
+    THIS IS THE ANSWER TO "can we treat the gateway as the pid" -- yes, but the
+    PER-PROFILE gateway, never the fleet one. There are 25 per-profile gateway
+    units, each a long-lived process; there is exactly ONE
+    hermes-fleet-bloodbank-gateway.service for all of them, so keying liveness
+    on the fleet router would mark all 25 PMs gone on a single restart and would
+    say nothing about any individual agent.
+
+    A profile ABSENT from this map is unobservable and ages out on its TTL. A
+    profile PRESENT with MainPID 0 is an observation: its gateway is stopped or
+    failed, so the agent is down. That distinction is the whole point -- never
+    claim `gone` for something you merely cannot see.
+
+    One systemctl call for the whole fleet, measured at 29ms. Cheap at a 15s
+    tick, and deliberately not on the hook path.
+    """
+    try:
+        out = subprocess.run(
+            ["systemctl", "--user", "show", "hermes-*-gateway.service",
+             "-p", "Id", "-p", "MainPID"],
+            capture_output=True, text=True, timeout=5.0,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+
+    # Parse BLOCKS separated by blank lines, never a property ORDER: systemd
+    # emits `MainPID=` BEFORE `Id=` here, and guarantees no ordering at all.
+    # Assuming Id-then-MainPID paired every unit with the NEXT unit's pid --
+    # an off-by-one across the whole fleet that reported live PMs as gone and
+    # dead ones as alive, with entirely plausible-looking numbers.
+    result: dict[str, tuple[int, int]] = {}
+    for block in out.split("\n\n"):
+        fields: dict[str, str] = {}
+        for line in block.splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                fields[key] = value
+        unit = fields.get("Id", "")
+        if not (unit.startswith("hermes-") and unit.endswith("-gateway.service")):
+            continue
+        profile = unit[len("hermes-"):-len("-gateway.service")]
+        if profile in asm.NOT_AN_AGENT_PROFILE:
+            continue
+        try:
+            pid = int(fields.get("MainPID", "0"))
+        except ValueError:
+            pid = 0
+        st = asm.proc_stat(pid) if pid > 0 else None
+        result[profile] = (pid, st[2] if st else 0)
+    return result
 
 
 def _alive(pid: int, starttime: int) -> bool:
@@ -89,6 +144,7 @@ def sweep_once(conn: Connection, *, now_ms: float | None = None,
     now = now_ms if now_ms is not None else time.time() * 1000
     seen = stale = gone = reaped = 0
     transitions: list[dict] = []
+    gateways: dict[str, tuple[int, int]] | None = None
 
     for scope in conn.command("ZRANGE", live_key, "0", "-1") or []:
         raw = conn.command("HGETALL", f"asm:a:{scope}")
@@ -110,13 +166,27 @@ def sweep_once(conn: Connection, *, now_ms: float | None = None,
         state = h.get("state", "")
         busy = any(int(h.get(k) or 0) > 0 for k in ("turn", "tools", "subs"))
 
-        # A scope resolved by native session id (the headless Hermes fleet) has
-        # no pid to observe, so it can never be proven gone -- it ages out on
-        # its TTL instead. Claiming `gone` for it would be a guess wearing an
-        # observation's clothes.
-        observable = pid > 0
+        # An agent-env scope (a Hermes profile) is not a process, so its
+        # liveness comes from its per-profile gateway unit rather than from a
+        # pid in the row. Resolved lazily: one systemctl call per tick, and only
+        # if such a scope actually exists.
+        if h.get("basis") == "agent-env":
+            if gateways is None:
+                gateways = gateway_pids()
+            entry = gateways.get(h.get("profile", ""))
+            if entry is None:
+                observable = False          # no gateway unit => cannot observe
+            else:
+                pid, starttime = entry
+                observable = True           # present, even at MainPID 0
+        else:
+            # A scope resolved by native session id has no pid to observe, so it
+            # can never be proven gone -- it ages out on its TTL instead.
+            # Claiming `gone` for it would be a guess wearing an observation's
+            # clothes.
+            observable = pid > 0
 
-        if observable and not _alive(pid, starttime):
+        if observable and (pid <= 0 or not _alive(pid, starttime)):
             edge = _fire(conn, scope, "gone", h, live_key)
             gone += 1
             if edge:
