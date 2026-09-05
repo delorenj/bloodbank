@@ -190,6 +190,29 @@ class LuaArbiterTest(unittest.TestCase):
         self.assertEqual(int(self.state()["subs"]), 1)
         self.assertEqual(self.state()["state"], "delegating")
 
+    def test_new_work_ends_the_attention_window(self):
+        """`awaiting_human` was sticky for the full 30 min: only prompt/start/
+        quiesce cleared blocked_until, so an agent that got a permission prompt,
+        was approved, and carried on still read as blocked. Observed live at
+        turn=1 tools=6 -- six tools in flight while reported as free."""
+        self.fire("prompt")
+        self.fire("attention")
+        self.assertEqual(self.state()["state"], "awaiting_human")
+        self.fire("tool_req")
+        self.assertEqual(self.state()["state"], "tool_running",
+                         "starting new work proves the human unblocked us")
+
+    def test_completing_old_work_does_NOT_end_the_attention_window(self):
+        """With parallel tools in flight, one COMPLETING says nothing about a
+        permission prompt still open on another."""
+        self.fire("prompt")
+        self.fire("tool_req")
+        self.fire("tool_req")
+        self.fire("attention")
+        self.assertEqual(self.state()["state"], "awaiting_human")
+        self.fire("tool_done")
+        self.assertEqual(self.state()["state"], "awaiting_human")
+
     def test_attention_outranks_everything(self):
         self.fire("prompt")
         self.fire("tool_req")

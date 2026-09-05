@@ -97,10 +97,21 @@ elseif sig == 'prompt' then
 elseif sig == 'tool_req' then
   turn  = 1
   tools = tools + 1
+  -- Starting NEW work is unambiguous proof the human already unblocked us, so
+  -- the attention window ends here. Without this, `awaiting_human` was sticky
+  -- for the full 30 minutes: nothing but prompt/start/quiesce cleared it, so an
+  -- agent that got a permission prompt, was approved, and carried on still read
+  -- as blocked. Observed live at turn=1 tools=6.
+  --
+  -- Deliberately NOT cleared on tool_done: with parallel tools in flight, one
+  -- COMPLETING says nothing about whether a permission prompt on another is
+  -- still open. Completing old work is not evidence; starting new work is.
+  blocked_until = 0
 elseif sig == 'tool_done' then
   tools = tools - 1
 elseif sig == 'sub_start' then
   turn = 1
+  blocked_until = 0
   if is_sub then redis.call('ZADD', lkey, now, lane) end
 elseif sig == 'sub_done' then
   -- claude has NO invocation_start binding (9 bindings, SubagentStop only), so
