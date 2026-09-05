@@ -60,11 +60,206 @@
         "name": "Ntfy Send",
         "credentials": {
           "ntfyApi": {
-            "id": "ECaXcIDDi0FvW6AB",
-            "name": "Ntfy account"
+            "id": "CMsMifZmcZA2DGcM",
+            "name": "Ntfy account (n8n token)"
           }
         },
         "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "\n// Board -> the ack label to hang on its tickets. A board missing from this map\n// simply gets no chip: CANDY and CANDYS carry a soft-deleted `agent:working`\n// row that Plane refuses to recreate, and a silent skip beats a failing lane.\nconst ACK = {\n  \"10d06f8d-c110-4ce5-beaa-0914534b090a\": {\n    \"ws\": \"33god\",\n    \"label\": \"8c18f2d5-9dba-46f7-9d76-7e5b85f1ff46\"\n  },\n  \"15258893-0206-4e8f-aea6-340eb217988c\": {\n    \"ws\": \"33god\",\n    \"label\": \"67eaa8a8-ba36-49dc-a3a3-92affc8a9896\"\n  },\n  \"aa83a39c-9265-4845-9453-343f21da483b\": {\n    \"ws\": \"33god\",\n    \"label\": \"30761002-5c30-4c88-9ce3-d8584ecb3415\"\n  },\n  \"b0a93110-2801-4524-a491-927c5b125da8\": {\n    \"ws\": \"33god\",\n    \"label\": \"5038d4c6-ada4-4245-8f10-4df673d4cb04\"\n  },\n  \"603a6391-2d04-46df-8d1a-5530c44f24e1\": {\n    \"ws\": \"33god\",\n    \"label\": \"aa69b6fa-e761-41c2-944b-2f0cb5bac68f\"\n  },\n  \"700f95ab-71ae-4f6a-a7aa-142a5252db47\": {\n    \"ws\": \"33god\",\n    \"label\": \"efe0947e-3e5f-4b49-ba0b-662400feee55\"\n  },\n  \"727a2b17-a1dd-46f6-b583-afa5a2d2cdae\": {\n    \"ws\": \"33god\",\n    \"label\": \"c3281642-5267-45e4-9cae-fcafac35cb46\"\n  },\n  \"5aa8ec5c-3c66-49f9-b900-cca8a8446b65\": {\n    \"ws\": \"33god\",\n    \"label\": \"39fffb87-c4fa-4b43-9fb6-9b063e28b95f\"\n  },\n  \"b757648f-0067-482c-84b5-947158a7af3f\": {\n    \"ws\": \"33god\",\n    \"label\": \"6e908099-1449-4937-87b1-a03fb6b87c72\"\n  },\n  \"96725b78-df0b-436a-8b45-c871264fe25d\": {\n    \"ws\": \"33god\",\n    \"label\": \"0a712e3f-7187-4fff-a60a-82b1b01df869\"\n  },\n  \"fdfbeb2d-4e0f-43a3-9615-f3f13c60a9f1\": {\n    \"ws\": \"33god\",\n    \"label\": \"757d9413-0f9f-47e4-9710-7e21f865695d\"\n  },\n  \"11cf7e2b-f964-4e82-b952-6fa74033fa57\": {\n    \"ws\": \"33god\",\n    \"label\": \"1efb5b21-236d-491f-a24a-3182bc5bc038\"\n  },\n  \"702d2969-e0a0-4e8d-ab59-e2cc00606f76\": {\n    \"ws\": \"33god\",\n    \"label\": \"c9ec4a20-7b54-4c24-8a19-05a5905486aa\"\n  },\n  \"244259e4-98e8-4abb-9e62-d0c668c38f86\": {\n    \"ws\": \"33god\",\n    \"label\": \"7b10b53d-54cf-4a93-84d5-9bdb48fffde5\"\n  },\n  \"a8a12be1-b3ab-44f4-ab24-abe8829aeb72\": {\n    \"ws\": \"automaticai\",\n    \"label\": \"6b970d48-1aef-471a-a0dc-f4ef4f075784\"\n  },\n  \"565f8557-7c76-4f84-a167-0926c113ecfd\": {\n    \"ws\": \"33god\",\n    \"label\": \"2bbb0564-d000-461d-9a45-e4539f6c44a2\"\n  },\n  \"18a79832-00fb-4146-b054-d88528f9fef3\": {\n    \"ws\": \"33god\",\n    \"label\": \"05733b95-b1fe-4e20-8adc-f9a08f725993\"\n  },\n  \"7485039f-85b0-47db-ad99-d11497f043d7\": {\n    \"ws\": \"33god\",\n    \"label\": \"9ac44d85-3f84-43b4-8e49-46b1f0a1cbd0\"\n  },\n  \"c2cbdc01-bcce-46b9-b10c-7bd620a81cd4\": {\n    \"ws\": \"automaticai\",\n    \"label\": \"252d44ff-091d-4f8e-9eb3-442efc9b305f\"\n  },\n  \"49035613-5b42-4a79-88d6-bfaf53e07473\": {\n    \"ws\": \"33god\",\n    \"label\": \"95e1625f-cafd-4c52-a9c8-af8e4411ba12\"\n  },\n  \"0c0f017d-ea58-4196-95a3-088261ed06b3\": {\n    \"ws\": \"33god\",\n    \"label\": \"f337d3e7-6ff3-4b92-83de-e91e03754d53\"\n  },\n  \"721549c9-3487-4005-81bc-022849cd2e17\": {\n    \"ws\": \"33god\",\n    \"label\": \"6f10446d-759d-40e3-ad0e-780e5b572bfd\"\n  },\n  \"ce150fc4-bfd9-4b6f-9f14-6468c18616e3\": {\n    \"ws\": \"33god\",\n    \"label\": \"abe8e72b-d5ac-48ac-957a-477fe67d9816\"\n  }\n};\nconst TRIGGER = 'onTicketTransitioned';\n\n// The clear branch keys off correlationid, the only ticket handle a\n// `bloodbank.agent.invocation.*` event carries -- it has no board or ticket key.\nconst store = $getWorkflowStaticData('global');\nif (!store.ack) store.ack = {};\nconst cutoff = Date.now() - 24 * 60 * 60 * 1000;\nfor (const [k, v] of Object.entries(store.ack)) {\n  if (!v || !v.at || v.at < cutoff) delete store.ack[k];\n}\n\nconst trig = $(TRIGGER).all();\nconst out = [];\n$input.all().forEach((item, i) => {\n  const j = item.json || {};\n  if (j.invoked !== true) return;            // skipped or ineligible: nothing to show\n  const cfg = ACK[j.boardId];\n  if (!cfg) return;\n  const data = ((trig[i] || trig[0] || {}).json || {}).data || {};\n  const ticketId = data.ticket_id || data.task_id;\n  if (!ticketId) return;\n  if (j.correlationid) {\n    store.ack[j.correlationid] = {\n      ws: cfg.ws, board: j.boardId, ticketId, labelId: cfg.label,\n      ticketKey: j.ticketKey || null, at: Date.now(),\n    };\n  }\n  out.push({ json: { ws: cfg.ws, board: j.boardId, ticketId,\n                     labelId: cfg.label, ticketKey: j.ticketKey || null } });\n});\nreturn out;\n"
+        },
+        "id": "6904ca03-5cb7-5d76-a66f-9a52db746a95",
+        "name": "Ack \u2014 Prepare",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          208,
+          288
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "=https://plane.delo.sh/api/v1/workspaces/{{ $json.ws }}/projects/{{ $json.board }}/issues/{{ $json.ticketId }}/",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "204cd0f2-8b65-510f-9804-e8f5241aa070",
+        "name": "Ack \u2014 Read Issue",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          432,
+          288
+        ],
+        "onError": "continueErrorOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "TpxVVgOnmjHaE6h7",
+            "name": "Plane API (33GOD + AutomaticAI)"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "=https://plane.delo.sh/api/v1/workspaces/{{ $('Ack \u2014 Prepare').item.json.ws }}/projects/{{ $('Ack \u2014 Prepare').item.json.board }}/issues/{{ $('Ack \u2014 Prepare').item.json.ticketId }}/",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0"
+              }
+            ]
+          },
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ labels: Array.from(new Set([...($json.labels || []).map(l => (l && typeof l === 'object') ? l.id : l).filter(Boolean), $('Ack \u2014 Prepare').item.json.labelId])) }) }}"
+        },
+        "id": "1dbdab16-0d97-572e-84fb-b33c11945318",
+        "name": "Ack \u2014 Add Label",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          656,
+          288
+        ],
+        "onError": "continueRegularOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "TpxVVgOnmjHaE6h7",
+            "name": "Plane API (33GOD + AutomaticAI)"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "events": [
+            "bloodbank.agent.invocation.completed",
+            "bloodbank.agent.invocation.failed"
+          ],
+          "connection": {}
+        },
+        "id": "669ddcaa-615d-5fec-a6af-a1d0516c3ca2",
+        "name": "Turn Ended",
+        "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          480
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "\n// Clear only what this workflow stamped. Both lanes see every agent's turn-end\n// event, so the static-data hit is what says \"this one was mine\".\nconst store = $getWorkflowStaticData('global');\nconst ack = store.ack || {};\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  const cid = j.correlationid || (j.data || {}).correlationid;\n  const hit = cid ? ack[cid] : null;\n  if (!hit) continue;\n  delete ack[cid];\n  out.push({ json: hit });\n}\nstore.ack = ack;\nreturn out;\n"
+        },
+        "id": "19962e56-3d33-511f-9c59-4942dce68032",
+        "name": "Ack \u2014 Recall",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          208,
+          480
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "=https://plane.delo.sh/api/v1/workspaces/{{ $json.ws }}/projects/{{ $json.board }}/issues/{{ $json.ticketId }}/",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "c6f142f8-a9be-5957-90f8-0640a71f44ab",
+        "name": "Ack \u2014 Reread Issue",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          432,
+          480
+        ],
+        "onError": "continueErrorOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "TpxVVgOnmjHaE6h7",
+            "name": "Plane API (33GOD + AutomaticAI)"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "=https://plane.delo.sh/api/v1/workspaces/{{ $('Ack \u2014 Recall').item.json.ws }}/projects/{{ $('Ack \u2014 Recall').item.json.board }}/issues/{{ $('Ack \u2014 Recall').item.json.ticketId }}/",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0"
+              }
+            ]
+          },
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ labels: ($json.labels || []).map(l => (l && typeof l === 'object') ? l.id : l).filter(l => l && l !== $('Ack \u2014 Recall').item.json.labelId) }) }}"
+        },
+        "id": "ca94b2a0-8ce7-57dd-bc7f-ce6e96ad7ee5",
+        "name": "Ack \u2014 Remove Label",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          656,
+          480
+        ],
+        "onError": "continueRegularOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "TpxVVgOnmjHaE6h7",
+            "name": "Plane API (33GOD + AutomaticAI)"
+          }
+        }
       }
     ],
     "connections": {
@@ -83,146 +278,93 @@
         "main": [
           [
             {
+              "node": "Ack \u2014 Prepare",
+              "type": "main",
+              "index": 0
+            },
+            {
               "node": "Ntfy Send",
               "type": "main",
               "index": 0
             }
           ]
         ]
+      },
+      "Ack \u2014 Prepare": {
+        "main": [
+          [
+            {
+              "node": "Ack \u2014 Read Issue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ack \u2014 Read Issue": {
+        "main": [
+          [
+            {
+              "node": "Ack \u2014 Add Label",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Turn Ended": {
+        "main": [
+          [
+            {
+              "node": "Ack \u2014 Recall",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ack \u2014 Recall": {
+        "main": [
+          [
+            {
+              "node": "Ack \u2014 Reread Issue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ack \u2014 Reread Issue": {
+        "main": [
+          [
+            {
+              "node": "Ack \u2014 Remove Label",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
       }
     },
     "settings": {
       "executionOrder": "v1"
     },
-    "staticData": null,
     "pinData": null,
-    "activeVersionId": "8dd227f9-b156-4aeb-aed6-8a63462dc32e",
-    "versionCounter": 3,
     "tags": [
       {
-        "updatedAt": "2025-10-12T06:44:16.038Z",
-        "createdAt": "2025-10-12T06:44:16.038Z",
         "id": "6vMYaFRLOHXXq3G5",
         "name": "33GOD"
       },
       {
-        "updatedAt": "2026-08-26T23:49:48.115Z",
-        "createdAt": "2026-08-26T23:49:48.115Z",
         "id": "Hgex1M1TJuQ3HccH",
         "name": "lifecycle"
       },
       {
-        "updatedAt": "2026-08-26T23:49:26.698Z",
-        "createdAt": "2026-08-26T23:49:26.698Z",
         "id": "UArKOM4NFnfz94g3",
         "name": "plane"
       }
-    ],
-    "activeVersion": {
-      "updatedAt": "2026-09-04T19:20:58.099Z",
-      "createdAt": "2026-09-04T19:20:58.099Z",
-      "versionId": "8dd227f9-b156-4aeb-aed6-8a63462dc32e",
-      "workflowId": "8mmqdMwQYA28ZwUj",
-      "nodes": [
-        {
-          "parameters": {
-            "events": [
-              "plane.ticket.transitioned"
-            ],
-            "connection": {}
-          },
-          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
-          "typeVersion": 1,
-          "position": [
-            0,
-            0
-          ],
-          "id": "d1000000-0000-4000-8000-000000000001",
-          "name": "onTicketTransitioned"
-        },
-        {
-          "parameters": {
-            "operation": "delegateTicket",
-            "providerEventGuard": "plane.ticket.transitioned",
-            "requiredLabel": "lifecycle:triaged",
-            "phaseGuard": "Todo,unstarted",
-            "onIneligible": "skip",
-            "registryFile": "~/.hermes/agents-registry.yaml",
-            "service": "n8n-ticket-delegation",
-            "ticket": {},
-            "connection": {}
-          },
-          "type": "n8n-nodes-bloodbank.bloodbankFleet",
-          "typeVersion": 1,
-          "position": [
-            224,
-            0
-          ],
-          "id": "d1000000-0000-4000-8000-000000000002",
-          "name": "Delegate Ticket"
-        },
-        {
-          "parameters": {
-            "topic": "lifecycle",
-            "message": "=# Delegated\n{{ $json.ticketKey }} -> {{ $json.agentId }}\nhttps://plane.delo.sh/{{ $json.workspace || 'automaticai' }}/browse/{{ $json.ticketKey }}",
-            "title": "Ticket Picked Up by the Project PM",
-            "tags": "=ticket:delegated,memo,repo:{{ $json.repo }}"
-          },
-          "type": "n8n-nodes-ntfy-client.ntfySend",
-          "typeVersion": 1,
-          "position": [
-            464,
-            0
-          ],
-          "id": "d1000000-0000-4000-8000-000000000003",
-          "name": "Ntfy Send",
-          "credentials": {
-            "ntfyApi": {
-              "id": "ECaXcIDDi0FvW6AB",
-              "name": "Ntfy account"
-            }
-          },
-          "onError": "continueRegularOutput"
-        }
-      ],
-      "connections": {
-        "onTicketTransitioned": {
-          "main": [
-            [
-              {
-                "node": "Delegate Ticket",
-                "type": "main",
-                "index": 0
-              }
-            ]
-          ]
-        },
-        "Delegate Ticket": {
-          "main": [
-            [
-              {
-                "node": "Ntfy Send",
-                "type": "main",
-                "index": 0
-              }
-            ]
-          ]
-        }
-      },
-      "authors": "Jarad DeLorenzo",
-      "name": null,
-      "description": null,
-      "autosaved": false,
-      "workflowPublishHistory": [
-        {
-          "createdAt": "2026-09-04T19:20:58.424Z",
-          "id": 223,
-          "workflowId": "8mmqdMwQYA28ZwUj",
-          "versionId": "8dd227f9-b156-4aeb-aed6-8a63462dc32e",
-          "event": "activated",
-          "userId": "8c250a0b-e8f9-442d-befe-2da3176bbdd9"
-        }
-      ]
-    }
+    ]
   }
 ]

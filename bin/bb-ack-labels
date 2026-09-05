@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Provision the `agent:working` ack label on every board bound to a fleet agent.
+
+The ticket lanes hang this label on a ticket the instant a fleet dispatch is
+confirmed -- about a second -- so the board shows the pickup long before the
+agent has finished booting and touched it itself. The lanes carry a board -> label
+id map baked into their `Ack — Prepare` code node, so after adding a board here
+you must re-export the map into `integrations/n8n-workflows/*.v1.json`.
+
+Plane's API has three traps this works around:
+  * label lists paginate, and the default page hides labels on busy boards, so an
+    unpaged existence check reports "missing" and the create then 409s;
+  * there is no per-issue label sub-resource, which is why the lanes do a full
+    read-modify-write PATCH of `labels` rather than a targeted add;
+  * it rate-limits hard (429, error_code 5900) after roughly 34 quick requests.
+
+Usage:  bb-ack-labels            # dry run
+        bb-ack-labels --apply
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+import yaml
+
+BASE = "https://plane.delo.sh"
+LABEL = "agent:working"
+COLOR = "#8B5CF6"
+REGISTRY = os.path.expanduser("~/.hermes/agents-registry.yaml")
+APPLY = "--apply" in sys.argv
+
+# ~/.hermes/config.yaml holds the literal string "${PLANE_API_KEY}", never the key.
+KEY = subprocess.run(["op", "read", "op://DeLoSecrets/Plane/apiKey"],
+                     capture_output=True, text=True, check=True).stdout.strip()
+# Plane sits behind Cloudflare, which 1010s a bare urllib User-Agent.
+H = {"X-API-Key": KEY, "User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
+
+
+def req(method, path, body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    delay = 5.0
+    for attempt in range(6):
+        r = urllib.request.Request(BASE + path, data=data, method=method, headers=H)
+        try:
+            out = json.load(urllib.request.urlopen(r, timeout=30))
+            time.sleep(1.2)
+            return out
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == 5:
+                raise
+            print(f"      (429, backing off {delay:.0f}s)")
+            time.sleep(delay)
+            delay *= 1.8
+    raise RuntimeError("unreachable")
+
+
+def all_labels(ws, pid):
+    """Every label, paged. The default page hides labels on a busy board."""
+    out, cursor = [], None
+    while True:
+        q = f"?per_page=100{'&cursor=' + cursor if cursor else ''}"
+        d = req("GET", f"/api/v1/workspaces/{ws}/projects/{pid}/labels/{q}")
+        out.extend(d.get("results", []))
+        cursor = d.get("next_cursor") if d.get("next_page_results") else None
+        if not cursor:
+            return out
+
+
+def main():
+    agents = yaml.safe_load(open(REGISTRY))["agents"]
+    boards = {}
+    for aid, entry in agents.items():
+        pl = (entry or {}).get("plane") or {}
+        if pl.get("project_id") and pl.get("workspace"):
+            boards[str(pl["project_id"])] = (aid, pl["workspace"], pl.get("identifier"))
+
+    print(f"{'DRY RUN — pass --apply to write' if APPLY is False else 'APPLYING'}: "
+          f"{len(boards)} boards\n")
+    ids, made, failed = {}, [], []
+    for pid, (aid, ws, ident) in sorted(boards.items(), key=lambda x: x[1][2] or ""):
+        try:
+            hit = next((x for x in all_labels(ws, pid) if x.get("name") == LABEL), None)
+            if hit:
+                ids[pid] = hit["id"]
+                print(f"  {str(ident):10} exists   {hit['id']}")
+            elif not APPLY:
+                print(f"  {str(ident):10} WOULD CREATE")
+            else:
+                new = req("POST", f"/api/v1/workspaces/{ws}/projects/{pid}/labels/",
+                          {"name": LABEL, "color": COLOR})
+                ids[pid] = new["id"]
+                made.append(ident)
+                print(f"  {str(ident):10} created  {new['id']}")
+        except urllib.error.HTTPError as e:
+            # A board that has ever soft-deleted this label refuses to recreate it:
+            # the row 409s as a duplicate while GET reports count 0. The lanes skip
+            # any board missing from the map, so this fails soft by design.
+            body = e.read().decode()[:120]
+            failed.append((ident, e.code, body))
+            print(f"  {str(ident):10} FAILED {e.code} {body}")
+
+    print(f"\nresolved={len(ids)}/{len(boards)}  created={len(made)}  failed={len(failed)}")
+    print(json.dumps(ids, indent=2))
+    return 1 if failed and APPLY else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
