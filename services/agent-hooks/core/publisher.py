@@ -129,6 +129,35 @@ def serialize_attention_envelope(envelope: dict[str, Any]) -> bytes:
     return body
 
 
+def _asm_observe(adapter: ClientAdapter, hook_name: str, payload: Any) -> None:
+    """Fold this hook into the Agent State Machine (core/asm.py).
+
+    Placed at ONE call site, and deliberately BEFORE the `alert_kind` branch in
+    run(): `_fanout_alert` returns early, so anything wired downstream of it
+    would never observe Notification / PermissionRequest / TeammateIdle -- and
+    `awaiting_human`, the single most valuable state in the machine, would
+    silently never fire. Here we still have the RAW payload, which is richer
+    than the shaped `data` and is how a failure is detected at all.
+
+    Fail-open twice over: the import is guarded (a partial checkout must not
+    break every hook on the box) and asm.record swallows everything itself.
+    """
+    try:
+        from core import asm
+    except Exception:
+        return
+    try:
+        alert_kind = resolve_alert_map(adapter.agent_dir).get(hook_name)
+        ce_type = None
+        if alert_kind is None:
+            mapping = resolve_map(adapter.agent_dir, adapter.default_map).get(hook_name)
+            if mapping:
+                ce_type = mapping[0]
+        asm.record(adapter.name, ce_type, alert_kind, payload, log=adapter.log)
+    except Exception:
+        return
+
+
 def run(adapter: ClientAdapter, argv: list[str]) -> int:
     """Execute the full publish pipeline for *adapter* with *argv*.
 
@@ -143,6 +172,8 @@ def run(adapter: ClientAdapter, argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
+
+    _asm_observe(adapter, hook_name, payload)
 
     alert_kind = resolve_alert_map(adapter.agent_dir).get(hook_name)
     if alert_kind is not None:

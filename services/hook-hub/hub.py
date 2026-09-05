@@ -83,7 +83,8 @@ class Handler:
     """One registry row."""
 
     __slots__ = ("id", "mode", "on", "on_native", "command", "timeout_ms",
-                 "match_tool", "require_env", "order", "enabled")
+                 "match_tool", "match_transition", "require_env", "order",
+                 "enabled")
 
     def __init__(self, raw: dict[str, Any]) -> None:
         self.id: str = str(raw["id"])
@@ -96,6 +97,13 @@ class Handler:
         self.timeout_ms: int = int(raw.get("timeout_ms", 5000))
         pattern = raw.get("match_tool")
         self.match_tool = re.compile(str(pattern)) if pattern else None
+        # Regex over the literal "<from>-><to>" of an agent-state transition.
+        # ANCHOR IT. An unanchored "." matches every edge on the box -- roughly
+        # 11 subprocess spawns a minute at current hook volume, forever.
+        transition = raw.get("match_transition")
+        self.match_transition = (
+            re.compile(str(transition)) if transition else None
+        )
         self.require_env: list[str] = [str(k) for k in raw.get("require_env", [])]
         self.order: int = int(raw.get("order", 100))
         self.enabled: bool = bool(raw.get("enabled", True))
@@ -158,7 +166,7 @@ class Config:
         log(f"config loaded: {len(handlers)} handlers, {len(bindings)} bindings")
 
     def select(self, role: str | None, native: str, payload: Any,
-               env: dict[str, str]) -> list[Handler]:
+               env: dict[str, str], transition: str = "") -> list[Handler]:
         tool = ""
         if isinstance(payload, dict):
             tool = str(payload.get("tool_name") or payload.get("toolName") or "")
@@ -167,6 +175,9 @@ class Config:
             if not ((role and role in h.on) or native in h.on_native):
                 continue
             if h.match_tool is not None and not h.match_tool.search(tool):
+                continue
+            if (h.match_transition is not None
+                    and not h.match_transition.search(transition)):
                 continue
             # A handler that needs pane context is not broken outside zellij --
             # it simply has nothing to act on. Skip quietly.
@@ -313,7 +324,14 @@ class Server:
         if binding is None:
             log(f"no binding for {cli}/{native} (dispatching on native name only)")
 
-        selected = self.cfg.select(role, native, payload, env)
+        # An agent-state transition arrives as native "transition" with a
+        # payload carrying from/to; everything else leaves this empty, so a row
+        # with match_transition simply never matches a normal hook.
+        transition = ""
+        if isinstance(payload, dict) and payload.get("to"):
+            transition = f"{payload.get('from', '')}->{payload['to']}"
+
+        selected = self.cfg.select(role, native, payload, env, transition)
         if not selected:
             return {"v": 1, "stdout": "", "exit_code": 0, "handled": []}
 

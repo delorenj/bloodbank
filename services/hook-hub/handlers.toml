@@ -117,6 +117,39 @@
 #command    = ["~/.agents/hooks/merge-forward/session-end.sh", "--client", "hub"]
 #timeout_ms = 5000
 
+
+# ------------------------------------------------- agent state machine (ASM)
+# native = "transition" is emitted by core/asm.py inside the hook process, never
+# by a CLI. `match_transition` is a regex over the literal "<from>-><to>".
+#
+# ALWAYS ANCHOR THE PATTERN. An unanchored "." matches every edge on this box --
+# roughly 11 subprocess spawns a minute, forever. The hub's 8-slot pool and
+# killpg timeout contain that; they do not prevent it.
+#
+# States: starting working tool_running delegating awaiting_human failed
+#         stale gone idle      (stale/gone are produced by the sweeper)
+
+[[handler]]
+id               = "asm-log"
+mode             = "async"
+on_native        = ["transition"]
+match_transition = "^.+->.+$"
+command          = ["~/.agents/hooks/asm/log-transition.sh"]
+timeout_ms       = 2000
+
+# deckard ALREADY owns amber via publisher.py::_fanout_alert -> deckard.evt.attention
+# (see the warning above). Enabling this before that path is retired fires the
+# key twice. Lands OFF on purpose.
+[[handler]]
+id               = "asm-blocked-amber"
+mode             = "async"
+on_native        = ["transition"]
+match_transition = "->awaiting_human$"
+command          = ["~/.config/zellij/scripts/zellij-notify", "attention"]
+require_env      = ["ZELLIJ_SESSION_NAME", "ZELLIJ_PANE_ID"]
+timeout_ms       = 1000
+enabled          = false
+
 # ---------------------------------------------------------------- smoke test
 # Enabled by default: proves the socket, the binding table and the dispatch path
 # without touching anything real. Safe to leave on; it only writes to the log.

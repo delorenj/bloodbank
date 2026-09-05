@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""asmctl -- look at the Agent State Machine.
+
+The first thing on this box that can see every agent at once, regardless of
+which CLI it is, whether it is in a zellij pane, or whether it is a headless
+Hermes PM under systemd.
+
+  asmctl ls              one-shot table
+  asmctl watch           live table, repainting
+  asmctl log <scope>     the transition log for one agent
+  asmctl tail            follow every transition as it happens
+
+Stdlib only, like the rest of agent-hooks.
+"""
+from __future__ import annotations
+
+import os
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.resp import Connection  # noqa: E402
+
+URL = (os.environ.get("ASM_REDIS_URL") or os.environ.get("TOOLING_REDIS_URL")
+       or os.environ.get("REDIS_URL") or "redis://127.0.0.1:6379")
+
+RESET, DIM, BOLD = "\033[0m", "\033[2m", "\033[1m"
+COLOR = {
+    "starting":       "\033[36m",   # cyan
+    "working":        "\033[32m",   # green
+    "tool_running":   "\033[33m",   # yellow
+    "delegating":     "\033[35m",   # magenta
+    "awaiting_human": "\033[1;33m", # bold amber
+    "failed":         "\033[31m",   # red
+    "stale":          "\033[1;31m", # bold red  (sweeper, step 2)
+    "gone":           "\033[90m",   # grey      (sweeper, step 2)
+    "idle":           "\033[90m",
+}
+
+
+def human_ms(ms: float) -> str:
+    s = ms / 1000.0
+    if s < 60:
+        return f"{s:.0f}s"
+    if s < 3600:
+        return f"{s / 60:.0f}m{s % 60:02.0f}s"
+    return f"{s / 3600:.0f}h{(s % 3600) / 60:02.0f}m"
+
+
+def rows(conn: Connection) -> list[dict]:
+    scopes = conn.command("ZRANGE", "asm:live", "0", "-1")
+    out = []
+    for scope in scopes or []:
+        raw = conn.command("HGETALL", f"asm:a:{scope}")
+        if not raw:
+            # The hash expired but the index entry survived; the sweeper (step
+            # 2) reaps these. Skip rather than render a ghost.
+            continue
+        h = {raw[i]: raw[i + 1] for i in range(0, len(raw), 2)}
+        h["scope"] = scope
+        out.append(h)
+    return out
+
+
+def render(conn: Connection) -> str:
+    now = time.time() * 1000
+    data = rows(conn)
+    sweeper = conn.command("GET", "asm:sweeper")
+
+    lines = []
+    head = f"{'STATE':<15} {'FOR':>7} {'CLI':<12} {'WHERE':<26} {'PANE':>6} {'BASIS':<10} {'T/S'}"
+    lines.append(BOLD + head + RESET)
+    lines.append(DIM + "-" * len(head) + RESET)
+
+    if not data:
+        lines.append(DIM + "  (no agents seen yet -- fire a hook in any CLI)" + RESET)
+
+    for h in sorted(data, key=lambda r: r.get("since", "0"), reverse=True):
+        state = h.get("state", "?")
+        since = float(h.get("since") or 0)
+        held = human_ms(now - since) if since else "-"
+        cwd = h.get("cwd", "")
+        where = os.path.basename(cwd.rstrip("/")) or cwd or "-"
+        pane = h.get("zellij_pane") or "-"
+        basis = h.get("basis", "-")
+        ts = f"{h.get('tools', '0')}/{h.get('subs', '0')}"
+        color = COLOR.get(state, "")
+        lines.append(
+            f"{color}{state:<15}{RESET} {held:>7} {h.get('cli', '?'):<12} "
+            f"{where[:26]:<26} {str(pane):>6} {DIM}{basis:<10}{RESET} {ts}"
+        )
+
+    lines.append("")
+    if sweeper:
+        lines.append(DIM + f"  sweeper: {sweeper}" + RESET)
+    else:
+        lines.append(
+            "\033[33m  sweeper not running -- `stale` and `gone` will not fire; "
+            "rows below may be dead agents.\033[0m"
+        )
+    return "\n".join(lines)
+
+
+def main(argv: list[str]) -> int:
+    cmd = argv[1] if len(argv) > 1 else "ls"
+
+    if cmd == "ls":
+        with Connection(URL) as conn:
+            print(render(conn))
+        return 0
+
+    if cmd == "watch":
+        try:
+            while True:
+                with Connection(URL) as conn:
+                    frame = render(conn)
+                sys.stdout.write("\033[H\033[J" + frame + "\n")
+                sys.stdout.flush()
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            return 0
+
+    if cmd == "log":
+        if len(argv) < 3:
+            print("usage: asmctl log <scope>", file=sys.stderr)
+            return 2
+        with Connection(URL) as conn:
+            entries = conn.command("XRANGE", f"asm:t:{argv[2]}", "-", "+")
+        for entry in entries or []:
+            fields = entry[1]
+            payload = dict(zip(fields[::2], fields[1::2])).get("j", "")
+            print(payload)
+        return 0
+
+    if cmd == "tail":
+        # SUBSCRIBE holds the connection open; read replies forever.
+        conn = Connection(URL, timeout=86400.0)
+        conn.command("SUBSCRIBE", "asm:transitions")
+        print(DIM + "listening on asm:transitions ..." + RESET, file=sys.stderr)
+        try:
+            while True:
+                msg = conn._read_reply()  # noqa: SLF001 -- pubsub has no api yet
+                if isinstance(msg, list) and len(msg) == 3 and msg[0] == "message":
+                    print(msg[2], flush=True)
+        except KeyboardInterrupt:
+            return 0
+        finally:
+            conn.close()
+
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
