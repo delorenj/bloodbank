@@ -243,6 +243,14 @@ echo "ASM sweeper units removed"
 description = "Run one ASM sweep tick by hand (stale/gone)"
 run = "python3 services/agent-hooks/bin/asmctl sweep"
 
+[tasks."asm:who"]
+description = "Who would pick up a ticket on <board> right now, ranked"
+run = "python3 services/agent-hooks/bin/asmctl who"
+
+[tasks."asm:agents"]
+description = "Every agent process on the box, with its pane and board"
+run = "python3 services/agent-hooks/bin/asmctl agents"
+
 [tasks."asm:test"]
 description = "Agent State Machine invariants (real asm.lua against a throwaway Redis prefix)"
 env = { BLOODBANK_ASM = "false" }

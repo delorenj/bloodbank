@@ -10,6 +10,8 @@ Hermes PM under systemd.
   asmctl log <scope>     the transition log for one agent
   asmctl tail            follow every transition as it happens
   asmctl sweep           one sweep tick (stale / gone); run by the systemd timer
+  asmctl agents          every agent process on the box, with pane and board
+  asmctl who <board>     who would pick up a ticket on <board> right now, ranked
 
 Stdlib only, like the rest of agent-hooks.
 """
@@ -139,6 +141,97 @@ def main(argv: list[str]) -> int:
             fields = entry[1]
             payload = dict(zip(fields[::2], fields[1::2])).get("j", "")
             print(payload)
+        return 0
+
+    if cmd in ("agents", "who"):
+        import re, subprocess                       # noqa: PLC0415
+        from core.agents import discover            # noqa: PLC0415
+
+        board_filter = argv[2] if cmd == "who" and len(argv) > 2 else None
+        if cmd == "who" and not board_filter:
+            print("usage: asmctl who <board_id|identifier>", file=sys.stderr)
+            return 2
+
+        agents = discover()
+        with Connection(URL) as conn:
+            rows = {}
+            for a in agents:
+                raw = conn.command("HGETALL", f"asm:a:{a['scope']}")
+                if raw:
+                    rows[a["scope"]] = {raw[i]: raw[i + 1]
+                                        for i in range(0, len(raw), 2)}
+            sweeper = conn.command("GET", "asm:sweeper")
+
+        # The focused pane is a BONUS, never a requirement -- unpaned agents
+        # must stay eligible. One ~200ms subprocess, cached, never per-candidate.
+        focused = ""
+        try:
+            out = subprocess.run(
+                ["zellij", "-s", os.environ.get("ZELLIJ_SESSION_NAME", ""),
+                 "action", "list-clients"],
+                capture_output=True, text=True, timeout=3.0).stdout
+            hit = re.search(r"terminal_(\d+)", out)
+            focused = hit.group(1) if hit else ""
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+        now = time.time() * 1000
+        table = []
+        for a in agents:
+            board = a["board"]
+            if board_filter:
+                if not board:
+                    continue
+                if board_filter not in (board["board_id"], board["identifier"]):
+                    continue
+            row = rows.get(a["scope"], {})
+            state = row.get("state", "unknown")
+            last = float(row.get("last_ms") or 0)
+            age = (now - last) / 1000 if last else None
+            busy = any(int(row.get(k) or 0) > 0
+                       for k in ("turn", "tools", "subs"))
+            # idle already implies turn/tools/subs zero and not blocked -- it
+            # sits at the BOTTOM of asm.lua's derive ladder. awaiting_human does
+            # NOT: it outranks tools and turn, so it must be checked explicitly.
+            claimable = (state == "idle"
+                         or (state == "awaiting_human" and not busy))
+            table.append({**a, "state": state, "age": age,
+                          "claimable": claimable,
+                          "focus": a["pane"] and a["pane"] == focused})
+
+        rank = {"idle": 0, "awaiting_human": 1}
+        table.sort(key=lambda r: (
+            not r["focus"], rank.get(r["state"], 9),
+            -(r["age"] is not None and -r["age"] or 0)))
+
+        hdr = (f"{'':1} {'STATE':<15} {'AGE':>7} {'CLI':<8} {'PANE':>5} "
+               f"{'BOARD':<8} {'WHERE':<30}")
+        print(BOLD + hdr + RESET)
+        print(DIM + "-" * len(hdr) + RESET)
+        for r in table:
+            mark = "*" if r["focus"] else (" " if r["claimable"] else DIM + "·" + RESET)
+            color = COLOR.get(r["state"], DIM)
+            age = f"{r['age']:.0f}s" if r["age"] is not None else "-"
+            board = r["board"]["identifier"] if r["board"] else "-"
+            where = os.path.basename(r["cwd"].rstrip("/")) or r["cwd"]
+            pane = r["pane"] or "-"
+            print(f"{mark} {color}{r['state']:<15}{RESET} {age:>7} {r['cli']:<8} "
+                  f"{pane:>5} {board:<8} {where[:30]:<30}")
+        print()
+        eligible = [r for r in table if r["claimable"]]
+        if board_filter:
+            if eligible:
+                w = eligible[0]
+                print(f"  WINNER: {w['cli']} in {os.path.basename(w['cwd'])} "
+                      f"(pane {w['pane'] or '-'}, {w['state']})"
+                      + ("  [focused]" if w["focus"] else ""))
+            else:
+                print(DIM + "  no claimable agent -> falls back to the fleet PM"
+                      + RESET)
+        print(DIM + f"  {len(table)} agent(s), {len(eligible)} claimable"
+              + ("" if sweeper else "  (SWEEPER DOWN - states may be stale)")
+              + RESET)
+        print(DIM + "  * = focused pane   · = not claimable" + RESET)
         return 0
 
     if cmd == "sweep":

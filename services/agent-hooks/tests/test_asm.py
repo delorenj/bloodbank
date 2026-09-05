@@ -17,7 +17,7 @@ from unittest import mock
 SERVICE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVICE_DIR))
 
-from core import asm, sweep                # noqa: E402
+from core import agents, asm, board, sweep  # noqa: E402
 from core.resp import Connection           # noqa: E402
 
 URL = os.environ.get("ASM_TEST_REDIS_URL", "redis://127.0.0.1:6379")
@@ -562,6 +562,81 @@ class GatewayPidParseTest(unittest.TestCase):
     def test_systemctl_failure_degrades_to_unobservable(self):
         with mock.patch("core.sweep.subprocess.run", side_effect=OSError):
             self.assertEqual(sweep.gateway_pids(), {})
+
+
+class BoardWalkUpTest(unittest.TestCase):
+    """cwd -> board. No inheritance, exact match, broken manifests stop the walk."""
+
+    def test_a_submodule_resolves_to_its_own_board_not_the_parents(self):
+        """Four registered projects live under 33GOD, so a naive
+        cwd.startswith(repo_path) hands every submodule agent to 33GOD."""
+        root = board.board_for("/home/delorenj/code/33GOD")
+        bb = board.board_for("/home/delorenj/code/33GOD/bloodbank/services/agent-hooks")
+        if root is None or bb is None:
+            self.skipTest("33GOD checkout not present")
+        self.assertNotEqual(root["board_id"], bb["board_id"])
+        self.assertEqual(root["identifier"], "33GOD")
+        self.assertEqual(bb["identifier"], "BB")
+
+    def test_a_subdirectory_inherits_from_its_own_repo_root(self):
+        a = board.board_for("/home/delorenj/code/33GOD")
+        b = board.board_for("/home/delorenj/code/33GOD/krebs")
+        if a is None:
+            self.skipTest("33GOD checkout not present")
+        self.assertEqual(a["board_id"], b["board_id"])
+
+    def test_a_manifest_without_a_board_stops_the_walk(self):
+        """momo/ has a .project.json with no ticket_provider. It must resolve to
+        NO board, never silently inherit 33GOD's."""
+        if not Path("/home/delorenj/code/33GOD/momo/.project.json").is_file():
+            self.skipTest("momo manifest not present")
+        self.assertIsNone(board.board_for("/home/delorenj/code/33GOD/momo"))
+
+    def test_no_manifest_anywhere_is_none_not_an_error(self):
+        self.assertIsNone(board.board_for("/tmp"))
+
+    def test_a_broken_manifest_does_not_climb_past_itself(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(dir="/tmp") as d:
+            (Path(d) / ".project.json").write_text("{ this is not json")
+            sub = Path(d) / "nested"
+            sub.mkdir()
+            self.assertIsNone(board.board_for(sub))
+
+
+class AgentDiscoveryTest(unittest.TestCase):
+    """/proc is the live registry -- asm:live is not."""
+
+    def test_discovery_finds_this_very_process_tree(self):
+        found = agents.discover()
+        self.assertTrue(found, "no agent processes found at all")
+        for a in found:
+            self.assertIn(a["cli"], agents.AGENT_COMMS)
+            self.assertGreater(a["pid"], 0)
+            self.assertTrue(a["scope"])
+
+    def test_scope_matches_what_the_hook_itself_would_mint(self):
+        """Discovery must join to ASM rows without a second convention."""
+        for a in agents.discover():
+            if a["cli"] == "hermes" and a["profile"]:
+                self.assertEqual(a["scope"], f"hermes:a:{a['profile']}")
+            else:
+                self.assertEqual(a["scope"],
+                                 f"{a['cli']}:p:{a['pid']}.{a['starttime']}")
+
+    def test_the_fleet_router_is_not_discovered_as_an_agent(self):
+        self.assertFalse([a for a in agents.discover()
+                          if a["profile"] in asm.NOT_AN_AGENT_PROFILE])
+
+    def test_for_board_matches_exactly_never_by_path_prefix(self):
+        all_agents = agents.discover()
+        root = board.board_for("/home/delorenj/code/33GOD")
+        if root is None:
+            self.skipTest("33GOD checkout not present")
+        for a in agents.for_board(root["board_id"], all_agents):
+            self.assertEqual(a["board"]["board_id"], root["board_id"])
+            self.assertNotEqual(a["board"]["identifier"], "BB",
+                                "a submodule agent leaked onto the parent board")
 
 
 class ScriptShaTest(unittest.TestCase):
