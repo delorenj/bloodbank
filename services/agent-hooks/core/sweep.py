@@ -25,8 +25,10 @@ import json
 import os
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
+from . import agents as agent_discovery
 from . import asm
 from .resp import Connection
 
@@ -35,7 +37,7 @@ STALE_MS = int(os.environ.get("BLOODBANK_ASM_STALE_MS", "120000"))
 # States the sweeper will never call stale. `awaiting_human` is the important
 # one: an agent that has been waiting on a person for twenty minutes is
 # blocked, not wedged, and reddening it would train you to ignore the signal.
-NEVER_STALE = frozenset({"stale", "gone", "awaiting_human", "idle"})
+NEVER_STALE = frozenset({"stale", "gone", "awaiting_human", "idle", "unknown"})
 
 
 def boot_id() -> str:
@@ -139,12 +141,35 @@ def _fire(conn: Connection, scope: str, signal: str, h: dict,
 
 
 def sweep_once(conn: Connection, *, now_ms: float | None = None,
-               live_key: str = "asm:live") -> dict:
+               live_key: str = "asm:live", discover: bool = True) -> dict:
     """One tick. Returns a small summary for logging and tests."""
     now = now_ms if now_ms is not None else time.time() * 1000
-    seen = stale = gone = reaped = 0
+    seen = stale = gone = reaped = found = 0
     transitions: list[dict] = []
     gateways: dict[str, tuple[int, int]] | None = None
+
+    # DISCOVERY FIRST. asm:live only ever knew agents that fired a hook inside
+    # the TTL window -- measured at 2 scopes against 71 live agent processes --
+    # so a quiet agent silently fell out of the table and stopped being
+    # observable at all. Seeding from /proc makes the board answer "who is
+    # alive" rather than "who was recently noisy", and it is what lets `gone`
+    # fire for an agent that never emitted a single event.
+    if discover:
+        for found_agent in agent_discovery.discover():
+            # The returned edge is DELIBERATELY discarded. A none->unknown
+            # discovery is bookkeeping, not a state change: dispatching it would
+            # spawn one handler per agent on every cold start (70 here) and
+            # again whenever a row ages out and is re-seeded. Only edges driven
+            # by real activity, or by a stale/gone verdict, reach handlers.
+            _fire(conn, found_agent["scope"], "discover", {
+                "cli": found_agent["cli"], "pid": found_agent["pid"],
+                "starttime": found_agent["starttime"], "cwd": found_agent["cwd"],
+                "basis": "agent-env" if found_agent["profile"] else "discovered",
+                "zellij_session": found_agent["session"],
+                "zellij_pane": found_agent["pane"],
+                "profile": found_agent["profile"], "last_role": "sweep:discover",
+            }, live_key)
+            found += 1
 
     for scope in conn.command("ZRANGE", live_key, "0", "-1") or []:
         raw = conn.command("HGETALL", f"asm:a:{scope}")
@@ -215,7 +240,103 @@ def sweep_once(conn: Connection, *, now_ms: float | None = None,
     conn.command("SET", "asm:sweeper", f"{os.getpid()}:{boot_id()}", "EX", "60")
 
     return {"seen": seen, "stale": stale, "gone": gone, "reaped": reaped,
-            "transitions": transitions}
+            "found": found, "transitions": transitions}
+
+
+HOLOCENE_STAT_KEY = "holocene:tooling:stat:agent-state-machine"
+HOLOCENE_STAT_TTL = 90        # < 2 sweeper ticks, so a dead sweeper goes stale fast
+
+# ASM state -> the dashboard's four-value severity vocabulary.
+SEVERITY = {
+    "stale": "critical", "failed": "critical",
+    "awaiting_human": "warning",
+    "working": "ok", "tool_running": "ok", "delegating": "ok",
+    "idle": "ok", "starting": "ok", "gone": "unknown",
+}
+
+
+def _human(ms: float) -> str:
+    seconds = ms / 1000.0
+    if seconds < 90:
+        return f"{seconds:.0f}s"
+    if seconds < 5400:
+        return f"{seconds / 60:.0f}m"
+    return f"{seconds / 3600:.1f}h"
+
+
+def write_holocene_stat(conn: Connection, *, now_ms: float | None = None) -> int:
+    """Publish the live agent board to the key Holocene reads.
+
+    This is the payoff for an operator who is headless or away from the box: the
+    same table `asmctl` prints, in the dashboard, without a terminal. Written by
+    the sweeper because the sweeper is the only thing that runs on a cadence and
+    already knows which rows are trustworthy.
+
+    Only agents with an OBSERVED state get a row. The discovered-but-never-seen
+    majority (70 of 71 on a cold start) is reported as one rollup line instead of
+    seventy `unknown` cards -- a dashboard that shows everything shows nothing.
+    """
+    now = now_ms if now_ms is not None else time.time() * 1000
+    items, discovered = [], 0
+
+    for scope in conn.command("ZRANGE", "asm:live", "0", "-1") or []:
+        raw = conn.command("HGETALL", f"asm:a:{scope}")
+        if not raw:
+            continue
+        h = {raw[i]: raw[i + 1] for i in range(0, len(raw), 2)}
+        state = h.get("state", "unknown")
+        if state == "unknown":
+            discovered += 1
+            continue
+        since = float(h.get("since") or 0)
+        held = _human(now - since) if since else "-"
+        where = os.path.basename((h.get("cwd") or "").rstrip("/")) or "-"
+        pane = h.get("zellij_pane") or ""
+        items.append({
+            "id": scope,
+            "label": f"{h.get('cli', '?')} · {where}",
+            "severity": SEVERITY.get(state, "unknown"),
+            "statusLabel": state,
+            "summary": f"{state} for {held}" + (f" · pane {pane}" if pane else ""),
+            "detail": {
+                "scope": scope, "cli": h.get("cli", ""), "state": state,
+                "heldFor": held, "cwd": h.get("cwd", ""),
+                "pid": h.get("pid", ""), "basis": h.get("basis", ""),
+                "profile": h.get("profile", ""),
+                "zellijSession": h.get("zellij_session", ""), "zellijPane": pane,
+                "tools": h.get("tools", "0"), "subs": h.get("subs", "0"),
+                "turn": h.get("turn", "0"), "previous": h.get("prev", ""),
+            },
+        })
+
+    items.sort(key=lambda i: ({"critical": 0, "warning": 1, "ok": 2,
+                               "unknown": 3}[i["severity"]], i["label"]))
+    if discovered:
+        items.append({
+            "id": "discovered-only",
+            "label": f"{discovered} agent(s) alive, not yet observed",
+            "severity": "unknown",
+            "statusLabel": "discovered",
+            "summary": "Found in /proc but has not emitted a hook event yet",
+            "detail": {"count": discovered},
+        })
+
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    payload = {
+        "id": "agent-state-machine",
+        "observedAt": now_iso,
+        "value": {
+            "view": {"kind": "collection", "layout": "list",
+                     "title": "Agent State Machine"},
+            "items": items,
+        },
+        "meta": {"source": "bloodbank-asm-sweeper",
+                 "ttlSeconds": HOLOCENE_STAT_TTL},
+    }
+    conn.command("SET", HOLOCENE_STAT_KEY,
+                 json.dumps(payload, separators=(",", ":")),
+                 "EX", str(HOLOCENE_STAT_TTL))
+    return len(items)
 
 
 def run(log=None) -> dict:
@@ -223,10 +344,16 @@ def run(log=None) -> dict:
     try:
         with Connection(asm._redis_url(), timeout=3.0) as conn:
             summary = sweep_once(conn)
+            # Best-effort: a dashboard write must never fail a sweep tick.
+            try:
+                summary["holocene_items"] = write_holocene_stat(conn)
+            except Exception as exc:                   # noqa: BLE001
+                if log:
+                    log(f"holocene stat write failed: {exc!r}")
     except Exception as exc:                       # noqa: BLE001
         if log:
             log(f"sweep failed: {exc!r}")
-        return {"seen": 0, "stale": 0, "gone": 0, "reaped": 0,
+        return {"seen": 0, "stale": 0, "gone": 0, "reaped": 0, "found": 0,
                 "transitions": [], "error": repr(exc)}
 
     # Sweeper edges must reach handlers too, or `->stale` and `->gone` -- the

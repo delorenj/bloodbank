@@ -40,6 +40,7 @@ COLOR = {
     "stale":          "\033[1;31m", # bold red  (sweeper, step 2)
     "gone":           "\033[90m",   # grey      (sweeper, step 2)
     "idle":           "\033[90m",
+    "unknown":        "\033[90m",   # discovered from /proc, never observed
 }
 
 
@@ -80,7 +81,10 @@ def render(conn: Connection) -> str:
     if not data:
         lines.append(DIM + "  (no agents seen yet -- fire a hook in any CLI)" + RESET)
 
-    for h in sorted(data, key=lambda r: r.get("since", "0"), reverse=True):
+    # Observed states first: a discovered-but-never-observed agent is real, but
+    # it is the least informative row on the board and there are many of them.
+    for h in sorted(data, key=lambda r: (r.get("state") == "unknown",
+                                         -float(r.get("since") or 0))):
         state = h.get("state", "?")
         # Without a sweeper, `stale` and `gone` cannot fire, so any row here may
         # be a dead agent frozen at its last known state. Render the whole table
@@ -88,7 +92,7 @@ def render(conn: Connection) -> str:
         if not sweeper:
             state_color = DIM
         else:
-            state_color = COLOR.get(state, "")
+            state_color = COLOR.get(state, DIM)
         since = float(h.get("since") or 0)
         held = human_ms(now - since) if since else "-"
         cwd = h.get("cwd", "")
@@ -102,6 +106,11 @@ def render(conn: Connection) -> str:
         )
 
     lines.append("")
+    observed = sum(1 for h in data if h.get("state") not in ("unknown", None))
+    if data:
+        lines.append(DIM + f"  {len(data)} agent(s) alive, {observed} with an "
+                     f"observed state ({len(data) - observed} discovered only)"
+                     + RESET)
     if sweeper:
         lines.append(DIM + f"  sweeper: {sweeper}" + RESET)
     else:

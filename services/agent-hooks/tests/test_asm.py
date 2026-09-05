@@ -213,6 +213,42 @@ class LuaArbiterTest(unittest.TestCase):
         self.fire("tool_done")
         self.assertEqual(self.state()["state"], "awaiting_human")
 
+    def test_discovery_seeds_an_unobserved_agent_as_unknown_never_idle(self):
+        """It would be easy to call a quiet agent idle -- an active one fires
+        hooks constantly, so silence really does suggest rest. But that is an
+        INFERENCE, and some CLIs in AGENT_COMMS have no hooks wired at all, for
+        which `idle` would simply be wrong."""
+        self.fire("discover", meta={"cli": "codex", "pid": 1, "cwd": "/tmp",
+                                    "basis": "discovered"})
+        self.assertEqual(self.state()["state"], "unknown")
+
+    def test_discovery_never_overwrites_an_observed_state(self):
+        self.fire("prompt")
+        self.fire("tool_req")
+        self.assertEqual(self.state()["state"], "tool_running")
+        self.fire("discover", meta={"cli": "claude", "pid": 1, "cwd": "/tmp",
+                                    "basis": "discovered"})
+        self.assertEqual(self.state()["state"], "tool_running")
+
+    def test_discovery_never_downgrades_an_observed_basis(self):
+        """The sweeper resolves identity from /proc and would otherwise stamp
+        the generic `discovered` over a richer proc-env/agent-env basis on every
+        15s tick."""
+        self.fire("prompt", meta={"cli": "claude", "pid": 1, "cwd": "/tmp",
+                                  "basis": "proc-env"})
+        self.assertEqual(self.state()["basis"], "proc-env")
+        self.fire("discover", meta={"cli": "claude", "pid": 1, "cwd": "/tmp",
+                                    "basis": "discovered"})
+        self.assertEqual(self.state()["basis"], "proc-env")
+
+    def test_a_rediscovered_row_emits_no_edge(self):
+        """A discovery edge must not reach handlers: one handler per agent on
+        every cold start is 70 subprocesses here."""
+        self.assertTrue(self.fire("discover", meta={"cli": "codex", "pid": 1,
+                                                    "cwd": "/tmp"}))
+        self.assertIsNone(self.fire("discover", meta={"cli": "codex", "pid": 1,
+                                                      "cwd": "/tmp"}))
+
     def test_attention_outranks_everything(self):
         self.fire("prompt")
         self.fire("tool_req")
@@ -323,9 +359,12 @@ class SweeperTest(unittest.TestCase):
             now = int(conn.command("TIME")[0]) * 1000
             conn.command("HSET", self.keys[0], "last_ms", str(now - ms))
 
-    def sweep(self) -> dict:
+    def sweep(self, discover: bool = False) -> dict:
+        """discover=False by default: sweep_once seeds every REAL agent process
+        on the box into whichever live_key it is given, which would pollute an
+        isolated test index with 70 rows."""
         with Connection(URL) as conn:
-            return sweep.sweep_once(conn, live_key=self.live)
+            return sweep.sweep_once(conn, live_key=self.live, discover=discover)
 
     def state(self) -> str:
         with Connection(URL) as conn:
@@ -369,7 +408,7 @@ class SweeperTest(unittest.TestCase):
                          "profile", "stopped-pm")
             with mock.patch.object(sweep, "gateway_pids",
                                    return_value={"stopped-pm": (0, 0)}):
-                summary = sweep.sweep_once(conn, live_key=self.live)
+                summary = sweep.sweep_once(conn, live_key=self.live, discover=False)
         self.assertEqual(summary["gone"], 1)
         with Connection(URL) as conn:
             self.assertEqual(conn.command("EXISTS", self.keys[0]), 0)
@@ -381,7 +420,7 @@ class SweeperTest(unittest.TestCase):
             conn.command("HSET", self.keys[0], "basis", "agent-env",
                          "profile", "never-deployed-pm")
             with mock.patch.object(sweep, "gateway_pids", return_value={}):
-                summary = sweep.sweep_once(conn, live_key=self.live)
+                summary = sweep.sweep_once(conn, live_key=self.live, discover=False)
         self.assertEqual(summary["gone"], 0)
         with Connection(URL) as conn:
             self.assertEqual(conn.command("EXISTS", self.keys[0]), 1)
@@ -396,7 +435,7 @@ class SweeperTest(unittest.TestCase):
                 sweep, "gateway_pids",
                 return_value={"live-pm": (me, asm.proc_stat(me)[2])},
             ):
-                summary = sweep.sweep_once(conn, live_key=self.live)
+                summary = sweep.sweep_once(conn, live_key=self.live, discover=False)
         self.assertEqual(summary["gone"], 0)
         self.assertEqual(self.state(), "working")
 
@@ -449,17 +488,53 @@ class SweeperTest(unittest.TestCase):
 
     # -- hygiene ------------------------------------------------------------
 
+    def test_an_unknown_agent_is_never_called_stale(self):
+        me = os.getpid()
+        self.seed("discover", pid=me, starttime=asm.proc_stat(me)[2])
+        self.assertEqual(self.state(), "unknown")
+        self.age(sweep.STALE_MS * 10)
+        self.assertEqual(self.sweep()["stale"], 0)
+
+    def test_holocene_stat_reports_observed_agents_and_rolls_up_the_rest(self):
+        """A dashboard that shows 70 `unknown` cards shows nothing."""
+        me = os.getpid()
+        self.seed("prompt", pid=me, starttime=asm.proc_stat(me)[2])
+        with Connection(URL) as conn:
+            conn.command("ZADD", "asm:live", "1", self.scope)
+            count = sweep.write_holocene_stat(conn)
+            raw = conn.command("GET", sweep.HOLOCENE_STAT_KEY)
+            ttl = conn.command("TTL", sweep.HOLOCENE_STAT_KEY)
+        payload = json.loads(raw)
+        self.assertEqual(payload["id"], "agent-state-machine")
+        self.assertEqual(payload["value"]["view"]["kind"], "collection")
+        self.assertGreaterEqual(count, 1)
+        item = payload["value"]["items"][0]
+        for key in ("id", "label", "severity", "statusLabel", "summary", "detail"):
+            self.assertIn(key, item)
+        self.assertIn(item["severity"], ("ok", "warning", "critical", "unknown"))
+        # Under two sweeper ticks, so a dead sweeper reads as missing rather
+        # than as a frozen-but-plausible board.
+        self.assertGreater(ttl, 0)
+        self.assertLessEqual(ttl, sweep.HOLOCENE_STAT_TTL)
+        self.assertLess(sweep.HOLOCENE_STAT_TTL, 15 * 2 + 90)
+
+    def test_severity_covers_every_state_the_machine_can_emit(self):
+        emitted = {"starting", "working", "tool_running", "delegating",
+                   "awaiting_human", "failed", "stale", "gone", "idle"}
+        self.assertTrue(emitted <= set(sweep.SEVERITY),
+                        f"unmapped states: {emitted - set(sweep.SEVERITY)}")
+
     def test_ghost_index_entries_are_reaped(self):
         """The hash TTL'd out but the index survived it."""
         with Connection(URL) as conn:
             conn.command("ZADD", self.live, "1", "no-such-scope")
-            summary = sweep.sweep_once(conn, live_key=self.live)
+            summary = sweep.sweep_once(conn, live_key=self.live, discover=False)
             self.assertEqual(summary["reaped"], 1)
             self.assertIsNone(conn.command("ZSCORE", self.live, "no-such-scope"))
 
     def test_sweeper_publishes_its_own_liveness(self):
         with Connection(URL) as conn:
-            sweep.sweep_once(conn, live_key=self.live)
+            sweep.sweep_once(conn, live_key=self.live, discover=False)
             self.assertTrue(conn.command("GET", "asm:sweeper"))
             self.assertGreater(conn.command("TTL", "asm:sweeper"), 0)
 

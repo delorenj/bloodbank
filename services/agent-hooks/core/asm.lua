@@ -125,6 +125,11 @@ elseif sig == 'attention' then
   blocked_until = now + att_ms
 elseif sig == 'fail' then
   err_ms = now
+elseif sig == 'discover' then
+  -- The sweeper found a live agent process. Carries NO counter delta and never
+  -- overwrites an observed state: it exists so a quiet agent stays in the table
+  -- instead of ageing out of it. See the derive ladder below.
+  nothing = true
 elseif sig == 'stale' or sig == 'gone' then
   -- Sweeper verdicts. They carry no counter delta: the sweeper observed
   -- something the event stream cannot express (silence, or /proc vanishing),
@@ -149,7 +154,19 @@ local subs = redis.call('ZCARD', lkey)
 -- Priority order is the whole semantics. awaiting_human outranks everything
 -- because a blocked agent that is also mid-tool is blocked, not busy.
 local level
-if sig == 'gone' then
+if sig == 'discover' then
+  -- An agent we have only DISCOVERED is `unknown`, never `idle`. It would be
+  -- very easy to call it idle -- an actively working agent fires hooks
+  -- constantly, so silence really does suggest rest -- but that is an
+  -- INFERENCE, and this machine's whole discipline is that an inference never
+  -- wears an observation's clothes. Some CLIs in AGENT_COMMS have no hooks
+  -- wired at all, and for those `idle` would simply be wrong.
+  --
+  -- On a row that already carries an observed state, keep it: this signal then
+  -- does nothing but refresh the TTL and the liveness index, which is the
+  -- entire point.
+  if prev == nil or prev == '' then level = 'unknown' else level = prev end
+elseif sig == 'gone' then
   -- A DIRECT OBSERVATION that the process is no longer in /proc, which is the
   -- one fact no bus consumer can ever learn. Terminal.
   level = 'gone'
@@ -171,6 +188,17 @@ else
   level = 'idle'
 end
 
+-- A `discover` must never DOWNGRADE what a real hook already established.
+-- The sweeper resolves identity from /proc and would otherwise overwrite a
+-- richer observed basis (proc-env, agent-env) with the generic `discovered` on
+-- every 15s tick. Live facts from /proc -- cwd, pane, pid -- are still
+-- refreshed, because those genuinely can change.
+local basis_out = s(meta.basis)
+if sig == 'discover' and cur['basis'] ~= nil and cur['basis'] ~= ''
+   and cur['basis'] ~= 'discovered' then
+  basis_out = cur['basis']
+end
+
 redis.call('HSET', hkey,
   'state', level, 'turn', s(turn), 'tools', s(tools), 'subs', s(subs),
   'blocked_until', s(blocked_until), 'err_ms', s(err_ms), 'last_ms', s(now),
@@ -179,7 +207,7 @@ redis.call('HSET', hkey,
   'pid',            s(meta.pid),
   'starttime',      s(meta.starttime),
   'cwd',            s(meta.cwd),
-  'basis',          s(meta.basis),
+  'basis',          basis_out,
   'zellij_session', s(meta.zellij_session),
   'zellij_pane',    s(meta.zellij_pane),
   'correlationid',  s(meta.correlationid),
