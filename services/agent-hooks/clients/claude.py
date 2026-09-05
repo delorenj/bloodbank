@@ -51,6 +51,11 @@ class ClaudeAdapter(ClientAdapter):
         "tool-request": ("bloodbank.agent.tool.requested", "invocation"),
         "tool-action": ("bloodbank.agent.tool.completed", "invocation"),
         "subagent-stopped": ("bloodbank.agent.invocation.completed", "invocation"),
+        # The turn itself died -- a 4xx, a rate limit, out of tokens. Distinct
+        # from a failed TOOL, which is ordinary and must not be reported as an
+        # outage. Without this the bus carried no failure signal at all, so no
+        # consumer could ever show an errored agent.
+        "stop-failure": ("bloodbank.agent.invocation.failed", "invocation"),
     }
 
     @property
@@ -146,6 +151,16 @@ class ClaudeAdapter(ClientAdapter):
             return {
                 "invocation_id": session.session_id,
                 "stop_reason": "completed",
+                "working_directory": cwd,
+            }
+
+        if ce_type == "bloodbank.agent.invocation.failed":
+            # `invocation_id` is required by invocation.failed.json. Data-level
+            # schema validation is off at hook time and ON in CI, so omitting it
+            # would publish fine on this machine and fail the build.
+            return {
+                "invocation_id": session.session_id,
+                "stop_reason": "failed",
                 "working_directory": cwd,
             }
 
