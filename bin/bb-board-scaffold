@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Give every board the 33GOD state machine, cloned from a reference board.
+
+Plane exposes no template API at all -- `/templates/`, `/project-templates/` and
+`/workitem-templates/` all 404 on this instance -- which is why the 9-state
+workflow on 33GOD and JIMB had to be built by hand, twice. States *are* fully
+writable over v1 though (create with name/color/group/description, and delete),
+so the scaffolding that templating cannot do is scriptable.
+
+33GOD and JIMB currently hold byte-identical state machines, so either is a
+sound reference. The other 18 fleet boards sit on Plane's stock five.
+
+This only ever adds and aligns. It never deletes a state, never reorders one it
+did not create, and never touches the `default` or `is_triage` flags -- a board
+must have exactly one default state and moving it silently re-homes new tickets.
+A state the target has and the reference does not is left alone.
+
+Usage:  bb-board-scaffold                          # dry run, every board
+        bb-board-scaffold --to DELO,DNET --apply
+        bb-board-scaffold --from JIMB --all --apply
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+import yaml
+
+BASE = "https://plane.delo.sh"
+REGISTRY = os.path.expanduser("~/.hermes/agents-registry.yaml")
+
+# The labels that carry machine meaning today. Everything else on a board is
+# descriptive and stays that board's own business. Keep this list short and
+# closed -- it is the part that must mean the same thing everywhere.
+FUNCTIONAL_LABELS = [
+    ("lifecycle:triaged", "#3F76FF"),   # grooming finished; delegation gates on it
+    ("agent:working",     "#8B5CF6"),   # a turn is live on this ticket; self-clearing
+    ("xp:internal",       "#60646C"),   # audience: client-admin board
+    ("xp:external",       "#46A758"),   # audience: the client's own board
+]
+
+KEY = subprocess.run(["op", "read", "op://DeLoSecrets/Plane/apiKey"],
+                     capture_output=True, text=True, check=True).stdout.strip()
+H = {"X-API-Key": KEY, "User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
+
+
+def call(method, path, body=None):
+    """Plane rate-limits hard (429 / error_code 5900) after ~34 quick requests."""
+    data = json.dumps(body).encode() if body is not None else None
+    delay = 5.0
+    for attempt in range(6):
+        r = urllib.request.Request(BASE + path, data=data, method=method, headers=H)
+        try:
+            raw = urllib.request.urlopen(r, timeout=30).read()
+            time.sleep(1.1)
+            return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            # 429 is the documented rate limit; 502/503/504 is Plane behind
+            # Traefik briefly dropping, which it does under a burst of writes.
+            if e.code not in (429, 502, 503, 504) or attempt == 5:
+                raise
+            time.sleep(delay)
+            delay *= 1.8
+    raise RuntimeError("unreachable")
+
+
+def paged(path):
+    out, cursor = [], None
+    while True:
+        sep = "&" if "?" in path else "?"
+        d = call("GET", f"{path}{sep}per_page=100" + (f"&cursor={cursor}" if cursor else ""))
+        out.extend(d.get("results", []))
+        cursor = d.get("next_cursor") if d.get("next_page_results") else None
+        if not cursor:
+            return out
+
+
+def fleet_boards():
+    agents = yaml.safe_load(open(REGISTRY))["agents"]
+    boards = {}
+    for entry in agents.values():
+        pl = (entry or {}).get("plane") or {}
+        if pl.get("project_id") and pl.get("workspace") and pl.get("identifier"):
+            boards[pl["identifier"]] = (pl["workspace"], str(pl["project_id"]))
+    return boards
+
+
+def scaffold(ident, ws, pid, ref_states, ref_labels, apply):
+    have = {s["name"].strip().lower(): s for s in paged(
+        f"/api/v1/workspaces/{ws}/projects/{pid}/states/")}
+    if not have:
+        # A board reporting zero states is not a fresh board; it is broken or
+        # soft-deleted (CANDY and CANDYS both do this, and both also refuse a
+        # label create with a 409 while reporting count 0). Do not write to it.
+        print(f"  {ident:10} SKIP — reports zero states, board looks soft-deleted")
+        return
+    added = aligned = 0
+    for ref in ref_states:
+        cur = have.get(ref["name"].strip().lower())
+        if cur is None:
+            print(f"  {ident:10} {'+ create' if apply else '+ would create'} "
+                  f"{ref['name']!r} ({ref['group']})")
+            if apply:
+                call("POST", f"/api/v1/workspaces/{ws}/projects/{pid}/states/",
+                     {"name": ref["name"], "color": ref["color"], "group": ref["group"],
+                      "description": ref.get("description") or "",
+                      "sequence": ref.get("sequence")})
+            added += 1
+            continue
+        if cur["group"] != ref["group"]:
+            # Changing a state's group moves it between board columns and
+            # rewrites what "started"/"completed" mean for every report.
+            print(f"  {ident:10} ! {ref['name']!r} group differs "
+                  f"({cur['group']} vs {ref['group']}) — left alone")
+            continue
+        patch = {}
+        if (cur.get("description") or "") != (ref.get("description") or ""):
+            patch["description"] = ref.get("description") or ""
+        if (cur.get("color") or "").lower() != (ref.get("color") or "").lower():
+            patch["color"] = ref["color"]
+        if patch:
+            print(f"  {ident:10} {'~ align' if apply else '~ would align'} "
+                  f"{ref['name']!r}: {', '.join(sorted(patch))}")
+            if apply:
+                call("PATCH", f"/api/v1/workspaces/{ws}/projects/{pid}/states/{cur['id']}/", patch)
+            aligned += 1
+
+    names = {l["name"] for l in paged(f"/api/v1/workspaces/{ws}/projects/{pid}/labels/")}
+    for name, color in ref_labels:
+        if name in names:
+            continue
+        print(f"  {ident:10} {'+ label' if apply else '+ would add label'} {name}")
+        if apply:
+            try:
+                call("POST", f"/api/v1/workspaces/{ws}/projects/{pid}/labels/",
+                     {"name": name, "color": color})
+            except urllib.error.HTTPError as e:
+                # A soft-deleted row 409s on recreate while GET reports count 0.
+                print(f"  {ident:10}   label {name} refused ({e.code}) — leaving it")
+    if not added and not aligned:
+        print(f"  {ident:10} already matches")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--from", dest="ref", default="33GOD", help="reference board identifier")
+    ap.add_argument("--to", help="comma-separated target identifiers")
+    ap.add_argument("--all", action="store_true", help="every fleet board")
+    ap.add_argument("--apply", action="store_true", help="write; otherwise dry run")
+    a = ap.parse_args()
+
+    boards = fleet_boards()
+    if a.ref not in boards:
+        sys.exit(f"reference board {a.ref!r} is not in the registry")
+    ref_ws, ref_pid = boards[a.ref]
+    ref_states = sorted(paged(f"/api/v1/workspaces/{ref_ws}/projects/{ref_pid}/states/"),
+                        key=lambda s: s.get("sequence") or 0)
+
+    targets = ([t.strip() for t in a.to.split(",")] if a.to
+               else [b for b in boards if b != a.ref])
+    unknown = [t for t in targets if t not in boards]
+    if unknown:
+        sys.exit(f"not in the registry: {unknown}")
+
+    print(f"reference {a.ref}: {len(ref_states)} states "
+          f"({sum(1 for s in ref_states if (s.get('description') or '').strip())} described)")
+    print(f"{'APPLYING to' if a.apply else 'DRY RUN over'} {len(targets)} board(s)\n")
+    for ident in sorted(targets):
+        ws, pid = boards[ident]
+        try:
+            scaffold(ident, ws, pid, ref_states, FUNCTIONAL_LABELS, a.apply)
+        except urllib.error.HTTPError as e:
+            print(f"  {ident:10} HTTP {e.code}: {e.read().decode()[:140]}")
+    if not a.apply:
+        print("\nnothing was written — re-run with --apply")
+
+
+if __name__ == "__main__":
+    main()
