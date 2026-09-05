@@ -25,10 +25,10 @@ wrapped, and a total no-op when Redis is absent.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
-import time
 from pathlib import Path
 
 from .resp import Connection
@@ -43,7 +43,6 @@ STREAM_MAXLEN = 500
 TIMEOUT       = float(os.environ.get("BLOODBANK_ASM_TIMEOUT", "0.25"))
 
 _LUA = Path(__file__).with_name("asm.lua")
-_SHA_CACHE = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "33god-asm.sha"
 
 # ce_type -> signal. Derived from the SSOT-generated event map rather than a
 # hardcoded role list, because hooks.master.json declares TEN roles, not the
@@ -286,26 +285,30 @@ def dispatch(transition: dict, cli: str, cwd: str) -> None:
 # --- entry point -----------------------------------------------------------
 
 def _eval(conn: Connection, keys: list[str], args: list[object]) -> object:
-    """EVALSHA with a NOSCRIPT fallback -- the script cache is empty after a
-    Redis restart, and this box's Redis has been up 15 days but will not be
-    forever."""
-    sha = ""
+    """EVALSHA with a NOSCRIPT fallback.
+
+    The sha is DERIVED from the script body rather than cached in a file, and
+    that is not a micro-optimization -- it is the only version of this that is
+    correct. Redis keys its script cache by the SHA1 of the body, so computing
+    it here means an edited asm.lua is a different sha by construction.
+
+    The cached-in-a-file version silently kept running the PREVIOUS script
+    after every edit: EVALSHA succeeded against Redis's still-warm cache, so
+    there was no error to notice, and new signals were simply ignored. Caught
+    only because a freshly-added `gone` signal did nothing at all.
+
+    Costs one ~8KB read and a sha1 per hook -- tens of microseconds against a
+    250ms deadline.
+    """
+    body = _LUA.read_bytes()
+    sha = hashlib.sha1(body).hexdigest()          # noqa: S324 -- Redis's own key
     try:
-        sha = _SHA_CACHE.read_text().strip()
-    except OSError:
-        pass
-    if sha:
-        try:
-            return conn.command("EVALSHA", sha, len(keys), *keys, *args)
-        except Exception as exc:
-            if "NOSCRIPT" not in str(exc):
-                raise
-    body = _LUA.read_text()
-    sha = conn.command("SCRIPT", "LOAD", body)
-    try:
-        _SHA_CACHE.write_text(str(sha))
-    except OSError:
-        pass
+        return conn.command("EVALSHA", sha, len(keys), *keys, *args)
+    except Exception as exc:
+        if "NOSCRIPT" not in str(exc):
+            raise
+    # First use on this Redis, or the cache was flushed / the server restarted.
+    conn.command("SCRIPT", "LOAD", body)
     return conn.command("EVALSHA", sha, len(keys), *keys, *args)
 
 

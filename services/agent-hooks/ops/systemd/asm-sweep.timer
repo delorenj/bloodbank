@@ -1,0 +1,14 @@
+# 15s cadence. `gone` should feel immediate -- a killed agent must leave the
+# table before you look again -- while `stale` is governed by its own 120s
+# threshold, not by this interval.
+[Unit]
+Description=33GOD ASM sweeper tick
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=15s
+AccuracySec=1s
+Unit=asm-sweep.service
+
+[Install]
+WantedBy=timers.target

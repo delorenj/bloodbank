@@ -17,7 +17,7 @@ from unittest import mock
 SERVICE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVICE_DIR))
 
-from core import asm                       # noqa: E402
+from core import asm, sweep                # noqa: E402
 from core.resp import Connection           # noqa: E402
 
 URL = os.environ.get("ASM_TEST_REDIS_URL", "redis://127.0.0.1:6379")
@@ -263,6 +263,169 @@ class IdentityLadderTest(unittest.TestCase):
         self.assertTrue(asm._failed({"payload": {"extra": {"error_type": "X"}}}))
         self.assertTrue(asm._failed({"payload": {"extra": {"status": "failed"}}}))
         self.assertTrue(asm._failed({"error": "boom"}))
+
+
+@unittest.skipUnless(_redis_available(), "no Redis at ASM_TEST_REDIS_URL")
+class SweeperTest(unittest.TestCase):
+    """`stale` and `gone` — the two states no event can ever produce."""
+
+    def setUp(self) -> None:
+        self.scope = f"{PREFIX}:sweep:{self.id().rsplit('.', 1)[-1]}"
+        self.live = f"asm:live:{self.scope}"
+        self.keys = [f"asm:a:{self.scope}", f"asm:t:{self.scope}",
+                     f"asm:lane:{self.scope}", self.live, ""]
+        self._clean()
+
+    def tearDown(self) -> None:
+        self._clean()
+
+    def _clean(self) -> None:
+        with Connection(URL) as conn:
+            conn.command("DEL", *[k for k in self.keys if k])
+
+    def seed(self, *signals: str, pid: int, starttime: int) -> None:
+        meta = {"cli": "sweeptest", "pid": pid, "starttime": starttime,
+                "cwd": "/tmp"}
+        with Connection(URL) as conn:
+            for sig in signals:
+                conn.command(
+                    "EVAL", LUA, len(self.keys), *self.keys,
+                    sig, 900, "main", json.dumps(meta), asm.LANE_GRACE_MS,
+                    asm.ERR_GRACE_MS, asm.ATTENTION_MS, 500, self.scope,
+                )
+
+    def age(self, ms: int) -> None:
+        """Backdate last_ms so the agent looks silent."""
+        with Connection(URL) as conn:
+            now = int(conn.command("TIME")[0]) * 1000
+            conn.command("HSET", self.keys[0], "last_ms", str(now - ms))
+
+    def sweep(self) -> dict:
+        with Connection(URL) as conn:
+            return sweep.sweep_once(conn, live_key=self.live)
+
+    def state(self) -> str:
+        with Connection(URL) as conn:
+            return conn.command("HGET", self.keys[0], "state") or ""
+
+    # -- gone ---------------------------------------------------------------
+
+    def test_dead_process_is_observed_gone_and_reaped(self):
+        """Exit is not an event; /proc is the only oracle."""
+        dead_pid = 2 ** 31 - 1
+        self.seed("prompt", "tool_req", pid=dead_pid, starttime=1)
+        self.assertEqual(self.state(), "tool_running")
+
+        summary = self.sweep()
+        self.assertEqual(summary["gone"], 1)
+        self.assertEqual([(e["from"], e["to"]) for e in summary["transitions"]],
+                         [("tool_running", "gone")])
+        with Connection(URL) as conn:
+            self.assertEqual(conn.command("EXISTS", self.keys[0]), 0)
+            self.assertIsNone(conn.command("ZSCORE", self.live, self.scope))
+
+    def test_a_recycled_pid_cannot_inherit_a_dead_agents_row(self):
+        """Same pid, different starttime => a different process => gone."""
+        self.seed("prompt", pid=os.getpid(), starttime=999999999)
+        self.assertEqual(self.sweep()["gone"], 1)
+
+    def test_a_live_process_is_left_alone(self):
+        self.seed("prompt", pid=os.getpid(),
+                  starttime=asm.proc_stat(os.getpid())[2])
+        summary = self.sweep()
+        self.assertEqual(summary["gone"], 0)
+        self.assertEqual(self.state(), "working")
+
+    def test_headless_agents_are_never_claimed_gone(self):
+        """A sid-based scope (the Hermes fleet) has no pid to observe. Claiming
+        `gone` for it would be a guess wearing an observation's clothes."""
+        self.seed("prompt", "tool_req", pid=0, starttime=0)
+        self.assertEqual(self.sweep()["gone"], 0)
+        self.assertEqual(self.state(), "tool_running")
+
+    # -- stale --------------------------------------------------------------
+
+    def test_a_wedged_agent_goes_stale(self):
+        me = os.getpid()
+        self.seed("prompt", "tool_req", pid=me,
+                  starttime=asm.proc_stat(me)[2])
+        self.age(sweep.STALE_MS + 60_000)
+        summary = self.sweep()
+        self.assertEqual(summary["stale"], 1)
+        self.assertEqual(self.state(), "stale")
+
+    def test_stale_self_heals_on_a_late_signal(self):
+        me = os.getpid()
+        st = asm.proc_stat(me)[2]
+        self.seed("prompt", "tool_req", pid=me, starttime=st)
+        self.age(sweep.STALE_MS + 60_000)
+        self.sweep()
+        self.assertEqual(self.state(), "stale")
+        self.seed("tool_done", pid=me, starttime=st)
+        self.assertEqual(self.state(), "working")
+
+    def test_idle_never_goes_stale(self):
+        """Idle is a resting state, not a fault. An agent waiting on you all
+        afternoon must not redden the board."""
+        me = os.getpid()
+        self.seed("prompt", "quiesce", pid=me, starttime=asm.proc_stat(me)[2])
+        self.age(sweep.STALE_MS * 10)
+        self.assertEqual(self.sweep()["stale"], 0)
+        self.assertEqual(self.state(), "idle")
+
+    def test_awaiting_human_never_goes_stale(self):
+        """Blocked on a person is not wedged. Reddening it trains you to
+        ignore the one signal that means something."""
+        me = os.getpid()
+        self.seed("prompt", "tool_req", "attention", pid=me,
+                  starttime=asm.proc_stat(me)[2])
+        self.age(sweep.STALE_MS * 10)
+        self.assertEqual(self.sweep()["stale"], 0)
+        self.assertEqual(self.state(), "awaiting_human")
+
+    # -- hygiene ------------------------------------------------------------
+
+    def test_ghost_index_entries_are_reaped(self):
+        """The hash TTL'd out but the index survived it."""
+        with Connection(URL) as conn:
+            conn.command("ZADD", self.live, "1", "no-such-scope")
+            summary = sweep.sweep_once(conn, live_key=self.live)
+            self.assertEqual(summary["reaped"], 1)
+            self.assertIsNone(conn.command("ZSCORE", self.live, "no-such-scope"))
+
+    def test_sweeper_publishes_its_own_liveness(self):
+        with Connection(URL) as conn:
+            sweep.sweep_once(conn, live_key=self.live)
+            self.assertTrue(conn.command("GET", "asm:sweeper"))
+            self.assertGreater(conn.command("TTL", "asm:sweeper"), 0)
+
+
+class ScriptShaTest(unittest.TestCase):
+    """The bug that made every future asm.lua edit a silent no-op."""
+
+    def test_the_sha_is_derived_from_the_body_not_cached(self):
+        """Redis keys its script cache by SHA1 of the body, so an edited script
+        MUST be a different sha by construction.
+
+        The previous implementation cached the sha in a file. After an edit,
+        EVALSHA still resolved against Redis's warm cache and silently ran the
+        OLD script -- no error, new signals simply ignored. Found only because a
+        freshly-added `gone` signal did nothing at all.
+        """
+        import hashlib
+
+        body = (SERVICE_DIR / "core" / "asm.lua").read_bytes()
+        expected = hashlib.sha1(body).hexdigest()      # noqa: S324
+
+        with Connection(URL) as conn:
+            loaded = conn.command("SCRIPT", "LOAD", body)
+        self.assertEqual(loaded, expected,
+                         "Redis disagrees with our sha derivation")
+
+        mutated = body + b"\n-- edit\n"
+        self.assertNotEqual(hashlib.sha1(mutated).hexdigest(),   # noqa: S324
+                            expected,
+                            "an edited script must not reuse the old sha")
 
 
 class RecordFailOpenTest(unittest.TestCase):

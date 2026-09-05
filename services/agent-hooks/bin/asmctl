@@ -9,6 +9,7 @@ Hermes PM under systemd.
   asmctl watch           live table, repainting
   asmctl log <scope>     the transition log for one agent
   asmctl tail            follow every transition as it happens
+  asmctl sweep           one sweep tick (stale / gone); run by the systemd timer
 
 Stdlib only, like the rest of agent-hooks.
 """
@@ -79,6 +80,13 @@ def render(conn: Connection) -> str:
 
     for h in sorted(data, key=lambda r: r.get("since", "0"), reverse=True):
         state = h.get("state", "?")
+        # Without a sweeper, `stale` and `gone` cannot fire, so any row here may
+        # be a dead agent frozen at its last known state. Render the whole table
+        # as untrusted rather than let it read as live.
+        if not sweeper:
+            state_color = DIM
+        else:
+            state_color = COLOR.get(state, "")
         since = float(h.get("since") or 0)
         held = human_ms(now - since) if since else "-"
         cwd = h.get("cwd", "")
@@ -86,9 +94,8 @@ def render(conn: Connection) -> str:
         pane = h.get("zellij_pane") or "-"
         basis = h.get("basis", "-")
         ts = f"{h.get('tools', '0')}/{h.get('subs', '0')}"
-        color = COLOR.get(state, "")
         lines.append(
-            f"{color}{state:<15}{RESET} {held:>7} {h.get('cli', '?'):<12} "
+            f"{state_color}{state:<15}{RESET} {held:>7} {h.get('cli', '?'):<12} "
             f"{where[:26]:<26} {str(pane):>6} {DIM}{basis:<10}{RESET} {ts}"
         )
 
@@ -133,6 +140,21 @@ def main(argv: list[str]) -> int:
             payload = dict(zip(fields[::2], fields[1::2])).get("j", "")
             print(payload)
         return 0
+
+    if cmd == "sweep":
+        from core.sweep import run as sweep_run  # noqa: PLC0415
+
+        summary = sweep_run(log=lambda m: print(m, file=sys.stderr))
+        for edge in summary["transitions"]:
+            print(f"{edge['from']} -> {edge['to']}  {edge['scope']}")
+        if os.environ.get("ASM_SWEEP_QUIET") != "1" or summary["transitions"]:
+            print(
+                f"swept {summary['seen']} agent(s): "
+                f"{summary['stale']} stale, {summary['gone']} gone, "
+                f"{summary['reaped']} ghost row(s) reaped",
+                file=sys.stderr,
+            )
+        return 1 if summary.get("error") else 0
 
     if cmd == "tail":
         # SUBSCRIBE holds the connection open; read replies forever.

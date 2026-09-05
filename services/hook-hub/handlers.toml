@@ -130,6 +130,14 @@
 #         stale gone idle      (stale/gone are produced by the sweeper)
 
 [[handler]]
+id               = "asm-stale-alert"
+mode             = "async"
+on_native        = ["transition"]
+match_transition = "^(working|tool_running|delegating)->stale$"
+command          = ["~/.agents/hooks/asm/notify-stale.sh"]
+timeout_ms       = 3000
+
+[[handler]]
 id               = "asm-log"
 mode             = "async"
 on_native        = ["transition"]

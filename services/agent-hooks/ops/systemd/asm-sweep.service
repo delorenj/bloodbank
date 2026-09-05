@@ -1,0 +1,19 @@
+# One sweep tick: mark wedged agents `stale`, reap exited ones as `gone`.
+#
+# Type=oneshot driven by a timer, deliberately NOT a daemon. There is no ack
+# floor, no durable consumer and no reconnect to get wrong, and a crash is
+# repaired by the next tick 15 seconds later rather than by a restart policy.
+# Plain python3 for the same reason as hook-hub: `mise x` adds ~11ms.
+[Unit]
+Description=33GOD ASM sweeper - stale/gone detection for live agents
+Documentation=file:%h/code/33GOD/bloodbank/services/agent-hooks/README.md
+
+[Service]
+Type=oneshot
+# Runs from / so nothing here can depend on a caller's working directory.
+WorkingDirectory=/
+ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/agent-hooks/bin/asmctl sweep
+# Only speak when something actually changed; systemd rotates the journal, so
+# there is no unrotated log file growing inside the repo.
+Environment=ASM_SWEEP_QUIET=1
+NoNewPrivileges=yes

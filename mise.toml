@@ -214,6 +214,35 @@ description = "Validate the agent-hooks SSOT and generated publisher maps"
 env = { BLOODBANK_ASM = "false" }
 run = "mise run hooks:check && python3 -m unittest discover -s services/agent-hooks/tests -p 'test_attention*.py'"
 
+[tasks."asm:install"]
+description = "Link the ASM sweeper systemd --user timer and start it (stale/gone detection)"
+run = """
+set -euo pipefail
+UNITS="$HOME/.config/systemd/user"
+mkdir -p "$UNITS"
+for u in asm-sweep.service asm-sweep.timer; do
+  ln -sfn "$PWD/services/agent-hooks/ops/systemd/$u" "$UNITS/$u"
+  echo "linked $u"
+done
+systemctl --user daemon-reload
+systemctl --user enable --now asm-sweep.timer
+systemctl --user --no-pager list-timers asm-sweep.timer --all | head -3
+"""
+
+[tasks."asm:uninstall"]
+description = "Stop the ASM sweeper and remove its systemd --user units"
+run = """
+set -uo pipefail
+systemctl --user disable --now asm-sweep.timer asm-sweep.service 2>/dev/null || true
+rm -f "$HOME/.config/systemd/user/asm-sweep.timer" "$HOME/.config/systemd/user/asm-sweep.service"
+systemctl --user daemon-reload
+echo "ASM sweeper units removed"
+"""
+
+[tasks."asm:sweep"]
+description = "Run one ASM sweep tick by hand (stale/gone)"
+run = "python3 services/agent-hooks/bin/asmctl sweep"
+
 [tasks."asm:test"]
 description = "Agent State Machine invariants (real asm.lua against a throwaway Redis prefix)"
 env = { BLOODBANK_ASM = "false" }

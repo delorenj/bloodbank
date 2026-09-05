@@ -32,6 +32,7 @@ local maxlen     = tonumber(ARGV[8])
 local scope      = ARGV[9]
 
 -- Server clock, so racing hooks from different processes share one timebase.
+local nothing
 local t   = redis.call('TIME')
 local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 
@@ -113,6 +114,12 @@ elseif sig == 'attention' then
   blocked_until = now + att_ms
 elseif sig == 'fail' then
   err_ms = now
+elseif sig == 'stale' or sig == 'gone' then
+  -- Sweeper verdicts. They carry no counter delta: the sweeper observed
+  -- something the event stream cannot express (silence, or /proc vanishing),
+  -- and the counters stay exactly as they were so a late signal self-heals
+  -- back to the right level instead of resuming from a fiction.
+  nothing = true
 end
 
 if tools < 0  then tools = 0  end
@@ -131,7 +138,13 @@ local subs = redis.call('ZCARD', lkey)
 -- Priority order is the whole semantics. awaiting_human outranks everything
 -- because a blocked agent that is also mid-tool is blocked, not busy.
 local level
-if blocked_until > now then
+if sig == 'gone' then
+  -- A DIRECT OBSERVATION that the process is no longer in /proc, which is the
+  -- one fact no bus consumer can ever learn. Terminal.
+  level = 'gone'
+elseif sig == 'stale' then
+  level = 'stale'
+elseif blocked_until > now then
   level = 'awaiting_human'
 elseif err_ms > 0 and (now - err_ms) < err_grace then
   level = 'failed'
@@ -179,7 +192,16 @@ redis.call('ZREMRANGEBYSCORE', live, '-inf', now - (ttl * 1000))
 redis.call('EXPIRE', live, ttl)
 if pidx ~= '' then redis.call('SET', pidx, scope, 'EX', ttl) end
 
+local function reap()
+  redis.call('DEL', hkey, tkey, lkey)
+  redis.call('ZREM', live, scope)
+  if pidx ~= '' then redis.call('DEL', pidx) end
+end
+
 if prev == level then
+  -- `gone` is terminal, so reap even on the (rare) repeat observation rather
+  -- than leaving a dead row pinned in the table forever.
+  if level == 'gone' then reap() end
   return nil
 end
 
@@ -216,5 +238,9 @@ local js = cjson.encode(tr)
 redis.call('XADD', tkey, 'MAXLEN', '~', maxlen, '*', 'j', js)
 redis.call('EXPIRE', tkey, ttl)
 redis.call('PUBLISH', 'asm:transitions', js)
+
+-- Reap AFTER the edge has been recorded and published, so `->gone` still
+-- reaches its handlers on the way out.
+if level == 'gone' then reap() end
 
 return js
