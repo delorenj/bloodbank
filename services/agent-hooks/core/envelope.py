@@ -63,6 +63,7 @@ def build_envelope(
     command_id: str | None = None,
     idempotency_key: str | None = None,
     delivery: str | None = None,
+    ephemeral: dict | None = None,
     schemaref: str | None = None,
     dataschema: str | None = None,
     traceparent: str | None = None,
@@ -156,6 +157,9 @@ def build_envelope(
         envelope["idempotency_key"] = idempotency_key
         envelope["delivery"] = delivery or "single_consumer"
     # kind=reply has no additional required fields beyond causation_id.
+
+    if ephemeral is not None:
+        envelope["ephemeral"] = ephemeral
 
     # Always run stdlib contract checks; loud failure on violation.
     assert_contract(envelope)

@@ -25,6 +25,7 @@ import sys
 from typing import Any
 
 from core.envelope import build_envelope, now_iso
+from core.ephemeral import ephemeral_context
 from core.event_map import (resolve_alert_kind_map, resolve_alert_map,
                             resolve_map)
 from core.nats_publish import publish as nats_publish
@@ -227,6 +228,12 @@ def run(adapter: ClientAdapter, argv: list[str]) -> int:
             causation_id=causation_id,
             ordering_key=f"{bucket_prefix}:{correlation_id}",
             event_id=event_id,
+            ephemeral=ephemeral_context(
+                cwd=session.working_directory,
+                harness=adapter.name,
+                turn_number=session.turn_number,
+                payload=payload,
+            ),
         )
     except Exception as exc:
         adapter.log(f"handler failed hook={hook_name} type={ce_type} err={exc!r}")

@@ -22,7 +22,10 @@ from core.publisher import run  # noqa: E402
 _DEFAULT_MAP = HermesAdapter.default_map
 HOOK_MAP = resolve_map(HermesAdapter().agent_dir, _DEFAULT_MAP)
 HERMES_SOURCE = HermesAdapter.source
-HERMES_PRODUCER = HermesAdapter.producer
+# producer is a per-profile @property on the adapter — reading it off the
+# CLASS yields the property object itself, which then fails schema validation
+# downstream ("<property object> is not of type 'string'").
+HERMES_PRODUCER = HermesAdapter().producer
 HERMES_SERVICE = HermesAdapter.service
 HERMES_ACTOR = dict(HermesAdapter.actor_base)
 

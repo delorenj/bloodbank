@@ -182,6 +182,62 @@
       "enum": ["single_consumer"],
       "description": "Command delivery semantics. v1 supports single_consumer only. Required for kind=command."
     },
+    "ephemeral": {
+      "type": "object",
+      "description": "Present only when the event originates from an ephemeral runtime context — currently: a git worktree (e.g. repo/.worktrees/<branch>), which fleet policy treats as a short-lived staging area deleted on merge. Carries the session's identifying data so consumers can persist breadcrumbs before the context (worktree, session file, transcript, CLI session history keyed on its path) dies. Absent means a durable context. Optional on every message kind.",
+      "properties": {
+        "worktree": {
+          "type": "object",
+          "description": "The ephemeral git worktree the event was published from.",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Absolute path of the worktree root.",
+              "examples": ["/home/operator/code/33GOD/.worktrees/feat-auth"]
+            },
+            "branch": {
+              "type": ["string", "null"],
+              "description": "Branch checked out in the worktree."
+            },
+            "repo": {
+              "type": ["string", "null"],
+              "description": "Repository name of the main checkout (basename of the common git dir's parent) — the durable identity this worktree belongs to."
+            },
+            "main_checkout": {
+              "type": ["string", "null"],
+              "description": "Absolute path of the main checkout."
+            }
+          },
+          "required": ["path"],
+          "additionalProperties": true
+        },
+        "session": {
+          "type": "object",
+          "description": "Identifying data for the agent session running in the ephemeral context. harness_session_id and transcript_path survive here even after the harness's own session files are gone.",
+          "properties": {
+            "harness": {
+              "type": ["string", "null"],
+              "examples": ["claude", "codex", "copilot"]
+            },
+            "harness_session_id": {
+              "type": ["string", "null"],
+              "description": "Harness-native session/thread id when the CLI provides one. Distinct from the publisher-internal correlationid."
+            },
+            "transcript_path": {
+              "type": ["string", "null"],
+              "description": "Harness transcript path at publish time; dangles after the session dies — consumers should copy what they need."
+            },
+            "turn_number": {
+              "type": ["integer", "null"]
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "required": ["worktree"],
+      "additionalProperties": true
+    },
     "data": {
       "type": "object",
       "description": "Domain-specific event payload. Validated separately by the domain schema identified by dataschema / schemaref."
