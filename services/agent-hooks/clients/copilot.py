@@ -68,15 +68,22 @@ class CopilotAdapter(ClientAdapter):
     ) -> dict[str, Any]:
         session_id = session.session_id
         raw = {"hook": hook_name, "payload": payload}
+        # Same gap as hermes: copilot carries the agent's cwd in the payload but
+        # never promoted it, so every copilot event was unattributable to a repo.
+        cwd = ""
+        if isinstance(payload, dict):
+            cwd = str(payload.get("cwd") or payload.get("working_directory") or "")
+        cwd = cwd or os.getcwd()
 
         if ce_type == "bloodbank.agent.session.started":
-            return {"session_id": session_id, **raw}
+            return {"session_id": session_id, "working_directory": cwd, **raw}
 
         if ce_type == "bloodbank.agent.session.ended":
             end_reason = None
             if isinstance(payload, dict):
                 end_reason = payload.get("reason") or payload.get("end_reason")
-            return {"session_id": session_id, "end_reason": end_reason, **raw}
+            return {"session_id": session_id, "end_reason": end_reason,
+                    "working_directory": cwd, **raw}
 
         if ce_type == "bloodbank.conversation.turn.started":
             prompt_text = None
@@ -86,6 +93,7 @@ class CopilotAdapter(ClientAdapter):
                 "thread_id": session_id,
                 "turn_id": session_id,
                 "prompt_text": prompt_text,
+                "working_directory": cwd,
                 **raw,
             }
 
@@ -103,6 +111,7 @@ class CopilotAdapter(ClientAdapter):
                 "invocation_id": session_id,
                 "tool_call_id": _tool_call_id(session_id, hook_name, payload),
                 "tool_name": tool_name,
+                "working_directory": cwd,
                 **raw,
             }
             if arguments is not None:

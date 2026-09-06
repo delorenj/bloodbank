@@ -110,17 +110,26 @@ class HermesAdapter(ClientAdapter):
         flat = _flatten(payload) if isinstance(payload, dict) else {}
         correlation = self.get_correlation_id(session, payload)
         raw = {"hook": hook_name, "payload": payload}
+        # The agent's cwd, on EVERY event -- not just session.started, and not
+        # os.getcwd(). Hermes runs under systemd, so the hook process's cwd is
+        # the unit's, not the agent's; the real one is in the payload and was
+        # simply never promoted. Consumers that attribute an event to a repo read
+        # data.working_directory, so without this the entire fleet is invisible
+        # to them: Deckard logged "event REFUSED: ... carries no
+        # working_directory" and dropped 16,014 events over three days.
+        cwd = _value(flat, "cwd", "working_directory") or os.getcwd()
 
         if ce_type == "bloodbank.conversation.turn.started":
             return {
                 "turn_id": correlation,
+                "working_directory": cwd,
                 **raw,
             }
 
         if ce_type == "bloodbank.agent.session.started":
             return {
                 "session_id": correlation,
-                "working_directory": os.getcwd(),
+                "working_directory": cwd,
                 **raw,
             }
 
@@ -128,6 +137,7 @@ class HermesAdapter(ClientAdapter):
             return {
                 "session_id": correlation,
                 "end_reason": _value(flat, "reason", "end_reason"),
+                "working_directory": cwd,
                 **raw,
             }
 
@@ -137,6 +147,7 @@ class HermesAdapter(ClientAdapter):
                 "tool_call_id": _tool_call_id(correlation, flat),
                 "tool_name": _tool_name(flat),
                 "arguments": _value(flat, "tool_input", "arguments") or {},
+                "working_directory": cwd,
                 **raw,
             }
 
@@ -146,6 +157,7 @@ class HermesAdapter(ClientAdapter):
                 "tool_call_id": _tool_call_id(correlation, flat),
                 "tool_name": _tool_name(flat),
                 "outcome": _outcome(flat),
+                "working_directory": cwd,
                 **raw,
             }
 
