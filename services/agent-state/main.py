@@ -95,6 +95,8 @@ class Projector:
             _env_int("AGENT_STATE_REDIS_PORT", 6379),
         )
         self.states: dict[str, dict] = {}
+        self.pane_to_tab: dict[tuple[str, int], int] = {}
+        self.has_attention = False
         self.running = True
 
     # -- redis surface --------------------------------------------------------
@@ -139,6 +141,7 @@ class Projector:
         if not sessions:
             return set()
         found: set[tuple[str, int]] = set()
+        self.pane_to_tab = {}
         looked = False
         for session in sessions:
             try:
@@ -158,10 +161,37 @@ class Projector:
                 pane = cols[3].strip()
                 if pane.startswith("terminal_"):
                     try:
-                        found.add((session, int(pane[len("terminal_"):])))
+                        ident = (session, int(pane[len("terminal_"):]))
                     except ValueError:
                         continue
+                    found.add(ident)
+                    try:
+                        self.pane_to_tab[ident] = int(cols[0].strip())
+                    except ValueError:
+                        pass
         return found if looked else None
+
+    def active_tabs(self, sessions: set[str]) -> dict[str, int]:
+        """The tab the user is looking at, per session. Empty when unknown."""
+        out: dict[str, int] = {}
+        for session in sessions:
+            try:
+                res = subprocess.run(
+                    [self.zellij, "--session", session, "action", "list-tabs", "--state"],
+                    capture_output=True, text=True, timeout=5,
+                    env={**os.environ, "ZELLIJ": "", "ZELLIJ_SESSION_NAME": ""},
+                ).stdout
+            except (OSError, subprocess.SubprocessError):
+                continue
+            for line in res.splitlines()[1:]:
+                cols = line.split("  ")
+                if len(cols) >= 4 and cols[3].strip() == "true":
+                    try:
+                        out[session] = int(cols[0].strip())
+                    except ValueError:
+                        pass
+                    break
+        return out
 
     def live_agents(self) -> set[tuple[str, int]] | None:
         try:
@@ -183,11 +213,25 @@ class Projector:
         return st.agent_panes(rows, _environ_of)
 
     def reconcile(self) -> None:
+        # Sessions we know of, plus any session an agent is alive in, so a pane
+        # that has never published can still be discovered.
         sessions = {e["session"] for e in self.states.values()}
-        panes = self.live_panes(sessions)
         agents = self.live_agents()
+        if agents:
+            sessions |= {ident[0] for ident in agents}
+        if not sessions:
+            sessions = {os.environ.get("AGENT_STATE_SESSION", "Workspace")}
+        panes = self.live_panes(sessions)
         gone = {k: (self.states[k]["session"], self.states[k]["pane"]) for k in self.states}
-        changed = st.reconcile(self.states, panes, agents, time.time())
+        now = time.time()
+        changed = st.reconcile(self.states, panes, agents, now)
+
+        # Arriving at a tab acknowledges its bell. Only worth asking zellij
+        # which tab is focused when something is actually waiting.
+        self.has_attention = any(e["state"] == st.ATTENTION for e in self.states.values())
+        if self.has_attention:
+            focused = st.focused_panes(self.pane_to_tab, self.active_tabs(sessions))
+            changed += st.clear_on_focus(self.states, focused, now)
         for key in changed:
             if key in self.states:
                 self.write(key)
@@ -228,7 +272,11 @@ class Projector:
 
             now = time.monotonic()
             if now >= next_reconcile:
-                next_reconcile = now + self.reconcile_secs
+                # A pending bell has to clear the moment the user looks at it,
+                # so tick fast WHILE one is outstanding and fall back to the slow
+                # cycle otherwise. Cost stays proportional to what is at stake.
+                interval = 1 if self.has_attention else self.reconcile_secs
+                next_reconcile = now + interval
                 self.reconcile()
 
         # Clean shutdown: drop our keys so consumers learn immediately rather

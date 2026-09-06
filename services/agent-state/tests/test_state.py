@@ -10,6 +10,8 @@ if str(SERVICE_DIR) not in sys.path:
 
 from state import (  # noqa: E402
     ATTENTION,
+    clear_on_focus,
+    focused_panes,
     ERROR,
     IDLE,
     WORKING,
@@ -137,10 +139,10 @@ class AgentPanesTest(unittest.TestCase):
             2: {"ZELLIJ_SESSION_NAME": "Workspace", "ZELLIJ_PANE_ID": "42"},
             3: {"ZELLIJ_SESSION_NAME": "Workspace", "ZELLIJ_PANE_ID": "43"},
         }
-        self.assertEqual(agent_panes(rows, envs.get), {("Workspace", 41)})
+        self.assertEqual(agent_panes(rows, envs.get), {("Workspace", 41): "claude"})
 
     def test_agent_outside_zellij_is_not_attributed(self) -> None:
-        self.assertEqual(agent_panes([(1, "claude")], lambda _pid: {}), set())
+        self.assertEqual(agent_panes([(1, "claude")], lambda _pid: {}), {})
 
 
 class ReconcileTest(unittest.TestCase):
@@ -199,3 +201,75 @@ class ReconcileTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PromotionTest(unittest.TestCase):
+    """Observation may CREATE state, not only correct it.
+
+    Without this the projector can only describe panes that happened to publish
+    while it was listening. An agent already running when the service started,
+    or one whose CLI has no bloodbank hooks at all, would stay invisible
+    forever -- which is exactly how a codex tab went dark.
+    """
+
+    def test_a_live_agent_with_no_state_becomes_working(self) -> None:
+        s: dict = {}
+        changed = reconcile(s, live_panes={PANE}, live_agents={PANE: "codex"}, now=100.0)
+        self.assertEqual(changed, [KEY])
+        self.assertEqual(s[KEY]["state"], WORKING)
+        self.assertEqual(s[KEY]["source"], "reconcile:agent-process-seen")
+        # A promoted pane names its agent, so it is as useful as an event-derived
+        # one -- consumers distinguish codex from claude.
+        self.assertEqual(s[KEY]["agent"], "codex")
+
+    def test_promotion_never_overwrites_a_known_state(self) -> None:
+        for existing in (ATTENTION, ERROR, IDLE):
+            with self.subTest(existing):
+                s = {KEY: {"session": "Workspace", "pane": 41, "state": existing,
+                           "since": 1.0, "seen": 99.0, "agent": "", "cwd": "", "source": "bus"}}
+                reconcile(s, live_panes={PANE}, live_agents={PANE}, now=100.0)
+                self.assertEqual(s[KEY]["state"], existing)
+
+    def test_an_agent_in_a_pane_we_cannot_see_is_not_promoted(self) -> None:
+        s: dict = {}
+        reconcile(s, live_panes=set(), live_agents={PANE}, now=100.0)
+        self.assertEqual(s, {})
+
+    def test_no_observation_promotes_nothing(self) -> None:
+        s: dict = {}
+        reconcile(s, live_panes=None, live_agents=None, now=100.0)
+        self.assertEqual(s, {})
+
+
+class FocusTest(unittest.TestCase):
+    def _bell(self) -> dict:
+        return {KEY: {"session": "Workspace", "pane": 41, "state": ATTENTION,
+                      "since": 1.0, "seen": 1.0, "agent": "", "cwd": "", "source": "bus"}}
+
+    def test_focused_panes_resolves_through_the_tab(self) -> None:
+        mapping = {("Workspace", 41): 7, ("Workspace", 42): 7, ("Workspace", 43): 9}
+        self.assertEqual(
+            focused_panes(mapping, {"Workspace": 7}),
+            {("Workspace", 41), ("Workspace", 42)},
+        )
+
+    def test_looking_at_the_tab_clears_its_bell(self) -> None:
+        s = self._bell()
+        changed = clear_on_focus(s, {PANE}, now=100.0)
+        self.assertEqual(changed, [KEY])
+        self.assertEqual(s[KEY]["state"], IDLE)
+        self.assertEqual(s[KEY]["source"], "focus:acknowledged")
+
+    def test_an_unfocused_bell_survives(self) -> None:
+        s = self._bell()
+        self.assertEqual(clear_on_focus(s, set(), now=100.0), [])
+        self.assertEqual(s[KEY]["state"], ATTENTION)
+
+    def test_focus_does_not_clear_error_or_working(self) -> None:
+        # A glance is not a fix. An unresolved failure outlives being looked at.
+        for keep in (ERROR, WORKING):
+            with self.subTest(keep):
+                s = self._bell()
+                s[KEY]["state"] = keep
+                self.assertEqual(clear_on_focus(s, {PANE}, now=100.0), [])
+                self.assertEqual(s[KEY]["state"], keep)

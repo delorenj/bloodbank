@@ -157,14 +157,17 @@ def apply_event(
     return key
 
 
-def agent_panes(ps_rows: Iterable[tuple[int, str]], environ_of) -> set[tuple[str, int]]:
-    """Which (session, pane) currently have a live agent process.
+def agent_panes(ps_rows: Iterable[tuple[int, str]], environ_of) -> dict[tuple[str, int], str]:
+    """Which (session, pane) have a live agent, mapped to WHICH agent.
+
+    A dict rather than a set so promotion can name the agent it found; `in`
+    still means the same thing at every call site.
 
     `ps_rows` is (pid, comm); `environ_of(pid)` returns that process's environ as
     a dict. Filtering on comm FIRST keeps this cheap -- environ is only read for
     the handful of processes that could possibly be an agent.
     """
-    live: set[tuple[str, int]] = set()
+    live: dict[tuple[str, int], str] = {}
     for pid, comm in ps_rows:
         if comm not in AGENT_COMMS:
             continue
@@ -176,16 +179,51 @@ def agent_panes(ps_rows: Iterable[tuple[int, str]], environ_of) -> set[tuple[str
         if not session or not pane:
             continue
         try:
-            live.add((session, int(pane)))
+            live[(session, int(pane))] = comm
         except (TypeError, ValueError):
             continue
     return live
 
 
+def focused_panes(
+    pane_to_tab: dict[tuple[str, int], int], active_tab: dict[str, int]
+) -> set[tuple[str, int]]:
+    """Panes belonging to the tab the user is currently looking at."""
+    out = set()
+    for ident, tab in pane_to_tab.items():
+        if active_tab.get(ident[0]) == tab:
+            out.add(ident)
+    return out
+
+
+def clear_on_focus(
+    states: dict[str, dict[str, Any]], focused: set[tuple[str, int]], now: float
+) -> list[str]:
+    """Arriving at a tab acknowledges its bell. Returns changed keys.
+
+    `attention` means "a human is being asked something", so looking at it IS
+    the answer. `error` deliberately does NOT clear this way -- an unresolved
+    failure should survive a glance and a move-on -- and `working` obviously
+    must not, since it is still working.
+    """
+    changed = []
+    for key, entry in states.items():
+        if entry["state"] != ATTENTION:
+            continue
+        if (entry["session"], entry["pane"]) not in focused:
+            continue
+        entry["state"] = IDLE
+        entry["since"] = now
+        entry["seen"] = now
+        entry["source"] = "focus:acknowledged"
+        changed.append(key)
+    return changed
+
+
 def reconcile(
     states: dict[str, dict[str, Any]],
     live_panes: set[tuple[str, int]] | None,
-    live_agents: set[tuple[str, int]] | None,
+    live_agents: dict[tuple[str, int], str] | set[tuple[str, int]] | None,
     now: float,
     *,
     working_grace: float = 20.0,
@@ -226,6 +264,32 @@ def reconcile(
             entry["since"] = now
             entry["seen"] = now
             entry["source"] = "reconcile:no-agent-process"
+            changed.append(key)
+
+    # PROMOTION. Observation creates state, it does not only correct it.
+    #
+    # Without this the projector can only ever describe panes that happened to
+    # publish while it was listening: an agent already running when the service
+    # started, or one whose CLI has no bloodbank hooks at all, stays invisible
+    # forever. Since a live agent process IS the evidence for `working`, seeing
+    # one is sufficient on its own.
+    if live_agents is not None:
+        for ident in live_agents:
+            if live_panes is not None and ident not in live_panes:
+                continue
+            key = pane_key(*ident)
+            if key in states:
+                continue
+            states[key] = {
+                "session": ident[0],
+                "pane": ident[1],
+                "state": WORKING,
+                "since": now,
+                "seen": now,
+                "agent": live_agents.get(ident, "") if isinstance(live_agents, dict) else "",
+                "cwd": "",
+                "source": "reconcile:agent-process-seen",
+            }
             changed.append(key)
     return changed
 
