@@ -38,7 +38,12 @@ from .resp import Connection
 TTL_SECONDS   = int(os.environ.get("BLOODBANK_ASM_TTL", "900"))
 LANE_GRACE_MS = 300_000      # a subagent lane older than this is presumed done
 ERR_GRACE_MS  = 30_000       # how long a failure keeps the row red
-ATTENTION_MS  = 1_800_000    # awaiting_human is non-decaying, capped at 30 min
+ATTENTION_MS  = 1_800_000    # a BELL: capped at 30 min
+# A GATE gets no such cap. An agent can sit on a permission prompt for hours, and
+# expiring the block would report `working` for an agent that is still stuck --
+# the exact false negative the bell/gate split exists to remove. The real bound
+# is /proc liveness, which the sweeper owns.
+GATE_MS       = int(os.environ.get("BLOODBANK_ASM_GATE_MS", 12 * 3600 * 1000))
 STREAM_MAXLEN = 500
 TIMEOUT       = float(os.environ.get("BLOODBANK_ASM_TIMEOUT", "0.25"))
 
@@ -398,7 +403,7 @@ def fire(conn: Connection, scope: str, signal: str, h: dict,
 
 
 def record(cli: str, ce_type: str | None, alert_kind: str | None,
-           payload: object, log=None) -> None:
+           payload: object, log=None, attention_kind: str | None = None) -> None:
     """Fold one hook into the state machine. Never raises. Never blocks."""
     if os.environ.get("BLOODBANK_ASM", "true") != "true":
         return
@@ -424,6 +429,13 @@ def record(cli: str, ce_type: str | None, alert_kind: str | None,
             "basis": basis, "zellij_session": zsess, "zellij_pane": zpane,
             "correlationid": "", "session_id": "",
             "last_role": ce_type or alert_kind or "",
+            # Which kind of attention, straight from the SSOT. A bell is answered
+            # by being seen; a gate is answered only by a keypress, so a surface
+            # must never clear one. Absent => bell, deliberately: wrongly
+            # acknowledging a bell costs a repaint, wrongly holding a gate open
+            # would freeze an agent in awaiting_human until its process dies.
+            "attention_kind": attention_kind or "bell",
+            "gate_ms": GATE_MS,
             # Only set for an agent-env scope; the sweeper resolves liveness
             # from this profile's gateway unit rather than from a pid.
             "profile": scope.split(":a:", 1)[1] if ":a:" in scope else "",

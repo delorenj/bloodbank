@@ -25,7 +25,8 @@ import sys
 from typing import Any
 
 from core.envelope import build_envelope, now_iso
-from core.event_map import resolve_alert_map, resolve_map
+from core.event_map import (resolve_alert_kind_map, resolve_alert_map,
+                            resolve_map)
 from core.nats_publish import publish as nats_publish
 from core.session import SessionState
 
@@ -149,11 +150,20 @@ def _asm_observe(adapter: ClientAdapter, hook_name: str, payload: Any) -> None:
     try:
         alert_kind = resolve_alert_map(adapter.agent_dir).get(hook_name)
         ce_type = None
+        attention_kind = None
         if alert_kind is None:
             mapping = resolve_map(adapter.agent_dir, adapter.default_map).get(hook_name)
             if mapping:
                 ce_type = mapping[0]
-        asm.record(adapter.name, ce_type, alert_kind, payload, log=adapter.log)
+        else:
+            # Bell or gate, from the generated SSOT projection. Read from a
+            # SIBLING table rather than the alert value itself: resolve_alert_map
+            # silently drops any non-string value, so folding the kind in there
+            # would empty the alert map and take BOTH the Deckard bell and
+            # awaiting_human with it, without an error anywhere.
+            attention_kind = resolve_alert_kind_map(adapter.agent_dir).get(hook_name)
+        asm.record(adapter.name, ce_type, alert_kind, payload, log=adapter.log,
+                   attention_kind=attention_kind)
     except Exception:
         return
 

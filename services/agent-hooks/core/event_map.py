@@ -57,6 +57,31 @@ def resolve_map(agent_dir: Path, default_map: Mapping[str, Pair]) -> dict[str, P
     return merged
 
 
+def resolve_alert_kind_map(agent_dir: Path) -> dict[str, str]:
+    """Return the generated hook-arg -> attention KIND map ("bell" | "gate").
+
+    A sibling of the alert map, not a refinement of it: `alerts` still says
+    WHETHER something wants attention (and Deckard's fanout keys on that literal
+    value), while this says WHAT KIND -- whether arriving at the pane answers it.
+
+    A bell is answered by being seen. A gate is not: an agent sitting on a
+    permission prompt stays blocked until a key is pressed, so a surface must
+    never clear it.
+
+    Defaults to bell at the call site when an entry is missing, deliberately.
+    Wrongly acknowledging a bell costs a repaint; wrongly holding a gate open
+    would freeze an agent in `awaiting_human` forever.
+    """
+    table = _load_table(agent_dir, "alert_kinds")
+    if table is None:
+        return {}
+    return {
+        str(arg): str(kind)
+        for arg, kind in table.items()
+        if isinstance(kind, str) and kind in ("bell", "gate")
+    }
+
+
 def resolve_alert_map(agent_dir: Path) -> dict[str, str]:
     """Return the generated hook-arg→normalized-alert-kind map.
 

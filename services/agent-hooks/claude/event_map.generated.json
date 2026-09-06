@@ -30,5 +30,10 @@
     "Notification": "attention",
     "PermissionRequest": "attention",
     "TeammateIdle": "attention"
+  },
+  "alert_kinds": {
+    "Notification": "bell",
+    "PermissionRequest": "gate",
+    "TeammateIdle": "bell"
   }
 }

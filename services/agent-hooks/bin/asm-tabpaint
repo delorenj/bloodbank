@@ -54,7 +54,23 @@ URL = (os.environ.get("ASM_REDIS_URL") or os.environ.get("TOOLING_REDIS_URL")
        or os.environ.get("REDIS_URL") or "redis://127.0.0.1:6379")
 
 ACTIVE = frozenset({"starting", "working", "tool_running", "delegating"})
+# Painted the same either way: a gated agent still needs you to walk over.
 BELL = frozenset({"awaiting_human"})
+
+
+def ackable(h: dict) -> bool:
+    """Can arriving at this tab answer it?
+
+    A BELL is answered by being seen. A GATE -- a permission prompt -- is not:
+    the agent stays blocked until a key is actually pressed, so clearing it on
+    sight would report `working` for an agent that is still stuck. Same state
+    name, same paint; only the acknowledgement differs.
+
+    Unknown/absent block_kind is treated as ackable, matching the arbiter's
+    default: over-acknowledging costs a repaint, under-acknowledging would leave
+    the tab lit until the agent's process dies.
+    """
+    return h.get("block_kind") != "gate"
 RED = frozenset({"failed", "stale"})
 
 # Higher wins when a tab holds several agents. Being asked a question outranks
@@ -177,7 +193,7 @@ class Painter:
             return
         for pane in panes.get(tab, []):
             entry = agents.get(pane)
-            if entry and entry[1] in BELL:
+            if entry and entry[1] in BELL and ackable(entry[2]):
                 try:
                     asm.fire(conn, entry[0], "ack", entry[2])
                 except (RedisError, OSError):
@@ -188,7 +204,7 @@ class Painter:
         names, panes = topo
         agents = self.agents(conn)
 
-        if any(s in BELL for _, s, _ in agents.values()):
+        if any(s in BELL and ackable(h) for _, s, h in agents.values()):
             self.acknowledge(conn, agents, panes, self.active_tab())
             agents = self.agents(conn)
 

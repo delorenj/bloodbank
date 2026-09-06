@@ -33,6 +33,18 @@ local maxlen     = tonumber(ARGV[8])
 local scope      = ARGV[9]
 
 -- Server clock, so racing hooks from different processes share one timebase.
+-- Signals a SURFACE may send. A surface observes a human; it does not run the
+-- agent, so it may only ever RELAX state. Enforced structurally below rather
+-- than trusted per-branch, so the next surface (deckard, the LED wall, Holocene)
+-- inherits the constraint instead of rediscovering it.
+local SURFACE = { ack = true }
+
+-- A gate is not a bell, so it does not get the bell's 30-minute cap: an agent
+-- can sit on a permission prompt for hours, and expiring it would report
+-- `working` for an agent that is still blocked -- the exact false negative this
+-- split exists to remove. Read from meta (never a new ARGV: a caller holding an
+-- older signature is how the telemetry write once half-applied this script).
+-- The real bound on a gate is /proc liveness, which the sweeper owns.
 local nothing
 local t   = redis.call('TIME')
 local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
@@ -60,7 +72,8 @@ end
 local prev          = cur['state']
 local turn          = num('turn')
 local tools         = num('tools')
-local blocked_until = num('blocked_until')
+local blocked_until = num('blocked_until')   -- a BELL: answered by being seen
+local gated_until   = num('gated_until')     -- a GATE: answered only by a keypress
 local err_ms        = num('err_ms')
 local seq           = num('seq')
 
@@ -70,7 +83,7 @@ local seq           = num('seq')
 -- `ack` originates from a SURFACE, which can be looking at a pane whose row
 -- already expired. Minting a row here would resurrect a dead agent as `idle`
 -- every time the human walked past its tab.
-if sig == 'ack' and (prev == nil or prev == '') then return nil end
+if SURFACE[sig] and (prev == nil or prev == '') then return nil end
 
 -- ---- which lane is 'main'? ------------------------------------------------
 --
@@ -98,11 +111,13 @@ local is_sub = (lane ~= '' and lane ~= 'main' and lane ~= main_lane)
 -- tool_done alone would wedge every codex agent in tool_running forever; the
 -- next turn boundary always repairs it.
 
+local gate_ms = tonumber(meta.gate_ms) or (12 * 3600 * 1000)
+
 if sig == 'start' then
-  turn, tools, blocked_until, err_ms = 0, 0, 0, 0
+  turn, tools, blocked_until, err_ms, gated_until = 0, 0, 0, 0, 0
   redis.call('DEL', lkey)
 elseif sig == 'prompt' then
-  turn, tools, blocked_until = 1, 0, 0
+  turn, tools, blocked_until, gated_until = 1, 0, 0, 0
 elseif sig == 'tool_req' then
   turn  = 1
   tools = tools + 1
@@ -118,9 +133,13 @@ elseif sig == 'tool_req' then
   blocked_until = 0
 elseif sig == 'tool_done' then
   tools = tools - 1
+  -- A claude permission gate is raised AFTER PreToolUse, so `tool_req` can never
+  -- end it -- the gated tool is the one still waiting. The only proof an answer
+  -- arrived is that the work DRAINED: a gated tool cannot complete unanswered.
+  if tools <= 0 then gated_until = 0 end
 elseif sig == 'sub_start' then
   turn = 1
-  blocked_until = 0
+  blocked_until, gated_until = 0, 0
   if is_sub then redis.call('ZADD', lkey, now, lane) end
 elseif sig == 'sub_done' then
   -- claude has NO invocation_start binding (9 bindings, SubagentStop only), so
@@ -128,10 +147,18 @@ elseif sig == 'sub_done' then
   -- ZCARD floors at 0, so the orphan cannot underflow into a negative count.
   if is_sub then redis.call('ZREM', lkey, lane) end
 elseif sig == 'quiesce' then
-  turn, tools, blocked_until, err_ms = 0, 0, 0, 0
+  turn, tools, blocked_until, err_ms, gated_until = 0, 0, 0, 0, 0
   redis.call('DEL', lkey)
 elseif sig == 'attention' then
-  blocked_until = now + att_ms
+  -- BELL vs GATE, from the SSOT (hooks.master.json attention_kind), never from
+  -- a hardcoded native name -- guessing that is exactly how the old health check
+  -- rotted. Two scalars, not one plus a kind: a bell arriving after a gate would
+  -- overwrite a single field and let a glance clear a live block.
+  if meta.attention_kind == 'gate' then
+    gated_until = now + gate_ms
+  else
+    blocked_until = now + att_ms
+  end
 elseif sig == 'ack' then
   -- A HUMAN IS LOOKING AT IT. Arriving at the pane IS the answer to whatever
   -- raised `awaiting_human`, so the window closes on sight rather than on the
@@ -156,6 +183,24 @@ elseif sig == 'stale' or sig == 'gone' then
   -- and the counters stay exactly as they were so a late signal self-heals
   -- back to the right level instead of resuming from a fiction.
   nothing = true
+end
+
+-- THE SURFACE CONSTRAINT, enforced structurally.
+--
+-- Whatever the branch above did, put back every field a surface is not
+-- permitted to move. This runs AFTER the fold on purpose: it does not matter
+-- what a future surface signal's branch touches, because the restore is
+-- positional, not a reminder someone has to remember to honour. The only thing
+-- a surface may do is LOWER the bell -- never raise it, never touch the gate,
+-- never assert activity, never resolve a failure.
+if SURFACE[sig] then
+  turn        = num('turn')
+  tools       = num('tools')
+  err_ms      = num('err_ms')       -- a red is not resolved by being looked at
+  gated_until = num('gated_until')  -- a keypress answers a gate; a glance does not
+  if blocked_until > num('blocked_until') then
+    blocked_until = num('blocked_until')
+  end
 end
 
 if tools < 0  then tools = 0  end
@@ -192,7 +237,11 @@ elseif sig == 'gone' then
   level = 'gone'
 elseif sig == 'stale' then
   level = 'stale'
-elseif blocked_until > now then
+elseif blocked_until > now or gated_until > now then
+  -- ONE state name on purpose. Splitting awaiting_human into two would fan out
+  -- across five surfaces (tabpaint BELL/RANK, sweep SEVERITY, asmctl COLOR,
+  -- the Holocene severity map, claimability) for no gain; the distinction lives
+  -- in the `block_kind` field for anything that actually needs it.
   level = 'awaiting_human'
 elseif err_ms > 0 and (now - err_ms) < err_grace then
   level = 'failed'
@@ -221,7 +270,9 @@ end
 
 redis.call('HSET', hkey,
   'state', level, 'turn', s(turn), 'tools', s(tools), 'subs', s(subs),
-  'blocked_until', s(blocked_until), 'err_ms', s(err_ms), 'last_ms', s(now),
+  'blocked_until', s(blocked_until), 'gated_until', s(gated_until),
+  'block_kind', (gated_until > now and 'gate') or (blocked_until > now and 'bell') or '',
+  'err_ms', s(err_ms), 'last_ms', s(now),
   'scope', scope, 'sv', '1',
   'cli',            s(meta.cli),
   'pid',            s(meta.pid),
@@ -265,7 +316,20 @@ redis.call('EXPIRE', live, ttl)
 -- hash. It was hardcoded, and asm:seen is global regardless of which live index
 -- a caller passes -- so the suite wrote sweeptest|* fields straight into the
 -- telemetry that Holocene reads.
-if meta.last_role ~= nil and meta.last_role ~= '' and sig ~= 'discover' then
+-- `seen_key` may be ABSENT. Redis does not roll back a script's effects when it
+-- errors, so atomicity is not transactionality: a long-running caller holding an
+-- older call signature (one fewer KEY) made this HSET raise on a nil key AFTER
+-- the state write above had already landed. The observed result was a half
+-- application -- blocked_until cleared and the board flipped to `idle`, with NO
+-- transition recorded, so nothing downstream ever learned of it. Reproduced
+-- exactly against the running tab painter, which had started 7 minutes before
+-- KEYS[6] was introduced and swallows RedisError silently.
+--
+-- Degrading to "no telemetry" is the right failure: telemetry is the least
+-- important thing this script does, and it must never be able to corrupt the
+-- state it is describing.
+if seen_key ~= nil and seen_key ~= ''
+   and meta.last_role ~= nil and meta.last_role ~= '' and sig ~= 'discover' then
   redis.call('HSET', seen_key, s(meta.cli) .. '|' .. s(meta.last_role), s(now))
   -- Per-PROFILE liveness for Hermes, one field, no roles. The per-CLI matrix
   -- cannot see a single broken PM: `hermes` as a CLI fires constantly because

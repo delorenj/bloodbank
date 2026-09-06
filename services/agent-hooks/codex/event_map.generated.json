@@ -32,5 +32,8 @@
   },
   "alerts": {
     "PermissionRequest": "attention"
+  },
+  "alert_kinds": {
+    "PermissionRequest": "gate"
   }
 }

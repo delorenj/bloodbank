@@ -295,16 +295,27 @@ def render_event_map(agent: dict, lifecycle: dict, lock: dict) -> dict:
     out: dict[str, Any] = dict(GENERATED_HEADER)
     table: dict[str, list[str]] = {}
     alerts: dict[str, str] = {}
+    alert_kinds: dict[str, str] = {}
     for b in agent.get("bindings", []):
         if b.get("publish", True) is False:
             if b.get("alert"):
                 alerts[b["arg"]] = b["alert"]
+                # BELL or GATE. Projected as a SIBLING table rather than folded
+                # into the `alerts` value, because core/publisher.py
+                # _fanout_alert hard-rejects any alert kind that is not the
+                # literal "attention" -- encoding the distinction in that value
+                # would silently stop Deckard's amber key instead of refining it.
+                # Defaults to "bell": a surface acknowledging something it should
+                # not have is recoverable, silently holding a block open is not.
+                alert_kinds[b["arg"]] = str(b.get("attention_kind") or "bell")
             continue
         ce_type, bucket = effective_type(b, lifecycle, lock)
         table[b["arg"]] = [ce_type, bucket]
     out["map"] = table
     if alerts:
         out["alerts"] = alerts
+    if alert_kinds:
+        out["alert_kinds"] = alert_kinds
     return out
 
 

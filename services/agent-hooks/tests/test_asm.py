@@ -293,6 +293,88 @@ class LuaArbiterTest(unittest.TestCase):
         self.assertIsNone(self.fire("discover", meta={"cli": "codex", "pid": 1,
                                                       "cwd": "/tmp"}))
 
+    def test_a_glance_answers_a_bell(self):
+        self.fire("prompt")
+        self.fire("attention", meta={"cli": "t", "pid": 1, "cwd": "/tmp",
+                                     "attention_kind": "bell"})
+        self.assertEqual(self.state()["state"], "awaiting_human")
+        self.assertEqual(self.state()["block_kind"], "bell")
+        self.assertTrue(self.fire("ack"))
+        self.assertEqual(self.state()["state"], "working")
+
+    def test_a_glance_does_NOT_answer_a_gate(self):
+        """A permission prompt is answered by a KEYPRESS, not by being seen.
+        Clearing it on sight reports `working` for an agent that is still
+        blocked -- the exact false negative this split exists to remove."""
+        self.fire("prompt")
+        self.fire("tool_req")
+        self.fire("attention", meta={"cli": "t", "pid": 1, "cwd": "/tmp",
+                                     "attention_kind": "gate"})
+        self.assertEqual(self.state()["block_kind"], "gate")
+        self.assertIsNone(self.fire("ack"), "a surface must not clear a gate")
+        self.assertEqual(self.state()["state"], "awaiting_human")
+
+    def test_a_gate_ends_when_the_work_drains(self):
+        """A claude gate is raised AFTER PreToolUse, so tool_req can never end
+        it. The only proof an answer arrived is that the tool COMPLETED."""
+        self.fire("prompt")
+        self.fire("tool_req")
+        self.fire("attention", meta={"cli": "t", "pid": 1, "cwd": "/tmp",
+                                     "attention_kind": "gate"})
+        self.fire("tool_done")
+        self.assertEqual(self.state()["state"], "working")
+        self.assertEqual(self.state()["block_kind"], "")
+
+    def test_a_bell_after_a_gate_cannot_unlock_the_gate(self):
+        """Why two scalars and not one field plus a kind: a single scalar would
+        be overwritten by the later bell, and the glance would clear both."""
+        self.fire("prompt")
+        self.fire("tool_req")
+        self.fire("attention", meta={"cli": "t", "pid": 1, "cwd": "/tmp",
+                                     "attention_kind": "gate"})
+        self.fire("attention", meta={"cli": "t", "pid": 1, "cwd": "/tmp",
+                                     "attention_kind": "bell"})
+        self.fire("ack")
+        self.assertEqual(self.state()["state"], "awaiting_human",
+                         "the gate must survive acking the bell")
+        self.assertEqual(self.state()["block_kind"], "gate")
+
+    def test_an_unknown_attention_kind_defaults_to_bell(self):
+        """Absent kind => bell. Over-acknowledging costs a repaint;
+        under-acknowledging freezes an agent until its process dies."""
+        self.fire("prompt")
+        self.fire("attention")
+        self.assertEqual(self.state()["block_kind"], "bell")
+
+    # -- the surface constraint, enforced structurally ----------------------
+
+    def test_a_surface_signal_cannot_create_a_row(self):
+        self.assertIsNone(self.fire("ack"))
+        self.assertEqual(self.state(), {})
+
+    def test_a_surface_signal_cannot_escalate_or_resolve(self):
+        """THE regression test for the SURFACE class. If someone later adds a
+        signal to SURFACE whose branch asserts activity or clears a failure, the
+        positional restore after the fold must undo it -- and this fails if the
+        restore is ever removed or moved above the fold."""
+        self.fire("prompt")
+        self.fire("tool_req")
+        self.fire("fail")
+        before = self.state()
+        self.fire("ack")
+        after = self.state()
+        for field in ("turn", "tools", "err_ms", "gated_until"):
+            self.assertEqual(after[field], before[field],
+                             f"a surface signal moved {field}")
+
+    def test_a_surface_signal_can_only_lower_the_bell_never_raise_it(self):
+        self.fire("prompt")
+        self.fire("attention")
+        raised = int(self.state()["blocked_until"])
+        self.fire("ack")
+        self.assertEqual(int(self.state()["blocked_until"]), 0)
+        self.assertGreater(raised, 0)
+
     def test_attention_outranks_everything(self):
         self.fire("prompt")
         self.fire("tool_req")
