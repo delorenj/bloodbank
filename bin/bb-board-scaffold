@@ -36,11 +36,22 @@ REGISTRY = os.path.expanduser("~/.hermes/agents-registry.yaml")
 # The labels that carry machine meaning today. Everything else on a board is
 # descriptive and stays that board's own business. Keep this list short and
 # closed -- it is the part that must mean the same thing everywhere.
+# Colour encodes the axis, not the value: one family per axis, one shade per
+# value inside it. The rule exists because `bug` reached three colours by
+# accident -- and `lifecycle:triaged` had already reached two (teal on JIMB,
+# amber on 33GOD) before this list was enforced.
+#
+# `agent:` purple and the two `xp:` shades are the values already live on the
+# boards; they are copied here rather than chosen, so applying this list
+# recolours nothing that is already right.
 FUNCTIONAL_LABELS = [
-    ("lifecycle:triaged", "#3F76FF"),   # grooming finished; delegation gates on it
-    ("agent:working",     "#8B5CF6"),   # a turn is live on this ticket; self-clearing
-    ("xp:internal",       "#60646C"),   # audience: client-admin board
-    ("xp:external",       "#46A758"),   # audience: the client's own board
+    ("lifecycle:triaged",     "#3F76FF"),  # grooming finished; delegation gates on it
+    ("lifecycle:needs-input", "#7BA4FF"),  # parked on a human answer
+    ("lifecycle:blocked",     "#1E3A8A"),  # parked on something outside this ticket
+    ("agent:working",         "#8B5CF6"),  # a turn is live on this ticket; self-clearing
+    ("agent:failed",          "#C4B5FD"),  # the turn ended badly; needs a look
+    ("xp:internal",           "#586A7A"),  # audience: client-admin board
+    ("xp:external",           "#0693E3"),  # audience: the client's own board
 ]
 
 KEY = subprocess.run(["op", "read", "op://DeLoSecrets/Plane/apiKey"],
@@ -129,19 +140,43 @@ def scaffold(ident, ws, pid, ref_states, ref_labels, apply):
                 call("PATCH", f"/api/v1/workspaces/{ws}/projects/{pid}/states/{cur['id']}/", patch)
             aligned += 1
 
-    names = {l["name"] for l in paged(f"/api/v1/workspaces/{ws}/projects/{pid}/labels/")}
+    have_labels = {l["name"]: l for l in paged(
+        f"/api/v1/workspaces/{ws}/projects/{pid}/labels/")}
+    labelled = 0
     for name, color in ref_labels:
-        if name in names:
+        cur = have_labels.get(name)
+        if cur is None:
+            print(f"  {ident:10} {'+ label' if apply else '+ would add label'} {name}")
+            labelled += 1
+            if apply:
+                try:
+                    call("POST", f"/api/v1/workspaces/{ws}/projects/{pid}/labels/",
+                         {"name": name, "color": color})
+                except urllib.error.HTTPError as e:
+                    # A soft-deleted row 409s on recreate while GET reports count 0.
+                    print(f"  {ident:10}   label {name} refused ({e.code}) — leaving it")
             continue
-        print(f"  {ident:10} {'+ label' if apply else '+ would add label'} {name}")
-        if apply:
-            try:
-                call("POST", f"/api/v1/workspaces/{ws}/projects/{pid}/labels/",
-                     {"name": name, "color": color})
-            except urllib.error.HTTPError as e:
-                # A soft-deleted row 409s on recreate while GET reports count 0.
-                print(f"  {ident:10}   label {name} refused ({e.code}) — leaving it")
-    if not added and not aligned:
+        if (cur.get("color") or "").lower() != color.lower():
+            # One name, one colour, on every board -- that is what makes the set
+            # closed. Colour is cosmetic: recolouring cannot move a ticket or
+            # change what carries the label, unlike a state's group.
+            print(f"  {ident:10} {'~ recolour' if apply else '~ would recolour'} "
+                  f"{name} {cur.get('color')} -> {color}")
+            labelled += 1
+            if apply:
+                call("PATCH",
+                     f"/api/v1/workspaces/{ws}/projects/{pid}/labels/{cur['id']}/",
+                     {"color": color})
+
+    # Rule 3: a colon means machine-readable and closed. Any other colon label is
+    # a mistake or an axis nobody declared. Reported, never touched -- deleting a
+    # label strips it from every ticket carrying it, which is not recoverable.
+    declared = {n for n, _ in ref_labels}
+    stray = sorted(n for n in have_labels if ":" in n and n not in declared)
+    if stray:
+        print(f"  {ident:10} ? undeclared colon labels: {', '.join(stray)}")
+
+    if not added and not aligned and not labelled:
         print(f"  {ident:10} already matches")
 
 
