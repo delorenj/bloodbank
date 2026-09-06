@@ -1,0 +1,20 @@
+[Unit]
+Description=Paint agent-state onto the zellij tab bar
+Documentation=https://github.com/delorenj/bloodbank/tree/main/services/agent-state
+After=agent-state.service
+Wants=agent-state.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/agent-state/tabpaint.py
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=ZELLIJ_BIN=%h/.local/bin/zellij
+Environment=TABPAINT_SESSION=Workspace
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+Nice=5
+
+[Install]
+WantedBy=default.target

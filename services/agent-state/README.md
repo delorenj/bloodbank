@@ -52,20 +52,46 @@ event, which may be minutes away. A bus cannot answer that question.
 | `working` | an agent or subagent is doing something | turn ends, or reconcile finds no agent process |
 | `attention` | it stopped and needs a human | a new turn, or TTL |
 | `error` | the turn failed — 4xx, rate limit, out of tokens | a new turn, or TTL |
-| `idle` | nothing running | — |
+| `idle` | no agent, or an agent present but not working | — |
 
 Precedence is `attention > error > working > idle`, matching Deckard's
 `AgentState`: a human being asked a question outranks a turn that already failed
 and is now just sitting there.
 
-Two asymmetries that look like bugs until you know why:
+**Presence is not activity.** A pane is promoted from observation as `idle`,
+never `working`: an agent sitting at a prompt waiting for you has a live process
+too. Seeding those as `working` lit every tab green at once, and a signal that is
+always on carries no information. Events are what raise a pane to `working`, and
+they arrive within seconds — every tool call publishes.
+
+Three asymmetries that look like bugs until you know why:
 
 - **Mid-turn traffic never clobbers a waiting state.** A tool call firing must
   not erase the bell that says "answer me". But a *new prompt* does reset it —
   the human has plainly moved on.
+- **Observation can create state, not only correct it.** A pane with a live
+  agent that never published — an agent already running when the service
+  started, or a CLI with no bloodbank hooks — is discovered rather than left
+  invisible.
 - **`attention` and `error` are not decayed by process absence.** They are
   addressed to a person and outlive the process that raised them, which is
   exactly when they matter most. They end by acknowledgement or TTL.
+
+## Consumers
+
+`tabpaint.py` is the reference consumer and ships alongside — it paints the
+zellij tab bar and owns **no state machine of its own**. It reads Redis,
+aggregates panes up to tabs (worst state wins, so one agent asking a question is
+not hidden by its neighbour merely working), and renames. Every decision about
+what a state MEANS lives in the projector.
+
+That split is the point. The previous painter ran its own hook-driven state
+machine wired only into `~/.claude/settings.json`, so a **codex pane could never
+light up at all**. This one is agent-agnostic because the projector is.
+
+```bash
+systemctl --user enable --now zellij-tabpaint
+```
 
 ## Reading it
 

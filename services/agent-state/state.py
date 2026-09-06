@@ -271,8 +271,14 @@ def reconcile(
     # Without this the projector can only ever describe panes that happened to
     # publish while it was listening: an agent already running when the service
     # started, or one whose CLI has no bloodbank hooks at all, stays invisible
-    # forever. Since a live agent process IS the evidence for `working`, seeing
-    # one is sufficient on its own.
+    # forever.
+    #
+    # Seeded as IDLE, never WORKING. A live process is evidence of PRESENCE, not
+    # of ACTIVITY -- an agent sitting at a prompt waiting for you has a process
+    # too. Marking those `working` lit every tab green at once, which is worse
+    # than useless: a signal that is always on carries no information. Events
+    # are what raise a pane to `working`, and they arrive within seconds
+    # (every tool call publishes), so nothing is lost by waiting for one.
     if live_agents is not None:
         for ident in live_agents:
             if live_panes is not None and ident not in live_panes:
@@ -283,7 +289,7 @@ def reconcile(
             states[key] = {
                 "session": ident[0],
                 "pane": ident[1],
-                "state": WORKING,
+                "state": IDLE,
                 "since": now,
                 "seen": now,
                 "agent": live_agents.get(ident, "") if isinstance(live_agents, dict) else "",

@@ -212,11 +212,15 @@ class PromotionTest(unittest.TestCase):
     forever -- which is exactly how a codex tab went dark.
     """
 
-    def test_a_live_agent_with_no_state_becomes_working(self) -> None:
+    def test_a_live_agent_with_no_state_is_seeded_as_present(self) -> None:
         s: dict = {}
         changed = reconcile(s, live_panes={PANE}, live_agents={PANE: "codex"}, now=100.0)
         self.assertEqual(changed, [KEY])
-        self.assertEqual(s[KEY]["state"], WORKING)
+        # IDLE, not WORKING: a live process proves PRESENCE, not ACTIVITY. An
+        # agent waiting at a prompt has a process too, and marking those
+        # "working" lit every tab green at once -- a signal always on carries no
+        # information. Events raise it to working.
+        self.assertEqual(s[KEY]["state"], IDLE)
         self.assertEqual(s[KEY]["source"], "reconcile:agent-process-seen")
         # A promoted pane names its agent, so it is as useful as an event-derived
         # one -- consumers distinguish codex from claude.
