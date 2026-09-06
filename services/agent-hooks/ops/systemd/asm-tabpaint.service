@@ -13,6 +13,17 @@ Documentation=file:%h/code/33GOD/bloodbank/services/agent-hooks/README.md
 After=network-online.target
 
 [Service]
+# Kill the blink. The painter swaps 🟢 for ⚫ on alternate phases to signal
+# "busy", which is a rename of the zellij tab -- and deckard treats every rename
+# as a topology change. Measured: 841 renames and 1,090 full deck repaints in ten
+# minutes, to serve ONE real agent event. Setting ALT to the same glyph makes
+# both phases identical, so `rendered != want` never trips and a steady state
+# costs one rename, ever -- exactly what the painter's own comment promises.
+#
+# Nothing is lost: deckard already animates Active as a slow green breathe and
+# Hitl as a sharp amber pulse. Motion is ITS vocabulary; duplicating it in the
+# tab name only corrupted its change detection.
+Environment=TABPAINT_BLINK_ALT=🟢
 Type=simple
 ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/agent-hooks/bin/asm-tabpaint
 # Host service on purpose: it drives the zellij CLI, which does not exist in a
