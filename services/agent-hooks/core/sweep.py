@@ -116,28 +116,13 @@ def _alive(pid: int, starttime: int) -> bool:
 
 def _fire(conn: Connection, scope: str, signal: str, h: dict,
           live_key: str = "asm:live") -> dict | None:
-    """Push a sweeper verdict through asm.lua and return the transition."""
-    zsess, zpane = h.get("zellij_session", ""), h.get("zellij_pane", "")
-    pane_idx = f"asm:idx:pane:{zsess}:{zpane}" if (zsess and zpane) else ""
-    meta = {
-        "cli": h.get("cli", ""), "pid": h.get("pid", ""),
-        "starttime": h.get("starttime", ""), "cwd": h.get("cwd", ""),
-        "basis": h.get("basis", ""), "zellij_session": zsess,
-        "zellij_pane": zpane, "correlationid": h.get("correlationid", ""),
-        "session_id": h.get("session_id", ""), "last_role": f"sweep:{signal}",
-    }
-    keys = [f"asm:a:{scope}", f"asm:t:{scope}", f"asm:lane:{scope}",
-            live_key, pane_idx]
-    args = [signal, asm.TTL_SECONDS, "main", json.dumps(meta, separators=(",", ":")),
-            asm.LANE_GRACE_MS, asm.ERR_GRACE_MS, asm.ATTENTION_MS,
-            asm.STREAM_MAXLEN, scope]
-    result = asm._eval(conn, keys, args)
-    if not result:
-        return None
-    try:
-        return json.loads(result)
-    except (TypeError, ValueError):
-        return None
+    """Push a sweeper verdict through asm.lua and return the transition.
+
+    Thin by design: the proposer lives in `asm.fire` so the sweeper and the
+    surfaces that acknowledge a bell go through one code path into one
+    arbiter.
+    """
+    return asm.fire(conn, scope, signal, h, live_key)
 
 
 def sweep_once(conn: Connection, *, now_ms: float | None = None,

@@ -213,6 +213,48 @@ class LuaArbiterTest(unittest.TestCase):
         self.fire("tool_done")
         self.assertEqual(self.state()["state"], "awaiting_human")
 
+    def test_looking_at_it_ends_the_attention_window(self):
+        """A bell you have already walked over to must stop ringing.
+
+        Otherwise it rings for the full 30-minute cap after you have dealt with
+        it, and a signal that keeps firing after it is resolved is one you learn
+        to ignore -- which costs the bell its entire value.
+        """
+        self.fire("prompt")
+        self.fire("attention")
+        self.assertEqual(self.state()["state"], "awaiting_human")
+        self.fire("ack")
+        self.assertEqual(self.state()["state"], "working",
+                         "acknowledged: back to whatever the counters say")
+
+    def test_ack_does_not_clear_a_failure(self):
+        """`failed` deliberately survives a glance. A failed turn is not
+        resolved by being seen, and a red that vanishes the moment you look at
+        it is a red nobody can ever read."""
+        self.fire("prompt")
+        self.fire("fail")
+        self.assertEqual(self.state()["state"], "failed")
+        self.fire("ack")
+        self.assertEqual(self.state()["state"], "failed")
+
+    def test_ack_never_mints_a_row(self):
+        """An ack is a statement ABOUT an agent, not a claim that one exists.
+
+        Every other signal comes from the agent's own process; this one comes
+        from a SURFACE, which can be looking at a pane whose row already
+        expired. Minting one here would resurrect a dead agent as `idle` every
+        time the human walked past its tab.
+        """
+        self.assertIsNone(self.fire("ack"))
+        self.assertEqual(self.state(), {})
+
+    def test_ack_on_a_working_agent_is_a_no_op_edge(self):
+        """Nothing is waiting, so nothing changes and no handler should fire."""
+        self.fire("prompt")
+        self.assertEqual(self.state()["state"], "working")
+        self.assertIsNone(self.fire("ack"))
+        self.assertEqual(self.state()["state"], "working")
+
     def test_discovery_seeds_an_unobserved_agent_as_unknown_never_idle(self):
         """It would be easy to call a quiet agent idle -- an active one fires
         hooks constantly, so silence really does suggest rest. But that is an

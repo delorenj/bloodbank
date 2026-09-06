@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+"""asm-tabpaint -- render the Agent State Machine onto the zellij tab bar.
+
+A SURFACE, not a state machine. It reads `asm:*` out of Redis, folds the agents
+in a tab down to one glyph, and renames the tab. Every decision about what a
+state MEANS was already made by core/asm.lua; nothing here re-derives one.
+
+  asm:live  ──ZRANGE──►  asm:a:{scope}  ──►  worst per tab  ──►  rename-tab-by-id
+  asm:transitions ──SUBSCRIBE──► repaint now, instead of on the next tick
+
+That split is the entire point of this rewrite. The previous painter ran its
+OWN projector -- a second fold of the same bus into a second vocabulary in a
+second set of Redis keys -- so the two could disagree, and did: it had no
+`stale`, no `gone`, and no `delegating`, because those are states only /proc can
+observe and it was looking at the bus. One machine, many surfaces.
+
+STATES -> GLYPHS
+  starting / working / tool_running / delegating   🟢 blinking  -- motion is busy
+  awaiting_human                                   🔔 steady    -- stillness is waiting
+  failed / stale                                   🔴 steady    -- wedged or errored
+  idle / unknown / gone                            (nothing)
+
+A tab holds several panes, so it shows the WORST of them: one agent asking a
+question must not be hidden by its neighbour merely working.
+
+Every glyph is East_Asian_Width=W, exactly two columns, and the blink SWAPS 🟢
+for ⚫ rather than removing it -- so the tab never changes width and the bar
+never reflows. `⚠️` and `▫️` are a narrow base plus VS16 and jitter between one
+and two columns; do not use them. Check with:
+    python3 -c "import unicodedata;print(unicodedata.east_asian_width('X'))"
+
+STATELESS. The unmarked tab name is recovered by stripping known glyphs off the
+CURRENT name, never remembered in a file. A tab the user renames is adopted
+immediately, and a crash cannot strand a stale "original" that later overwrites
+a good name.
+"""
+from __future__ import annotations
+
+import os
+import re
+import signal as signalmod
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core import asm                       # noqa: E402
+from core.resp import Connection, RedisError  # noqa: E402
+
+URL = (os.environ.get("ASM_REDIS_URL") or os.environ.get("TOOLING_REDIS_URL")
+       or os.environ.get("REDIS_URL") or "redis://127.0.0.1:6379")
+
+ACTIVE = frozenset({"starting", "working", "tool_running", "delegating"})
+BELL = frozenset({"awaiting_human"})
+RED = frozenset({"failed", "stale"})
+
+# Higher wins when a tab holds several agents. Being asked a question outranks
+# a failure that already happened and is now just sitting there.
+RANK = {**{s: 1 for s in ACTIVE}, **{s: 2 for s in RED}, **{s: 3 for s in BELL}}
+MARK = {1: "🟢", 2: "🔴", 3: "🔔"}
+BLINKS = frozenset({1})
+ALT = os.environ.get("TABPAINT_BLINK_ALT", "⚫")
+
+# Every glyph this painter can leave on a name, plus the legacy ones from the
+# hook-era painter, so old markers are cleaned off rather than accumulating.
+_MARKERS = "".join(["🟢", "🔔", "🔴", "🟠", "✅", "⚫", "🔕", "⚠️", "⚠", "️"])
+_STRIP = re.compile(rf"^[{re.escape(_MARKERS)}\s]+|[{re.escape(_MARKERS)}\s]+$")
+
+
+def strip_markers(name: str) -> str:
+    return _STRIP.sub("", name)
+
+
+class Painter:
+    def __init__(self) -> None:
+        self.session = (os.environ.get("TABPAINT_SESSION")
+                        or os.environ.get("ZELLIJ_SESSION_NAME") or "Workspace")
+        self.zellij = os.environ.get("ZELLIJ_BIN", "zellij")
+        self.interval = float(os.environ.get("TABPAINT_INTERVAL", "0.5"))
+        self.topology_every = int(os.environ.get("TABPAINT_TOPOLOGY_EVERY", "10"))
+        self.rendered: dict[int, str] = {}
+        self.running = True
+
+    # -- zellij ---------------------------------------------------------------
+    def _zellij(self, *args: str) -> str | None:
+        try:
+            res = subprocess.run(
+                [self.zellij, "--session", self.session, "action", *args],
+                capture_output=True, text=True, timeout=5,
+                # Blanked so zellij treats this as an external client rather
+                # than a pane trying to act on its own session.
+                env={**os.environ, "ZELLIJ": "", "ZELLIJ_SESSION_NAME": ""},
+            )
+            return res.stdout if res.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    def topology(self) -> tuple[dict[int, str], dict[int, list[int]]] | None:
+        """(tab id -> current name, tab id -> its pane ids), or None if unknown.
+
+        `list-panes --tab` is ~104ms; `--json` is 4.7s, because it resolves
+        every pane's command out of ps. Never use --json here.
+        """
+        out = self._zellij("list-panes", "--tab")
+        if out is None:
+            return None
+        names: dict[int, str] = {}
+        panes: dict[int, list[int]] = {}
+        for line in out.splitlines()[1:]:
+            cols = line.split("  ")
+            if len(cols) < 4:
+                continue
+            try:
+                tab = int(cols[0].strip())
+            except ValueError:
+                continue
+            pane_col = cols[3].strip()
+            names.setdefault(tab, cols[2])
+            if pane_col.startswith("terminal_"):
+                try:
+                    panes.setdefault(tab, []).append(int(pane_col[len("terminal_"):]))
+                except ValueError:
+                    continue
+        return names, panes
+
+    def active_tab(self) -> int | None:
+        out = self._zellij("list-tabs", "--state")
+        if out is None:
+            return None
+        for line in out.splitlines()[1:]:
+            cols = line.split("  ")
+            if len(cols) >= 4 and cols[3].strip() == "true":
+                try:
+                    return int(cols[0].strip())
+                except ValueError:
+                    return None
+        return None
+
+    # -- the machine ----------------------------------------------------------
+    def agents(self, conn: Connection) -> dict[int, tuple[str, str, dict]]:
+        """pane id -> (scope, state, hash), for this session only.
+
+        Read off `asm:live` and the per-scope hashes rather than the pane index,
+        because the hash carries the pane as a FIELD -- one ZRANGE plus one
+        HGETALL per live agent, and no chance of following an index entry to a
+        row that has already expired. A row with no pane (a headless Hermes PM)
+        simply has no tab to paint and drops out here.
+        """
+        out: dict[int, tuple[str, str, dict]] = {}
+        scopes = conn.command("ZRANGE", "asm:live", "0", "-1") or []
+        for scope in scopes:
+            raw = conn.command("HGETALL", f"asm:a:{scope}")
+            if not raw:
+                continue
+            h = {raw[i]: raw[i + 1] for i in range(0, len(raw), 2)}
+            if h.get("zellij_session") != self.session:
+                continue
+            try:
+                pane = int(h.get("zellij_pane") or "")
+            except ValueError:
+                continue
+            out[pane] = (scope, h.get("state", "unknown"), h)
+        return out
+
+    def acknowledge(self, conn: Connection, agents, panes, tab: int | None) -> None:
+        """Looking at a tab answers its bell.
+
+        Fired as an `ack` SIGNAL through asm.lua, not written as a state: a
+        surface observes that a human arrived, and the arbiter decides what that
+        means. Clearing the key here would be this painter keeping its own
+        opinion of the state, which is the thing this rewrite exists to stop.
+        """
+        if tab is None:
+            return
+        for pane in panes.get(tab, []):
+            entry = agents.get(pane)
+            if entry and entry[1] in BELL:
+                try:
+                    asm.fire(conn, entry[0], "ack", entry[2])
+                except (RedisError, OSError):
+                    return
+
+    # -- loop -----------------------------------------------------------------
+    def paint(self, conn: Connection, topo, phase: int) -> None:
+        names, panes = topo
+        agents = self.agents(conn)
+
+        if any(s in BELL for _, s, _ in agents.values()):
+            self.acknowledge(conn, agents, panes, self.active_tab())
+            agents = self.agents(conn)
+
+        for tab, pane_ids in panes.items():
+            worst = 0
+            for pane in pane_ids:
+                entry = agents.get(pane)
+                if entry:
+                    worst = max(worst, RANK.get(entry[1], 0))
+            base = strip_markers(names.get(tab, ""))
+            if not base:
+                continue
+            if worst == 0:
+                want = base
+            elif worst in BLINKS and phase % 2:
+                want = f"{base} {ALT}"
+            else:
+                want = f"{base} {MARK[worst]}"
+
+            # Only talk to zellij when the rendered name actually changes. A
+            # steady state costs one rename, ever.
+            if self.rendered.get(tab) != want:
+                if self._zellij("rename-tab-by-id", str(tab), want) is not None:
+                    self.rendered[tab] = want
+                    names[tab] = want
+
+    def run(self) -> int:
+        print(f"asm-tabpaint up: session={self.session} redis={URL} "
+              f"interval={self.interval:.2f}s", file=sys.stderr, flush=True)
+        topo = None
+        phase = tick = 0
+        conn = sub = None
+        while self.running:
+            try:
+                if conn is None:
+                    conn = Connection(URL, timeout=5.0)
+                if sub is None:
+                    # A second connection, because SUBSCRIBE makes a connection
+                    # one-way. Its timeout IS the frame interval: every read
+                    # either delivers a transition to repaint on immediately or
+                    # times out into the next blink.
+                    sub = Connection(URL, timeout=self.interval)
+                    sub.command("SUBSCRIBE", "asm:transitions")
+
+                if tick % self.topology_every == 0 or topo is None:
+                    fresh = self.topology()
+                    if fresh is not None:
+                        topo = fresh
+                if topo is not None:
+                    self.paint(conn, topo, phase)
+
+                try:
+                    while True:
+                        # Drain: several agents can transition inside one frame,
+                        # and one repaint covers all of them.
+                        sub.read_push()
+                except (socket.timeout, TimeoutError):
+                    pass
+            except (RedisError, OSError, ConnectionError) as exc:
+                print(f"asm-tabpaint: {exc!r}; reconnecting", file=sys.stderr, flush=True)
+                for c in (conn, sub):
+                    if c is not None:
+                        c.close()
+                conn = sub = None
+                time.sleep(1.0)
+            phase += 1
+            tick += 1
+
+        # Leave the bar clean rather than frozen mid-blink.
+        if topo is not None:
+            for tab, name in topo[0].items():
+                base = strip_markers(name)
+                if base and base != name:
+                    self._zellij("rename-tab-by-id", str(tab), base)
+        for c in (conn, sub):
+            if c is not None:
+                c.close()
+        print("asm-tabpaint stopped", file=sys.stderr, flush=True)
+        return 0
+
+
+def main() -> int:
+    painter = Painter()
+
+    def stop(_s, _f):
+        painter.running = False
+
+    signalmod.signal(signalmod.SIGTERM, stop)
+    signalmod.signal(signalmod.SIGINT, stop)
+    return painter.run()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

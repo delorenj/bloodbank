@@ -1,0 +1,31 @@
+# Paint the Agent State Machine onto the zellij tab bar.
+#
+# A pure SURFACE: it reads asm:* and renames tabs. It owns no state, so it can
+# be restarted, killed, or run alongside other surfaces (Deckard, the Nanoleaf
+# wall) without any of them disagreeing about what an agent is doing.
+#
+# It does depend on the sweeper for honesty rather than for data: without
+# asm-sweep.timer nothing can produce `gone` or `stale`, so dead agents stay
+# frozen at their last state and the bar quietly lies.
+[Unit]
+Description=Paint the 33GOD Agent State Machine onto the zellij tab bar
+Documentation=file:%h/code/33GOD/bloodbank/services/agent-hooks/README.md
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/agent-hooks/bin/asm-tabpaint
+# Host service on purpose: it drives the zellij CLI, which does not exist in a
+# container.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=ZELLIJ_BIN=%h/.local/bin/zellij
+Environment=TABPAINT_SESSION=Workspace
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=3
+# It strips its own glyphs off every tab on the way out, so give it room to.
+TimeoutStopSec=10
+Nice=5
+
+[Install]
+WantedBy=default.target

@@ -342,6 +342,42 @@ def _eval(conn: Connection, keys: list[str], args: list[object]) -> object:
     return conn.command("EVALSHA", sha, len(keys), *keys, *args)
 
 
+def fire(conn: Connection, scope: str, signal: str, h: dict,
+         live_key: str = "asm:live") -> dict | None:
+    """Push one signal for an EXISTING scope through asm.lua. The transition, or None.
+
+    The proposer entry point for everything that is not a hook: the sweeper's
+    `stale`/`gone`/`discover` verdicts and a surface's `ack`. Those observers
+    know a scope and a fact about it, not a CloudEvent, so `record()`'s identity
+    ladder has nothing to resolve -- but the arbitration must still be the same
+    arbitration, or there are two state machines again.
+
+    `h` is the scope's current hash; its fields are carried straight back so an
+    out-of-band signal cannot blank the identity that hooks established.
+    """
+    zsess, zpane = h.get("zellij_session", ""), h.get("zellij_pane", "")
+    pane_idx = f"asm:idx:pane:{zsess}:{zpane}" if (zsess and zpane) else ""
+    meta = {
+        "cli": h.get("cli", ""), "pid": h.get("pid", ""),
+        "starttime": h.get("starttime", ""), "cwd": h.get("cwd", ""),
+        "basis": h.get("basis", ""), "zellij_session": zsess,
+        "zellij_pane": zpane, "correlationid": h.get("correlationid", ""),
+        "session_id": h.get("session_id", ""), "last_role": f"sweep:{signal}",
+        "profile": h.get("profile", ""),
+    }
+    keys = [f"asm:a:{scope}", f"asm:t:{scope}", f"asm:lane:{scope}",
+            live_key, pane_idx]
+    args = [signal, TTL_SECONDS, "main", json.dumps(meta, separators=(",", ":")),
+            LANE_GRACE_MS, ERR_GRACE_MS, ATTENTION_MS, STREAM_MAXLEN, scope]
+    result = _eval(conn, keys, args)
+    if not result:
+        return None
+    try:
+        return json.loads(result)
+    except (TypeError, ValueError):
+        return None
+
+
 def record(cli: str, ce_type: str | None, alert_kind: str | None,
            payload: object, log=None) -> None:
     """Fold one hook into the state machine. Never raises. Never blocks."""

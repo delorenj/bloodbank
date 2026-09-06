@@ -21,7 +21,14 @@ agent-hooks/
 │   ├── validate.py       # §2 regex, §5 tense, §6–§9 allowlists, §11 fields
 │   ├── event_map.py      # load a publisher's hook→type map from the SSOT projection
 │   ├── nats_publish.py   # stdlib-only NATS text-protocol PUB
-│   └── session.py        # file-backed SessionState (correlation/causation chain)
+│   ├── session.py        # file-backed SessionState (correlation/causation chain)
+│   ├── asm.py            # Agent State Machine — the hook-side proposer
+│   ├── asm.lua           # …and its arbiter. The ONLY writer of asm:*
+│   ├── sweep.py          # `stale` / `gone` — the two states no event can produce
+│   └── resp.py           # length-aware RESP2 client
+├── bin/
+│   ├── asmctl            # look at the state machine
+│   └── asm-tabpaint      # paint it onto the zellij tab bar
 ├── claude/
 │   ├── publish.py            # entry point for Claude Code hooks
 │   ├── settings.hooks.json   # GENERATED — merge into ~/.claude/settings.json
@@ -364,6 +371,74 @@ two managers never fight.
 synthesizing the same v1 event shapes (`agent.session.*`,
 `conversation.turn.started`, `agent.tool.*`, `agent.invocation.*`).
 `actor.cli=openclaw`, `actor.agent_id=bloodbank.agent.openclaw.<per-session-agent-id>`.
+
+## Agent State Machine
+
+One fold of every CLI's lifecycle into **what each agent is doing right now**,
+in Redis. It is the SSOT for agent state on this box — surfaces read it, and
+**nothing else re-derives it from the bus**. Two folds of one stream are two
+answers to one question, and they will disagree.
+
+```
+hooks (proposer) ─┐
+sweeper /proc     ├─► core/asm.lua (EVAL: the serialization point) ─► asm:* ─► surfaces
+surface `ack`     ─┘
+```
+
+`asm.lua` is the only writer. Redis is single-threaded and EVAL is atomic, so N
+racing hooks from N panes need no owning daemon, no CAS retry and no WATCH — and
+the `from` in every transition is provably the value that was replaced.
+
+### States
+
+| state | means |
+|---|---|
+| `starting` | the session just began |
+| `working` | in a turn |
+| `tool_running` | ≥1 tool in flight |
+| `delegating` | ≥1 subagent lane live |
+| `awaiting_human` | blocked on a person — permission, a question, idle-nudge |
+| `failed` | the turn errored |
+| `stale` | silent past the threshold with work outstanding, and still in /proc — **wedged** |
+| `gone` | `/proc/<pid>` is missing. An observation of exit, not a TTL guess |
+| `idle` | in the table, nothing outstanding |
+| `unknown` | discovered from /proc, never observed publishing |
+
+Priority is the semantics: `awaiting_human` outranks everything, because an
+agent that is blocked *and* mid-tool is blocked, not busy.
+
+`stale` and `gone` have no triggering hook **by definition** — they are the two
+facts the bus can never carry — so `asm-sweep.timer` asks /proc every 15s and
+fires its verdicts through the same arbiter.
+
+### Keys
+
+| key | type | holds |
+|---|---|---|
+| `asm:a:{scope}` | hash | current state + identity |
+| `asm:t:{scope}` | stream | that agent's transition log |
+| `asm:lane:{scope}` | zset | live subagent lanes |
+| `asm:live` | zset | every live scope, by last signal |
+| `asm:idx:pane:{sess}:{pane}` | string | pane → scope, a secondary index |
+| `asm:transitions` | pubsub | every edge, as JSON |
+
+The scope is the agent **process** (`cli:p:pid.starttime`), never the pane and
+never the correlationid — both were measured and both split one agent across
+several rows. See `resolve_scope()` for the numbers.
+
+### Surfaces
+
+A surface reads `asm:*` and renders. It may PROPOSE through `asm.fire()`; it
+may not decide.
+
+- `bin/asmctl` — `ls`, `watch`, `tail`, `log`, `agents`, `who`
+- `bin/asm-tabpaint` — the zellij tab bar (`ops/systemd/asm-tabpaint.service`)
+
+The one signal a surface originates is `ack`: arriving at a pane answers the
+question that raised `awaiting_human`, so the bell stops on sight rather than at
+the 30-minute cap. It clears *only* the attention window — `failed` survives a
+glance, because a red that vanishes when you look at it is a red nobody can
+read.
 
 ## Verify
 

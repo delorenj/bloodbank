@@ -265,7 +265,7 @@ def main(argv: list[str]) -> int:
         print(DIM + "listening on asm:transitions ..." + RESET, file=sys.stderr)
         try:
             while True:
-                msg = conn._read_reply()  # noqa: SLF001 -- pubsub has no api yet
+                msg = conn.read_push()
                 if isinstance(msg, list) and len(msg) == 3 and msg[0] == "message":
                     print(msg[2], flush=True)
         except KeyboardInterrupt:

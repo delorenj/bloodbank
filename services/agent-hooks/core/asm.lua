@@ -63,6 +63,14 @@ local blocked_until = num('blocked_until')
 local err_ms        = num('err_ms')
 local seq           = num('seq')
 
+-- An `ack` is a statement ABOUT an existing agent, never a claim that one
+-- exists. Nothing else in this script can be called for a scope that has no
+-- row, because every other signal originates from that agent's own process;
+-- `ack` originates from a SURFACE, which can be looking at a pane whose row
+-- already expired. Minting a row here would resurrect a dead agent as `idle`
+-- every time the human walked past its tab.
+if sig == 'ack' and (prev == nil or prev == '') then return nil end
+
 -- ---- which lane is 'main'? ------------------------------------------------
 --
 -- SELF-CALIBRATING, and it has to be. CLAUDE_CODE_SESSION_ID is set in EVERY
@@ -123,6 +131,17 @@ elseif sig == 'quiesce' then
   redis.call('DEL', lkey)
 elseif sig == 'attention' then
   blocked_until = now + att_ms
+elseif sig == 'ack' then
+  -- A HUMAN IS LOOKING AT IT. Arriving at the pane IS the answer to whatever
+  -- raised `awaiting_human`, so the window closes on sight rather than on the
+  -- 30-minute cap -- otherwise a bell you have already dealt with keeps
+  -- ringing, which is exactly how a person learns to ignore the bell.
+  --
+  -- It clears ONLY the attention window. `err_ms` deliberately survives a
+  -- glance: a failed turn is not resolved by being seen, and a red that
+  -- vanishes when you look at it is a red you can never read. Counters are
+  -- untouched for the same reason -- a tool still running is still running.
+  blocked_until = 0
 elseif sig == 'fail' then
   err_ms = now
 elseif sig == 'discover' then
@@ -230,6 +249,28 @@ redis.call('ZADD', live, now, scope)
 -- nanoleaf wall and Holocene's stats is an OOM, not a leak.
 redis.call('ZREMRANGEBYSCORE', live, '-inf', now - (ttl * 1000))
 redis.call('EXPIRE', live, ttl)
+
+-- HOOK TELEMETRY: when did this (cli, event type) pair last actually fire?
+--
+-- Recorded here rather than derived from Candystore because the hook is the one
+-- place that KNOWS what it just published -- no Postgres driver, no credentials,
+-- no docker exec, and it stays stdlib-only. One HSET on a bounded hash (5 CLIs x
+-- ~10 event types = ~50 fields) inside an EVAL that already costs 0.023ms.
+--
+-- This is what makes "configured but never fires" observable. A config parser
+-- can only catch the failure modes it was taught to look for; absence of traffic
+-- catches every reason at once.
+if meta.last_role ~= nil and meta.last_role ~= '' and sig ~= 'discover' then
+  redis.call('HSET', 'asm:seen', s(meta.cli) .. '|' .. s(meta.last_role), s(now))
+  -- Per-PROFILE liveness for Hermes, one field, no roles. The per-CLI matrix
+  -- cannot see a single broken PM: `hermes` as a CLI fires constantly because
+  -- 21 other profiles work, which is exactly how two PMs (infra, ssbnk) sat
+  -- emitting nothing at all without the fleet looking unhealthy.
+  if meta.profile ~= nil and meta.profile ~= '' then
+    redis.call('HSET', 'asm:seen', 'profile|' .. s(meta.profile), s(now))
+  end
+  redis.call('EXPIRE', 'asm:seen', 2592000)   -- 30d, refreshed on every write
+end
 if pidx ~= '' then redis.call('SET', pidx, scope, 'EX', ttl) end
 
 local function reap()

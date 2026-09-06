@@ -101,6 +101,20 @@ class Connection:
         self._sock.sendall(encode(*parts))
         return self._read_reply()
 
+    def read_push(self) -> object:
+        """Read one server-pushed reply on a connection already in pubsub mode.
+
+        SUBSCRIBE turns the connection one-way: the server sends when it feels
+        like it and there is no command to pair the reply with, so a caller
+        needs to read WITHOUT writing. That is the whole of it -- the parser is
+        the same one `command()` uses.
+
+        A `socket.timeout` propagates rather than being swallowed, so a caller
+        can use the connection timeout as a poll interval and still do other
+        work between messages.
+        """
+        return self._read_reply()
+
     def close(self) -> None:
         try:
             self._sock.close()
