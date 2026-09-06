@@ -39,8 +39,10 @@ class LuaArbiterTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.scope = f"{PREFIX}:{self.id().rsplit('.', 1)[-1]}"
+        self.seen = f"asm:seen:{self.scope}"
         self.keys = [f"asm:a:{self.scope}", f"asm:t:{self.scope}",
-                     f"asm:lane:{self.scope}", f"asm:live:{self.scope}", ""]
+                     f"asm:lane:{self.scope}", f"asm:live:{self.scope}", "",
+                     self.seen]
         self._clean()
 
     def tearDown(self) -> None:
@@ -373,8 +375,9 @@ class SweeperTest(unittest.TestCase):
     def setUp(self) -> None:
         self.scope = f"{PREFIX}:sweep:{self.id().rsplit('.', 1)[-1]}"
         self.live = f"asm:live:{self.scope}"
+        self.seen = f"asm:seen:{self.scope}"
         self.keys = [f"asm:a:{self.scope}", f"asm:t:{self.scope}",
-                     f"asm:lane:{self.scope}", self.live, ""]
+                     f"asm:lane:{self.scope}", self.live, "", self.seen]
         self._clean()
 
     def tearDown(self) -> None:
@@ -590,6 +593,18 @@ class SweeperTest(unittest.TestCase):
             summary = sweep.sweep_once(conn, live_key=self.live, discover=False)
             self.assertEqual(summary["reaped"], 1)
             self.assertIsNone(conn.command("ZSCORE", self.live, "no-such-scope"))
+
+    def test_the_telemetry_hash_is_never_the_production_one(self):
+        """asm:seen is global no matter which live index a caller passes, so a
+        suite firing through the real Lua wrote sweeptest|* fields straight into
+        the telemetry Holocene reads. It is KEYS[6] now."""
+        me = os.getpid()
+        self.seed("prompt", pid=me, starttime=asm.proc_stat(me)[2])
+        with Connection(URL) as conn:
+            polluted = [k for k in (conn.command("HKEYS", "asm:seen") or [])
+                        if k.startswith(("sweeptest|", "asmtest"))]
+            self.assertEqual(polluted, [],
+                             f"test data leaked into production telemetry: {polluted}")
 
     def test_sweeper_publishes_its_own_liveness(self):
         with Connection(URL) as conn:

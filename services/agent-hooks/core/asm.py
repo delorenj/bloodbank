@@ -44,6 +44,10 @@ TIMEOUT       = float(os.environ.get("BLOODBANK_ASM_TIMEOUT", "0.25"))
 
 _LUA = Path(__file__).with_name("asm.lua")
 
+# Which (cli, event type) pairs have actually fired. A KEY rather than a literal
+# inside the Lua so tests can redirect it; see core/asm.lua.
+SEEN_KEY = "asm:seen"
+
 # ce_type -> signal. Derived from the SSOT-generated event map rather than a
 # hardcoded role list, because hooks.master.json declares TEN roles, not the
 # eight its own header comment lists (`turn_complete` and `tool_invoked` are
@@ -352,7 +356,7 @@ def _eval(conn: Connection, keys: list[str], args: list[object]) -> object:
 
 
 def fire(conn: Connection, scope: str, signal: str, h: dict,
-         live_key: str = "asm:live") -> dict | None:
+         live_key: str = "asm:live", seen_key: str = "asm:seen") -> dict | None:
     """Push one signal for an EXISTING scope through asm.lua. The transition, or None.
 
     The proposer entry point for everything that is not a hook: the sweeper's
@@ -371,11 +375,17 @@ def fire(conn: Connection, scope: str, signal: str, h: dict,
         "starttime": h.get("starttime", ""), "cwd": h.get("cwd", ""),
         "basis": h.get("basis", ""), "zellij_session": zsess,
         "zellij_pane": zpane, "correlationid": h.get("correlationid", ""),
-        "session_id": h.get("session_id", ""), "last_role": f"sweep:{signal}",
+        # NOT a role, and deliberately NOT written into the telemetry hash:
+        # `stale`, `gone`, `discover` and `ack` are VERDICTS about an agent, not
+        # event types it emitted. Stamping them as roles put `claude|sweep:ack`
+        # and `hermes|sweep:gone` into asm:seen beside real CloudEvents types,
+        # and attributed a surface's ack to the sweeper. The verdict is already
+        # carried by `reason` on the transition.
+        "session_id": h.get("session_id", ""), "last_role": "",
         "profile": h.get("profile", ""),
     }
     keys = [f"asm:a:{scope}", f"asm:t:{scope}", f"asm:lane:{scope}",
-            live_key, pane_idx]
+            live_key, pane_idx, seen_key]
     args = [signal, TTL_SECONDS, "main", json.dumps(meta, separators=(",", ":")),
             LANE_GRACE_MS, ERR_GRACE_MS, ATTENTION_MS, STREAM_MAXLEN, scope]
     result = _eval(conn, keys, args)
@@ -423,7 +433,7 @@ def record(cli: str, ce_type: str | None, alert_kind: str | None,
         pane_idx = f"asm:idx:pane:{zsess}:{zpane}" if (zsess and zpane) else ""
 
         keys = [f"asm:a:{scope}", f"asm:t:{scope}", f"asm:lane:{scope}",
-                "asm:live", pane_idx]
+                "asm:live", pane_idx, SEEN_KEY]
         args = [signal, TTL_SECONDS, _lane(signal, payload),
                 json.dumps(meta, separators=(",", ":")),
                 LANE_GRACE_MS, ERR_GRACE_MS, ATTENTION_MS, STREAM_MAXLEN, scope]

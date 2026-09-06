@@ -20,6 +20,7 @@ local tkey  = KEYS[2]   -- asm:t:{scope}        STREAM transition log
 local lkey  = KEYS[3]   -- asm:lane:{scope}     ZSET   lane_id -> last_ms
 local live  = KEYS[4]   -- asm:live             ZSET   scope -> last_ms
 local pidx  = KEYS[5]   -- asm:idx:pane:{zs}:{p} STRING scope pointer
+local seen_key = KEYS[6]   -- asm:seen             HASH   (cli|type) -> last fired
 
 local sig        = ARGV[1]
 local ttl        = tonumber(ARGV[2])
@@ -260,16 +261,20 @@ redis.call('EXPIRE', live, ttl)
 -- This is what makes "configured but never fires" observable. A config parser
 -- can only catch the failure modes it was taught to look for; absence of traffic
 -- catches every reason at once.
+-- `seen_key` is a KEY, not a literal, so a test can point it at a throwaway
+-- hash. It was hardcoded, and asm:seen is global regardless of which live index
+-- a caller passes -- so the suite wrote sweeptest|* fields straight into the
+-- telemetry that Holocene reads.
 if meta.last_role ~= nil and meta.last_role ~= '' and sig ~= 'discover' then
-  redis.call('HSET', 'asm:seen', s(meta.cli) .. '|' .. s(meta.last_role), s(now))
+  redis.call('HSET', seen_key, s(meta.cli) .. '|' .. s(meta.last_role), s(now))
   -- Per-PROFILE liveness for Hermes, one field, no roles. The per-CLI matrix
   -- cannot see a single broken PM: `hermes` as a CLI fires constantly because
   -- 21 other profiles work, which is exactly how two PMs (infra, ssbnk) sat
   -- emitting nothing at all without the fleet looking unhealthy.
   if meta.profile ~= nil and meta.profile ~= '' then
-    redis.call('HSET', 'asm:seen', 'profile|' .. s(meta.profile), s(now))
+    redis.call('HSET', seen_key, 'profile|' .. s(meta.profile), s(now))
   end
-  redis.call('EXPIRE', 'asm:seen', 2592000)   -- 30d, refreshed on every write
+  redis.call('EXPIRE', seen_key, 2592000)   -- 30d, refreshed on every write
 end
 if pidx ~= '' then redis.call('SET', pidx, scope, 'EX', ttl) end
 
