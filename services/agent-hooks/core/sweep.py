@@ -249,7 +249,8 @@ def _human(ms: float) -> str:
     return f"{seconds / 3600:.1f}h"
 
 
-def write_holocene_stat(conn: Connection, *, now_ms: float | None = None) -> int:
+def write_holocene_stat(conn: Connection, *, now_ms: float | None = None,
+                        live_key: str = "asm:live") -> int:
     """Publish the live agent board to the key Holocene reads.
 
     This is the payoff for an operator who is headless or away from the box: the
@@ -264,7 +265,7 @@ def write_holocene_stat(conn: Connection, *, now_ms: float | None = None) -> int
     now = now_ms if now_ms is not None else time.time() * 1000
     items, discovered = [], 0
 
-    for scope in conn.command("ZRANGE", "asm:live", "0", "-1") or []:
+    for scope in conn.command("ZRANGE", live_key, "0", "-1") or []:
         raw = conn.command("HGETALL", f"asm:a:{scope}")
         if not raw:
             continue

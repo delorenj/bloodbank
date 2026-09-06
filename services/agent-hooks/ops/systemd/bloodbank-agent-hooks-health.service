@@ -1,13 +1,20 @@
 [Unit]
-Description=Bloodbank agent-hooks health → Holocene (validate deployed hook configs)
+Description=Bloodbank agent-hooks health → Holocene (config validation + live hook telemetry)
 After=network-online.target
 
 [Service]
 Type=oneshot
 WorkingDirectory=/home/delorenj/code/33GOD/bloodbank
-# `mise run health:hooks` runs the healthcheck under the repo toolchain (jsonschema
-# present) and emits the snapshot to the Redis key Holocene reads. Sandbox only:
-# our publishers run with BLOODBANK_ENABLED=false; foreign hooks are never executed.
+# Legacy config validation. Parses every deployed hook config and reports what
+# it can prove statically. Sandbox only: our publishers run with
+# BLOODBANK_ENABLED=false and foreign hooks are never executed.
 ExecStart=/home/delorenj/.local/bin/mise run health:hooks
-StandardOutput=append:/home/delorenj/code/33GOD/bloodbank/_bmad_output/evidence/health/timer.log
-StandardError=append:/home/delorenj/code/33GOD/bloodbank/_bmad_output/evidence/health/timer.log
+# Successor: what actually FIRED, per (cli, role), cross-referenced against which
+# agents are alive. Catches the failure modes no parser was taught to look for.
+# `-` prefix: the newer check must never be able to fail the older one.
+ExecStart=-/home/delorenj/.local/bin/mise run health:hook-telemetry
+# Journal, not `append:` into the repo. The previous unit wrote both streams to
+# _bmad_output/evidence/health/timer.log, which reached 4.9 MB unrotated inside
+# the worktree. systemd already rotates the journal.
+StandardOutput=journal
+StandardError=journal

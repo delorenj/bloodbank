@@ -25,7 +25,17 @@ _HERMES_STATE_DIR = Path(
 class HermesAdapter(ClientAdapter):
     name = "hermes"
     source = "urn:33god:agent:hermes"
-    producer = "hermes-agent"
+    # Attributed per PROFILE, not just "hermes-agent". The bare value left
+    # 29,681 hook events in 7 days unattributable across a 23-PM fleet -- you
+    # could see that Hermes was busy but never WHICH agent. The gateway path
+    # already stamped `hermes-agent:{profile}` (contract.py:328); the hook path
+    # never did, and HERMES_HOME names the profile in every hermes process.
+    @property
+    def producer(self) -> str:                     # type: ignore[override]
+        profile = os.path.basename(
+            os.environ.get("HERMES_HOME", "").rstrip("/")
+        )
+        return f"hermes-agent:{profile}" if profile else "hermes-agent"
     service = "hermes-hooks"
     actor_base = {
         "type": "agent_cli",

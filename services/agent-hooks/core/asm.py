@@ -103,7 +103,16 @@ IDENTITY_ENV_FOR_CLI = {
 # HERMES_HOME shapes that are infrastructure, not an agent. The single
 # fleet-shared command router presents exactly like a profile but represents all
 # 25 PMs at once; keying anything on it would collapse the fleet into one row.
-NOT_AN_AGENT_PROFILE = frozenset({"fleet-bloodbank-gateway"})
+# The fleet router presents under TWO different names depending on the source,
+# and excluding only one of them excludes neither in practice:
+#   HERMES_HOME basename      -> "fleet-bloodbank-gateway"
+#   systemd unit, prefix/suffix stripped
+#     (hermes-fleet-bloodbank-gateway.service) -> "fleet-bloodbank"
+# The first draft listed only the former, and its test asserted the former was
+# absent from a map keyed by the latter -- a check that could never fail and
+# never verified anything, while the router sat in the gateway map the whole
+# time.
+NOT_AN_AGENT_PROFILE = frozenset({"fleet-bloodbank-gateway", "fleet-bloodbank"})
 
 
 def _redis_url() -> str:

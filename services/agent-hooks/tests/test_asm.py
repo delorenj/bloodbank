@@ -542,8 +542,8 @@ class SweeperTest(unittest.TestCase):
         me = os.getpid()
         self.seed("prompt", pid=me, starttime=asm.proc_stat(me)[2])
         with Connection(URL) as conn:
-            conn.command("ZADD", "asm:live", "1", self.scope)
-            count = sweep.write_holocene_stat(conn)
+            conn.command("ZADD", self.live, "1", self.scope)
+            count = sweep.write_holocene_stat(conn, live_key=self.live)
             raw = conn.command("GET", sweep.HOLOCENE_STAT_KEY)
             ttl = conn.command("TTL", sweep.HOLOCENE_STAT_KEY)
         payload = json.loads(raw)
@@ -572,8 +572,8 @@ class SweeperTest(unittest.TestCase):
         me = os.getpid()
         self.seed("prompt", pid=me, starttime=asm.proc_stat(me)[2])
         with Connection(URL) as conn:
-            conn.command("ZADD", "asm:live", "1", self.scope)
-            sweep.write_holocene_stat(conn)
+            conn.command("ZADD", self.live, "1", self.scope)
+            sweep.write_holocene_stat(conn, live_key=self.live)
             payload = json.loads(conn.command("GET", sweep.HOLOCENE_STAT_KEY))
         self.assertEqual(payload["status"], "healthy")
 
@@ -680,8 +680,21 @@ class GatewayPidParseTest(unittest.TestCase):
 
         self.assertEqual(got["keepy-money-pm"][0], 772171)
         self.assertEqual(got["bloodbank-pm"][0], 749200)
-        self.assertNotIn("fleet-bloodbank-gateway", got,
-                         "the fleet router is not an agent")
+
+    def test_the_fleet_router_is_excluded_under_its_UNIT_derived_name(self):
+        """Regression: the first version asserted "fleet-bloodbank-gateway" was
+        absent from a map whose keys are unit-derived ("fleet-bloodbank"). That
+        can never fail, so it verified nothing while the router sat in the map.
+        """
+        with mock.patch("core.sweep.subprocess.run") as run:
+            run.return_value = mock.Mock(stdout=self.SHOW_OUTPUT)
+            got = sweep.gateway_pids()
+        self.assertNotIn("fleet-bloodbank", got,
+                         "the fleet router is one unit for the whole fleet, "
+                         "not an agent")
+        self.assertNotIn("fleet-bloodbank-gateway", got)
+        self.assertIn("fleet-bloodbank", asm.NOT_AN_AGENT_PROFILE)
+        self.assertIn("fleet-bloodbank-gateway", asm.NOT_AN_AGENT_PROFILE)
 
     def test_a_stopped_gateway_is_an_observation_not_an_absence(self):
         """MainPID 0 on a unit that EXISTS means the agent is down -- reportable

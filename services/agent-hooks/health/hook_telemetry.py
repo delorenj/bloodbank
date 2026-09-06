@@ -163,21 +163,32 @@ def build_report(now_ms: float | None = None) -> dict:
         gateways = sweep.gateway_pids()
     except Exception:                              # noqa: BLE001
         gateways = {}
+    # Only meaningful once we have been recording long enough for silence to
+    # mean something. Before that, absence is just a young dataset -- and this
+    # check must never repeat its first mistake: it originally read profile
+    # liveness from Candystore `producer`, which is unattributed on the hook
+    # path (29,681 events in 7 days as a bare "hermes-agent"), so it reported
+    # 15 healthy PMs as permanently broken. It now reads only asm:seen, which
+    # the hook stamps from HERMES_HOME and which is accurate by construction.
+    profile_window_open = (now - tracking_since) >= SILENT_AFTER_MS
     for profile, (pid, _start) in sorted(gateways.items()):
         if pid <= 0:
             continue                               # unit stopped; not a hook fault
-        last = float(seen.get(f"profile|{profile}") or 0)
-        if last:
+        if seen.get(f"profile|{profile}"):
             continue                               # has emitted at some point
-        counts["silent"] += 1
+        silent = profile_window_open
+        counts["silent" if silent else "unknown"] += 1
         items.append({
             "id": f"profile|{profile}",
             "label": f"hermes · {profile}",
-            "severity": "critical",
-            "statusLabel": "silent",
-            "summary": "gateway is up but this profile has never emitted an event",
+            "severity": "critical" if silent else "unknown",
+            "statusLabel": "silent" if silent else "unproven",
+            "summary": ("gateway is up but this profile has never emitted an event"
+                        if silent else
+                        "gateway is up; not yet observed within the tracking window"),
             "detail": {"cli": "hermes", "profile": profile, "gatewayPid": pid,
-                       "verdict": "silent", "agentsAlive": 1,
+                       "verdict": "silent" if silent else "unproven",
+                       "agentsAlive": 1,
                        "hint": "hooks present in config but absent from the "
                                "shell-hooks allowlist will never fire"},
         })
