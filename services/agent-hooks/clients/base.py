@@ -8,6 +8,7 @@ publishers.
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import select
@@ -117,6 +118,27 @@ class ClientAdapter:
     error_log: Path | None = None
 
     default_map: dict[str, tuple[str, str]] = {}
+
+    def native_session_id(self, payload: Any) -> str | None:
+        """Native identity is stable across hooks and distinct across sessions."""
+        if isinstance(payload, dict):
+            for candidate in (payload, payload.get("extra"), payload.get("properties")):
+                if not isinstance(candidate, dict):
+                    continue
+                for key in ("session_id", "sessionId", "sessionID", "thread_id", "threadId"):
+                    value = candidate.get(key)
+                    if isinstance(value, str) and value:
+                        return value
+        return None
+
+    def get_session_path(self, payload: Any) -> Path:
+        native_id = self.native_session_id(payload)
+        if not native_id:
+            return self.session_file
+        # Hash avoids path traversal and keeps opaque native ids out of paths.
+        digest = hashlib.sha256(native_id.encode("utf-8")).hexdigest()
+        state = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
+        return state / "33god/agent-hooks" / self.name / "sessions" / f"{digest}.json"
 
     @property
     def agent_dir(self) -> Path:

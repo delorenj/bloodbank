@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,14 +74,16 @@ class SessionState:
         tools_used      — name → count
     """
 
-    def __init__(self, path: Path, *, working_directory: str | None = None):
+    def __init__(self, path: Path, *, working_directory: str | None = None,
+                 native_id: str | None = None):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._cwd = working_directory or os.getcwd()
+        self._native_id = native_id
         self._data: dict[str, Any] = self._load()
 
     def _fresh(self) -> dict[str, Any]:
-        sid = str(uuid.uuid4())
+        sid = self._native_id or str(uuid.uuid4())
         return {
             "session_id": sid,
             "started_at": _now_iso(),
@@ -100,10 +104,18 @@ class SessionState:
             return self._fresh()
 
     def _save(self) -> None:
+        temporary = None
         try:
-            self.path.write_text(json.dumps(self._data, indent=2))
+            with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent,
+                                             prefix=".session-", delete=False) as out:
+                temporary = out.name
+                json.dump(self._data, out, indent=2)
+            os.replace(temporary, self.path)
         except OSError:
             pass
+        finally:
+            if temporary:
+                Path(temporary).unlink(missing_ok=True)
 
     @property
     def session_id(self) -> str:
@@ -133,8 +145,9 @@ class SessionState:
     def started_at(self) -> str:
         return self._data.get("started_at", _now_iso())
 
-    def reset(self) -> None:
-        """Force a brand-new session id. Used on session-start hooks."""
+    def reset(self, native_id: str | None = None) -> None:
+        """Initialize state while preserving an authoritative native id."""
+        self._native_id = native_id or self._native_id
         self._data = self._fresh()
         self._save()
 
@@ -155,6 +168,7 @@ class SessionState:
             return
         archive_dir.mkdir(parents=True, exist_ok=True)
         try:
-            self.path.rename(archive_dir / f"{self.session_id}.json")
+            safe_id = hashlib.sha256(self.session_id.encode("utf-8")).hexdigest()
+            self.path.rename(archive_dir / f"{safe_id}.json")
         except OSError:
             pass
