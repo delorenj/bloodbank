@@ -482,6 +482,8 @@ class Server:
         self.inventory: dict | None = None
         self.inventory_at = 0.0
         self.inventory_lock = asyncio.Lock()
+        self.socket_path: Path | None = None
+        self.socket_activated = False
 
     async def journal(self, method: str, *args, **kwargs):
         try:
@@ -653,6 +655,8 @@ class Server:
         self.cfg.maybe_reload()
         summary = await self.journal("summary")
         inventory = await self.installed_inventory()
+        socket_present = self.socket_path.is_socket() if self.socket_path else None
+        transport_error = "socket_path_missing" if socket_present is False else None
         deployed = {(cli["cli"], native["native"]): native
                     for cli in inventory.get("clis", [])
                     for native in cli.get("natives", [])}
@@ -703,9 +707,12 @@ class Server:
                                "timeout_ms": 10000, "order": 0, "require_env": [],
                                "match_tool": None, "state": "configured"})
         return {"schema_version": SCHEMA_VERSION, "generated_at": now_iso(),
-                "hub": {"state": "failed" if self.cfg.error or self.journal_error else "running",
+                "hub": {"state": "failed" if self.cfg.error or self.journal_error or transport_error else "running",
                         "started_at": self.started_at, "pid": os.getpid(),
                         "registry_error": self.cfg.error, "journal_error": self.journal_error,
+                        "transport_error": transport_error,
+                        "socket": {"path": str(self.socket_path) if self.socket_path else None,
+                                   "present": socket_present, "activated": self.socket_activated},
                         "publish_enabled": PUBLISH_ENABLED, "async_running": len(self.background)},
                 "bindings": bindings, "handlers": handlers, "installed_inventory": inventory, **summary}
 
@@ -833,7 +840,13 @@ async def main() -> int:
 
     sock = listener()
     if sock is not None:
-        server = await asyncio.start_unix_server(server_obj.handle, sock=sock)
+        # The socket unit owns the pathname across daemon restarts. Python 3.13
+        # otherwise unlinks it when this inherited server closes, leaving the
+        # next service with a listening fd that no native CLI can reach.
+        kwargs = {"cleanup_socket": False} if sys.version_info >= (3, 13) else {}
+        server_obj.socket_path = Path(os.fsdecode(sock.getsockname()))
+        server_obj.socket_activated = True
+        server = await asyncio.start_unix_server(server_obj.handle, sock=sock, **kwargs)
         log("listening on systemd-activated socket")
     else:
         path = os.environ.get("BB_HOOK_SOCKET") or str(
@@ -844,6 +857,7 @@ async def main() -> int:
         if Path(path).exists():
             Path(path).unlink()        # stale socket from an unclean exit
         server = await asyncio.start_unix_server(server_obj.handle, path=path)
+        server_obj.socket_path = Path(path)
         os.chmod(path, 0o600)
         log(f"listening on {path}")
 
