@@ -98,7 +98,7 @@ def bank() -> str:
             return remote.stdout.strip().removesuffix(".git").rsplit("/", 1)[-1]
     except (OSError, subprocess.SubprocessError):
         pass
-    return (root or Path.cwd()).name or "general"
+    return root.name if root else "general"
 
 
 def binary() -> str | None:

@@ -38,6 +38,11 @@ class ConcernTests(unittest.TestCase):
         self.assertEqual(response["injectSteps"][0]["ephemeralMessage"], "skill reminder")
         self.assertEqual(concerns.context_output("context", "kimi", "UserPromptSubmit"), "context")
 
+    def test_memory_bank_outside_a_repository_is_general(self):
+        with mock.patch.object(hindsight, "repository", return_value=None), mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(hindsight.subprocess, "run") as command:
+            command.return_value.returncode = 1
+            self.assertEqual(hindsight.bank(), "general")
+
     def test_orca_without_pane_is_an_explicit_skip(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             response = concerns.orca({}, "claude", "SessionStart")
