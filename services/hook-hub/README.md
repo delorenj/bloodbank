@@ -63,10 +63,20 @@ explicit skips for absent project context or optional tools.
 | Sound notifications | Claude/Codex attention signals, Codex turn completion, and OpenCode session closure. |
 | Zellij attention and Git checkpoint | OpenCode only; attention requires a Zellij pane, and the existing checkpoint project opt-out is preserved. |
 
-Project Notebook, Nanoleaf, CodeGraph, Orca, CommonProject/PJangler projections,
+Project Notebook, Nanoleaf, CodeGraph, Code Review Graph, Orca, CommonProject/PJangler projections,
 and guarded project fallbacks consult the same ownership contract so ordinary
 reinstallation does not restore retired native owners. Standalone installations
 without a central owner retain their existing behavior.
+
+The managed `~/.local/bin/code-review-graph` launcher delegates to the installed
+uv tool. While the hub owns its concern, `install` and its `init` alias receive
+`--no-hooks`; other commands and arguments pass through. The tool package remains
+upstream-owned. `hub:install` and combined cutover installation restore this link
+if a uv tool reinstall replaces it. To refresh just the launcher:
+
+```sh
+python3 services/hook-hub/tool_guards.py --install
+```
 
 ## Installation and cutover
 

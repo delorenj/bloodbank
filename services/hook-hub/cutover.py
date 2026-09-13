@@ -233,6 +233,8 @@ def main() -> int:
         installed = module.cmd_install(module.load_master(), codex_trust_before=snapshots)
         if installed:
             return installed
+        from tool_guards import install as install_tool_guards
+        print(json.dumps({"tool_guard": install_tool_guards(args.home)}))
     if args.activate and report:
         print(json.dumps({"error": "legacy_native_handlers_remain", "changes": report}, indent=2))
         return 1

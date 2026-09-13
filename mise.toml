@@ -477,6 +477,7 @@ for u in hook-hub.socket hook-hub.service; do
   ln -sfn "$PWD/services/hook-hub/systemd/$u" "$UNITS/$u"
   echo "linked $u"
 done
+python3 services/hook-hub/tool_guards.py --install
 systemctl --user daemon-reload
 systemctl --user enable --now hook-hub.socket
 systemctl --user --no-pager status hook-hub.socket | head -5
