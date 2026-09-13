@@ -178,7 +178,11 @@ def recall(payload: dict, cli: str, native: str) -> dict:
 def candidate(payload: dict, cli: str) -> dict:
     if not payload.get("session_id"):
         return result("skipped", "native_session_id_missing")
-    if payload.get("error") or payload.get("is_error"):
+    tool_response = payload.get("tool_response", payload.get("tool_result", payload.get("result", {})))
+    failed_response = isinstance(tool_response, dict) and (
+        tool_response.get("error") or tool_response.get("is_error") or tool_response.get("success") is False
+    )
+    if payload.get("error") or payload.get("is_error") or failed_response or str(payload.get("hook_event_name", "")).lower().endswith("failure"):
         return result("skipped", "tool_failed")
     edits = [(path, content) for path, content in file_edits(payload) if len(content) >= 50]
     if not edits:
@@ -258,11 +262,15 @@ def dispatch(concern: str, payload: dict, cli: str, native: str) -> dict:
         root = Path(os.environ.get("HS_JOURNAL_DIR", Path.home() / ".agents/journal"))
         key = hashlib.sha1(str(payload.get("cwd", os.getcwd())).encode()).hexdigest()[:12]
         jotfile = root / "jots" / f"{key}.md"
-        if not jotfile.is_file() or not jotfile.stat().st_size:
-            return result("skipped", "no_pending_jots")
-        output = invoke(["~/.agents/hooks/hindsight/hindsight-jot-flush.sh", "--jotfile", str(jotfile)], payload,
-                        timeout=180, environment=cli_environment(cli))
-        if output["_hook_hub"]["status"] == "succeeded" and jotfile.exists():
-            return result("skipped", "jots_remain_pending")
-        return output
+        jotfile.parent.mkdir(parents=True, exist_ok=True)
+        with jotfile.with_suffix(".flush.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if not jotfile.is_file() or not jotfile.stat().st_size:
+                return result("skipped", "no_pending_jots")
+            (jotfile.parent / "flushed").mkdir(exist_ok=True)
+            output = invoke(["~/.agents/hooks/hindsight/hindsight-jot-flush.sh", "--jotfile", str(jotfile)], payload,
+                            timeout=180, environment=cli_environment(cli))
+            if output["_hook_hub"]["status"] == "succeeded" and jotfile.exists():
+                return result("skipped", "jots_remain_pending")
+            return output
     return result("failed", "unknown_hindsight_concern", exit_code=1)

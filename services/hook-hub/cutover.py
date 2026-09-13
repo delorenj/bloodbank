@@ -9,11 +9,13 @@ No backups are written beside credential-bearing native configuration files.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
 import tempfile
 import tomllib
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,6 +37,10 @@ LEGACY_MARKERS = (
 
 
 def owned(command: object) -> bool:
+    if isinstance(command, list):
+        # Old Gemini registrations incorrectly stored shell argv arrays; they
+        # still belong to the concern and must be retired before valid groups.
+        return any(owned(part) for part in command)
     if not isinstance(command, str) or "bb-hook" in command:
         return False
     return any(marker in command for marker in LEGACY_MARKERS) or bool(
@@ -126,8 +132,24 @@ def strip_notify(text: str) -> tuple[str, int]:
     return text, 0
 
 
+def native_sync():
+    source = SERVICE_DIR.parent / "agent-hooks/sync.py"
+    spec = importlib.util.spec_from_file_location("_hook_cutover_native_sync", source)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def codex_paths(home: Path) -> list[Path]:
+    if home.resolve() != Path.home().resolve():
+        return [home / ".codex/hooks.json"]
+    module = native_sync()
+    return [path for _label, path, _ in module.discover_codex_configs(module.load_master()["agents"]["codex"])]
+
+
 def json_paths(home: Path, projects: list[Path]) -> list[Path]:
-    paths = [home / ".claude/settings.json", home / ".codex/hooks.json", home / ".gemini/settings.json",
+    paths = [home / ".claude/settings.json", *codex_paths(home), home / ".gemini/settings.json",
              home / ".gemini/config/hooks.json", home / ".copilot/settings.json"]
     paths.extend(sorted((home / ".copilot/hooks").glob("*.json")))
     paths.extend(root / ".claude/settings.json" for root in projects)
@@ -150,13 +172,14 @@ def inspect(home: Path, projects: list[Path], apply: bool = False) -> list[dict]
             if apply:
                 write(kimi, updated)
             report.append({"path": str(kimi), "removed": count, "applied": apply})
-    codex = home / ".codex/config.toml"
-    if codex.exists():
-        updated, count = strip_notify(codex.read_text())
-        if count:
-            if apply:
-                write(codex, updated)
-            report.append({"path": str(codex), "removed": count, "applied": apply})
+    for hooks_path in codex_paths(home):
+        codex = hooks_path.parent / "config.toml"
+        if codex.exists():
+            updated, count = strip_notify(codex.read_text())
+            if count:
+                if apply:
+                    write(codex, updated)
+                report.append({"path": str(codex), "removed": count, "applied": apply})
     for name, marker in (("hindsight-memory.ts", "/.agents/hooks/claude/publish.py"),
                          ("crg-plugin.ts", 'app.on("file.edited"')):
         path = home / ".config/opencode/plugins" / name
@@ -176,7 +199,7 @@ def activate(home: Path) -> dict:
     write(REGISTRY, text)
     manifest = {"version": 1, "registry": str(REGISTRY), "clis": CLIS, "handler_ids": handlers,
                 "installed_at": datetime.now(timezone.utc).isoformat()}
-    path = home / ".config/33god/hook-hub/ownership.json"
+    path = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state")) / "33god/hook-hub/ownership.json"
     write(path, json.dumps(manifest, indent=2) + "\n")
     return {"activated": handlers, "manifest": str(path)}
 
@@ -185,15 +208,37 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--project", type=Path, action="append", default=[])
+    parser.add_argument("--install", action="store_true", help="with --apply, regenerate/install native hooks and preserve Codex trust across pruning")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--apply", action="store_true")
     action.add_argument("--activate", action="store_true")
     args = parser.parse_args()
+    snapshots = {}
+    module = None
+    if args.install:
+        if not args.apply or args.home.resolve() != Path.home().resolve():
+            parser.error("--install requires --apply and the current user's home")
+        module = native_sync()
+        from codex_native import capture_trust
+        # Native loader metadata and raw trust state stay in memory. Capture
+        # before pruning: identical retained foreign hooks may be separately
+        # enabled/disabled at their original positional keys.
+        for path in codex_paths(args.home):
+            snapshots[str(path)] = capture_trust(path.parent / "config.toml")
+        generated = module.cmd_apply(module.load_master(), module.load_lock(), False)
+        if generated:
+            return generated
     report = inspect(args.home, args.project, args.apply)
+    if module is not None:
+        installed = module.cmd_install(module.load_master(), codex_trust_before=snapshots)
+        if installed:
+            return installed
     if args.activate and report:
         print(json.dumps({"error": "legacy_native_handlers_remain", "changes": report}, indent=2))
         return 1
-    print(json.dumps({"changes": report, **(activate(args.home) if args.activate else {})}, indent=2))
+    print(json.dumps({"changes": report,
+                      **({"next": "Verify native hooks/list before --activate." if args.install else "Use --apply --install for in-memory Codex trust preservation across native pruning; verify native hooks/list before --activate."} if args.apply else {}),
+                      **(activate(args.home) if args.activate else {})}, indent=2))
     return 0
 
 

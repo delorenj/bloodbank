@@ -107,6 +107,11 @@ class MemoryReceiptTests(unittest.TestCase):
         self.assertEqual(hindsight.end(payload, "claude")["_hook_hub"]["reason"], "no_retention_candidates")
         self.assertFalse(self.calls.exists())
 
+    def test_failed_tool_does_not_record_an_edit_candidate(self):
+        payload = {**self.payload(), "tool_response": {"success": False}}
+        self.assertEqual(hindsight.candidate(payload, "codex")["_hook_hub"]["reason"], "tool_failed")
+        self.assertFalse(hindsight.journal_path(payload, "codex").exists())
+
     def test_recall_returns_native_context_from_json_response(self):
         output = hindsight.recall({"session_id": "recall", "prompt": "Please explain the current project hook architecture"}, "codex", "UserPromptSubmit")
         self.assertEqual(output["_hook_hub"]["status"], "succeeded")
@@ -126,6 +131,7 @@ class CutoverTests(unittest.TestCase):
     def test_keeps_project_fallback_and_new_hub_command(self):
         self.assertFalse(cutover.owned("python .agents/hooks/hindsight/hook.py recall"))
         self.assertFalse(cutover.owned("~/.agents/hooks/bb-hook --cli codex --native Stop"))
+        self.assertTrue(cutover.owned(["bash", "-c", "HINDSIGHT_OUTPUT_FORMAT=gemini_json exec /home/me/.agents/hooks/hindsight/hindsight-recall.sh"]))
 
     def test_kimi_removal_preserves_following_sections(self):
         original = 'model="test"\n[[hooks]]\nevent="Stop"\ncommand="/home/me/.agents/hooks/hindsight/hindsight-session-end.sh"\n[[hooks]]\nevent="Stop"\ncommand="custom-hook"\n[foreign]\nvalue=true\n'
