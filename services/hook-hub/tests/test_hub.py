@@ -37,22 +37,28 @@ def _free_socket_path(tmp: Path) -> str:
 class HubHarness:
     """Start a hub with a purpose-built registry; tear it down on exit."""
 
-    def __init__(self, tmp: Path, registry: str) -> None:
+    def __init__(self, tmp: Path, registry: str, env_extra: dict | None = None) -> None:
         self.tmp = tmp
         self.sock = _free_socket_path(tmp)
         self.registry = tmp / "handlers.toml"
         self.registry.write_text(registry)
         self.log = tmp / "hub.log"
         self.proc: subprocess.Popen | None = None
+        self.env_extra = env_extra or {}
 
     def __enter__(self) -> "HubHarness":
+        Path(self.sock).unlink(missing_ok=True)
         env = dict(
             os.environ,
             BB_HOOK_SOCKET=self.sock,
             HOOK_HUB_REGISTRY=str(self.registry),
             HOOK_HUB_LOG=str(self.log),
+            HOOK_HUB_RECEIPTS=str(self.tmp / "receipts.sqlite3"),
+            HOOK_HUB_HTTP_PORT="0",
+            HOOK_HUB_PUBLISH="false",
             HOOK_HUB_SYNC_BUDGET="2.0",
         )
+        env.update(self.env_extra)
         self.proc = subprocess.Popen(
             [sys.executable, str(HUB)], env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
@@ -160,7 +166,7 @@ command = ["/usr/bin/touch", "{marker}"]
 timeout_ms = 5000
 """
         with HubHarness(self.tmp, reg) as h:
-            r = h.request("claude", "Stop")
+            r = h.request("claude", "SessionEnd")
             self.assertEqual(r["stdout"], "")        # async output is discarded
             self.assertEqual(r["handled"], ["writer"])
             deadline = time.monotonic() + 5

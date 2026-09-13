@@ -169,7 +169,19 @@ def _asm_observe(adapter: ClientAdapter, hook_name: str, payload: Any) -> None:
         return
 
 
-def run(adapter: ClientAdapter, argv: list[str]) -> int:
+def _report(report: dict | None, status: str, reason: str | None = None,
+            envelope: dict | None = None) -> None:
+    """Transport evidence for the hub; contains no user input or credentials."""
+    if report is None:
+        return
+    report.clear()
+    report.update(status=status, reason=reason,
+                  publish_status="sent" if status == "succeeded" else status,
+                  event_id=envelope.get("id") if envelope else None,
+                  event_type=envelope.get("type") if envelope else None)
+
+
+def run(adapter: ClientAdapter, argv: list[str], *, report: dict | None = None) -> int:
     """Execute the full publish pipeline for *adapter* with *argv*.
 
     Returns 0 on success or fail-open skip, 1 in strict mode on error,
@@ -178,6 +190,7 @@ def run(adapter: ClientAdapter, argv: list[str]) -> int:
     payload = adapter.read_payload(argv)
     hook_name = adapter.resolve_hook_name(argv, payload)
     if not hook_name:
+        _report(report, "failed", "missing_hook_name")
         print(
             f"usage: publish.py [--client <name>] <hook-or-event> [payload-json|end-reason]",
             file=sys.stderr,
@@ -188,19 +201,22 @@ def run(adapter: ClientAdapter, argv: list[str]) -> int:
 
     alert_kind = resolve_alert_map(adapter.agent_dir).get(hook_name)
     if alert_kind is not None:
-        return _fanout_alert(adapter, hook_name, alert_kind, payload)
+        return _fanout_alert(adapter, hook_name, alert_kind, payload, report=report)
 
     event_map = resolve_map(adapter.agent_dir, adapter.default_map)
     mapping = event_map.get(hook_name)
     if mapping is None:
+        _report(report, "skipped", "unsupported_hook")
         adapter.log(f"unsupported hook name (ignored): {hook_name}")
         return 1 if os.environ.get("BLOODBANK_HOOK_STRICT") == "1" else 0
 
     ce_type, bucket_prefix = mapping
-    session = SessionState(path=adapter.session_file)
+    native_id = adapter.native_session_id(payload)
+    session = SessionState(path=adapter.get_session_path(payload), native_id=native_id)
 
-    if adapter.should_reset_session(ce_type, hook_name):
-        session.reset()
+    resume = isinstance(payload, dict) and payload.get("source") == "resume"
+    if adapter.should_reset_session(ce_type, hook_name) and not (resume and native_id == session.session_id):
+        session.reset(native_id)
 
     correlation_id = adapter.get_correlation_id(session, payload)
     causation_id = adapter.get_causation_id(
@@ -236,12 +252,14 @@ def run(adapter: ClientAdapter, argv: list[str]) -> int:
             ),
         )
     except Exception as exc:
+        _report(report, "failed", "envelope_invalid")
         adapter.log(f"handler failed hook={hook_name} type={ce_type} err={exc!r}")
         return 1 if os.environ.get("BLOODBANK_HOOK_STRICT") == "1" else 0
 
     adapter.before_publish(session, ce_type, payload, argv)
 
     if os.environ.get("BLOODBANK_ENABLED", "true") != "true":
+        _report(report, "skipped", "publisher_disabled", envelope)
         adapter.after_publish_attempt(session, ce_type, payload, argv, published=False)
         return 0
 
@@ -250,10 +268,14 @@ def run(adapter: ClientAdapter, argv: list[str]) -> int:
     try:
         nats_publish(subject, body, client_name=adapter.nats_client_name)
     except (OSError, RuntimeError, ValueError) as exc:
+        _report(report, "failed", "transport_failed", envelope)
         adapter.log(f"publish failed ({subject}): {exc}")
         adapter.after_publish_attempt(session, ce_type, payload, argv, published=False)
         return 1 if os.environ.get("BLOODBANK_HOOK_STRICT") == "1" else 0
 
+    # The transport result is already known even if a local post-publish
+    # projection subsequently fails. Never misreport a sent event as unsent.
+    _report(report, "succeeded", envelope=envelope)
     session.record_event(envelope["id"])
     adapter.post_publish(session, ce_type, payload, argv)
     adapter.after_publish_attempt(session, ce_type, payload, argv, published=True)
@@ -262,15 +284,23 @@ def run(adapter: ClientAdapter, argv: list[str]) -> int:
 
 
 def _fanout_alert(
-    adapter: ClientAdapter, hook_name: str, alert_kind: str, payload: Any
+    adapter: ClientAdapter, hook_name: str, alert_kind: str, payload: Any,
+    *, report: dict | None = None,
 ) -> int:
     """Publish one normalized Deckard alert, always bounded and fail-open."""
     if alert_kind != "attention":
+        _report(report, "skipped", "unsupported_alert")
         adapter.log(f"unsupported alert kind (ignored): {alert_kind}")
         return 0
     if os.environ.get("BLOODBANK_ENABLED", "true") != "true":
+        _report(report, "skipped", "publisher_disabled")
         return 0
 
+    if not os.environ.get("ZELLIJ_PANE_ID") or not os.environ.get("ZELLIJ_SESSION_NAME"):
+        _report(report, "skipped", "missing_pane_context")
+        return 0
+
+    envelope = None
     try:
         envelope = build_attention_envelope(adapter, hook_name, payload)
         body = serialize_attention_envelope(envelope)
@@ -281,8 +311,10 @@ def _fanout_alert(
             timeout=DECKARD_PUBLISH_TIMEOUT,
         )
     except Exception as exc:  # Hooks must never block or fail the agent.
+        _report(report, "failed", "transport_failed" if envelope else "envelope_invalid", envelope)
         adapter.log(f"attention alert refused/failed hook={hook_name}: {exc}")
         return 0
 
     adapter.log(f"published {DECKARD_ATTENTION_SUBJECT}")
+    _report(report, "succeeded", envelope=envelope)
     return 0

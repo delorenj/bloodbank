@@ -8,10 +8,9 @@ adding one meant editing six files in five dialects. This daemon is where that
 behavior moves. One registry (handlers.toml) binds handlers to lifecycle roles,
 and every CLI reaches it through the same `bb-hook` re-trigger.
 
-Scope note (deliberate): this daemon DISPATCHES; it does not publish. Envelope
-publishing stays in services/agent-hooks/publish.py until the cutover phase that
-moves it, so the freshly-landed alert-fanout logic is not duplicated here. See
-README.md.
+The canonical publisher is one asynchronous execution alongside the behavioral
+handlers. Broker availability never sits on the synchronous CLI response path.
+Every selection and outcome is recorded in the payload-free receipt journal.
 
 Two invariants:
 
@@ -27,6 +26,10 @@ Stdlib-only (tomllib is stdlib on 3.11+), matching the rest of agent-hooks.
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
+from dataclasses import dataclass
+from datetime import datetime
+import importlib.util
 import json
 import os
 import re
@@ -37,6 +40,10 @@ import time
 import tomllib
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, unquote, urlsplit
+
+from receipts import (SCHEMA_VERSION, ReceiptStore, invocation_identity,
+                      native_session_id, now_iso)
 
 SERVICE_DIR = Path(__file__).resolve().parent
 AGENT_HOOKS_DIR = SERVICE_DIR.parent / "agent-hooks"
@@ -46,12 +53,18 @@ REGISTRY = Path(os.environ.get("HOOK_HUB_REGISTRY", SERVICE_DIR / "handlers.toml
 MAX_REQUEST_BYTES = 1 << 20
 ASYNC_SLOTS = int(os.environ.get("HOOK_HUB_ASYNC_SLOTS", "8"))
 SYNC_BUDGET = float(os.environ.get("HOOK_HUB_SYNC_BUDGET", "2.5"))
+MAX_SYNC_BUDGET = float(os.environ.get("HOOK_HUB_MAX_SYNC_BUDGET", "14.0"))
 LOG_MAX_BYTES = 1 << 20
 
 STATE_DIR = Path(
     os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")
 ) / "33god/hook-hub"
 LOG_PATH = Path(os.environ.get("HOOK_HUB_LOG", STATE_DIR / "hub.log"))
+RECEIPT_PATH = Path(os.environ.get("HOOK_HUB_RECEIPTS", STATE_DIR / "receipts.sqlite3"))
+HTTP_HOST = os.environ.get("HOOK_HUB_HTTP_HOST", "127.0.0.1")
+HTTP_PORT = int(os.environ.get("HOOK_HUB_HTTP_PORT", "8685"))
+PUBLISH_ENABLED = os.environ.get("HOOK_HUB_PUBLISH", "true") == "true"
+MAX_HANDLER_OUTPUT = 1 << 20
 
 SD_LISTEN_FDS_START = 3
 
@@ -84,13 +97,14 @@ class Handler:
 
     __slots__ = ("id", "mode", "on", "on_native", "command", "timeout_ms",
                  "match_tool", "match_transition", "require_env", "order",
-                 "enabled")
+                 "enabled", "clis")
 
     def __init__(self, raw: dict[str, Any]) -> None:
         self.id: str = str(raw["id"])
         self.mode: str = str(raw.get("mode", "async"))
         self.on: set[str] = set(raw.get("on", []) or [])
         self.on_native: set[str] = set(raw.get("on_native", []) or [])
+        self.clis: set[str] = set(raw.get("clis", []) or [])
         self.command: list[str] = [
             os.path.expanduser(str(part)) for part in raw["command"]
         ]
@@ -109,6 +123,8 @@ class Handler:
         self.enabled: bool = bool(raw.get("enabled", True))
         if self.mode not in ("sync", "async"):
             raise ValueError(f"handler {self.id}: mode must be sync|async")
+        if not self.command or self.timeout_ms <= 0:
+            raise ValueError(f"handler {self.id}: command and positive timeout required")
         if not self.on and not self.on_native:
             raise ValueError(f"handler {self.id}: needs `on` or `on_native`")
 
@@ -119,6 +135,7 @@ class Config:
     def __init__(self) -> None:
         self.handlers: list[Handler] = []
         self.bindings: dict[tuple[str, str], dict[str, Any]] = {}
+        self.error: str | None = None
         self._stamps: tuple = ()
 
     @staticmethod
@@ -135,10 +152,12 @@ class Config:
         try:
             self._load()
             self._stamps = stamps
+            self.error = None
         except Exception as exc:
             # Keep serving the last good config: dispatching against a
             # half-parsed registry is worse than dispatching against a stale one.
-            log(f"config reload FAILED, keeping previous: {exc!r}")
+            self.error = type(exc).__name__
+            log(f"config reload FAILED, keeping previous: {self.error}")
             self._stamps = stamps
 
     def _load(self) -> None:
@@ -148,6 +167,11 @@ class Config:
             for binding in agent.get("bindings") or []:
                 native = binding.get("native")
                 if native:
+                    binding = dict(binding)
+                    binding["support_status"] = agent.get("support_status", "supported")
+                    binding["event_type"] = (master.get("lifecycle", {}).get(binding.get("lifecycle"), {}).get("type"))
+                    if binding.get("alert") == "attention":
+                        binding["event_type"] = "deckard.v1.agent.attention"
                     bindings[(cli, str(native))] = binding
 
         handlers: list[Handler] = []
@@ -158,33 +182,43 @@ class Config:
             except Exception as exc:
                 log(f"skipping invalid handler row {row.get('id')!r}: {exc}")
                 continue
-            if handler.enabled:
-                handlers.append(handler)
+            if any(h.id == handler.id for h in handlers):
+                raise ValueError("duplicate handler id")
+            handlers.append(handler)
         handlers.sort(key=lambda h: (h.order, h.id))
 
         self.bindings, self.handlers = bindings, handlers
         log(f"config loaded: {len(handlers)} handlers, {len(bindings)} bindings")
 
-    def select(self, role: str | None, native: str, payload: Any,
-               env: dict[str, str], transition: str = "") -> list[Handler]:
+    def selections(self, role: str | None, native: str, payload: Any,
+                   env: dict[str, str], transition: str = "", cli: str = "") -> list[tuple[Handler, str | None]]:
         tool = ""
         if isinstance(payload, dict):
             tool = str(payload.get("tool_name") or payload.get("toolName") or "")
         out = []
         for h in self.handlers:
+            if h.clis and cli not in h.clis:
+                continue
             if not ((role and role in h.on) or native in h.on_native):
                 continue
-            if h.match_tool is not None and not h.match_tool.search(tool):
-                continue
-            if (h.match_transition is not None
+            reason = None
+            if not h.enabled:
+                reason = "disabled"
+            elif h.match_tool is not None and not h.match_tool.search(tool):
+                reason = "tool_not_matched"
+            elif (h.match_transition is not None
                     and not h.match_transition.search(transition)):
-                continue
+                reason = "transition_not_matched"
             # A handler that needs pane context is not broken outside zellij --
             # it simply has nothing to act on. Skip quietly.
-            if any(not env.get(k) for k in h.require_env):
-                continue
-            out.append(h)
+            elif any(not env.get(k) for k in h.require_env):
+                reason = "missing_environment"
+            out.append((h, reason))
         return out
+
+    def select(self, role: str | None, native: str, payload: Any,
+               env: dict[str, str], transition: str = "", cli: str = "") -> list[Handler]:
+        return [h for h, reason in self.selections(role, native, payload, env, transition, cli) if reason is None]
 
 
 # --------------------------------------------------------------------------
@@ -199,6 +233,9 @@ def _child_env(req: dict[str, Any], role: str | None) -> dict[str, str]:
     env["BB_HOOK_CLI"] = str(req.get("cli", ""))
     env["BB_HOOK_NATIVE"] = str(req.get("native", ""))
     env["BB_HOOK_ROLE"] = role or ""
+    env["BB_HOOK_INVOCATION_ID"] = str(req.get("invocation_id", ""))
+    env["BB_HOOK_SESSION_ID"] = native_session_id(req)
+    env["BB_HOOK_PARENT_PID"] = str(req.get("parent_pid", ""))
     # Handlers that re-enter an agent CLI must not re-enter the hub.
     env["BB_HOOK_HUB"] = "off"
     return env
@@ -211,13 +248,92 @@ def _child_cwd(req: dict[str, Any]) -> str | None:
     return None
 
 
+@dataclass
+class HandlerResult:
+    status: str
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
+    reason: str | None = None
+    duration_ms: float = 0.0
+    event_id: str | None = None
+    event_type: str | None = None
+    publish_status: str | None = None
+
+
+def decode_result(out: bytes, err: bytes, code: int, *, publisher: bool = False) -> HandlerResult:
+    """Metadata is consumed here; only the native result reaches the CLI."""
+    text = out.decode("utf-8", "replace")
+    result = HandlerResult("succeeded" if code == 0 else "failed", text,
+                           err.decode("utf-8", "replace") if code == 2 else "", code,
+                           None if code == 0 else "nonzero_exit")
+    try:
+        value = json.loads(text)
+    except (ValueError, UnicodeDecodeError):
+        value = None
+    if publisher:
+        if not isinstance(value, dict) or value.get("status") not in {"succeeded", "failed", "skipped"}:
+            return HandlerResult("failed", exit_code=code, reason="invalid_publisher_receipt", publish_status="unknown")
+        return HandlerResult(value["status"], exit_code=code,
+                             reason=_reason(value.get("reason")),
+                             event_id=_field(value.get("event_id")),
+                             event_type=_field(value.get("event_type")),
+                             publish_status=_field(value.get("publish_status")))
+    if isinstance(value, dict) and isinstance(value.get("_hook_hub"), dict):
+        meta = value["_hook_hub"]
+        status = meta.get("status")
+        if status in {"succeeded", "failed", "skipped"}:
+            result.status = status
+            result.reason = _reason(meta.get("reason"))
+        result.stdout = value.get("stdout", "") if isinstance(value.get("stdout", ""), str) else ""
+        # Only deliberate native blocking (2) is propagated. Other subprocess
+        # failures remain fail-open, regardless of the wrapper's metadata.
+        if meta.get("exit_code") == 2:
+            result.exit_code = 2
+    return result
+
+
+def _field(value: Any) -> str | None:
+    return value[:256] if isinstance(value, str) else None
+
+
+def _reason(value: Any) -> str | None:
+    # Diagnostic codes, never a handler's arbitrary error/payload text.
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,96}", value) else None
+
+
+async def _communicate(proc: Any, data: bytes) -> tuple[bytes, bytes]:
+    async def read(stream: Any) -> bytes:
+        result = bytearray()
+        while True:
+            chunk = await stream.read(65536)
+            if not chunk:
+                return bytes(result)
+            result.extend(chunk)
+            if len(result) > MAX_HANDLER_OUTPUT:
+                raise ValueError("output_limit_exceeded")
+
+    async def write() -> None:
+        try:
+            proc.stdin.write(data)
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            proc.stdin.close()
+
+    _, out, err, _ = await asyncio.gather(write(), read(proc.stdout), read(proc.stderr), proc.wait())
+    return out, err
+
+
 async def run_handler(h: Handler, req: dict[str, Any], role: str | None,
-                      stdin_bytes: bytes, budget_s: float) -> str:
-    """Run one handler. Returns its stdout (empty on any failure)."""
+                      stdin_bytes: bytes, budget_s: float) -> HandlerResult:
+    """Run once with a bounded process group and a truthful execution result."""
+    started = time.monotonic()
     timeout = min(h.timeout_ms / 1000.0, budget_s) if budget_s > 0 else 0
     if timeout <= 0:
         log(f"handler {h.id}: no budget left, skipped")
-        return ""
+        return HandlerResult("skipped", reason="sync_budget_exhausted")
     try:
         proc = await asyncio.create_subprocess_exec(
             *h.command,
@@ -234,26 +350,36 @@ async def run_handler(h: Handler, req: dict[str, Any], role: str | None,
             start_new_session=True,
         )
     except (OSError, ValueError) as exc:
-        log(f"handler {h.id}: spawn failed: {exc}")
-        return ""
+        log(f"handler {h.id}: spawn failed: {type(exc).__name__}")
+        return HandlerResult("failed", reason="spawn_failed")
 
     try:
         out, err = await asyncio.wait_for(
-            proc.communicate(input=stdin_bytes), timeout=timeout
+            _communicate(proc, stdin_bytes), timeout=timeout
         )
     except asyncio.TimeoutError:
         log(f"handler {h.id}: TIMEOUT after {timeout:.2f}s, killed")
         _kill(proc)
-        return ""
+        await proc.wait()
+        return HandlerResult("timed_out", reason="timeout", duration_ms=round((time.monotonic() - started) * 1000, 2))
     except Exception as exc:
-        log(f"handler {h.id}: failed: {exc!r}")
+        log(f"handler {h.id}: failed: {type(exc).__name__}")
         _kill(proc)
-        return ""
+        await proc.wait()
+        return HandlerResult("failed", reason="output_limit_exceeded" if isinstance(exc, ValueError) else "execution_error")
+    except asyncio.CancelledError:
+        _kill(proc)
+        await proc.wait()
+        raise
 
     if proc.returncode not in (0, None):
-        tail = (err or b"").decode("utf-8", "replace").strip()[-400:]
-        log(f"handler {h.id}: exit={proc.returncode} stderr={tail!r}")
-    return (out or b"").decode("utf-8", "replace")
+        log(f"handler {h.id}: exit={proc.returncode}")
+    result = decode_result(out or b"", err or b"", proc.returncode or 0,
+                           publisher=h.id == "bloodbank-publisher")
+    if result.status in {"failed", "skipped"} and result.exit_code != 2:
+        result.stdout = ""
+    result.duration_ms = round((time.monotonic() - started) * 1000, 2)
+    return result
 
 
 def _kill(proc: Any) -> None:
@@ -295,78 +421,347 @@ def _kill(proc: Any) -> None:
 # Server
 # --------------------------------------------------------------------------
 
+def compose_stdout(chunks: list[str]) -> str:
+    """Keep multiple native JSON hook responses valid and preserve denials."""
+    if not chunks:
+        return ""
+    objects: list[dict] = []
+    plain: list[str] = []
+    for chunk in chunks:
+        try:
+            value = json.loads(chunk)
+        except ValueError:
+            value = None
+        if isinstance(value, dict):
+            objects.append(value)
+        elif chunk.strip():
+            plain.append(chunk.rstrip("\n"))
+    if not objects:
+        return "\n\n".join(plain)
+
+    def merge(dst: dict, src: dict) -> None:
+        for key, value in src.items():
+            if key not in dst:
+                dst[key] = value
+            elif isinstance(dst[key], dict) and isinstance(value, dict):
+                merge(dst[key], value)
+            elif key in {"additionalContext", "systemMessage", "reason", "permissionDecisionReason"}:
+                dst[key] = "\n\n".join(str(v) for v in (dst[key], value) if v)
+            elif key == "permissionDecision":
+                rank = {"allow": 0, "ask": 1, "deny": 2}
+                if rank.get(str(value), -1) > rank.get(str(dst[key]), -1):
+                    dst[key] = value
+            elif key == "decision" and value == "block":
+                dst[key] = value
+            elif key == "continue" and value is False:
+                dst[key] = False
+    combined: dict[str, Any] = {}
+    for obj in objects:
+        merge(combined, obj)
+    if plain:
+        extra = combined.setdefault("hookSpecificOutput", {})
+        if isinstance(extra, dict):
+            merge(extra, {"additionalContext": "\n\n".join(plain)})
+    return json.dumps(combined, separators=(",", ":"))
+
+
 class Server:
     def __init__(self) -> None:
         self.cfg = Config()
         self.slots = asyncio.Semaphore(ASYNC_SLOTS)
         self.background: set[asyncio.Task] = set()
+        self.pending: dict[str, asyncio.Future] = {}
+        self.replies: OrderedDict[str, dict] = OrderedDict()
+        self.session_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self.store = ReceiptStore(RECEIPT_PATH)
+        self.store.recover()
+        self.started_at = now_iso()
+        self.journal_error: str | None = None
+        self.inventory: dict | None = None
+        self.inventory_at = 0.0
+        self.inventory_lock = asyncio.Lock()
+
+    async def journal(self, method: str, *args, **kwargs):
+        try:
+            result = await asyncio.to_thread(getattr(self.store, method), *args, **kwargs)
+            self.journal_error = None
+            return result
+        except Exception as exc:
+            self.journal_error = type(exc).__name__
+            log(f"receipt journal {method} failed: {self.journal_error}")
+            raise
+
+    def task(self, coroutine) -> asyncio.Task:
+        task = asyncio.create_task(coroutine)
+        self.background.add(task)
+        task.add_done_callback(self.background.discard)
+        return task
+
+    async def execute(self, h: Handler, req: dict, role: str | None,
+                      stdin_bytes: bytes, budget_s: float) -> HandlerResult:
+        iid = req["invocation_id"]
+        await self.journal("update", iid, h.id, "started")
+        try:
+            result = await run_handler(h, req, role, stdin_bytes, budget_s)
+        except asyncio.CancelledError:
+            await self.journal("update", iid, h.id, "failed", reason="hub_shutdown")
+            raise
+        await self.journal("update", iid, h.id, result.status, reason=result.reason,
+                           duration_ms=result.duration_ms, exit_code=result.exit_code,
+                           event_id=result.event_id, event_type=result.event_type,
+                           publish_status=result.publish_status)
+        return result
 
     def spawn_async(self, h: Handler, req: dict, role: str | None,
                     stdin_bytes: bytes) -> None:
-        async def guarded() -> None:
+        async def work() -> None:
             async with self.slots:
-                await run_handler(h, req, role, stdin_bytes, h.timeout_ms / 1000.0)
+                await self.execute(h, req, role, stdin_bytes, h.timeout_ms / 1000.0)
 
-        task = asyncio.create_task(guarded())
-        self.background.add(task)
-        task.add_done_callback(self.background.discard)
+        async def guarded() -> None:
+            try:
+                if h.id == "bloodbank-publisher":
+                    # Causation chains and counters belong to one native
+                    # session. Preserve event arrival order within it while
+                    # independent sessions publish concurrently.
+                    key = (str(req.get("cli")), native_session_id(req) or str(req.get("cwd", "")))
+                    lock = self.session_locks.setdefault(key, asyncio.Lock())
+                    async with lock:
+                        await work()
+                    # All waiters share this lock; remove only after the last.
+                    if not lock.locked() and not getattr(lock, "_waiters", None):
+                        self.session_locks.pop(key, None)
+                else:
+                    await work()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log(f"async handler {h.id} failed: {type(exc).__name__}")
+        self.task(guarded())
+
+    def publisher(self, cli: str, native: str, binding: dict | None) -> Handler | None:
+        if not PUBLISH_ENABLED or native == "transition" or binding is None:
+            return None
+        if binding.get("support_status", "supported") != "supported":
+            return None
+        if not binding.get("event_type"):
+            return None
+        return Handler({
+            "id": "bloodbank-publisher", "mode": "async", "on_native": [native],
+            "command": [sys.executable, str(AGENT_HOOKS_DIR / "publish.py"),
+                        "--report", "--client", cli, "--hook", native],
+            "timeout_ms": 10000,
+        })
 
     async def dispatch(self, req: dict[str, Any]) -> dict[str, Any]:
+        if req.get("op") == "status":
+            return await self.status()
         self.cfg.maybe_reload()
-        cli = str(req.get("cli", ""))
-        native = str(req.get("native", ""))
+        cli = str(req.get("cli", ""))[:64]
+        native = str(req.get("native", ""))[:128]
+        if not cli or not native:
+            return {"v": 1, "stdout": "", "exit_code": 0, "handled": []}
         payload = req.get("payload")
-        env = {k: v for k, v in (req.get("env") or {}).items()
+        raw_env = req.get("env")
+        env = {k: v for k, v in (raw_env if isinstance(raw_env, dict) else {}).items()
                if isinstance(k, str) and isinstance(v, str)}
-
         binding = self.cfg.bindings.get((cli, native))
         role = binding.get("role") if binding else None
-        if binding is None:
-            log(f"no binding for {cli}/{native} (dispatching on native name only)")
+        iid, identity_kind = invocation_identity(req)
+        base = {"v": 1, "invocation_id": iid, "stdout": "", "exit_code": 0, "handled": []}
+        fresh = await self.journal("claim", {
+            "invocation_id": iid, "cli": cli, "native": native, "role": role,
+            "event_type": binding.get("event_type") if binding else None,
+            "session_id": native_session_id(req) or None,
+            "identity_kind": identity_kind, "received_at": now_iso(),
+        })
+        if not fresh:
+            # In-memory replies may contain context; the durable receipt does
+            # not. Never rerun a side effect merely to reconstruct old output.
+            future = self.pending.get(iid)
+            if future is not None:
+                try:
+                    reply = await asyncio.wait_for(asyncio.shield(future), min(MAX_SYNC_BUDGET, max(float(req.get("budget_s", SYNC_BUDGET)), 0.1)))
+                except asyncio.TimeoutError:
+                    reply = base
+            else:
+                reply = self.replies.get(iid, base)
+            return {**reply, "deduplicated": True}
 
-        # An agent-state transition arrives as native "transition" with a
-        # payload carrying from/to; everything else leaves this empty, so a row
-        # with match_transition simply never matches a normal hook.
-        transition = ""
-        if isinstance(payload, dict) and payload.get("to"):
-            transition = f"{payload.get('from', '')}->{payload['to']}"
-
-        selected = self.cfg.select(role, native, payload, env, transition)
-        if not selected:
-            return {"v": 1, "stdout": "", "exit_code": 0, "handled": []}
-
+        future = asyncio.get_running_loop().create_future()
+        self.pending[iid] = future
+        req = {**req, "cli": cli, "native": native, "env": env, "invocation_id": iid}
         try:
+            transition = ""
+            if native == "transition" and isinstance(payload, dict) and payload.get("to"):
+                transition = f"{payload.get('from', '')}->{payload['to']}"
+            selections = self.cfg.selections(role, native, payload, env, transition, cli)
+            publisher = self.publisher(cli, native, binding)
+            if publisher is not None:
+                selections.insert(0, (publisher, None))
+            for h, reason in selections:
+                await self.journal("select", iid, h.id, h.mode, reason=reason)
+            selected = [h for h, reason in selections if reason is None]
             stdin_bytes = json.dumps(payload if payload is not None else {}).encode()
-        except (TypeError, ValueError):
-            stdin_bytes = b"{}"
+            for h in selected:
+                if h.mode == "async":
+                    self.spawn_async(h, req, role, stdin_bytes)
+            chunks: list[str] = []
+            stderr: list[str] = []
+            exit_code = 0
+            requested_budget = req.get("budget_s", SYNC_BUDGET)
+            budget = min(float(requested_budget), MAX_SYNC_BUDGET) if isinstance(requested_budget, (int, float)) else SYNC_BUDGET
+            deadline = time.monotonic() + max(budget, 0)
+            for h in selected:
+                if h.mode != "sync":
+                    continue
+                result = await self.execute(h, req, role, stdin_bytes, deadline - time.monotonic())
+                if result.stdout.strip():
+                    chunks.append(result.stdout)
+                if result.exit_code == 2:
+                    exit_code = 2
+                    if result.stderr:
+                        stderr.append(result.stderr)
+            await self.journal("finish", iid)
+            reply = {**base, "stdout": compose_stdout(chunks), "exit_code": exit_code,
+                     "handled": [h.id for h in selected], "deduplicated": False}
+            if stderr:
+                reply["stderr"] = "\n".join(stderr)
+            self.replies[iid] = reply
+            if len(self.replies) > 512:
+                self.replies.popitem(last=False)
+            future.set_result(reply)
+            return reply
+        finally:
+            self.pending.pop(iid, None)
+            if not future.done():
+                future.set_result(base)
 
-        sync = [h for h in selected if h.mode == "sync"]
-        for h in selected:
-            if h.mode == "async":
-                self.spawn_async(h, req, role, stdin_bytes)
+    async def status(self) -> dict[str, Any]:
+        self.cfg.maybe_reload()
+        summary = await self.journal("summary")
+        inventory = await self.installed_inventory()
+        deployed = {(cli["cli"], native["native"]): native
+                    for cli in inventory.get("clis", [])
+                    for native in cli.get("natives", [])}
+        activity = {(row["cli"], row["native"]): row for row in summary["native_activity"]}
+        bindings = []
+        for (cli, native), binding in sorted(self.cfg.bindings.items()):
+            observed = activity.get((cli, native))
+            # Native installation health is a separate deployment check. A
+            # configured route with no observations is unobserved, never broken.
+            state = "unobserved"
+            if observed:
+                age = time.time() - datetime.fromisoformat(observed["last_received_at"].replace("Z", "+00:00")).timestamp()
+                state = "idle" if age > 3600 else "active"
+            installation = deployed.get((cli, native))
+            observed_state = state
+            if installation and installation.get("status") == "missing":
+                state = "missing"
+            elif installation and installation.get("status") in {"duplicate", "drift"}:
+                state = "failed"
+            handler_ids = [h.id for h in self.cfg.handlers
+                           if h.enabled and (not h.clis or cli in h.clis)
+                           and (binding.get("role") in h.on or native in h.on_native)]
+            if self.publisher(cli, native, binding):
+                handler_ids.insert(0, "bloodbank-publisher")
+            bindings.append({"cli": cli, "native": native, "role": binding.get("role"),
+                             "support_status": binding.get("support_status", "supported"),
+                             "event_type": binding.get("event_type"), "state": state,
+                             "observed_state": observed_state,
+                             "configured": True, "activity": observed,
+                             "installation": installation,
+                             "handler_ids": handler_ids})
+        handlers = [{"id": h.id, "mode": h.mode, "on": sorted(h.on),
+                     "on_native": sorted(h.on_native), "clis": sorted(h.clis),
+                     "enabled": h.enabled, "timeout_ms": h.timeout_ms, "order": h.order,
+                     "require_env": h.require_env,
+                     "match_tool": h.match_tool.pattern if h.match_tool else None,
+                     "state": "configured" if h.enabled else "disabled"}
+                    for h in self.cfg.handlers]
+        if PUBLISH_ENABLED:
+            handlers.insert(0, {"id": "bloodbank-publisher", "mode": "async",
+                               "on": sorted({b.get("role") for b in self.cfg.bindings.values() if b.get("role") and b.get("event_type")}),
+                               "on_native": [], "clis": [], "enabled": True,
+                               "timeout_ms": 10000, "order": 0, "require_env": [],
+                               "match_tool": None, "state": "configured"})
+        return {"schema_version": SCHEMA_VERSION, "generated_at": now_iso(),
+                "hub": {"state": "failed" if self.cfg.error or self.journal_error else "running",
+                        "started_at": self.started_at, "pid": os.getpid(),
+                        "registry_error": self.cfg.error, "journal_error": self.journal_error,
+                        "publish_enabled": PUBLISH_ENABLED, "async_running": len(self.background)},
+                "bindings": bindings, "handlers": handlers, "installation": inventory, **summary}
 
-        chunks: list[str] = []
-        deadline = time.monotonic() + SYNC_BUDGET
-        for h in sync:
-            out = await run_handler(
-                h, req, role, stdin_bytes, deadline - time.monotonic()
-            )
-            if out.strip():
-                chunks.append(out.rstrip("\n"))
+    async def installed_inventory(self) -> dict:
+        async with self.inventory_lock:
+            if self.inventory is not None and time.monotonic() - self.inventory_at < 30:
+                return self.inventory
 
-        return {
-            "v": 1,
-            "stdout": "\n\n".join(chunks),
-            "exit_code": 0,
-            "handled": [h.id for h in selected],
-        }
+            def collect() -> dict:
+                path = AGENT_HOOKS_DIR / "health" / "installed_inventory.py"
+                if not path.is_file():
+                    return {"generated_at": now_iso(), "status": "unavailable", "reason": "inventory_not_installed", "clis": []}
+                name = "hook_hub_installed_inventory"
+                spec = importlib.util.spec_from_file_location(name, path)
+                if spec is None or spec.loader is None:
+                    raise ImportError("inventory_loader_unavailable")
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[name] = module
+                spec.loader.exec_module(module)
+                return module.collect_installed_inventory()
+
+            try:
+                self.inventory = await asyncio.to_thread(collect)
+            except Exception as exc:
+                self.inventory = {"generated_at": now_iso(), "status": "unavailable", "reason": type(exc).__name__, "clis": []}
+            self.inventory_at = time.monotonic()
+            return self.inventory
+
+    async def http(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        code, body = 200, {}
+        try:
+            headers = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=2)
+            if len(headers) > 16384:
+                raise ValueError("headers too large")
+            method, target, _ = headers.split(b"\r\n", 1)[0].decode("ascii").split(" ", 2)
+            path = urlsplit(target)
+            if method != "GET":
+                code, body = 405, {"error": "method_not_allowed"}
+            elif path.path in {"/health", "/v1/hooks/status"}:
+                body = await self.status()
+            elif path.path == "/v1/hooks/invocations":
+                query = parse_qs(path.query)
+                args = {name: query[name][0] for name in ("cli", "native", "handler", "status", "limit", "offset") if name in query}
+                body = await self.journal("history", **args)
+            elif path.path.startswith("/v1/hooks/invocations/"):
+                detail = await self.journal("detail", unquote(path.path.rsplit("/", 1)[1]))
+                if detail is None:
+                    code, body = 404, {"error": "invocation_not_found"}
+                else:
+                    body = {"invocation": detail}
+            else:
+                code, body = 404, {"error": "not_found"}
+        except (ValueError, UnicodeDecodeError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
+            code, body = 400, {"error": "invalid_request"}
+        except asyncio.TimeoutError:
+            code, body = 408, {"error": "request_timeout"}
+        except Exception as exc:
+            code, body = 503, {"error": "journal_unavailable", "reason": type(exc).__name__}
+        body = {"schema_version": SCHEMA_VERSION, "generated_at": now_iso(), **body}
+        raw = json.dumps(body, separators=(",", ":")).encode()
+        try:
+            writer.write(f"HTTP/1.1 {code} Response\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {len(raw)}\r\nConnection: close\r\n\r\n".encode() + raw)
+            await writer.drain()
+        except (OSError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+            await writer.wait_closed()
 
     async def handle(self, reader: asyncio.StreamReader,
                      writer: asyncio.StreamWriter) -> None:
         try:
-            raw = await asyncio.wait_for(
-                reader.read(MAX_REQUEST_BYTES + 1), timeout=SYNC_BUDGET + 1
-            )
+            raw = await asyncio.wait_for(reader.read(MAX_REQUEST_BYTES + 1), timeout=SYNC_BUDGET + 1)
             if len(raw) > MAX_REQUEST_BYTES:
                 raise ValueError("request too large")
             req = json.loads(raw)
@@ -374,18 +769,18 @@ class Server:
                 raise ValueError("request must be a JSON object")
             reply = await self.dispatch(req)
         except Exception as exc:
-            log(f"request failed: {exc!r}")
+            log(f"request failed: {type(exc).__name__}")
             reply = {"v": 1, "stdout": "", "exit_code": 0, "handled": []}
-
         try:
             writer.write(json.dumps(reply, separators=(",", ":")).encode() + b"\n")
             await writer.drain()
         except (OSError, ConnectionError):
-            pass                       # client gave up; its own deadline covers it
+            pass
         finally:
+            writer.close()
             try:
-                writer.close()
-            except OSError:
+                await writer.wait_closed()
+            except (OSError, ConnectionError):
                 pass
 
 
@@ -432,8 +827,29 @@ async def main() -> int:
         os.chmod(path, 0o600)
         log(f"listening on {path}")
 
+    http_server = None
+    if HTTP_PORT:
+        try:
+            http_server = await asyncio.start_server(server_obj.http, HTTP_HOST, HTTP_PORT, limit=16384)
+            log(f"receipt API listening on {HTTP_HOST}:{HTTP_PORT}")
+        except OSError as exc:
+            log(f"receipt API unavailable: {type(exc).__name__}")
+
+    async def maintenance() -> None:
+        while True:
+            await server_obj.journal("prune")
+            await asyncio.sleep(300)
+
+    maintenance_task = asyncio.create_task(maintenance())
     async with server:
         await stop
+    if http_server is not None:
+        http_server.close()
+        await http_server.wait_closed()
+    maintenance_task.cancel()
+    for task in list(server_obj.background):
+        task.cancel()
+    await asyncio.gather(maintenance_task, *server_obj.background, return_exceptions=True)
     log("shutting down")
     return 0
 

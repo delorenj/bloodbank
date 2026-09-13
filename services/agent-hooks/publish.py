@@ -79,6 +79,9 @@ def _parse_argv(argv: list[str]) -> tuple[str, str, list[str]]:
 
 
 def main(argv: list[str]) -> int:
+    report = "--report" in argv
+    if report:
+        argv = [arg for arg in argv if arg != "--report"]
     client_name, hook_name, run_argv = _parse_argv(argv)
 
     if not client_name or client_name not in REGISTRY:
@@ -96,7 +99,19 @@ def main(argv: list[str]) -> int:
         return 2
 
     adapter = get_adapter(client_name)
-    return run(adapter, run_argv)
+    outcome: dict = {}
+    try:
+        code = run(adapter, run_argv, report=outcome if report else None)
+    except Exception:
+        if not report:
+            raise
+        if not outcome:
+            outcome = {"status": "failed", "reason": "publisher_error", "publish_status": "unknown"}
+        code = 1
+    if report:
+        import json
+        print(json.dumps(outcome, separators=(",", ":")))
+    return code
 
 
 if __name__ == "__main__":

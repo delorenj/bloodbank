@@ -87,6 +87,19 @@ ENV_ALLOWLIST = (
     "CLAUDE_CODE_SESSION_ID",
     "CLAUDE_PROJECT_DIR",
     "PJ_HOOK_OWNER",
+    "CODEX_THREAD_ID",
+    "HERMES_HOME",
+    "HERMES_AGENT_ID",
+    "HERMES_PROFILE",
+    "HINDSIGHT_AGENT",
+    "HINDSIGHT_PROJECT_FALLBACK",
+    "ORCA_AGENT_HOOK_ENDPOINT",
+    "ORCA_AGENT_HOOK_PORT",
+    "ORCA_PANE_KEY",
+    "ORCA_TAB_ID",
+    "ORCA_WORKTREE_ID",
+    "ORCA_AGENT_HOOK_ENV",
+    "ORCA_AGENT_HOOK_VERSION",
 )
 
 # Second gate, independent of the first. Anything credential-shaped is dropped
@@ -121,9 +134,9 @@ def socket_path() -> str:
     return os.path.join(runtime, "33god", "hook-hub.sock")
 
 
-def left(budget: float = TOTAL_BUDGET) -> float:
+def left(budget: float | None = None) -> float:
     """Seconds remaining against an absolute budget from process start."""
-    return budget - (time.monotonic() - START)
+    return (TOTAL_BUDGET if budget is None else budget) - (time.monotonic() - START)
 
 
 def read_payload() -> object:
@@ -215,12 +228,17 @@ def exchange(request: bytes) -> dict:
 
 
 def main(argv: list[str]) -> int:
+    global TOTAL_BUDGET
     trailer = None
+    flags: dict[str, str] = {}
     rest: list[str] = []
     i = 1
     while i < len(argv):
         arg = argv[i]
-        if arg == "--trailer" and i + 1 < len(argv):
+        if arg in ("--cli", "--native", "--invocation-id", "--deadline") and i + 1 < len(argv):
+            flags[arg] = argv[i + 1]
+            i += 2
+        elif arg == "--trailer" and i + 1 < len(argv):
             trailer = TRAILERS.get(argv[i + 1])
             i += 2
         elif arg.startswith("--trailer="):
@@ -239,14 +257,20 @@ def main(argv: list[str]) -> int:
 
     if os.environ.get("BB_HOOK_HUB") == "off":
         return finish()
-    if len(rest) < 2:
+    if "--deadline" in flags:
+        try:
+            TOTAL_BUDGET = min(max(float(flags["--deadline"]), 0.1), 15.0)
+        except ValueError:
+            pass
+    cli = flags.get("--cli") or (rest.pop(0) if rest else "")
+    native = flags.get("--native") or (rest.pop(0) if rest else "")
+    if not cli or not native:
         print(
             "usage: bb-hook <cli> <native-event> [--trailer passive|stop]",
             file=sys.stderr,
         )
         return finish(0)
 
-    cli, native = rest[0], rest[1]
     payload = read_payload()
 
     request = {
@@ -255,10 +279,14 @@ def main(argv: list[str]) -> int:
         "native": native,
         "cwd": os.environ.get("PWD") or _getcwd(),
         "pid": os.getpid(),
+        "parent_pid": os.getppid(),
+        "budget_s": max(left() - 0.25, 0.0),
         "env": captured_env(),
         "payload": payload,
-        "extra": rest[2:],
+        "extra": rest,
     }
+    if flags.get("--invocation-id"):
+        request["invocation_id"] = flags["--invocation-id"][:256]
     try:
         line = json.dumps(request, separators=(",", ":")).encode("utf-8") + b"\n"
     except (TypeError, ValueError):
