@@ -146,6 +146,14 @@ groups are terminated and recorded as timed out. A malformed registry retains th
 last good configuration and surfaces the error in Holocene. None of these states
 are reported as successful execution.
 
+On service shutdown, the hub stops accepting new connections and drains accepted
+requests and background work for up to two seconds. Publication has two reserved
+slots, so long behavioral jobs cannot starve it. Remaining work is recorded as
+`interrupted` with reason `shutdown_grace_expired`; an unfinished publisher has
+outcome `unknown`. It is not automatically replayed. The service uses
+`KillMode=mixed` and `TimeoutStopSec=5s` so systemd allows that drain before
+terminating the remaining process group. Status reports `draining` while it runs.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -157,6 +165,8 @@ are reported as successful execution.
 | `HOOK_HUB_SYNC_BUDGET` | `2.5` | Default shared synchronous deadline |
 | `HOOK_HUB_MAX_SYNC_BUDGET` | `14.0` | Maximum shared synchronous deadline |
 | `HOOK_HUB_ASYNC_SLOTS` | `8` | Concurrent background handlers |
+| `HOOK_HUB_PUBLISH_SLOTS` | `2` | Reserved publisher concurrency |
+| `HOOK_HUB_SHUTDOWN_GRACE` | `2.0` | Shutdown drain, capped at two seconds |
 | `HOOK_HUB_RECEIPTS` | `$XDG_STATE_HOME/33god/hook-hub/receipts.sqlite3` | Receipt database |
 | `HOOK_HUB_LOG` | `$XDG_STATE_HOME/33god/hook-hub/hub.log` | Rotating diagnostic log |
 | `HOOK_HUB_HTTP_HOST` | `127.0.0.1` | Read-only API bind address |
