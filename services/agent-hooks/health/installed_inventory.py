@@ -115,7 +115,10 @@ def collect_installed_inventory(master: dict | None = None, *, probe_native: boo
             from codex_native import capture_trust
             native_codex = []
             for _, path, _ in config_paths("codex", master["agents"]["codex"]):
-                native_codex.extend(capture_trust(path.parent / "config.toml")["hooks"])
+                # Native hooks/list also includes project sources for its cwd.
+                # Verify each user source in its own runtime trust context.
+                native_codex.extend(h for h in capture_trust(path.parent / "config.toml")["hooks"]
+                                    if h.get("sourcePath") == str(path))
         except Exception:
             native_codex = None
     clis = []

@@ -14,6 +14,13 @@ pytest loads this automatically; `unittest discover` does not, so the mise task
 `asm:test` and `validate:agent-hooks` set the same variable in the environment.
 """
 import os
+import pytest
 
 os.environ.setdefault("BLOODBANK_ASM", "false")
 os.environ["BLOODBANK_ASM"] = "false"
+
+
+@pytest.fixture(autouse=True)
+def isolate_live_hook_hub(monkeypatch, tmp_path):
+    """Publisher tests must not forward through an installed machine hub."""
+    monkeypatch.setenv("BB_HOOK_OWNERSHIP", str(tmp_path / "absent-ownership.json"))

@@ -99,7 +99,7 @@ class ClaudeAdapter(ClientAdapter):
                 "session_id": session.session_id,
                 "end_reason": end_reason,
                 "duration_seconds": duration,
-                "total_turns": session.turn_number,
+                "total_turns": session.conversation_turn_number,
                 "tools_used": session.tools_used,
                 "files_modified": git_files_modified(cwd),
                 "git_commits": git_commits_since(session.started_at, cwd),
@@ -110,7 +110,7 @@ class ClaudeAdapter(ClientAdapter):
 
         if ce_type == "bloodbank.conversation.turn.started":
             prompt_text = str(payload.get("prompt", ""))
-            turn_id = f"{session.session_id}:{session.turn_number + 1}"
+            turn_id = self.native_turn_id(payload) or session.current_turn_id
             return {
                 "thread_id": session.session_id,
                 "turn_id": turn_id,
@@ -122,7 +122,7 @@ class ClaudeAdapter(ClientAdapter):
 
         if ce_type == "bloodbank.conversation.turn.completed":
             return {"thread_id": session.session_id,
-                    "turn_id": str(payload.get("turn_id") or f"{session.session_id}:{session.turn_number}"),
+                    "turn_id": self.native_turn_id(payload) or session.current_turn_id,
                     "outcome": "failed" if payload.get("error") else "completed",
                     "working_directory": cwd}
 

@@ -140,6 +140,17 @@ class ClientAdapter:
         state = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
         return state / "33god/agent-hooks" / self.name / "sessions" / f"{digest}.json"
 
+    def native_turn_id(self, payload: Any) -> str | None:
+        """Use an explicit native turn identity when the CLI provides one."""
+        if isinstance(payload, dict):
+            for candidate in (payload, payload.get("extra"), payload.get("properties")):
+                if isinstance(candidate, dict):
+                    for key in ("turn_id", "turnId", "turnID"):
+                        value = candidate.get(key)
+                        if isinstance(value, str) and value:
+                            return value
+        return None
+
     @property
     def agent_dir(self) -> Path:
         """Directory containing the client's event_map.generated.json."""

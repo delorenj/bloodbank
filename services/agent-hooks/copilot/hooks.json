@@ -4,57 +4,85 @@
     "sessionStart": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook sessionStart",
-        "timeoutSec": 5
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native sessionStart --deadline 15",
+        "timeoutSec": 16
       }
     ],
     "sessionEnd": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook sessionEnd",
-        "timeoutSec": 5
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native sessionEnd",
+        "timeoutSec": 4
       }
     ],
     "userPromptSubmitted": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook userPromptSubmitted",
-        "timeoutSec": 5
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native userPromptSubmitted --deadline 15",
+        "timeoutSec": 16
       }
     ],
     "preToolUse": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook preToolUse",
-        "timeoutSec": 5
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native preToolUse",
+        "timeoutSec": 4
       }
     ],
     "postToolUse": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook postToolUse",
-        "timeoutSec": 5
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native postToolUse",
+        "timeoutSec": 4
       }
     ],
     "errorOccurred": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook errorOccurred",
-        "timeoutSec": 5
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native errorOccurred",
+        "timeoutSec": 4
       }
     ],
     "agentStop": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook agentStop",
-        "timeoutSec": 5
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native agentStop",
+        "timeoutSec": 4
       }
     ],
     "permissionRequest": [
       {
         "type": "command",
-        "bash": "exec python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client copilot --hook permissionRequest",
-        "timeoutSec": 2
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native permissionRequest",
+        "timeoutSec": 4
+      }
+    ],
+    "subagentStart": [
+      {
+        "type": "command",
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native subagentStart",
+        "timeoutSec": 4
+      }
+    ],
+    "subagentStop": [
+      {
+        "type": "command",
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native subagentStop",
+        "timeoutSec": 4
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "type": "command",
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native postToolUseFailure",
+        "timeoutSec": 4
+      }
+    ],
+    "notification": [
+      {
+        "type": "command",
+        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native notification",
+        "timeoutSec": 4
       }
     ]
   }

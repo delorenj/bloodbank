@@ -19,6 +19,7 @@ from core.event_map import resolve_map
 from core.envelope import build_envelope
 from core.session import SessionState
 from health.installed_inventory import collect_installed_inventory, native_rows
+from health import installed_inventory
 import sync
 
 
@@ -150,6 +151,25 @@ def test_turn_completion_is_not_session_closure_and_new_adapters_keep_identity(t
         assert data["outcome"] == "completed"
 
 
+@pytest.mark.parametrize("name", ["claude", "codex", "copilot", "hermes", "kimi", "gemini", "opencode"])
+def test_prompt_completion_turn_identity_survives_tools_and_subsequent_prompts(tmp_path, name):
+    adapter = get_adapter(name)
+    path = tmp_path / f"{name}.json"
+    session = SessionState(path, native_id="native-session")
+    payload = {"session_id": "native-session", "cwd": str(tmp_path)}
+    first = session.begin_turn(adapter.native_turn_id(payload))
+    started = adapter.shape_data(session, "bloodbank.conversation.turn.started", "prompt", payload, [])
+    session.bump_tool("Bash")
+    session.bump_tool("Read")
+    reloaded = SessionState(path, native_id="native-session")
+    completed = adapter.shape_data(reloaded, "bloodbank.conversation.turn.completed", "stop", payload, [])
+    assert started["turn_id"] == completed["turn_id"] == first
+    assert reloaded.begin_turn() != first
+    explicit = {**payload, "extra": {"turn_id": "native-turn"}}
+    assert reloaded.begin_turn(adapter.native_turn_id(explicit)) == "native-turn"
+    assert reloaded.conversation_turn_number == 3
+
+
 def test_every_publishing_binding_shapes_a_valid_schema_and_actor(tmp_path):
     pytest.importorskip("jsonschema")
     master = sync.load_master()
@@ -206,6 +226,31 @@ def test_codex_discovery_includes_runtime_account_and_active_homes_once(tmp_path
     agent = {"live_target": str(runtime / "hooks.json"), "discover_runtime_homes": True}
     paths = [path for _, path, _ in sync.discover_codex_configs(agent, proc_root=proc.parent)]
     assert paths == [runtime / "hooks.json", account / "hooks.json", active / "hooks.json"]
+
+
+def test_inventory_keeps_codex_native_trust_scoped_to_its_config_home(tmp_path, monkeypatch):
+    import codex_native
+    master = sync.load_master()
+    agent = master["agents"]["codex"]
+    master["agents"] = {"codex": agent}
+    generated = sync.render_config(agent, master["lifecycle"], sync.load_lock())
+    paths = [tmp_path / name / "hooks.json" for name in ("default", "runtime")]
+    for path in paths:
+        path.parent.mkdir()
+        path.write_text(json.dumps(generated))
+    def loaded(config):
+        source = config.parent / "hooks.json"
+        own = [{"sourcePath": str(source), "command": row["command"], "enabled": True,
+                "trustStatus": "trusted", "timeoutSec": row["timeout"]}
+               for row in native_rows(generated, "codex")]
+        extra = [{**h, "sourcePath": str(paths[0]), "trustStatus": "untrusted"} for h in own] if source == paths[1] else []
+        return {"hooks": own + extra}
+    monkeypatch.setattr(codex_native, "capture_trust", loaded)
+    monkeypatch.setattr(installed_inventory, "config_paths", lambda *_: [(p.parent.name, p, None) for p in paths])
+    monkeypatch.setattr(installed_inventory, "_binary_available", lambda *_: True)
+    result = collect_installed_inventory(master)
+    assert result["status"] == "healthy"
+    assert all(row["actual_hub_count"] == row["expected_count"] == 2 for row in result["clis"][0]["natives"])
 
 
 def test_opencode_native_bridge_keeps_session_identity_context_and_failed_tool_once(tmp_path):

@@ -121,7 +121,7 @@ class HermesAdapter(ClientAdapter):
         if ce_type == "bloodbank.conversation.turn.started":
             return {
                 "thread_id": correlation,
-                "turn_id": str(_value(flat, "turn_id", "task_id") or correlation),
+                "turn_id": self.native_turn_id(payload) or session.current_turn_id,
                 "working_directory": cwd,
                 **raw,
             }
@@ -129,7 +129,7 @@ class HermesAdapter(ClientAdapter):
         if ce_type == "bloodbank.conversation.turn.completed":
             outcome = "canceled" if flat.get("interrupted") else "failed" if flat.get("failed") else "completed"
             return {"thread_id": correlation,
-                    "turn_id": str(_value(flat, "turn_id", "task_id") or correlation),
+                    "turn_id": self.native_turn_id(payload) or session.current_turn_id,
                     "outcome": outcome, "working_directory": cwd, **raw}
 
         if ce_type == "bloodbank.agent.session.started":

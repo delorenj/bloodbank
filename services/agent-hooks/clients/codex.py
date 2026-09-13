@@ -136,7 +136,7 @@ class CodexAdapter(ClientAdapter):
                 "session_id": session.session_id,
                 "end_reason": end_reason,
                 "duration_seconds": duration,
-                "total_turns": session.turn_number,
+                "total_turns": session.conversation_turn_number,
                 "tools_used": session.tools_used,
                 "files_modified": git_files_modified(cwd),
                 "git_commits": git_commits_since(session.started_at, cwd),
@@ -326,5 +326,4 @@ def _turn_id(session: SessionState, payload: Any) -> str:
     value = _value(payload, "turn_id", "turnId")
     if value:
         return str(value)
-    turn_number = max(session.turn_number, 1)
-    return f"{session.session_id}:{turn_number}"
+    return session.current_turn_id

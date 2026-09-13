@@ -71,6 +71,7 @@ class SessionState:
         started_at      — ISO timestamp of session start
         working_directory, git_branch
         turn_number     — bumped on each tool-use event
+        conversation_turn_number, current_turn_id — prompt/response identity
         tools_used      — name → count
     """
 
@@ -90,6 +91,7 @@ class SessionState:
             "working_directory": self._cwd,
             "git_branch": git_branch(self._cwd),
             "turn_number": 0,
+            "conversation_turn_number": 0,
             "tools_used": {},
             # The adapter uses the UUID correlation id before the first event.
             "last_event_id": "",
@@ -136,6 +138,21 @@ class SessionState:
     @property
     def turn_number(self) -> int:
         return int(self._data.get("turn_number", 0))
+
+    @property
+    def conversation_turn_number(self) -> int:
+        return int(self._data.get("conversation_turn_number", 0))
+
+    @property
+    def current_turn_id(self) -> str:
+        return self._data.get("current_turn_id") or f"{self.session_id}:turn:{max(self.conversation_turn_number, 1)}"
+
+    def begin_turn(self, native_turn_id: str | None = None) -> str:
+        """Persist one prompt/response identity independently of tool counts."""
+        self._data["conversation_turn_number"] = self.conversation_turn_number + 1
+        self._data["current_turn_id"] = native_turn_id or f"{self.session_id}:turn:{self.conversation_turn_number}"
+        self._save()
+        return self.current_turn_id
 
     @property
     def tools_used(self) -> dict[str, int]:

@@ -94,7 +94,7 @@ class CopilotAdapter(ClientAdapter):
                 prompt_text = payload.get("prompt") or payload.get("prompt_text")
             return {
                 "thread_id": session_id,
-                "turn_id": session_id,
+                "turn_id": self.native_turn_id(payload) or session.current_turn_id,
                 "prompt_text": prompt_text,
                 "working_directory": cwd,
                 **raw,
@@ -102,7 +102,7 @@ class CopilotAdapter(ClientAdapter):
 
         if ce_type == "bloodbank.conversation.turn.completed":
             return {"thread_id": session_id,
-                    "turn_id": str(payload.get("turnId") or payload.get("turn_id") or session_id),
+                    "turn_id": self.native_turn_id(payload) or session.current_turn_id,
                     "outcome": "failed" if payload.get("error") else "completed",
                     "working_directory": cwd, **raw}
 
