@@ -1,122 +1,214 @@
-# hook-hub handler registry — THE ONE FILE YOU EDIT.
+# Portable behavioral handlers. Native CLIs have one bb-hook per event.
+# Command wrappers emit explicit _hook_hub status metadata; the hub records it
+# and only returns their nested stdout to the originating native CLI.
+# Behavioral rows are staged OFF until cutover.py retires their native owners.
+# Keep the ASM rows active: they already have a single publisher-owned source.
 #
-# Every agent CLI reaches this registry through the same `bb-hook` re-trigger, so
-# a handler bound to a lifecycle role here fires for claude, codex, copilot,
-# hermes and antigravity alike. Adding a concern is one row, not six edits across
-# five config dialects.
-#
-# Fields
-#   id           unique, stable; appears in the hub log and the reply's `handled`
-#   mode         "sync"  -> stdout is returned to the CLI and injected into the
-#                           prompt; shares one budget (HOOK_HUB_SYNC_BUDGET)
-#                "async" -> launched and forgotten; stdout discarded
-#   on           lifecycle roles, from hooks.master.json — the portable binding:
-#                session_start, prompt_submit, pre_tool, post_tool,
-#                subagent_stop, session_end, invocation_start, invocation_failed
-#   on_native    native event names, for signals with no contract-legal event
-#                type (Notification, PermissionRequest, TeammateIdle). These
-#                dispatch to handlers but are never published to the bus.
-#   command      argv list; ~ is expanded. No shell, so no pipes or $VARS.
-#   timeout_ms   hard kill deadline for this handler
-#   match_tool   regex against payload tool_name (post_tool / pre_tool only)
-#   require_env  skip silently unless every listed var is set and non-empty.
-#                This is what makes a zellij handler correct in a bare terminal
-#                instead of noisy.
-#   order        sync execution order (low first); async order is unspecified
-#   enabled      false parks a row without deleting it
-#
-# Handlers inherit the hub's environment plus the caller's captured context
-# (ZELLIJ_*, TERM) and run with cwd set to the agent's working directory.
-# BB_HOOK_CLI / BB_HOOK_NATIVE / BB_HOOK_ROLE are exported for handlers that
-# want to know who triggered them. BB_HOOK_HUB=off is exported too, so a handler
-# that re-enters an agent CLI cannot recurse back into the hub.
-#
-# Everything below is commented out. Rows are enabled one at a time during the
-# cutover, and in the SAME commit that removes the concern's old native wiring —
-# never both live at once. See docs/hook-hub-plan.md.
+# `on` matches lifecycle roles in agent-hooks/hooks.master.json, `on_native`
+# covers attention/error signals; `clis` narrows a CLI-specific concern.
+# Sync rows return native context; async rows are supervised to completion.
 
-# ---------------------------------------------------------------- hindsight
-# The only synchronous handler: its stdout becomes prompt context. Calls
-# api.hs.delo.sh, so it is also the slowest thing on the critical path.
-#[[handler]]
-#id         = "hindsight-recall"
-#mode       = "sync"
-#on         = ["prompt_submit"]
-#command    = ["~/.agents/hooks/hindsight/hindsight-recall.sh"]
-#timeout_ms = 2500
-#order      = 10
+[[handler]]
+id = "skill-reminder"
+mode = "sync"
+on = ["prompt_submit", "invocation_start"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "skill-reminder"]
+timeout_ms = 1000
+order = 0
+enabled = false # cutover-managed
 
-#[[handler]]
-#id         = "hindsight-retain"
-#mode       = "async"
-#on         = ["post_tool"]
-#match_tool = "^(Write|Edit|MultiEdit)$"
-#command    = ["~/.agents/hooks/hindsight/hindsight-retain.sh"]
-#timeout_ms = 10000
+[[handler]]
+id = "hindsight-recall"
+mode = "sync"
+on = ["prompt_submit"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-recall"]
+timeout_ms = 11000
+order = 10
+enabled = false # cutover-managed
 
-#[[handler]]
-#id         = "hindsight-session-end"
-#mode       = "async"
-#on         = ["session_end"]
-#command    = ["~/.agents/hooks/hindsight/hindsight-session-end.sh"]
-#timeout_ms = 8000
+[[handler]]
+id = "hindsight-retain"
+mode = "async"
+on = ["post_tool"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-retain"]
+timeout_ms = 3000
+order = 20
+enabled = false # cutover-managed
 
-# ---------------------------------------------------------------- attention
-# Notification / PermissionRequest / TeammateIdle have no legal type under the
-# locked naming contract (docs/event-naming.md §6–§8), and only local ephemeral
-# consumers, so they bind on_native and are never published.
-#[[handler]]
-#id         = "claude-notify"
-#mode       = "async"
-#on_native  = ["Notification", "PermissionRequest"]
-#command    = ["~/.local/bin/claude-notify"]
-#timeout_ms = 5000
+[[handler]]
+id = "hindsight-session-end"
+mode = "async"
+on = ["session_end"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-session-end"]
+timeout_ms = 50000
+order = 30
+enabled = false # cutover-managed
 
-#[[handler]]
-#id          = "zellij-notify-mark"
-#mode        = "async"
-#on_native   = ["Notification"]
-#command     = ["~/.config/zellij/scripts/zellij-notify", "attention"]
-#require_env = ["ZELLIJ_SESSION_NAME", "ZELLIJ_PANE_ID"]
-#timeout_ms  = 1000
+[[handler]]
+id = "hindsight-journal"
+mode = "async"
+on = ["session_end"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-journal"]
+timeout_ms = 6000
+order = 40
+enabled = false # cutover-managed
 
-#[[handler]]
-#id          = "zellij-notify-clear"
-#mode        = "async"
-#on          = ["prompt_submit"]
-#command     = ["~/.config/zellij/scripts/zellij-notify", "--clear"]
-#require_env = ["ZELLIJ_SESSION_NAME", "ZELLIJ_PANE_ID"]
-#timeout_ms  = 1000
+[[handler]]
+id = "hindsight-jot-flush"
+mode = "async"
+on = ["session_end"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-jot-flush"]
+timeout_ms = 185000
+order = 50
+enabled = false # cutover-managed
 
-# NOTE: deckard attention alerts are ALREADY fanned out by the agent-hooks
-# publisher (core/publisher.py::_fanout_alert -> deckard.evt.attention, added
-# 2026-08-26). Do not add a deckard row here until that path is retired, or the
-# amber key fires twice.
+[[handler]]
+id = "skill-lint"
+mode = "async"
+on = ["post_tool"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "skill-lint"]
+timeout_ms = 4000
+order = 60
+enabled = false # cutover-managed
 
-# ---------------------------------------------------------------- session
-#[[handler]]
-#id         = "project-notebook-start"
-#mode       = "async"
-#on         = ["session_start"]
-#command    = ["~/.agents/skills/project-notebook/hooks/session-start.sh"]
-#timeout_ms = 3000
+[[handler]]
+id = "codegraph-prompt"
+mode = "sync"
+on = ["prompt_submit"]
+clis = ["claude", "codex", "copilot", "kimi", "gemini", "opencode", "hermes"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "codegraph-prompt"]
+timeout_ms = 2000
+order = 20
+enabled = false # cutover-managed
 
-#[[handler]]
-#id         = "project-notebook-end"
-#mode       = "async"
-#on         = ["session_end"]
-#command    = ["~/.agents/skills/project-notebook/hooks/session-end.sh"]
-#timeout_ms = 1000
+[[handler]]
+id = "code-review-graph-status"
+mode = "sync"
+on = ["session_start"]
+clis = ["claude", "codex", "opencode"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "code-review-graph-status"]
+timeout_ms = 8000
+order = 20
+enabled = false # cutover-managed
 
-# Already self-detaches a 900s worker; the hub's pool makes that unnecessary but
-# harmless. Keep the timeout generous enough to cover the launcher, not the work.
-#[[handler]]
-#id         = "merge-forward"
-#mode       = "async"
-#on         = ["session_end"]
-#command    = ["~/.agents/hooks/merge-forward/session-end.sh", "--client", "hub"]
-#timeout_ms = 5000
+[[handler]]
+id = "code-review-graph-update"
+mode = "async"
+on = ["post_tool"]
+clis = ["claude", "codex", "opencode"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "code-review-graph-update"]
+timeout_ms = 35000
+order = 60
+enabled = false # cutover-managed
 
+[[handler]]
+id = "code-review-graph-before-commit"
+mode = "sync"
+on = ["pre_tool"]
+clis = ["opencode"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "code-review-graph-before-commit"]
+timeout_ms = 2000
+order = 20
+enabled = false # cutover-managed
+
+[[handler]]
+id = "project-notebook-start"
+mode = "sync"
+on = ["session_start"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "project-notebook-start"]
+timeout_ms = 5000
+order = 10
+enabled = false # cutover-managed
+
+[[handler]]
+id = "project-notebook-end"
+mode = "async"
+on = ["session_end"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "project-notebook-end"]
+timeout_ms = 5000
+order = 40
+enabled = false # cutover-managed
+
+[[handler]]
+id = "merge-forward"
+mode = "async"
+on = ["session_end"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "merge-forward"]
+timeout_ms = 905000
+order = 80
+enabled = false # cutover-managed
+
+[[handler]]
+id = "claude-notify"
+mode = "async"
+on_native = ["Notification", "PermissionRequest"]
+clis = ["claude", "codex"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "claude-notify"]
+timeout_ms = 6000
+order = 50
+enabled = false # cutover-managed
+
+[[handler]]
+id = "codex-turn-notify"
+mode = "async"
+on = ["turn_completed"]
+clis = ["codex"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "claude-notify"]
+timeout_ms = 6000
+order = 50
+enabled = false # cutover-managed
+
+[[handler]]
+id = "nanoleaf"
+mode = "async"
+on = ["session_start", "session_end", "turn_completed", "subagent_start", "subagent_stop", "tool_failed"]
+on_native = ["Notification", "PermissionRequest", "StopFailure", "PostToolUseFailure"]
+clis = ["claude"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "nanoleaf"]
+timeout_ms = 3000
+order = 50
+enabled = false # cutover-managed
+
+[[handler]]
+id = "zellij-notify"
+mode = "async"
+on = ["prompt_submit", "turn_completed"]
+clis = ["opencode"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "zellij-notify"]
+timeout_ms = 2000
+order = 50
+enabled = false # cutover-managed
+
+[[handler]]
+id = "orca-status"
+mode = "async"
+on = ["session_start", "session_end", "prompt_submit", "pre_tool", "post_tool", "subagent_start", "subagent_stop", "turn_completed", "invocation_start", "invocation_failed", "tool_failed"]
+on_native = ["Notification", "PermissionRequest", "TeammateIdle", "StopFailure", "PostToolUseFailure", "PreCompact", "on_session_finalize", "on_session_reset", "pre_approval_request", "post_approval_response"]
+clis = ["claude", "codex", "copilot", "kimi", "hermes", "antigravity"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "orca-status"]
+timeout_ms = 2500
+order = 50
+enabled = false # cutover-managed
+
+[[handler]]
+id = "git-checkpoint"
+mode = "async"
+on = ["session_end"]
+clis = ["opencode"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "git-checkpoint"]
+timeout_ms = 125000
+order = 70
+enabled = false # cutover-managed
+
+[[handler]]
+id = "opencode-session-notify"
+mode = "async"
+on = ["session_end"]
+clis = ["opencode"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "claude-notify"]
+timeout_ms = 6000
+order = 60
+enabled = false # cutover-managed
 
 # ------------------------------------------------- agent state machine (ASM)
 # native = "transition" is emitted by core/asm.py inside the hook process, never
