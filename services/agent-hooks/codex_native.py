@@ -13,21 +13,30 @@ from typing import Any
 
 
 class CodexAppServer:
-    def __init__(self, *, binary: str | None = None):
+    def __init__(self, *, binary: str | None = None, config_home: Path | None = None):
         executable = binary or shutil.which("codex")
         if not executable:
             raise FileNotFoundError("codex executable unavailable for native hook verification")
+        child_env = dict(os.environ)
+        if config_home is not None:
+            # This is Codex's documented config selector, not a task scratch
+            # variable; the caller targets a discovered native runtime home.
+            child_env["CODEX_HOME"] = str(config_home)
         self.process = subprocess.Popen([executable, "app-server", "--stdio"],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.DEVNULL, cwd=Path.home())
+                                        stderr=subprocess.DEVNULL, cwd=Path.home(), env=child_env)
         self.counter = 0
         self.buffer = b""
 
     def __enter__(self):
-        self.rpc("initialize", {"clientInfo": {"name": "bloodbank-hooks-sync", "version": "2"},
-                                "capabilities": {"experimentalApi": True}})
-        self.send({"method": "initialized", "params": {}})
-        return self
+        try:
+            self.rpc("initialize", {"clientInfo": {"name": "bloodbank-hooks-sync", "version": "2"},
+                                    "capabilities": {"experimentalApi": True}})
+            self.send({"method": "initialized", "params": {}})
+            return self
+        except Exception:
+            self.__exit__()
+            raise
 
     def __exit__(self, *_):
         self.process.terminate()
@@ -76,7 +85,7 @@ class CodexAppServer:
 def capture_trust(config_path: Path | None = None) -> dict:
     config_path = config_path or Path.home() / ".codex/config.toml"
     states = tomllib.loads(config_path.read_text()).get("hooks", {}).get("state", {}) if config_path.exists() else {}
-    with CodexAppServer() as native:
+    with CodexAppServer(config_home=config_path.parent) as native:
         hooks = native.hooks()
     return {"hooks": hooks, "states": states}
 
@@ -115,12 +124,12 @@ def trust_edits(before: dict, after: list[dict], source_path: Path) -> list[dict
 
 
 def reconcile_trust(before: dict, source_path: Path) -> int:
-    with CodexAppServer() as native:
+    with CodexAppServer(config_home=source_path.parent) as native:
         edits = trust_edits(before, native.hooks(), source_path)
         if edits:
             native.rpc("config/batchWrite", {"edits": edits, "reloadUserConfig": True})
     # A fresh loader proves persisted trust, not a cache in the writer process.
-    with CodexAppServer() as native:
+    with CodexAppServer(config_home=source_path.parent) as native:
         managed = [h for h in native.hooks() if h.get("sourcePath") == str(source_path)
                    and "/bb-hook --cli codex --native " in h.get("command", "")]
     if not managed or any(not h["enabled"] or h["trustStatus"] != "trusted" for h in managed):

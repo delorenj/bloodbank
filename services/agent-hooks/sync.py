@@ -856,6 +856,45 @@ def discover_hermes_configs(agent: dict, *, proc_root: Path = Path("/proc")) -> 
     return out
 
 
+def discover_codex_configs(agent: dict, *, proc_root: Path = Path("/proc")) -> list[tuple[str, Path, None]]:
+    """Find the canonical config plus Orca account/runtime and active homes."""
+    primary = _expand(agent["live_target"])
+    out = [("default", primary, None)]
+    if not agent.get("discover_runtime_homes"):
+        return out
+    homes: list[tuple[str, Path]] = []
+    user_data = Path(os.environ.get("ORCA_USER_DATA_PATH") or
+                     (Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "orca"))
+    shared = user_data / "codex-runtime-home/home"
+    if shared.is_dir():
+        homes.append(("orca:shared", shared))
+    accounts = user_data / "codex-accounts"
+    if accounts.is_dir():
+        homes.extend((f"orca:{p.parent.name}", p) for p in sorted(accounts.glob("*/home")) if p.is_dir())
+    if proc_root.is_dir():
+        for proc in proc_root.iterdir():
+            if not proc.name.isdigit():
+                continue
+            try:
+                env = (proc / "environ").read_bytes().split(b"\0")
+            except OSError:
+                continue
+            for item in env:
+                if item.startswith(b"CODEX_HOME="):
+                    home = Path(os.fsdecode(item.split(b"=", 1)[1]))
+                    if home.is_dir():
+                        homes.append((f"active:{home.name}", home))
+                    break
+    seen = {primary.resolve()}
+    for label, home in homes:
+        path = home / "hooks.json"
+        if path.resolve() in seen:
+            continue
+        seen.add(path.resolve())
+        out.append((label, path, None))
+    return out
+
+
 def _merge_kimi_toml(raw: str, generated: list[dict], markers: list[str]) -> str:
     """Replace managed [[hooks]] sections without rewriting other TOML values."""
     starts = list(re.finditer(r"(?m)^\s*\[\[hooks\]\]\s*(?:#.*)?$", raw))
@@ -1047,7 +1086,7 @@ def _install_hermes_fleet(name: str, agent: dict) -> int:
     return total_changed
 
 
-def cmd_install(master: dict) -> int:
+def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None) -> int:
     """Deploy each agent's generated config to its live_target.
 
     copilot         → symlink live_target → repo config_target
@@ -1063,7 +1102,14 @@ def cmd_install(master: dict) -> int:
     changed = _ensure_bloodbank_hook_link()
     if any(a.get("publisher") == "bb-hook" for a in master["agents"].values()):
         changed += _ensure_hub_client_link()
+    installs = []
     for name, agent in master["agents"].items():
+        if name == "codex" and agent.get("discover_runtime_homes"):
+            installs.extend((name, {**agent, "live_target": str(path)})
+                            for _, path, _ in discover_codex_configs(agent))
+        else:
+            installs.append((name, agent))
+    for name, agent in installs:
         dialect = agent.get("dialect")
         cfg = agent.get("config_target")
         if dialect == "hermes_config":
@@ -1108,7 +1154,9 @@ def cmd_install(master: dict) -> int:
             prior_trust = None
             if dialect == "codex" and agent.get("publisher") == "bb-hook":
                 from codex_native import capture_trust
-                prior_trust = capture_trust()
+                prior_trust = (codex_trust_before or {}).get(str(dest))
+                if prior_trust is None:
+                    prior_trust = capture_trust(dest.parent / "config.toml")
             merged = _merge_hooks(
                 liveobj,
                 gen_hooks,

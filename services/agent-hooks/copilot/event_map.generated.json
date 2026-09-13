@@ -26,14 +26,28 @@
       "invocation"
     ],
     "agentStop": [
+      "bloodbank.conversation.turn.completed",
+      "thread"
+    ],
+    "subagentStart": [
+      "bloodbank.agent.invocation.started",
+      "invocation"
+    ],
+    "subagentStop": [
       "bloodbank.agent.invocation.completed",
+      "invocation"
+    ],
+    "postToolUseFailure": [
+      "bloodbank.agent.tool.completed",
       "invocation"
     ]
   },
   "alerts": {
-    "permissionRequest": "attention"
+    "permissionRequest": "attention",
+    "notification": "attention"
   },
   "alert_kinds": {
-    "permissionRequest": "gate"
+    "permissionRequest": "gate",
+    "notification": "bell"
   }
 }

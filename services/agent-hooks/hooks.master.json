@@ -281,9 +281,9 @@
         },
         {
           "native": "agentStop",
-          "role": "subagent_stop",
+          "role": "turn_completed",
           "arg": "agentStop",
-          "lifecycle": "agent.invocation.completed",
+          "lifecycle": "conversation.turn.completed",
           "payload": "stdin"
         },
         {
@@ -295,6 +295,36 @@
           "attention_kind": "gate",
           "payload": "stdin",
           "timeoutSec": 4
+        },
+        {
+          "native": "subagentStart",
+          "role": "invocation_start",
+          "arg": "subagentStart",
+          "lifecycle": "agent.invocation.started",
+          "payload": "stdin"
+        },
+        {
+          "native": "subagentStop",
+          "role": "subagent_stop",
+          "arg": "subagentStop",
+          "lifecycle": "agent.invocation.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "postToolUseFailure",
+          "role": "post_tool",
+          "arg": "postToolUseFailure",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "notification",
+          "role": "attention",
+          "arg": "notification",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "bell",
+          "payload": "stdin"
         }
       ],
       "support_status": "supported",
@@ -402,7 +432,8 @@
         }
       ],
       "support_status": "supported",
-      "default_timeout_sec": 4
+      "default_timeout_sec": 4,
+      "discover_runtime_homes": true
     },
     "hermes": {
       "label": "Hermes PM agent",

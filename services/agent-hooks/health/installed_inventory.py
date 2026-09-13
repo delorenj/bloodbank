@@ -1,7 +1,8 @@
 """Read-only native wiring inventory for hook-hub and the operator UI.
 
 Configuration is evidence of wiring, not proof that an invocation succeeded.
-No commands are executed and no payload/configuration secrets are returned.
+Codex's native loader is queried without executing hooks or changing config;
+no payload/configuration secrets are returned.
 """
 from __future__ import annotations
 
@@ -32,6 +33,8 @@ DIRECT_MARKERS = (
 def config_paths(name: str, agent: dict) -> list[tuple[str, Path, Path | None]]:
     if agent.get("dialect") == "hermes_config":
         return sync.discover_hermes_configs(agent)
+    if name == "codex":
+        return sync.discover_codex_configs(agent)
     paths = [(name, sync._expand(agent["live_target"]), None)] if agent.get("live_target") else []
     if name == "copilot" and paths:
         primary = paths[0][1]
@@ -110,7 +113,9 @@ def collect_installed_inventory(master: dict | None = None, *, probe_native: boo
     if probe_native and _binary_available("codex"):
         try:
             from codex_native import capture_trust
-            native_codex = capture_trust()["hooks"]
+            native_codex = []
+            for _, path, _ in config_paths("codex", master["agents"]["codex"]):
+                native_codex.extend(capture_trust(path.parent / "config.toml")["hooks"])
         except Exception:
             native_codex = None
     clis = []
@@ -165,7 +170,7 @@ def collect_installed_inventory(master: dict | None = None, *, probe_native: boo
         for binding in agent["bindings"]:
             native = binding["native"]
             # Every Hermes profile is an independent native hook configuration.
-            count = len(paths) if dialect == "hermes_config" else 1
+            count = len(paths) if dialect in {"hermes_config", "codex"} else 1
             row = {"native": native, "role": binding["role"], "expected_count": count,
                    "actual_hub_count": 0, "direct_managed_count": 0, "sources": []}
             has_issues = False

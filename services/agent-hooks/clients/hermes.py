@@ -72,9 +72,7 @@ class HermesAdapter(ClientAdapter):
         return None
 
     def get_correlation_id(self, session: SessionState, payload: Any) -> str:
-        flat = _flatten(payload) if isinstance(payload, dict) else {}
-        hermes_sid = _value(flat, "session_id", "sessionId")
-        return str(hermes_sid) if hermes_sid else session.session_id
+        return super().get_correlation_id(session, payload)
 
     def get_causation_id(
         self,
@@ -109,7 +107,7 @@ class HermesAdapter(ClientAdapter):
         argv: list[str],
     ) -> dict[str, Any]:
         flat = _flatten(payload) if isinstance(payload, dict) else {}
-        correlation = self.get_correlation_id(session, payload)
+        correlation = self.native_session_id(payload) or session.session_id
         raw = {"hook": hook_name, "payload": payload}
         # The agent's cwd, on EVERY event -- not just session.started, and not
         # os.getcwd(). Hermes runs under systemd, so the hook process's cwd is
@@ -220,7 +218,7 @@ def _tool_call_id(session_id: str, payload: dict) -> str:
 def _outcome(payload: dict) -> str:
     if payload.get("is_error") or payload.get("error"):
         return "error"
-    if str(payload.get("status", "")).lower() in {"error", "failed", "failure"}:
+    if str(payload.get("status", "")).lower() in {"error", "failed", "failure", "blocked"}:
         return "error"
     res = payload.get("result")
     if isinstance(res, dict) and (res.get("error") or res.get("is_error")):

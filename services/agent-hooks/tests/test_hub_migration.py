@@ -7,12 +7,16 @@ import tomllib
 import sys
 import subprocess
 import os
+import shutil
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from clients import get_adapter
 from codex_native import trust_edits
+from codex_native import CodexAppServer, capture_trust, reconcile_trust
 from core.event_map import resolve_map
+from core.envelope import build_envelope
 from core.session import SessionState
 from health.installed_inventory import collect_installed_inventory, native_rows
 import sync
@@ -97,6 +101,7 @@ def test_empty_installed_hook_config_fails_expected_coverage(tmp_path):
     live = tmp_path / "hooks.json"
     live.write_text('{"hooks": {}}')
     master["agents"]["codex"]["live_target"] = str(live)
+    master["agents"]["codex"]["discover_runtime_homes"] = False
     report = collect_installed_inventory(master, probe_native=False)
     cli = report["clis"][0]
     assert report["status"] == "drift"
@@ -133,7 +138,7 @@ def test_native_sessions_remain_separate_and_keep_their_native_identity(tmp_path
 
 
 def test_turn_completion_is_not_session_closure_and_new_adapters_keep_identity(tmp_path):
-    for name, turn, ended in [("claude", "Stop", "SessionEnd"), ("codex", "Stop", "SessionEnd"), ("hermes", "on_session_end", "on_session_finalize"), ("kimi", "Stop", "SessionEnd"), ("gemini", "AfterAgent", "SessionEnd"), ("opencode", "session.idle", "session.deleted")]:
+    for name, turn, ended in [("claude", "Stop", "SessionEnd"), ("codex", "Stop", "SessionEnd"), ("copilot", "agentStop", "sessionEnd"), ("hermes", "on_session_end", "on_session_finalize"), ("kimi", "Stop", "SessionEnd"), ("gemini", "AfterAgent", "SessionEnd"), ("opencode", "session.idle", "session.deleted")]:
         adapter = get_adapter(name)
         mapping = resolve_map(adapter.agent_dir, adapter.default_map)
         assert mapping[turn][0] == "bloodbank.conversation.turn.completed"
@@ -143,6 +148,64 @@ def test_turn_completion_is_not_session_closure_and_new_adapters_keep_identity(t
         data = adapter.shape_data(session, mapping[turn][0], turn, {"session_id": "native-session"}, ["publish.py", turn])
         assert data["thread_id"] == "native-session"
         assert data["outcome"] == "completed"
+
+
+def test_every_publishing_binding_shapes_a_valid_schema_and_actor(tmp_path):
+    pytest.importorskip("jsonschema")
+    master = sync.load_master()
+    for name, agent in master["agents"].items():
+        if agent.get("support_status") != "supported":
+            continue
+        adapter = get_adapter(name)
+        for binding in agent["bindings"]:
+            if binding.get("publish") is False:
+                continue
+            native = binding["native"]
+            ce_type, bucket = sync.effective_type(binding, master["lifecycle"], sync.load_lock())
+            payload = {"session_id": "native-session", "hook_event_name": native,
+                       "tool_name": "Bash", "toolName": "bash", "tool_input": {},
+                       "toolArgs": {}, "turn_id": "turn-1", "cwd": str(tmp_path)}
+            session = SessionState(tmp_path / f"{name}.json", native_id="native-session")
+            data = adapter.shape_data(session, ce_type, native, payload, ["publish.py", native])
+            correlation = adapter.get_correlation_id(session, payload)
+            envelope = build_envelope(ce_type=ce_type, kind="event", source=adapter.source,
+                producer=adapter.producer, service=adapter.service, actor=adapter.get_actor(payload),
+                data=data, correlation_id=correlation, causation_id=adapter.get_causation_id(session, ce_type, native, correlation),
+                ordering_key=f"{bucket}:{correlation}", validate=True)
+            assert envelope["actor"]["cli"] == name
+
+
+def test_copilot_camel_case_tool_payload_retains_tool_arguments_and_failure(tmp_path):
+    adapter = get_adapter("copilot")
+    session = SessionState(tmp_path / "copilot.json", native_id="session")
+    payload = {"sessionId": "session", "toolName": "bash", "toolArgs": {"command": "false"}, "error": "exit 1"}
+    data = adapter.shape_data(session, "bloodbank.agent.tool.completed", "postToolUseFailure", payload, ["publish.py", "postToolUseFailure"])
+    assert data["tool_name"] == "bash"
+    assert data["arguments"] == {"command": "false"}
+    assert data["outcome"] == "error"
+    payload["toolArgs"] = '{"command":"false"}'
+    data = adapter.shape_data(session, "bloodbank.agent.tool.requested", "preToolUse", payload, [])
+    assert data["arguments"] == {"command": "false"}
+    error = {"error": {"name": "ModelError", "message": "model request failed"}}
+    data = adapter.shape_data(session, "bloodbank.agent.invocation.failed", "errorOccurred", error, [])
+    assert data["error_code"] == "ModelError"
+    assert data["error_message"] == "model request failed"
+
+
+def test_codex_discovery_includes_runtime_account_and_active_homes_once(tmp_path, monkeypatch):
+    user_data = tmp_path / "orca"
+    runtime = user_data / "codex-runtime-home/home"
+    account = user_data / "codex-accounts/one/home"
+    active = tmp_path / "active-codex"
+    for home in (runtime, account, active):
+        home.mkdir(parents=True)
+    proc = tmp_path / "proc/1"
+    proc.mkdir(parents=True)
+    (proc / "environ").write_bytes(f"CODEX_HOME={active}\0".encode())
+    monkeypatch.setenv("ORCA_USER_DATA_PATH", str(user_data))
+    agent = {"live_target": str(runtime / "hooks.json"), "discover_runtime_homes": True}
+    paths = [path for _, path, _ in sync.discover_codex_configs(agent, proc_root=proc.parent)]
+    assert paths == [runtime / "hooks.json", account / "hooks.json", active / "hooks.json"]
 
 
 def test_opencode_native_bridge_keeps_session_identity_context_and_failed_tool_once(tmp_path):
@@ -177,3 +240,31 @@ console.log(JSON.stringify(output.parts));
     assert calls[3]["payload"]["is_error"] is True
     assert calls[3]["payload"]["tool_call_id"] == "call-1"
     assert calls[1]["args"][-2:] == ["--deadline", "15"]
+
+
+@pytest.mark.skipif(shutil.which("codex") is None, reason="installed Codex loader unavailable")
+def test_real_codex_loader_retains_foreign_trust_after_group_reindex(tmp_path):
+    # This isolated native home has no credentials or model turn. The only
+    # writes are hook declarations and their native loader-generated hashes.
+    config = tmp_path / "config.toml"
+    config.write_text("")
+    source = tmp_path / "hooks.json"
+    foreign = {"type": "command", "command": "/usr/bin/env true", "timeout": 3}
+    old = {"type": "command", "command": "/old/bloodbank/publish.py Stop", "timeout": 3000}
+    source.write_text(json.dumps({"hooks": {"Stop": [{"hooks": [old, foreign]}]}}))
+    with CodexAppServer(config_home=tmp_path) as native:
+        loaded = next(h for h in native.hooks() if h.get("command") == foreign["command"])
+        native.rpc("config/batchWrite", {"edits": [{
+            "keyPath": f"hooks.state.{json.dumps(loaded['key'])}", "mergeStrategy": "replace",
+            "value": {"enabled": False, "trusted_hash": loaded["currentHash"]},
+        }]})
+    before = capture_trust(config)
+    command = "/canonical/bb-hook --cli codex --native Stop"
+    source.write_text(json.dumps({"hooks": {"Stop": [
+        {"hooks": [foreign]}, {"hooks": [{"type": "command", "command": command, "timeout": 4}]}]}}))
+    assert reconcile_trust(before, source) >= 1
+    after = capture_trust(config)["hooks"]
+    kept = next(h for h in after if h.get("command") == foreign["command"])
+    managed = next(h for h in after if h.get("command") == command)
+    assert kept["enabled"] is False and kept["trustStatus"] == "trusted"
+    assert managed["enabled"] is True and managed["trustStatus"] == "trusted"

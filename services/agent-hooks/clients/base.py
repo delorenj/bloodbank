@@ -169,8 +169,11 @@ class ClientAdapter:
         return ce_type == "bloodbank.agent.session.started"
 
     def get_correlation_id(self, session: SessionState, payload: Any) -> str:
-        """Correlation ID for the envelope (defaults to session.session_id)."""
-        return session.session_id
+        """Use a schema-valid UUID while retaining native ids in event data."""
+        try:
+            return str(uuid.UUID(session.session_id))
+        except (ValueError, AttributeError):
+            return str(uuid.uuid5(uuid.NAMESPACE_URL, f"bloodbank:{self.name}:{session.session_id}"))
 
     def get_causation_id(
         self,

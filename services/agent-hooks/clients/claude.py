@@ -163,6 +163,10 @@ class ClaudeAdapter(ClientAdapter):
                 "working_directory": cwd,
             }
 
+        if ce_type == "bloodbank.agent.invocation.started":
+            return {"invocation_id": str(payload.get("agent_id") or session.session_id),
+                    "parent_invocation_id": session.session_id, "working_directory": cwd}
+
         if ce_type == "bloodbank.agent.invocation.failed":
             # `invocation_id` is required by invocation.failed.json. Data-level
             # schema validation is off at hook time and ON in CI, so omitting it

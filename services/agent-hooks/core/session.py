@@ -1,6 +1,6 @@
 """Per-CLI session state for hook publishers.
 
-Persists the session id (used as ``correlationid``), the previous event
+Persists the native session id (mapped to a UUID ``correlationid``), the previous event
 id (used as ``causationid`` on the next event so the chain is linked),
 a turn counter, and per-tool usage counters. Each CLI chooses its own
 on-disk path.
@@ -66,7 +66,7 @@ class SessionState:
     """File-backed per-CLI session state.
 
     Keys:
-        session_id      — stable for the life of the CLI session, used as correlation_id
+        session_id      — native identity, stable for the life of the CLI session
         last_event_id   — id of the previously published event, used as causation_id
         started_at      — ISO timestamp of session start
         working_directory, git_branch
@@ -91,8 +91,8 @@ class SessionState:
             "git_branch": git_branch(self._cwd),
             "turn_number": 0,
             "tools_used": {},
-            # First event in the chain causes itself.
-            "last_event_id": sid,
+            # The adapter uses the UUID correlation id before the first event.
+            "last_event_id": "",
         }
 
     def _load(self) -> dict[str, Any]:

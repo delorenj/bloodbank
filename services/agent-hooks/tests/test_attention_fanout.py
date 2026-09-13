@@ -500,7 +500,7 @@ class AttentionFanoutTests(unittest.TestCase):
         expected = {
             "claude": {"Notification", "PermissionRequest", "TeammateIdle"},
             "codex": {"PermissionRequest"},
-            "copilot": {"permissionRequest"},
+            "copilot": {"permissionRequest", "notification"},
         }
         for agent_name, native_events in expected.items():
             rendered = SYNC.render_event_map(

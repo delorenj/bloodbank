@@ -41,7 +41,10 @@ class CopilotAdapter(ClientAdapter):
         "preToolUse": ("bloodbank.agent.tool.requested", "invocation"),
         "postToolUse": ("bloodbank.agent.tool.completed", "invocation"),
         "errorOccurred": ("bloodbank.agent.invocation.failed", "invocation"),
-        "agentStop": ("bloodbank.agent.invocation.completed", "invocation"),
+        "agentStop": ("bloodbank.conversation.turn.completed", "thread"),
+        "subagentStart": ("bloodbank.agent.invocation.started", "invocation"),
+        "subagentStop": ("bloodbank.agent.invocation.completed", "invocation"),
+        "postToolUseFailure": ("bloodbank.agent.tool.completed", "invocation"),
     }
 
     @property
@@ -97,14 +100,26 @@ class CopilotAdapter(ClientAdapter):
                 **raw,
             }
 
+        if ce_type == "bloodbank.conversation.turn.completed":
+            return {"thread_id": session_id,
+                    "turn_id": str(payload.get("turnId") or payload.get("turn_id") or session_id),
+                    "outcome": "failed" if payload.get("error") else "completed",
+                    "working_directory": cwd, **raw}
+
         if ce_type.startswith("bloodbank.agent.tool."):
             tool_name = "unknown"
             arguments: dict[str, Any] | None = None
             if isinstance(payload, dict):
                 tool_name = str(
-                    payload.get("tool") or payload.get("tool_name") or "unknown"
+                    payload.get("toolName") or payload.get("tool") or payload.get("tool_name") or "unknown"
                 )
-                args = payload.get("arguments") or payload.get("tool_input")
+                args = next((payload[key] for key in ("toolArgs", "arguments", "tool_input")
+                             if key in payload), None)
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except (ValueError, TypeError):
+                        pass
                 if isinstance(args, dict):
                     arguments = args
             base: dict[str, Any] = {
@@ -119,10 +134,14 @@ class CopilotAdapter(ClientAdapter):
             if ce_type == "bloodbank.agent.tool.completed":
                 outcome = "success"
                 if isinstance(payload, dict) and (
-                    payload.get("is_error") or payload.get("error")
+                    payload.get("is_error") or payload.get("error") or hook_name == "postToolUseFailure"
                 ):
                     outcome = "error"
                 base["outcome"] = outcome
+                if isinstance(payload, dict):
+                    result = payload.get("toolResult", payload.get("tool_result"))
+                    if result is not None:
+                        base["result"] = result
             return base
 
         if ce_type == "bloodbank.agent.invocation.failed":
@@ -131,22 +150,29 @@ class CopilotAdapter(ClientAdapter):
             if isinstance(payload, dict):
                 err_msg = payload.get("message") or payload.get("error")
                 err_code = payload.get("code")
+                if isinstance(err_msg, dict):
+                    err_code = err_code or err_msg.get("code") or err_msg.get("name")
+                    err_msg = err_msg.get("message")
             return {
                 "invocation_id": session_id,
-                "error_code": err_code,
-                "error_message": err_msg,
+                "error_code": str(err_code) if err_code is not None else None,
+                "error_message": str(err_msg) if err_msg is not None else None,
                 **raw,
             }
 
         if ce_type == "bloodbank.agent.invocation.completed":
-            return {"invocation_id": session_id, **raw}
+            return {"invocation_id": str(payload.get("agentId") or session_id), **raw}
+
+        if ce_type == "bloodbank.agent.invocation.started":
+            return {"invocation_id": str(payload.get("agentId") or session_id),
+                    "parent_invocation_id": session_id, "working_directory": cwd, **raw}
 
         return raw
 
 
 def _tool_call_id(session_id: str, hook_name: str, payload: Any) -> str:
     if isinstance(payload, dict):
-        for key in ("tool_call_id", "toolUseId", "id"):
+        for key in ("toolCallId", "tool_call_id", "toolUseId", "id"):
             v = payload.get(key)
             if isinstance(v, str) and v:
                 return v
