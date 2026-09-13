@@ -1,162 +1,144 @@
-# hook-hub
+# Hook hub
 
-One dispatcher for every agent CLI's hooks.
+Every supported CLI invokes `bb-hook` once per native hook. The host daemon
+resolves that native hook into the canonical lifecycle role and Bloodbank event,
+selects behavioral handlers from `handlers.toml`, and owns event publication.
+CLI configuration contains the adapter entry point; behavioral wiring belongs in
+one registry.
 
-Every supported agent CLI already re-triggers into a shared lifecycle-role
-vocabulary via [`../agent-hooks/hooks.master.json`](../agent-hooks/hooks.master.json).
-What never followed was the *behavior*: each concern stayed hand-wired into every
-CLI's native config, so adding one meant editing six files across five dialects.
-`~/.claude/settings.json` alone carries 40 wiring entries across 13 events.
-
-This service is where that behavior moves. One registry — [`handlers.toml`](handlers.toml)
-— binds handlers to lifecycle roles, and every CLI reaches it through the same
-`bb-hook` re-trigger.
-
-```
-  claude ─┐
-  codex  ─┤   re-trigger          ┌── sync verdict ──────> back to the CLI
-  copilot─┼──> unix socket ──────>│      hook-hub
-  hermes  ┤      (<1 ms)          │
-  antigrv─┘                       └── async handlers ────> hindsight, notify,
-        handlers.toml  <───────────────                    zellij, notebook, …
-        the one file you edit
+```mermaid
+flowchart LR
+  CLI[Native CLI hook] --> Client[bb-hook]
+  Client -->|Unix socket| Hub[Canonical role and event]
+  Hub --> Sync[Bounded synchronous handlers]
+  Sync -->|Context or native decision| CLI
+  Hub --> Async[Supervised background handlers]
+  Hub --> Publish[Single Bloodbank publisher]
+  Publish --> NATS[NATS]
+  NATS --> Candystore[Candystore]
+  Hub --> Journal[Execution receipt journal]
+  Journal --> Holocene[Holocene Hooks page]
 ```
 
-Full design and cutover sequence: [`../../docs/hook-hub-plan.md`](../../docs/hook-hub-plan.md).
-Topology diagram: `../../docs/hook-hub-topology.excalidraw`.
+Claude, Codex, Copilot, Hermes, Antigravity, Gemini, Kimi, and OpenCode have
+adapters. Installed inventory separately reports whether each executable and
+native configuration exist. OpenClaw is explicitly unsupported. Some Hermes
+signals have no Bloodbank event contract; these can run local handlers without
+inventing an event type.
 
-## Why a unix socket and not NATS
+## Runtime ownership
 
-Two reasons, both load-bearing:
+The Unix socket keeps synchronous context and approval decisions on the local
+CLI path. Background handlers and NATS publication are supervised by the hub.
+Handlers receive bounded launch context for host integrations such as Orca and
+Zellij, plus `BB_HOOK_HUB=off` to prevent recursion.
 
-1. **The broker stays off the CLI's critical path.** A socket round trip is
-   sub-millisecond. NATS request/reply on every `UserPromptSubmit` and every
-   `PreToolUse` is not, and a wedged broker would degrade all six CLIs at once.
-2. **Handlers need host session context.** `zellij-notify` needs
-   `ZELLIJ_SESSION_NAME` + `ZELLIJ_PANE_ID` and shells out to `zellij action`;
-   `claude-notify` needs the host audio session. A container on
-   `bloodbank-network` can reach none of that, so the hub is a host daemon.
+The internal `bloodbank-publish` handler is the sole publisher for a native
+invocation. Cached legacy `publish.py` commands forward to the hub once its
+ownership manifest is active. Explicit native invocation, event, or tool-call IDs
+provide durable duplicate suppression. A fresh UUID is used when the CLI supplies
+no usable identity; matching prompt text alone never suppresses legitimate work.
+This is not an exactly-once guarantee for a transport retry without stable IDs.
 
-## Scope today
+`~/.config/33god/hook-hub/ownership.json` records the centralized concerns.
+Legacy handlers and their installers honor that manifest. Pausing a central
+handler does not silently restore its old native wiring.
 
-**This daemon dispatches; it does not publish.** Envelope publishing stays in
-[`../agent-hooks/publish.py`](../agent-hooks/publish.py) until the cutover phase
-that moves it — notably so the `_fanout_alert` → `deckard.evt.attention` path
-added on 2026-08-26 is not duplicated here. Candystore, Holocene and the
-event-toaster are unaffected by this service.
+## Installation and cutover
 
-## Layout
-
-| path | what |
-|---|---|
-| `hub.py` | the daemon: asyncio, unix socket, socket-activated |
-| `client/bb-hook` | the re-trigger every CLI calls |
-| `handlers.toml` | the handler registry — **the one file you edit** |
-| `systemd/hook-hub.socket` | socket unit (starts the service on first hook) |
-| `systemd/hook-hub.service` | the daemon unit |
-| `tests/test_hub.py` | behavioral tests; no daemon or NATS needed |
-
-## Install
-
-```bash
-mise run hub:install     # link units into ~/.config/systemd/user, enable the socket
-mise run hub:status      # is it listening?
-mise run hub:logs        # tail the hub log
+```sh
+mise run hub:install
+python3 services/hook-hub/cutover.py --project /path/to/project
+python3 services/hook-hub/cutover.py --project /path/to/project --apply --install
+python3 services/agent-hooks/sync.py --check-installed --json
+python3 services/agent-hooks/health/hook_healthcheck.py --json
 ```
 
-Or by hand:
+The first cutover command is a read-only plan. The combined apply/install captures
+Codex native trust before pruning known legacy handlers, renders and installs the
+canonical adapters, then preserves existing trust choices while trusting the new
+managed entry points. It discovers Hermes profiles and alternate Codex runtime
+homes. It preserves foreign hooks and configuration properties.
 
-```bash
-ln -sf ~/code/33GOD/bloodbank/services/hook-hub/systemd/hook-hub.socket  ~/.config/systemd/user/
-ln -sf ~/code/33GOD/bloodbank/services/hook-hub/systemd/hook-hub.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now hook-hub.socket
+Verify the native CLI loader as well as static inventory before activating staged
+behavioral rows:
+
+```sh
+python3 services/hook-hub/cutover.py --project /path/to/project --activate
 ```
 
-Nothing is wired into any agent CLI by installing this. The hub sits idle until
-`hooks.master.json` renders `bb-hook` lines — that is a separate, per-event
-cutover step.
+Activation refuses to proceed while inspected legacy managed commands remain.
+The registry reloads on mtime changes; code changes require a service restart.
+Native CLIs that cache their hook configuration need a fresh session for newly
+added native hook types. The legacy publisher compatibility path covers existing
+registered publisher commands.
 
-## The wire protocol
+## Receipts and Holocene
 
-Newline-delimited JSON over `$XDG_RUNTIME_DIR/33god/hook-hub.sock`. One request,
-one reply, close.
+The metadata-only SQLite journal records received, selected, started, succeeded,
+failed, timed-out, skipped, interrupted, and duplicate-suppressed work. Background
+children remain supervised until completion. Session-end retention waits for
+pending candidate writes from the same session.
 
-```json
-{"v":1,"cli":"claude","native":"UserPromptSubmit",
- "cwd":"/home/delorenj/code/33GOD/bloodbank",
- "env":{"ZELLIJ_SESSION_NAME":"Workspace","ZELLIJ_PANE_ID":"12"},
- "payload":{"prompt":"..."},"extra":[]}
+The read-only HTTP API binds to loopback by default:
+
+| Endpoint | Result |
+| --- | --- |
+| `/v1/hooks/status` | Registry, mappings, installed wiring, and aggregate activity |
+| `/v1/hooks/invocations` | Paginated execution receipts |
+| `/v1/hooks/invocations/{id}` | One receipt with its lifecycle timeline |
+
+History accepts `cli`, `native`, `role`, `handler`, `status`, `limit`, and `offset`.
+Holocene proxies these under `/api/modules/hooks` and presents them at `/hooks`.
+Configuration proves wiring; a receipt proves observed execution. Quiet hooks
+remain visibly unobserved.
+
+A publication receipt marked `sent` means NATS transport succeeded. It is not a
+Candystore persistence acknowledgment. Durable delivery acceptance must separately
+look up the event ID in Candystore. Receipts do not store prompts, transcripts,
+stdout, stderr, or environment values.
+
+## Deadlines and failure behavior
+
+Ordinary client calls have a 3-second total deadline and a 2.5-second synchronous
+budget. Prompt hooks that recall Hindsight use a 15-second client deadline within
+a 16-second native timeout, with up to 14 seconds of shared synchronous work.
+The recall handler itself is capped at 11 seconds. Each other handler has its own
+registry timeout.
+
+The client fails open on unavailable sockets, malformed replies, or elapsed
+deadlines. A deliberate, valid native denial is preserved. Hung handler process
+groups are terminated and recorded as timed out. A malformed registry retains the
+last good configuration and surfaces the error in Holocene. None of these states
+are reported as successful execution.
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BB_HOOK_HUB` | unset | `off` disables client recursion |
+| `BB_HOOK_SOCKET` | `$XDG_RUNTIME_DIR/33god/hook-hub.sock` | Unix socket |
+| `BB_HOOK_DEADLINE` | `3.0` | Client total deadline, seconds |
+| `HOOK_HUB_REGISTRY` | `handlers.toml` beside the daemon | Behavioral registry |
+| `HOOK_HUB_SYNC_BUDGET` | `2.5` | Default shared synchronous deadline |
+| `HOOK_HUB_MAX_SYNC_BUDGET` | `14.0` | Maximum shared synchronous deadline |
+| `HOOK_HUB_ASYNC_SLOTS` | `8` | Concurrent background handlers |
+| `HOOK_HUB_RECEIPTS` | `$XDG_STATE_HOME/33god/hook-hub/receipts.sqlite3` | Receipt database |
+| `HOOK_HUB_LOG` | `$XDG_STATE_HOME/33god/hook-hub/hub.log` | Rotating diagnostic log |
+| `HOOK_HUB_HTTP_HOST` | `127.0.0.1` | Read-only API bind address |
+| `HOOK_HUB_HTTP_PORT` | `8685` | Read-only API port; zero disables it |
+| `HOOK_HUB_PUBLISH` | `true` | Central publisher enabled |
+
+Unset XDG state/runtime paths use the user's standard local state and runtime
+locations. Runtime files remain outside the source checkout.
+
+## Development
+
+```sh
+python3 -m pytest services/hook-hub/tests services/agent-hooks/tests
 ```
 
-```json
-{"v":1,"stdout":"<context to inject>","exit_code":0,"handled":["hindsight-recall"]}
-```
-
-The client sends `(cli, native)`; the **hub** resolves the lifecycle role from
-`hooks.master.json`, so a role remap needs no config regeneration.
-
-## Fail-open, in detail
-
-The client exits `0` and prints nothing on every abnormal path: no socket, no
-daemon, connection reset, malformed reply, blown deadline. Two specifics worth
-knowing, because they are what keep a hook from wedging an agent:
-
-- **stdin is read through `select()` against a 0.5 s budget**, never a bare
-  `read()`. A harness that opens stdin and never closes it cannot hold the
-  client. There is a test for exactly this
-  (`test_stdin_that_never_closes_cannot_hang_the_client`).
-- **every deadline is absolute** from process start, so a slow stdin cannot lend
-  its remaining budget to a slow socket.
-
-On the daemon side: a hung handler is killed at its `timeout_ms`; a missing
-binary, a malformed request, or a broken registry is logged and scoped to the one
-connection or handler that caused it. A registry that fails to parse leaves the
-last good config serving.
-
-## Environment
-
-| var | default | purpose |
-|---|---|---|
-| `BB_HOOK_HUB` | — | `off` makes the client an immediate no-op. The kill switch. |
-| `BB_HOOK_SOCKET` | `$XDG_RUNTIME_DIR/33god/hook-hub.sock` | socket path (client and daemon) |
-| `BB_HOOK_DEADLINE` | `3.0` | client's total budget, seconds |
-| `HOOK_HUB_REGISTRY` | `handlers.toml` beside `hub.py` | registry path |
-| `HOOK_HUB_SYNC_BUDGET` | `2.5` | shared deadline for all sync handlers |
-| `HOOK_HUB_ASYNC_SLOTS` | `8` | concurrent async handlers; bounds a session-end storm |
-| `HOOK_HUB_LOG` | `$XDG_STATE_HOME/33god/hook-hub/hub.log` | size-rotated at 1 MiB |
-| `HOOK_HUB_STDERR` | — | also log to stderr (for `journalctl`) |
-
-Handlers additionally receive `BB_HOOK_CLI`, `BB_HOOK_NATIVE`, `BB_HOOK_ROLE`,
-and `BB_HOOK_HUB=off` — the last so a handler that re-enters an agent CLI cannot
-recurse back into the hub.
-
-## Verify
-
-```bash
-python3 -m pytest services/hook-hub/tests/test_hub.py     # 19 behavioral tests
-mise run hub:smoke                                        # live round trip
-```
-
-Manual round trip against a throwaway hub:
-
-```bash
-export BB_HOOK_SOCKET=/tmp/hub.sock HOOK_HUB_LOG=/tmp/hub.log
-python3 services/hook-hub/hub.py &
-printf '{"tool_name":"Bash"}' | services/hook-hub/client/bb-hook claude PreToolUse
-cat /tmp/hub.log
-```
-
-## Adding a handler
-
-One row in `handlers.toml`. Bind to a lifecycle role (`on`) and it fires for
-every CLI; bind to `on_native` for signals with no contract-legal event type
-(`Notification`, `PermissionRequest`, `TeammateIdle`). Field reference is in the
-file's own header comment.
-
-The registry is re-read when its mtime changes, so an edit takes effect on the
-next hook — no restart. `systemctl --user kill -s HUP hook-hub` forces it.
-
-**During cutover, enable a row in the same commit that removes that concern's old
-native wiring.** Never both at once: `hindsight-retain` firing twice writes memory
-twice, and `merge-forward` firing twice spawns two 900-second workers.
+Add a behavioral row to `handlers.toml`, bind it with `on` lifecycle roles or
+`on_native`, and optionally narrow it with `clis`. Sync handlers return context or
+native decisions. Async handlers emit supervised outcomes. Retire any equivalent
+native registration before enabling the new row.
