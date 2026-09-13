@@ -44,6 +44,30 @@ This is not an exactly-once guarantee for a transport retry without stable IDs.
 Legacy handlers and their installers honor that manifest. Pausing a central
 handler does not silently restore its old native wiring.
 
+## Concern applicability
+
+Native adapter coverage and behavioral applicability are separate. A registered
+native hook with no matching concern is not missing a hook. The registry's `clis`,
+`on`, and `on_native` fields declare the supported intersection; wrappers record
+explicit skips for absent project context or optional tools.
+
+| Concern | Applicable CLIs and runtime requirements |
+| --- | --- |
+| Hindsight, skill reminder, skill lint | Portable where the native adapter provides the matching lifecycle role and required prompt, session, or file-edit payload. Retention is session-close work; candidate writes are not retain receipts. |
+| CodeGraph prompt context | Claude, Codex, Copilot, Kimi, Gemini, OpenCode, Hermes; the working repository must have an index. |
+| Code Review Graph status/update | Claude, Codex, OpenCode; the repository must have a Code Review Graph index. The before-commit decision is OpenCode-specific. |
+| Project Notebook | Claude only: its canonical PJangler engine accepts Claude identities and SessionStart/SessionEnd. Other CLIs must not be relabeled as Claude. Non-repository work is skipped; the project must also be registered and configured in PJangler. |
+| Merge forward | Matching session closure in a repository that owns the `33god-merge-forward` tuner worker. Other repositories are skipped. |
+| Orca status | Claude, Codex, Copilot, Kimi, Hermes, Antigravity; an Orca pane and usable endpoint are required. |
+| Nanoleaf | Claude lifecycle and attention signals, with the existing panel runtime. |
+| Sound notifications | Claude/Codex attention signals, Codex turn completion, and OpenCode session closure. |
+| Zellij attention and Git checkpoint | OpenCode only; attention requires a Zellij pane, and the existing checkpoint project opt-out is preserved. |
+
+Project Notebook, Nanoleaf, CodeGraph, Orca, CommonProject/PJangler projections,
+and guarded project fallbacks consult the same ownership contract so ordinary
+reinstallation does not restore retired native owners. Standalone installations
+without a central owner retain their existing behavior.
+
 ## Installation and cutover
 
 ```sh

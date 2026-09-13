@@ -248,6 +248,12 @@ def dispatch(concern: str, raw: dict) -> dict:
         action = "--clear" if role == "prompt_submit" else "attention"
         return invoke(["~/.config/zellij/scripts/zellij-notify", action], payload, timeout=1)
     if concern.startswith("project-notebook-"):
+        # The canonical PJ notebook engine currently accepts Claude identities
+        # only. Never misattribute another CLI as Claude to bypass that contract.
+        if cli != "claude":
+            return result("skipped", "notebook_cli_unsupported")
+        if repository(Path(payload["cwd"])) is None:
+            return result("skipped", "not_a_git_repository")
         event = "start" if concern.endswith("start") else "end"
         environment = os.environ.copy()
         environment["PJ_HOOK_OWNER"] = "project-notebook.v1"

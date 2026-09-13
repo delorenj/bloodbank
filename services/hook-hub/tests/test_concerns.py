@@ -43,6 +43,17 @@ class ConcernTests(unittest.TestCase):
             response = concerns.orca({}, "claude", "SessionStart")
         self.assertEqual(response["_hook_hub"]["reason"], "not_an_orca_pane")
 
+    def test_notebook_preserves_supported_cli_and_project_scope(self):
+        with mock.patch.object(concerns, "repository", return_value=None), mock.patch.object(concerns, "invoke") as invoke:
+            for name in ("project-notebook-start", "project-notebook-end"):
+                with mock.patch.dict(os.environ, {"BB_HOOK_CLI": "codex"}):
+                    output = concerns.dispatch(name, {})
+                    self.assertEqual(output["_hook_hub"]["reason"], "notebook_cli_unsupported")
+                with mock.patch.dict(os.environ, {"BB_HOOK_CLI": "claude"}):
+                    output = concerns.dispatch(name, {})
+                    self.assertEqual(output["_hook_hub"]["reason"], "not_a_git_repository")
+            invoke.assert_not_called()
+
     def test_project_disabled_concern_is_not_invoked(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -113,9 +113,11 @@ order = 20
 enabled = true # cutover-managed
 
 [[handler]]
+# The canonical PJ engine currently accepts Claude identities only.
 id = "project-notebook-start"
 mode = "sync"
 on = ["session_start"]
+clis = ["claude"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "project-notebook-start"]
 timeout_ms = 5000
 order = 10
@@ -125,6 +127,7 @@ enabled = true # cutover-managed
 id = "project-notebook-end"
 mode = "async"
 on = ["session_end"]
+clis = ["claude"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "project-notebook-end"]
 timeout_ms = 5000
 order = 40
