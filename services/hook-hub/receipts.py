@@ -7,6 +7,7 @@ marked failed on startup. The journal never stores hook input or output.
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import time
 import uuid
@@ -26,14 +27,31 @@ def identifier(value: Any) -> str:
     """Identifiers are scalars only, bounded independently of input size."""
     if not isinstance(value, (str, int)) or isinstance(value, bool):
         return ""
-    return str(value).replace("\x00", "")[:256]
+    raw = str(value)
+    if len(raw) > 256 or "\x00" in raw:
+        return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
+    return raw
+
+
+def payload_sources(req: dict[str, Any]) -> list[dict]:
+    payload = req.get("payload")
+    if not isinstance(payload, dict):
+        return []
+    return [item for item in (payload, payload.get("extra"), payload.get("properties"))
+            if isinstance(item, dict)]
+
+
+def payload_identifier(req: dict[str, Any], names: tuple[str, ...]) -> str:
+    for source in payload_sources(req):
+        for name in names:
+            found = identifier(source.get(name))
+            if found:
+                return found
+    return ""
 
 
 def native_session_id(req: dict[str, Any]) -> str:
-    payload = req.get("payload")
-    if not isinstance(payload, dict):
-        payload = {}
-    for source in (payload, req):
+    for source in (*payload_sources(req), req):
         for key in ("session_id", "sessionId", "sessionID", "thread_id", "threadId"):
             found = identifier(source.get(key))
             if found:
@@ -49,28 +67,21 @@ def invocation_identity(req: dict[str, Any]) -> tuple[str, str]:
     Events lacking a stable upstream id get a fresh UUID, explicitly labelled
     generated so observability does not claim cross-process deduplication.
     """
-    payload = req.get("payload")
-    if not isinstance(payload, dict):
-        payload = {}
     key = identifier(req.get("invocation_id"))
     kind = "provided"
     if not key:
-        for name in ("hook_event_id", "event_id", "eventId", "invocation_id"):
-            key = identifier(payload.get(name))
-            if key:
-                kind = "native_event"
-                break
+        key = payload_identifier(req, ("hook_event_id", "event_id", "eventId", "invocation_id"))
+        if key:
+            kind = "native_event"
     if not key and str(req.get("native", "")).lower() in {
         "pretooluse", "posttooluse", "posttoolusefailure", "pretoolusefailure",
         "on_tool_start", "on_tool_end", "beforetool", "aftertool",
         "tool.execute.before", "tool.execute.after", "pre_tool_use", "post_tool_use",
         "pre_tool_call", "post_tool_call",
     }:
-        for name in ("tool_use_id", "tool_call_id", "toolCallId", "call_id", "callID"):
-            key = identifier(payload.get(name))
-            if key:
-                kind = "tool_call"
-                break
+        key = payload_identifier(req, ("tool_use_id", "tool_call_id", "toolCallId", "call_id", "callID"))
+        if key:
+            kind = "tool_call"
     if not key:
         return str(uuid.uuid4()), "generated"
     scope = json.dumps([req.get("cli"), req.get("native"), native_session_id(req), key])

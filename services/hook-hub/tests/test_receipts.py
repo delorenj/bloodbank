@@ -18,7 +18,7 @@ import pytest
 from test_hub import CLIENT, HUB_DIR, HubHarness, echo_handler
 
 sys.path.insert(0, str(HUB_DIR))
-from receipts import ReceiptStore, invocation_identity
+from receipts import ReceiptStore, invocation_identity, native_session_id
 from hub import compose_stdout
 
 
@@ -66,6 +66,21 @@ def test_tool_identity_is_scoped_to_native_event_and_session():
     assert invocation_identity(req)[0] == original
     assert invocation_identity({**req, "native": "PreToolUse"})[0] != original
     assert invocation_identity({**req, "payload": {"session_id": "s2", "tool_use_id": "t1"}})[0] != original
+
+
+def test_nested_hermes_ids_match_adapter_session_and_deduplicate_like_flat_payload():
+    payload = {"session_id": "hermes-session", "tool_call_id": "one-tool"}
+    flat = {"cli": "hermes", "native": "post_tool_call", "payload": payload}
+    nested = {**flat, "payload": {"extra": payload}}
+    assert native_session_id(nested) == "hermes-session"
+    assert invocation_identity(nested) == invocation_identity(flat)
+    assert invocation_identity(nested)[1] == "tool_call"
+
+
+def test_long_native_ids_do_not_deduplicate_on_a_shared_prefix():
+    req = {"cli": "hermes", "native": "post_tool_call", "payload": {"session_id": "s", "tool_call_id": "a" * 256 + "one"}}
+    other = {**req, "payload": {"session_id": "s", "tool_call_id": "a" * 256 + "two"}}
+    assert invocation_identity(req)[0] != invocation_identity(other)[0]
 
 
 def test_failed_handler_receipt_does_not_store_input_or_stderr(tmp_path):
