@@ -1,0 +1,69 @@
+{
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native SessionStart --deadline 15",
+      "timeout": 16
+    },
+    {
+      "event": "SessionEnd",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native SessionEnd",
+      "timeout": 4
+    },
+    {
+      "event": "UserPromptSubmit",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native UserPromptSubmit --deadline 15",
+      "timeout": 16
+    },
+    {
+      "event": "Stop",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native Stop",
+      "timeout": 4
+    },
+    {
+      "event": "Interrupt",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native Interrupt",
+      "timeout": 4
+    },
+    {
+      "event": "PreToolUse",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native PreToolUse",
+      "timeout": 4
+    },
+    {
+      "event": "PostToolUse",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native PostToolUse",
+      "timeout": 4
+    },
+    {
+      "event": "PostToolUseFailure",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native PostToolUseFailure",
+      "timeout": 4
+    },
+    {
+      "event": "SubagentStart",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native SubagentStart",
+      "timeout": 4
+    },
+    {
+      "event": "SubagentStop",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native SubagentStop",
+      "timeout": 4
+    },
+    {
+      "event": "StopFailure",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native StopFailure",
+      "timeout": 4
+    },
+    {
+      "event": "PermissionRequest",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native PermissionRequest",
+      "timeout": 4
+    },
+    {
+      "event": "Notification",
+      "command": "/home/delorenj/.agents/hooks/bb-hook --cli kimi --native Notification",
+      "timeout": 4
+    }
+  ]
+}

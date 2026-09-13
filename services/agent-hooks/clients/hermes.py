@@ -51,7 +51,8 @@ class HermesAdapter(ClientAdapter):
 
     default_map = {
         "on_session_start": ("bloodbank.agent.session.started", "session"),
-        "on_session_end": ("bloodbank.agent.session.ended", "session"),
+        "on_session_end": ("bloodbank.conversation.turn.completed", "thread"),
+        "on_session_finalize": ("bloodbank.agent.session.ended", "session"),
         "pre_llm_call": ("bloodbank.conversation.turn.started", "thread"),
         "pre_tool_call": ("bloodbank.agent.tool.requested", "invocation"),
         "post_tool_call": ("bloodbank.agent.tool.completed", "invocation"),
@@ -121,10 +122,17 @@ class HermesAdapter(ClientAdapter):
 
         if ce_type == "bloodbank.conversation.turn.started":
             return {
-                "turn_id": correlation,
+                "thread_id": correlation,
+                "turn_id": str(_value(flat, "turn_id", "task_id") or correlation),
                 "working_directory": cwd,
                 **raw,
             }
+
+        if ce_type == "bloodbank.conversation.turn.completed":
+            outcome = "canceled" if flat.get("interrupted") else "failed" if flat.get("failed") else "completed"
+            return {"thread_id": correlation,
+                    "turn_id": str(_value(flat, "turn_id", "task_id") or correlation),
+                    "outcome": outcome, "working_directory": cwd, **raw}
 
         if ce_type == "bloodbank.agent.session.started":
             return {
@@ -167,6 +175,10 @@ class HermesAdapter(ClientAdapter):
                 "stop_reason": _value(flat, "reason", "stop_reason") or "completed",
                 **raw,
             }
+
+        if ce_type == "bloodbank.agent.invocation.started":
+            return {"invocation_id": str(_value(flat, "child_session_id") or correlation),
+                    "parent_invocation_id": correlation, "working_directory": cwd, **raw}
 
         return raw
 

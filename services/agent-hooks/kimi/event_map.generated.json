@@ -5,12 +5,20 @@
       "bloodbank.agent.session.started",
       "session"
     ],
+    "SessionEnd": [
+      "bloodbank.agent.session.ended",
+      "session"
+    ],
+    "UserPromptSubmit": [
+      "bloodbank.conversation.turn.started",
+      "thread"
+    ],
     "Stop": [
       "bloodbank.conversation.turn.completed",
       "thread"
     ],
-    "UserPromptSubmit": [
-      "bloodbank.conversation.turn.started",
+    "Interrupt": [
+      "bloodbank.conversation.turn.completed",
       "thread"
     ],
     "PreToolUse": [
@@ -18,6 +26,10 @@
       "invocation"
     ],
     "PostToolUse": [
+      "bloodbank.agent.tool.completed",
+      "invocation"
+    ],
+    "PostToolUseFailure": [
       "bloodbank.agent.tool.completed",
       "invocation"
     ],
@@ -29,19 +41,17 @@
       "bloodbank.agent.invocation.completed",
       "invocation"
     ],
-    "SessionEnd": [
-      "bloodbank.agent.session.ended",
-      "session"
-    ],
-    "Interrupt": [
-      "bloodbank.conversation.turn.completed",
-      "thread"
+    "StopFailure": [
+      "bloodbank.agent.invocation.failed",
+      "invocation"
     ]
   },
   "alerts": {
-    "PermissionRequest": "attention"
+    "PermissionRequest": "attention",
+    "Notification": "attention"
   },
   "alert_kinds": {
-    "PermissionRequest": "gate"
+    "PermissionRequest": "gate",
+    "Notification": "bell"
   }
 }

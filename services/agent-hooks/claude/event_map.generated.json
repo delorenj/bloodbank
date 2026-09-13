@@ -5,7 +5,15 @@
       "bloodbank.agent.session.started",
       "session"
     ],
+    "SessionStart": [
+      "bloodbank.agent.session.started",
+      "session"
+    ],
     "prompt-submitted": [
+      "bloodbank.conversation.turn.started",
+      "thread"
+    ],
+    "UserPromptSubmit": [
       "bloodbank.conversation.turn.started",
       "thread"
     ],
@@ -13,7 +21,15 @@
       "bloodbank.agent.tool.requested",
       "invocation"
     ],
+    "PreToolUse": [
+      "bloodbank.agent.tool.requested",
+      "invocation"
+    ],
     "tool-action": [
+      "bloodbank.agent.tool.completed",
+      "invocation"
+    ],
+    "PostToolUse": [
       "bloodbank.agent.tool.completed",
       "invocation"
     ],
@@ -21,9 +37,33 @@
       "bloodbank.agent.invocation.completed",
       "invocation"
     ],
-    "session-end": [
+    "SubagentStop": [
+      "bloodbank.agent.invocation.completed",
+      "invocation"
+    ],
+    "Stop": [
+      "bloodbank.conversation.turn.completed",
+      "thread"
+    ],
+    "SessionEnd": [
       "bloodbank.agent.session.ended",
       "session"
+    ],
+    "PostToolUseFailure": [
+      "bloodbank.agent.tool.completed",
+      "invocation"
+    ],
+    "SubagentStart": [
+      "bloodbank.agent.invocation.started",
+      "invocation"
+    ],
+    "stop-failure": [
+      "bloodbank.agent.invocation.failed",
+      "invocation"
+    ],
+    "StopFailure": [
+      "bloodbank.agent.invocation.failed",
+      "invocation"
     ]
   },
   "alerts": {

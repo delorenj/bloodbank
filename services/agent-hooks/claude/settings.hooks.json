@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook session-start",
-            "timeout": 3
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native SessionStart --deadline 15",
+            "timeout": 16
           }
         ]
       }
@@ -16,8 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook prompt-submitted",
-            "timeout": 3
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native UserPromptSubmit --deadline 15",
+            "timeout": 16
           }
         ]
       }
@@ -28,8 +28,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook tool-request",
-            "timeout": 3
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native PreToolUse",
+            "timeout": 4
           }
         ]
       }
@@ -40,8 +40,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook tool-action",
-            "timeout": 3
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native PostToolUse",
+            "timeout": 4
           }
         ]
       }
@@ -51,8 +51,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook subagent-stopped",
-            "timeout": 3
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native SubagentStop",
+            "timeout": 4
           }
         ]
       }
@@ -62,8 +62,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook session-end",
-            "timeout": 3
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native Stop",
+            "timeout": 4
           }
         ]
       }
@@ -73,8 +73,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook Notification",
-            "timeout": 2
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native Notification",
+            "timeout": 4
           }
         ]
       }
@@ -84,8 +84,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook PermissionRequest",
-            "timeout": 2
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native PermissionRequest",
+            "timeout": 4
           }
         ]
       }
@@ -95,8 +95,53 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | $HOME/.local/bin/mise x -- python /home/delorenj/.agents/hooks/bloodbank/publish.py --client claude --hook TeammateIdle",
-            "timeout": 2
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native TeammateIdle",
+            "timeout": 4
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native SessionEnd",
+            "timeout": 4
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native PostToolUseFailure",
+            "timeout": 4
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native SubagentStart",
+            "timeout": 4
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native StopFailure",
+            "timeout": 4
           }
         ]
       }

@@ -53,6 +53,9 @@ import copilot.publish as _cp  # noqa: E402
 import codex.publish as _cx  # noqa: E402
 import hermes.publish as _hm  # noqa: E402
 import antigravity.publish as _ag  # noqa: E402
+from clients import REGISTRY, get_adapter
+from core.event_map import resolve_map, resolve_alert_map
+from health.installed_inventory import config_paths, collect_installed_inventory, native_rows
 
 REDIS_KEY = "holocene:tooling:stat:agent-hook-tests"
 TTL_SECONDS = int(os.environ.get("AGENT_HOOK_TESTS_TTL", 60 * 60 * 24 * 7))
@@ -72,6 +75,12 @@ IDENT: dict[str, dict[str, Any]] = {
     "antigravity": dict(source=_ag.ANTIGRAVITY_SOURCE, producer=_ag.ANTIGRAVITY_PRODUCER, service=_ag.ANTIGRAVITY_SERVICE,
                         actor=_ag.ANTIGRAVITY_ACTOR, map=_ag.HOOK_MAP, label="Antigravity"),
 }
+for _name in REGISTRY:
+    _adapter = get_adapter(_name)
+    IDENT[_name] = dict(source=_adapter.source, producer=_adapter.producer,
+                        service=_adapter.service, actor=_adapter.actor_base,
+                        map=resolve_map(_adapter.agent_dir, _adapter.default_map),
+                        label=_name.title())
 
 HOOKS_ENV = os.environ.get("HOOKS", str(Path.home() / ".agents" / "hooks"))
 HOME = str(Path.home())
@@ -119,7 +128,7 @@ def _publisher_arg(command: str, markers: list[str]) -> str | None:
     except ValueError:
         toks = after.split()
     for i, tok in enumerate(toks):
-        if tok == "--hook" and i + 1 < len(toks):
+        if tok in {"--hook", "--native"} and i + 1 < len(toks):
             return toks[i + 1]
         if tok.startswith("--hook="):
             return tok.split("=", 1)[1]
@@ -163,6 +172,12 @@ def _check_bloodbank(agent: str, arg: str | None) -> tuple[bool, str | None]:
         return False, "no event arg after publish.py"
     mapping = ident["map"].get(arg)
     if mapping is None:
+        adapter = get_adapter(agent)
+        if resolve_alert_map(adapter.agent_dir).get(arg):
+            return True, None
+        spec = sync.load_master()["agents"][agent]
+        if any(b.get("native") == arg and b.get("publish") is False for b in spec["bindings"]):
+            return True, None  # explicit non-publishing native concern
         return False, f"arg {arg!r} not in {agent} publisher map (would no-op)"
     ce_type, bucket = mapping
     try:
@@ -260,6 +275,15 @@ def _load_config(path: Path, dialect: str):
     if dialect == "hermes_config":
         import yaml
         return yaml.safe_load(text) or {}
+    if dialect == "kimi_toml":
+        import tomllib
+        return tomllib.loads(text)
+    if dialect == "opencode_plugin":
+        agent = sync.load_master()["agents"]["opencode"]
+        canonical = SERVICE_DIR / agent["plugin_source"]
+        if text != canonical.read_text():
+            raise ValueError("OpenCode plugin source differs from canonical bridge")
+        return json.loads((SERVICE_DIR / agent["config_target"]).read_text())
     return json.loads(text)
 
 
@@ -288,7 +312,7 @@ def _check_config(
         result["note"] = "config file absent"
         return result
 
-    if dialect in ("claude_settings", "codex"):
+    if dialect in ("claude_settings", "codex", "gemini_settings"):
         commands = _commands_from_nested(cfg)
     elif dialect == "copilot":
         commands = _commands_from_copilot(cfg)
@@ -296,6 +320,10 @@ def _check_config(
         commands = _commands_from_hermes(cfg)
     elif dialect == "antigravity_bundle":
         commands = _commands_from_bundles(cfg)
+    elif dialect == "kimi_toml":
+        commands = [(h["native"], h["command"]) for h in native_rows(cfg, dialect)]
+    elif dialect == "opencode_plugin":
+        commands = list(cfg["hooks"].items())
     else:
         commands = []
 
@@ -315,7 +343,8 @@ def _check_config(
             ok, err = _check_bloodbank(agent, arg)
             entry = {"event": event, "kind": "bloodbank", "arg": arg, "ok": ok,
                      "check": "envelope", "error": err}
-            if ok and dialect == "hermes_config" and allowlist_path is not None:
+            if (ok and dialect == "hermes_config" and allowlist_path is not None
+                    and cfg.get("hooks_auto_accept") is not True):
                 if (event, command) not in allow:
                     entry["ok"] = False
                     entry["error"] = "not in shell-hooks-allowlist (hook will not fire)"
@@ -344,23 +373,7 @@ def _agent_configs(master: dict, agent_name: str, agent: dict) -> list[tuple[str
     dialect = agent.get("dialect")
     if dialect in ("watcher", "runtime"):
         return []
-    if dialect == "hermes_config":
-        out = []
-        reg = sync._expand(agent["fleet_registry"]) if agent.get("fleet_registry") else None
-        if reg and reg.exists():
-            import yaml
-            rd = yaml.safe_load(reg.read_text()) or {}
-            subdir = agent.get("runtime_subdir", "runtime")
-            alw_name = agent.get("allowlist_filename", "shell-hooks-allowlist.json")
-            for aid, meta in (rd.get("agents") or {}).items():
-                role_dir = (meta or {}).get("role_dir")
-                if not role_dir:
-                    continue
-                rt = Path(role_dir) / subdir
-                out.append((aid, rt / "config.yaml", rt / alw_name))
-        return out
-    live = agent.get("live_target")
-    return [(agent_name, sync._expand(live), None)] if live else []
+    return config_paths(agent_name, agent)
 
 
 def build_report(master: dict) -> dict:
@@ -369,6 +382,7 @@ def build_report(master: dict) -> dict:
     total = passed = failed = 0
     overall_ok = True
     overall_warn = False
+    inventory = {row["cli"]: row for row in collect_installed_inventory(master)["clis"]}
 
     for agent_name, agent in master["agents"].items():
         dialect = agent.get("dialect")
@@ -381,6 +395,17 @@ def build_report(master: dict) -> dict:
             cfg_results.append(
                 (label, _check_config(agent_name, dialect, path, alw, markers))
             )
+
+        # Empty/missing events used to pass because only existing commands were
+        # iterated. Verify expected native coverage, matcher and timeout too.
+        deployed = inventory.get(agent_name, {})
+        bad_wiring = [row for row in deployed.get("natives", []) if row["status"] != "configured"]
+        if bad_wiring:
+            cfg_results.append(("native coverage", {"config": None, "ok": False,
+                "note": "managed native wiring differs from registry",
+                "entries": [{"event": row["native"], "kind": "wiring", "ok": False,
+                             "check": "installed", "error": row["status"]}
+                            for row in bad_wiring]}))
 
         present = [r for _, r in cfg_results if r.get("note") != "config file absent"]
         absent = [r for _, r in cfg_results if r.get("note") == "config file absent"]
@@ -413,6 +438,8 @@ def build_report(master: dict) -> dict:
             n_ok = sum(1 for e in r0["entries"] if e["ok"])
             summary = (f"{n_ok}/{len(r0['entries'])} hooks ok" if r0["entries"]
                        else (r0.get("note") or "no hooks"))
+        if bad_wiring:
+            summary += f" · {len(bad_wiring)} native wiring gaps"
 
         items.append({
             "id": agent_name,
@@ -427,6 +454,7 @@ def build_report(master: dict) -> dict:
                 "configsFailing": cfg_fail,
                 "uninitialized": len(absent),
                 "configs": [{"label": lbl, **r} for lbl, r in cfg_results],
+                "installedInventory": deployed,
             },
         })
 

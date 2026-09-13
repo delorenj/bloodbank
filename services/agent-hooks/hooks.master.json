@@ -1,11 +1,12 @@
 {
-  "version": 1,
-  "$comment": "SINGLE SOURCE OF TRUTH for agent-hooks. Edit this file, then run `mise run hooks:sync` (or python3 sync.py --apply) to propagate to every agent's native hook config + publisher event map. Never hand-edit the generated artifacts (*/hooks.json, claude/settings.hooks.json, */event_map.generated.json) or a publisher's HOOK_MAP/EVENT_MAP — sync.py overwrites them from here. Ambiguous/divergent mappings are recorded in hooks.mappings.lock.json so the next sync is seamless. See README.md §'SSOT propagation'.",
+  "version": 2,
+  "$comment": "SINGLE SOURCE OF TRUTH for agent-hooks. Edit this file, then run `mise run hooks:sync` (or python3 sync.py --apply) to propagate to every agent's native hook config + publisher event map. Never hand-edit the generated artifacts (*/hooks.json, claude/settings.hooks.json, */event_map.generated.json) or a publisher's HOOK_MAP/EVENT_MAP \u2014 sync.py overwrites them from here. Ambiguous/divergent mappings are recorded in hooks.mappings.lock.json so the next sync is seamless. See README.md \u00a7'SSOT propagation'.",
   "meta": {
     "service_dir_placeholder": "{service_dir}",
     "contract": "../../docs/event-naming.md",
     "validator": "core/validate.py",
-    "lock": "hooks.mappings.lock.json"
+    "lock": "hooks.mappings.lock.json",
+    "native_timeout_unit": "seconds except Gemini milliseconds"
   },
   "lifecycle": {
     "agent.session.started": {
@@ -33,7 +34,7 @@
       "type": "bloodbank.conversation.turn.completed",
       "kind": "event",
       "ordering_bucket": "thread",
-      "role": "turn_complete",
+      "role": "turn_completed",
       "description": "A conversation turn reached a terminal state."
     },
     "agent.tool.requested": {
@@ -49,7 +50,7 @@
       "ordering_bucket": "invocation",
       "role": "tool_invoked",
       "emitted": false,
-      "description": "A tool was invoked. Defined for §14 fidelity but NOT bound to a post-tool hook: resolved 2026-06-07 to use agent.tool.completed for the single post-tool hook surface."
+      "description": "A tool was invoked. Defined for \u00a714 fidelity but NOT bound to a post-tool hook: resolved 2026-06-07 to use agent.tool.completed for the single post-tool hook surface."
     },
     "agent.tool.completed": {
       "type": "bloodbank.agent.tool.completed",
@@ -86,11 +87,14 @@
       "dialect": "claude_settings",
       "config_target": "claude/settings.hooks.json",
       "live_target": "~/.claude/settings.json",
-      "publisher": "bloodbank/publish.py",
-      "legacy_publishers": ["claude/publish.py"],
+      "publisher": "bb-hook",
+      "legacy_publishers": [
+        "claude/publish.py",
+        "bloodbank/publish.py"
+      ],
       "event_map_target": "claude/event_map.generated.json",
-      "runner": "$HOME/.local/bin/mise x -- python {hooks_dir}/bloodbank/publish.py --client claude --hook",
-      "default_timeout": 3,
+      "runner": "{hooks_dir}/bb-hook --cli claude --native",
+      "default_timeout": 4,
       "actor": {
         "type": "agent_cli",
         "agent_id": "bloodbank.agent.claude",
@@ -99,27 +103,128 @@
         "model": null
       },
       "bindings": [
-        { "native": "SessionStart", "role": "session_start", "arg": "session-start", "lifecycle": "agent.session.started", "payload": "empty" },
-        { "native": "UserPromptSubmit", "role": "prompt_submit", "arg": "prompt-submitted", "lifecycle": "conversation.turn.started", "payload": "stdin" },
-        { "native": "PreToolUse", "role": "pre_tool", "arg": "tool-request", "lifecycle": "agent.tool.requested", "payload": "stdin", "matcher": ".*" },
-        { "native": "PostToolUse", "role": "post_tool", "arg": "tool-action", "lifecycle": "agent.tool.completed", "payload": "stdin", "matcher": ".*" },
-        { "native": "SubagentStop", "role": "subagent_stop", "arg": "subagent-stopped", "lifecycle": "agent.invocation.completed", "payload": "stdin" },
-        { "native": "Stop", "role": "session_end", "arg": "session-end", "lifecycle": "agent.session.ended", "payload": "stdin" },
-        { "native": "Notification", "role": "attention", "arg": "Notification", "publish": false, "alert": "attention", "attention_kind": "bell", "payload": "stdin", "timeout": 2 },
-        { "native": "PermissionRequest", "role": "attention", "arg": "PermissionRequest", "publish": false, "alert": "attention", "attention_kind": "gate", "payload": "stdin", "timeout": 2 },
-        { "native": "TeammateIdle", "role": "attention", "arg": "TeammateIdle", "publish": false, "alert": "attention", "attention_kind": "bell", "payload": "stdin", "timeout": 2 }
-      ]
+        {
+          "native": "SessionStart",
+          "role": "session_start",
+          "arg": "session-start",
+          "lifecycle": "agent.session.started",
+          "payload": "stdin",
+          "timeout": 16
+        },
+        {
+          "native": "UserPromptSubmit",
+          "role": "prompt_submit",
+          "arg": "prompt-submitted",
+          "lifecycle": "conversation.turn.started",
+          "payload": "stdin",
+          "timeout": 16
+        },
+        {
+          "native": "PreToolUse",
+          "role": "pre_tool",
+          "arg": "tool-request",
+          "lifecycle": "agent.tool.requested",
+          "payload": "stdin",
+          "matcher": ".*"
+        },
+        {
+          "native": "PostToolUse",
+          "role": "post_tool",
+          "arg": "tool-action",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin",
+          "matcher": ".*"
+        },
+        {
+          "native": "SubagentStop",
+          "role": "subagent_stop",
+          "arg": "subagent-stopped",
+          "lifecycle": "agent.invocation.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "Stop",
+          "role": "turn_completed",
+          "arg": "Stop",
+          "lifecycle": "conversation.turn.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "Notification",
+          "role": "attention",
+          "arg": "Notification",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "bell",
+          "payload": "stdin",
+          "timeout": 4
+        },
+        {
+          "native": "PermissionRequest",
+          "role": "attention",
+          "arg": "PermissionRequest",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "gate",
+          "payload": "stdin",
+          "timeout": 4
+        },
+        {
+          "native": "TeammateIdle",
+          "role": "attention",
+          "arg": "TeammateIdle",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "bell",
+          "payload": "stdin",
+          "timeout": 4
+        },
+        {
+          "native": "SessionEnd",
+          "role": "session_end",
+          "arg": "SessionEnd",
+          "lifecycle": "agent.session.ended",
+          "payload": "stdin"
+        },
+        {
+          "native": "PostToolUseFailure",
+          "role": "post_tool",
+          "arg": "PostToolUseFailure",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin",
+          "matcher": ".*"
+        },
+        {
+          "native": "SubagentStart",
+          "role": "invocation_start",
+          "arg": "SubagentStart",
+          "lifecycle": "agent.invocation.started",
+          "payload": "stdin"
+        },
+        {
+          "native": "StopFailure",
+          "role": "invocation_failed",
+          "arg": "stop-failure",
+          "lifecycle": "agent.invocation.failed",
+          "payload": "stdin"
+        }
+      ],
+      "support_status": "supported",
+      "default_timeout_sec": 4
     },
     "copilot": {
       "label": "GitHub Copilot CLI",
       "dialect": "copilot",
       "config_target": "copilot/hooks.json",
       "live_target": "~/.copilot/hooks/bloodbank.json",
-      "publisher": "bloodbank/publish.py",
-      "legacy_publishers": ["copilot/publish.py"],
+      "publisher": "bb-hook",
+      "legacy_publishers": [
+        "copilot/publish.py",
+        "bloodbank/publish.py"
+      ],
       "event_map_target": "copilot/event_map.generated.json",
-      "runner": "python3 {hooks_dir}/bloodbank/publish.py --client copilot --hook",
-      "default_timeout_sec": 5,
+      "runner": "{hooks_dir}/bb-hook --cli copilot --native",
+      "default_timeout_sec": 4,
       "actor": {
         "type": "agent_cli",
         "agent_id": "bloodbank.agent.copilot",
@@ -128,26 +233,86 @@
         "model": null
       },
       "bindings": [
-        { "native": "sessionStart", "role": "session_start", "arg": "sessionStart", "lifecycle": "agent.session.started", "payload": "stdin" },
-        { "native": "sessionEnd", "role": "session_end", "arg": "sessionEnd", "lifecycle": "agent.session.ended", "payload": "stdin" },
-        { "native": "userPromptSubmitted", "role": "prompt_submit", "arg": "userPromptSubmitted", "lifecycle": "conversation.turn.started", "payload": "stdin" },
-        { "native": "preToolUse", "role": "pre_tool", "arg": "preToolUse", "lifecycle": "agent.tool.requested", "payload": "stdin" },
-        { "native": "postToolUse", "role": "post_tool", "arg": "postToolUse", "lifecycle": "agent.tool.completed", "payload": "stdin" },
-        { "native": "errorOccurred", "role": "invocation_failed", "arg": "errorOccurred", "lifecycle": "agent.invocation.failed", "payload": "stdin" },
-        { "native": "agentStop", "role": "subagent_stop", "arg": "agentStop", "lifecycle": "agent.invocation.completed", "payload": "stdin" },
-        { "native": "permissionRequest", "role": "attention", "arg": "permissionRequest", "publish": false, "alert": "attention", "attention_kind": "gate", "payload": "stdin", "timeoutSec": 2 }
-      ]
+        {
+          "native": "sessionStart",
+          "role": "session_start",
+          "arg": "sessionStart",
+          "lifecycle": "agent.session.started",
+          "payload": "stdin",
+          "timeout": 16,
+          "timeoutSec": 16
+        },
+        {
+          "native": "sessionEnd",
+          "role": "session_end",
+          "arg": "sessionEnd",
+          "lifecycle": "agent.session.ended",
+          "payload": "stdin"
+        },
+        {
+          "native": "userPromptSubmitted",
+          "role": "prompt_submit",
+          "arg": "userPromptSubmitted",
+          "lifecycle": "conversation.turn.started",
+          "payload": "stdin",
+          "timeout": 16,
+          "timeoutSec": 16
+        },
+        {
+          "native": "preToolUse",
+          "role": "pre_tool",
+          "arg": "preToolUse",
+          "lifecycle": "agent.tool.requested",
+          "payload": "stdin"
+        },
+        {
+          "native": "postToolUse",
+          "role": "post_tool",
+          "arg": "postToolUse",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "errorOccurred",
+          "role": "invocation_failed",
+          "arg": "errorOccurred",
+          "lifecycle": "agent.invocation.failed",
+          "payload": "stdin"
+        },
+        {
+          "native": "agentStop",
+          "role": "subagent_stop",
+          "arg": "agentStop",
+          "lifecycle": "agent.invocation.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "permissionRequest",
+          "role": "attention",
+          "arg": "permissionRequest",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "gate",
+          "payload": "stdin",
+          "timeoutSec": 4
+        }
+      ],
+      "support_status": "supported",
+      "default_timeout": 4
     },
     "codex": {
       "label": "Codex CLI",
       "dialect": "codex",
       "config_target": "codex/hooks.json",
       "live_target": "~/.codex/hooks.json",
-      "publisher": "bloodbank/publish.py",
-      "legacy_publishers": ["codex/publish.py"],
+      "publisher": "bb-hook",
+      "legacy_publishers": [
+        "codex/publish.py",
+        "bloodbank/publish.py"
+      ],
       "event_map_target": "codex/event_map.generated.json",
-      "runner": "python3 {hooks_dir}/bloodbank/publish.py --client codex --hook",
-      "default_timeout": 3000,
+      "runner": "{hooks_dir}/bb-hook --cli codex --native",
+      "default_timeout": 4,
       "actor": {
         "type": "agent_cli",
         "agent_id": "bloodbank.agent.codex",
@@ -156,29 +321,105 @@
         "model": null
       },
       "bindings": [
-        { "native": "SessionStart", "role": "session_start", "arg": "SessionStart", "lifecycle": "agent.session.started", "payload": "empty" },
-        { "native": "Stop", "role": "session_end", "arg": "Stop", "lifecycle": "agent.session.ended", "payload": "empty", "extra_args": ["user_stop"] },
-        { "native": "UserPromptSubmit", "role": "prompt_submit", "arg": "UserPromptSubmit", "lifecycle": "conversation.turn.started", "payload": "stdin" },
-        { "native": "PreToolUse", "role": "pre_tool", "arg": "PreToolUse", "lifecycle": "agent.tool.requested", "payload": "stdin", "matcher": ".*" },
-        { "native": "PostToolUse", "role": "post_tool", "arg": "PostToolUse", "lifecycle": "agent.tool.completed", "payload": "stdin", "matcher": ".*" },
-        { "native": "SubagentStart", "role": "invocation_start", "arg": "SubagentStart", "lifecycle": "agent.invocation.started", "payload": "stdin" },
-        { "native": "SubagentStop", "role": "subagent_stop", "arg": "SubagentStop", "lifecycle": "agent.invocation.completed", "payload": "stdin" },
-        { "native": "PermissionRequest", "role": "attention", "arg": "PermissionRequest", "publish": false, "alert": "attention", "attention_kind": "gate", "payload": "stdin", "timeout": 2000 }
-      ]
+        {
+          "native": "SessionStart",
+          "role": "session_start",
+          "arg": "SessionStart",
+          "lifecycle": "agent.session.started",
+          "payload": "stdin",
+          "timeout": 16
+        },
+        {
+          "native": "Stop",
+          "role": "turn_completed",
+          "arg": "Stop",
+          "lifecycle": "conversation.turn.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "UserPromptSubmit",
+          "role": "prompt_submit",
+          "arg": "UserPromptSubmit",
+          "lifecycle": "conversation.turn.started",
+          "payload": "stdin",
+          "timeout": 16
+        },
+        {
+          "native": "PreToolUse",
+          "role": "pre_tool",
+          "arg": "PreToolUse",
+          "lifecycle": "agent.tool.requested",
+          "payload": "stdin",
+          "matcher": ".*"
+        },
+        {
+          "native": "PostToolUse",
+          "role": "post_tool",
+          "arg": "PostToolUse",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin",
+          "matcher": ".*"
+        },
+        {
+          "native": "SubagentStart",
+          "role": "invocation_start",
+          "arg": "SubagentStart",
+          "lifecycle": "agent.invocation.started",
+          "payload": "stdin"
+        },
+        {
+          "native": "SubagentStop",
+          "role": "subagent_stop",
+          "arg": "SubagentStop",
+          "lifecycle": "agent.invocation.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "PermissionRequest",
+          "role": "attention",
+          "arg": "PermissionRequest",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "gate",
+          "payload": "stdin",
+          "timeout": 4
+        },
+        {
+          "native": "SessionEnd",
+          "role": "session_end",
+          "arg": "SessionEnd",
+          "lifecycle": "agent.session.ended",
+          "payload": "stdin",
+          "timeout": 3
+        },
+        {
+          "native": "Interrupt",
+          "role": "turn_completed",
+          "arg": "Interrupt",
+          "lifecycle": "conversation.turn.completed",
+          "payload": "stdin",
+          "timeout": 3
+        }
+      ],
+      "support_status": "supported",
+      "default_timeout_sec": 4
     },
     "hermes": {
       "label": "Hermes PM agent",
       "dialect": "hermes_config",
       "config_target": "hermes/hooks.config.json",
       "event_map_target": "hermes/event_map.generated.json",
-      "publisher": "bloodbank/publish.py",
-      "legacy_publishers": ["hermes/publish.py"],
+      "publisher": "bb-hook",
+      "legacy_publishers": [
+        "hermes/publish.py",
+        "bloodbank/publish.py"
+      ],
       "fleet_registry": "~/.hermes/agents-registry.yaml",
       "runtime_subdir": "runtime",
       "allowlist_filename": "shell-hooks-allowlist.json",
-      "runner": "python3 {hooks_dir}/bloodbank/publish.py --client hermes --hook",
-      "default_timeout": 5,
-      "note": "Hermes-agent fires shell hooks from the `hooks:` block in its config.yaml (agent/shell_hooks.py); commands run shell=False (shlex argv) with the payload piped as JSON on stdin, gated by shell-hooks-allowlist.json. Each agent sets HERMES_HOME=<role_dir>/runtime, so deploy is FLEET-WIDE: it reads the fleet registry (~/.hermes/agents-registry.yaml), and for every agent merges the hooks: block into <role_dir>/runtime/config.yaml + seeds <role_dir>/runtime/shell-hooks-allowlist.json. Uninitialized runtimes (no dir) are skipped; missing config.yaml is created. Newly-provisioned agents are covered on the next `mise run deploy` (they appear in the registry at provision time). The pre_llm_call hook provides context injection and stands in for the user-prompt event.",
+      "runner": "{hooks_dir}/bb-hook --cli hermes --native",
+      "default_timeout": 4,
+      "note": "Discover default and non-backup profile configs, plus live HERMES_HOME process paths and initialized legacy registry runtimes. Each native event invokes the hub once; hooks_auto_accept or exact allowlist governs native loading.",
       "actor": {
         "type": "agent_cli",
         "agent_id": "bloodbank.agent.hermes",
@@ -187,13 +428,100 @@
         "model": null
       },
       "bindings": [
-        { "native": "on_session_start", "role": "session_start", "arg": "on_session_start", "lifecycle": "agent.session.started" },
-        { "native": "on_session_end", "role": "session_end", "arg": "on_session_end", "lifecycle": "agent.session.ended" },
-        { "native": "pre_llm_call", "role": "prompt_submit", "arg": "pre_llm_call", "lifecycle": "conversation.turn.started" },
-        { "native": "pre_tool_call", "role": "pre_tool", "arg": "pre_tool_call", "lifecycle": "agent.tool.requested", "fail_closed": false },
-        { "native": "post_tool_call", "role": "post_tool", "arg": "post_tool_call", "lifecycle": "agent.tool.completed" },
-        { "native": "subagent_stop", "role": "subagent_stop", "arg": "subagent_stop", "lifecycle": "agent.invocation.completed" }
-      ]
+        {
+          "native": "on_session_start",
+          "role": "session_start",
+          "arg": "on_session_start",
+          "lifecycle": "agent.session.started",
+          "payload": "stdin",
+          "timeout": 16
+        },
+        {
+          "native": "on_session_end",
+          "role": "turn_completed",
+          "arg": "on_session_end",
+          "lifecycle": "conversation.turn.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "pre_llm_call",
+          "role": "prompt_submit",
+          "arg": "pre_llm_call",
+          "lifecycle": "conversation.turn.started",
+          "payload": "stdin",
+          "timeout": 16
+        },
+        {
+          "native": "pre_tool_call",
+          "role": "pre_tool",
+          "arg": "pre_tool_call",
+          "lifecycle": "agent.tool.requested",
+          "fail_closed": false,
+          "payload": "stdin"
+        },
+        {
+          "native": "post_tool_call",
+          "role": "post_tool",
+          "arg": "post_tool_call",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "subagent_stop",
+          "role": "subagent_stop",
+          "arg": "subagent_stop",
+          "lifecycle": "agent.invocation.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "post_llm_call",
+          "role": "after_response",
+          "arg": "post_llm_call",
+          "publish": false,
+          "payload": "stdin"
+        },
+        {
+          "native": "pre_approval_request",
+          "role": "attention",
+          "arg": "pre_approval_request",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "gate",
+          "payload": "stdin"
+        },
+        {
+          "native": "post_approval_response",
+          "role": "permission_resolved",
+          "arg": "post_approval_response",
+          "publish": false,
+          "payload": "stdin"
+        },
+        {
+          "native": "on_session_finalize",
+          "role": "session_end",
+          "arg": "on_session_finalize",
+          "lifecycle": "agent.session.ended",
+          "payload": "stdin"
+        },
+        {
+          "native": "on_session_reset",
+          "role": "session_reset",
+          "arg": "on_session_reset",
+          "publish": false,
+          "payload": "stdin"
+        },
+        {
+          "native": "subagent_start",
+          "role": "invocation_start",
+          "arg": "subagent_start",
+          "lifecycle": "agent.invocation.started",
+          "payload": "stdin"
+        }
+      ],
+      "support_status": "supported",
+      "default_timeout_sec": 4,
+      "live_target": "~/.hermes/config.yaml",
+      "profiles_dir": "~/.hermes/profiles"
     },
     "antigravity": {
       "label": "Antigravity CLI",
@@ -201,12 +529,15 @@
       "config_target": "antigravity/hooks.json",
       "live_target": "~/.gemini/config/hooks.json",
       "bundle_name": "bloodbank",
-      "publisher": "bloodbank/publish.py",
-      "legacy_publishers": ["antigravity/publish.py"],
+      "publisher": "bb-hook",
+      "legacy_publishers": [
+        "antigravity/publish.py",
+        "bloodbank/publish.py"
+      ],
       "event_map_target": "antigravity/event_map.generated.json",
-      "runner": "python3 {hooks_dir}/bloodbank/publish.py --client antigravity --hook",
-      "default_timeout": 5,
-      "note": "Antigravity CLI (Gemini fork) reads NAMED hook bundles from ~/.gemini/config/hooks.json: each top-level key is a bundle mapping native event -> handlers. Flat events (PreInvocation/PostInvocation/Stop) take handler objects directly; tool events (PreToolUse/PostToolUse) take {matcher, hooks[]} groups. Every hook must print a JSON response: {} for passive events, {\"decision\":\"\"} for Stop — the renderer appends the right printf. Install replaces ONLY the 'bloodbank' bundle, preserving foreign bundles (orca-status, skill-check-reminder, ...). PreToolUse is deliberately UNBOUND: its hooks gate tool permissions (decision required) and an observational hook can block or auto-allow user tools — the same reason Orca skips it. No antigravity payload carries the user prompt, so prompt_submit has no native surface; PostToolUse carries no toolCall (only stepIdx/error), so tool_name is 'unknown'.",
+      "runner": "{hooks_dir}/bb-hook --cli antigravity --native",
+      "default_timeout": 4,
+      "note": "Antigravity CLI (Gemini fork) reads NAMED hook bundles from ~/.gemini/config/hooks.json: each top-level key is a bundle mapping native event -> handlers. Flat events (PreInvocation/PostInvocation/Stop) take handler objects directly; tool events (PreToolUse/PostToolUse) take {matcher, hooks[]} groups. Every hook must print a JSON response: {} for passive events, {\"decision\":\"\"} for Stop \u2014 the renderer appends the right printf. Install replaces ONLY the 'bloodbank' bundle, preserving foreign bundles (orca-status, skill-check-reminder, ...). PreToolUse is deliberately UNBOUND: its hooks gate tool permissions (decision required) and an observational hook can block or auto-allow user tools \u2014 the same reason Orca skips it. No antigravity payload carries the user prompt, so prompt_submit has no native surface; PostToolUse carries no toolCall (only stepIdx/error), so tool_name is 'unknown'.",
       "actor": {
         "type": "agent_cli",
         "agent_id": "bloodbank.agent.antigravity",
@@ -215,11 +546,38 @@
         "model": null
       },
       "bindings": [
-        { "native": "PreInvocation", "role": "invocation_start", "arg": "PreInvocation", "lifecycle": "agent.invocation.started", "payload": "stdin" },
-        { "native": "PostInvocation", "role": "subagent_stop", "arg": "PostInvocation", "lifecycle": "agent.invocation.completed", "payload": "stdin" },
-        { "native": "PostToolUse", "role": "post_tool", "arg": "PostToolUse", "lifecycle": "agent.tool.completed", "payload": "stdin", "matcher": "*" },
-        { "native": "Stop", "role": "session_end", "arg": "Stop", "lifecycle": "agent.session.ended", "payload": "stdin" }
-      ]
+        {
+          "native": "PreInvocation",
+          "role": "invocation_start",
+          "arg": "PreInvocation",
+          "lifecycle": "agent.invocation.started",
+          "payload": "stdin"
+        },
+        {
+          "native": "PostInvocation",
+          "role": "subagent_stop",
+          "arg": "PostInvocation",
+          "lifecycle": "agent.invocation.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "PostToolUse",
+          "role": "post_tool",
+          "arg": "PostToolUse",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin",
+          "matcher": "*"
+        },
+        {
+          "native": "Stop",
+          "role": "session_end",
+          "arg": "Stop",
+          "lifecycle": "agent.session.ended",
+          "payload": "stdin"
+        }
+      ],
+      "support_status": "supported",
+      "default_timeout_sec": 4
     },
     "openclaw": {
       "label": "OpenClaw",
@@ -227,7 +585,7 @@
       "config_target": null,
       "publisher": "openclaw/watch.py",
       "event_map_target": null,
-      "note": "Log/trajectory tailer, not a hook-config CLI. Synthesizes the same lifecycle roles; no native config file to generate. Bindings below are documentation of intended coverage only.",
+      "note": "No installed Bloodbank bridge. Coverage is planned; these rows are explicitly not deployed hooks.",
       "actor": {
         "type": "agent_cli",
         "agent_id": "bloodbank.agent.openclaw",
@@ -236,14 +594,336 @@
         "model": null
       },
       "bindings": [
-        { "native": "session.start", "role": "session_start", "lifecycle": "agent.session.started", "payload": "synthetic" },
-        { "native": "session.end", "role": "session_end", "lifecycle": "agent.session.ended", "payload": "synthetic" },
-        { "native": "prompt", "role": "prompt_submit", "lifecycle": "conversation.turn.started", "payload": "synthetic" },
-        { "native": "tool.pre", "role": "pre_tool", "lifecycle": "agent.tool.requested", "payload": "synthetic" },
-        { "native": "tool.post", "role": "post_tool", "lifecycle": "agent.tool.completed", "payload": "synthetic" },
-        { "native": "invocation.start", "role": "invocation_start", "lifecycle": "agent.invocation.started", "payload": "synthetic" },
-        { "native": "invocation.stop", "role": "subagent_stop", "lifecycle": "agent.invocation.completed", "payload": "synthetic" }
+        {
+          "native": "session.start",
+          "role": "session_start",
+          "lifecycle": "agent.session.started",
+          "payload": "synthetic"
+        },
+        {
+          "native": "session.end",
+          "role": "session_end",
+          "lifecycle": "agent.session.ended",
+          "payload": "synthetic"
+        },
+        {
+          "native": "prompt",
+          "role": "prompt_submit",
+          "lifecycle": "conversation.turn.started",
+          "payload": "synthetic"
+        },
+        {
+          "native": "tool.pre",
+          "role": "pre_tool",
+          "lifecycle": "agent.tool.requested",
+          "payload": "synthetic"
+        },
+        {
+          "native": "tool.post",
+          "role": "post_tool",
+          "lifecycle": "agent.tool.completed",
+          "payload": "synthetic"
+        },
+        {
+          "native": "invocation.start",
+          "role": "invocation_start",
+          "lifecycle": "agent.invocation.started",
+          "payload": "synthetic"
+        },
+        {
+          "native": "invocation.stop",
+          "role": "subagent_stop",
+          "lifecycle": "agent.invocation.completed",
+          "payload": "synthetic"
+        }
+      ],
+      "support_status": "planned"
+    },
+    "gemini": {
+      "label": "Gemini CLI",
+      "dialect": "gemini_settings",
+      "config_target": "gemini/settings.hooks.json",
+      "live_target": "~/.gemini/settings.json",
+      "publisher": "bb-hook",
+      "legacy_publishers": [
+        "gemini/publish.py",
+        "bloodbank/publish.py"
+      ],
+      "event_map_target": "gemini/event_map.generated.json",
+      "runner": "{hooks_dir}/bb-hook --cli gemini --native",
+      "default_timeout": 4000,
+      "support_status": "supported",
+      "actor": {
+        "type": "agent_cli",
+        "agent_id": "bloodbank.agent.gemini",
+        "cli": "gemini",
+        "provider": "google",
+        "model": null
+      },
+      "bindings": [
+        {
+          "native": "SessionStart",
+          "role": "session_start",
+          "arg": "SessionStart",
+          "lifecycle": "agent.session.started",
+          "payload": "stdin",
+          "timeout": 16000
+        },
+        {
+          "native": "SessionEnd",
+          "role": "session_end",
+          "arg": "SessionEnd",
+          "lifecycle": "agent.session.ended",
+          "payload": "stdin"
+        },
+        {
+          "native": "BeforeAgent",
+          "role": "prompt_submit",
+          "arg": "BeforeAgent",
+          "lifecycle": "conversation.turn.started",
+          "payload": "stdin",
+          "timeout": 16000
+        },
+        {
+          "native": "AfterAgent",
+          "role": "turn_completed",
+          "arg": "AfterAgent",
+          "lifecycle": "conversation.turn.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "BeforeTool",
+          "role": "pre_tool",
+          "arg": "BeforeTool",
+          "lifecycle": "agent.tool.requested",
+          "payload": "stdin",
+          "matcher": ".*"
+        },
+        {
+          "native": "AfterTool",
+          "role": "post_tool",
+          "arg": "AfterTool",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin",
+          "matcher": ".*"
+        },
+        {
+          "native": "Notification",
+          "role": "attention",
+          "arg": "Notification",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "gate",
+          "payload": "stdin"
+        }
       ]
+    },
+    "kimi": {
+      "label": "Kimi Code",
+      "dialect": "kimi_toml",
+      "config_target": "kimi/hooks.config.json",
+      "live_target": "~/.kimi-code/config.toml",
+      "publisher": "bb-hook",
+      "legacy_publishers": [
+        "kimi/publish.py",
+        "bloodbank/publish.py"
+      ],
+      "event_map_target": "kimi/event_map.generated.json",
+      "runner": "{hooks_dir}/bb-hook --cli kimi --native",
+      "default_timeout": 4,
+      "support_status": "supported",
+      "actor": {
+        "type": "agent_cli",
+        "agent_id": "bloodbank.agent.kimi",
+        "cli": "kimi",
+        "provider": "moonshot",
+        "model": null
+      },
+      "bindings": [
+        {
+          "native": "SessionStart",
+          "role": "session_start",
+          "arg": "SessionStart",
+          "lifecycle": "agent.session.started",
+          "payload": "stdin",
+          "timeout": 16
+        },
+        {
+          "native": "SessionEnd",
+          "role": "session_end",
+          "arg": "SessionEnd",
+          "lifecycle": "agent.session.ended",
+          "payload": "stdin"
+        },
+        {
+          "native": "UserPromptSubmit",
+          "role": "prompt_submit",
+          "arg": "UserPromptSubmit",
+          "lifecycle": "conversation.turn.started",
+          "payload": "stdin",
+          "timeout": 16
+        },
+        {
+          "native": "Stop",
+          "role": "turn_completed",
+          "arg": "Stop",
+          "lifecycle": "conversation.turn.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "Interrupt",
+          "role": "turn_completed",
+          "arg": "Interrupt",
+          "lifecycle": "conversation.turn.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "PreToolUse",
+          "role": "pre_tool",
+          "arg": "PreToolUse",
+          "lifecycle": "agent.tool.requested",
+          "payload": "stdin"
+        },
+        {
+          "native": "PostToolUse",
+          "role": "post_tool",
+          "arg": "PostToolUse",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "PostToolUseFailure",
+          "role": "post_tool",
+          "arg": "PostToolUseFailure",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "SubagentStart",
+          "role": "invocation_start",
+          "arg": "SubagentStart",
+          "lifecycle": "agent.invocation.started",
+          "payload": "stdin"
+        },
+        {
+          "native": "SubagentStop",
+          "role": "subagent_stop",
+          "arg": "SubagentStop",
+          "lifecycle": "agent.invocation.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "StopFailure",
+          "role": "invocation_failed",
+          "arg": "StopFailure",
+          "lifecycle": "agent.invocation.failed",
+          "payload": "stdin"
+        },
+        {
+          "native": "PermissionRequest",
+          "role": "attention",
+          "arg": "PermissionRequest",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "gate",
+          "payload": "stdin"
+        },
+        {
+          "native": "Notification",
+          "role": "attention",
+          "arg": "Notification",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "bell",
+          "payload": "stdin"
+        }
+      ]
+    },
+    "opencode": {
+      "label": "OpenCode",
+      "dialect": "opencode_plugin",
+      "config_target": "opencode/hooks.config.json",
+      "live_target": "~/.config/opencode/plugins/bloodbank-hook-hub.js",
+      "publisher": "bb-hook",
+      "legacy_publishers": [
+        "opencode/publish.py",
+        "bloodbank/publish.py"
+      ],
+      "event_map_target": "opencode/event_map.generated.json",
+      "runner": "{hooks_dir}/bb-hook --cli opencode --native",
+      "default_timeout": 4,
+      "support_status": "supported",
+      "actor": {
+        "type": "agent_cli",
+        "agent_id": "bloodbank.agent.opencode",
+        "cli": "opencode",
+        "provider": null,
+        "model": null
+      },
+      "bindings": [
+        {
+          "native": "session.created",
+          "role": "session_start",
+          "arg": "session.created",
+          "lifecycle": "agent.session.started",
+          "payload": "stdin",
+          "timeout": 16
+        },
+        {
+          "native": "session.deleted",
+          "role": "session_end",
+          "arg": "session.deleted",
+          "lifecycle": "agent.session.ended",
+          "payload": "stdin"
+        },
+        {
+          "native": "chat.message",
+          "role": "prompt_submit",
+          "arg": "chat.message",
+          "lifecycle": "conversation.turn.started",
+          "payload": "stdin",
+          "timeout": 16
+        },
+        {
+          "native": "session.idle",
+          "role": "turn_completed",
+          "arg": "session.idle",
+          "lifecycle": "conversation.turn.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "tool.execute.before",
+          "role": "pre_tool",
+          "arg": "tool.execute.before",
+          "lifecycle": "agent.tool.requested",
+          "payload": "stdin"
+        },
+        {
+          "native": "tool.execute.after",
+          "role": "post_tool",
+          "arg": "tool.execute.after",
+          "lifecycle": "agent.tool.completed",
+          "payload": "stdin"
+        },
+        {
+          "native": "session.error",
+          "role": "invocation_failed",
+          "arg": "session.error",
+          "lifecycle": "agent.invocation.failed",
+          "payload": "stdin"
+        },
+        {
+          "native": "permission.asked",
+          "role": "attention",
+          "arg": "permission.asked",
+          "publish": false,
+          "alert": "attention",
+          "attention_kind": "gate",
+          "payload": "stdin"
+        }
+      ],
+      "plugin_source": "opencode/hook-hub.js",
+      "note": "Native plugin routes OpenCode events to the hub with actor.cli=opencode. session.idle completes a turn; only session.deleted closes a session. Global plugin is auto-loaded; no direct behavioral handlers."
     }
   }
 }

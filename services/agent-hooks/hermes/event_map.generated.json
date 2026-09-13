@@ -6,8 +6,8 @@
       "session"
     ],
     "on_session_end": [
-      "bloodbank.agent.session.ended",
-      "session"
+      "bloodbank.conversation.turn.completed",
+      "thread"
     ],
     "pre_llm_call": [
       "bloodbank.conversation.turn.started",
@@ -24,6 +24,20 @@
     "subagent_stop": [
       "bloodbank.agent.invocation.completed",
       "invocation"
+    ],
+    "on_session_finalize": [
+      "bloodbank.agent.session.ended",
+      "session"
+    ],
+    "subagent_start": [
+      "bloodbank.agent.invocation.started",
+      "invocation"
     ]
+  },
+  "alerts": {
+    "pre_approval_request": "attention"
+  },
+  "alert_kinds": {
+    "pre_approval_request": "gate"
   }
 }

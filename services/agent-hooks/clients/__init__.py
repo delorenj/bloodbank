@@ -15,6 +15,7 @@ from .claude import ClaudeAdapter
 from .codex import CodexAdapter
 from .copilot import CopilotAdapter
 from .hermes import HermesAdapter
+from .native import GeminiAdapter, KimiAdapter, OpenCodeAdapter
 
 REGISTRY: dict[str, type[ClientAdapter]] = {
     "antigravity": AntigravityAdapter,
@@ -22,6 +23,9 @@ REGISTRY: dict[str, type[ClientAdapter]] = {
     "codex": CodexAdapter,
     "copilot": CopilotAdapter,
     "hermes": HermesAdapter,
+    "gemini": GeminiAdapter,
+    "kimi": KimiAdapter,
+    "opencode": OpenCodeAdapter,
 }
 
 

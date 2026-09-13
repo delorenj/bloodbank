@@ -196,7 +196,7 @@ class BloodbankProjectNotebookCoexistenceTests(unittest.TestCase):
                 self.assertEqual(changed["hooks"]["Stop"], stop_before)
                 self.assertEqual(
                     [group.get("matcher") for group in changed["hooks"]["SessionStart"]],
-                    ["head", "mixed", "tail"],
+                    ["head", "mixed", "tail", None],
                 )
                 self.assertEqual(
                     changed["hooks"]["SessionStart"][1]["condition"],
@@ -207,12 +207,8 @@ class BloodbankProjectNotebookCoexistenceTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     _command_order(changed, "SessionStart"),
-                    [
-                        command
-                        if command != old_bloodbank["command"]
-                        else new_bloodbank["command"]
-                        for command in start_order_before
-                    ],
+                    [command for command in start_order_before if command != old_bloodbank["command"]]
+                    + [new_bloodbank["command"]],
                 )
                 self.assertEqual(_command_order(changed, "SessionEnd"), end_order_before)
                 self.assertEqual(

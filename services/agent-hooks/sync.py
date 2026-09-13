@@ -38,9 +38,11 @@ import argparse
 import copy
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -300,6 +302,7 @@ def render_event_map(agent: dict, lifecycle: dict, lock: dict) -> dict:
         if b.get("publish", True) is False:
             if b.get("alert"):
                 alerts[b["arg"]] = b["alert"]
+                alerts[b["native"]] = b["alert"]
                 # BELL or GATE. Projected as a SIBLING table rather than folded
                 # into the `alerts` value, because core/publisher.py
                 # _fanout_alert hard-rejects any alert kind that is not the
@@ -308,9 +311,11 @@ def render_event_map(agent: dict, lifecycle: dict, lock: dict) -> dict:
                 # Defaults to "bell": a surface acknowledging something it should
                 # not have is recoverable, silently holding a block open is not.
                 alert_kinds[b["arg"]] = str(b.get("attention_kind") or "bell")
+                alert_kinds[b["native"]] = str(b.get("attention_kind") or "bell")
             continue
         ce_type, bucket = effective_type(b, lifecycle, lock)
         table[b["arg"]] = [ce_type, bucket]
+        table[b["native"]] = [ce_type, bucket]
     out["map"] = table
     if alerts:
         out["alerts"] = alerts
@@ -321,6 +326,13 @@ def render_event_map(agent: dict, lifecycle: dict, lock: dict) -> dict:
 
 def _command(agent: dict, b: dict, *, codex_empty_echo: bool) -> str:
     runner = _runner(agent)
+    if agent.get("publisher") == "bb-hook":
+        # Native stdin carries session identity, tool ids and end reasons. The
+        # re-trigger reads it directly; no cat process or fabricated {} payload.
+        command = f"{runner} {shlex.quote(b['native'])}"
+        if b.get("role") in {"prompt_submit", "session_start"}:
+            command += " --deadline 15"
+        return command
     parts: list[str] = []
     payload = b.get("payload", "stdin")
     if payload == "stdin":
@@ -343,7 +355,7 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
         hooks: dict[str, list] = {}
         for b in agent["bindings"]:
             entry: dict[str, Any] = {
-                "command": f"{_runner(agent)} {b['arg']}",
+                "command": _command(agent, b, codex_empty_echo=False),
                 "timeout": b.get("timeout", agent.get("default_timeout", 5)),
             }
             if b.get("matcher") is not None:
@@ -358,16 +370,28 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
             hooks[b["native"]] = [
                 {
                     "type": "command",
-                    "bash": f"exec {_runner(agent)} {b['arg']}",
+                    "bash": f"exec {_command(agent, b, codex_empty_echo=False)}",
                     "timeoutSec": b.get(
                         "timeoutSec", agent.get("default_timeout_sec", 5)
                     ),
                 }
             ]
         return {"version": 1, "hooks": hooks}
-    if dialect in ("codex", "claude_settings"):
+    if dialect == "kimi_toml":
+        return {"hooks": [
+            {"event": b["native"],
+             "command": _command(agent, b, codex_empty_echo=False),
+             "timeout": b.get("timeout", agent.get("default_timeout", 4)),
+             **({"matcher": b["matcher"]} if "matcher" in b else {})}
+            for b in agent["bindings"]
+        ]}
+    if dialect == "opencode_plugin":
+        return {"hooks": {b["native"]: _command(agent, b, codex_empty_echo=False)
+                          for b in agent["bindings"]}}
+    if dialect in ("codex", "claude_settings", "gemini_settings"):
         codex_empty_echo = dialect == "codex"
-        timeout = agent.get("default_timeout", 3000 if dialect == "codex" else 3)
+        # Codex/Claude/Kimi use seconds. Gemini alone uses milliseconds.
+        timeout = agent.get("default_timeout", 4000 if dialect == "gemini_settings" else 4)
         hooks = {}
         for b in agent["bindings"]:
             entry: dict[str, Any] = {}
@@ -380,6 +404,8 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
                     "timeout": b.get("timeout", timeout),
                 }
             ]
+            if dialect == "gemini_settings":
+                entry["hooks"][0]["command"] += " --trailer passive"
             hooks[b["native"]] = [entry]
         return {"hooks": hooks}
     if dialect == "antigravity_bundle":
@@ -396,7 +422,9 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
             cmd = _command(agent, b, codex_empty_echo=False)
             # NB the space before ';' — health/hook_healthcheck.py tokenizes
             # with shlex, which keeps 'Stop;' fused and breaks arg resolution.
-            if b["native"] == "Stop":
+            if agent.get("publisher") == "bb-hook":
+                cmd += " --trailer " + ("stop" if b["native"] == "Stop" else "passive")
+            elif b["native"] == "Stop":
                 cmd += " ; printf '{\"decision\":\"\"}\\n'"
             else:
                 cmd += " ; printf '{}\\n'"
@@ -706,92 +734,44 @@ def _merge_hooks(
     markers: list[str],
     attention_replacements: set[str] | None = None,
 ) -> dict:
-    """Update our publisher hook at INNER-hook granularity.
+    """Install canonical managed groups while preserving every foreign group.
 
-    The bloodbank publisher hook may be its own group OR nested among foreign
-    sibling hooks inside a single group's ``hooks`` list (e.g. Claude's Stop
-    group holds hindsight + git-checkpoint + publish + notify). We update ONLY
-    our inner hook's ``command``/``timeout`` in place — never touching foreign
-    hooks, groups, or matchers. If our hook is absent for an event, append the
-    generated group(s) that carry it. For registry-declared attention
-    replacements, first remove only the exact legacy command shape written by
-    ``deckard install-hooks`` so the two unique-id publishers cannot coexist.
+    A managed hook must not inherit the matcher/condition of a foreign sibling.
+    In particular, leaving Codex's publisher under Write|Edit|MultiEdit silently
+    dropped every Bash completion. Remove managed entries at inner granularity,
+    retain foreign siblings with their original metadata, then append exactly
+    the generated groups. The second install is byte-identical.
     """
     hooks = live.setdefault("hooks", {})
     attention_replacements = attention_replacements or set()
-    for event, gen_groups in generated_hooks.items():
-        gen_bb = [
-            h
-            for g in gen_groups
-            for h in g.get("hooks", [])
-            if _has_marker(h.get("command", ""), markers)
-        ]
-        if not gen_bb:
-            continue
-        groups = hooks.setdefault(event, [])
-        live_bb = [
-            (g, h)
-            for g in groups
-            for h in g.get("hooks", [])
-            if _has_marker(h.get("command", ""), markers)
-        ]
-        if event in attention_replacements:
-            legacy = [
-                (group, hook)
-                for group in groups
-                for hook in group.get("hooks", [])
-                if isinstance(hook, dict)
-                and _is_legacy_deckard_attention(hook.get("command"), event)
-            ]
-            if not live_bb and legacy:
-                # Preserve the first legacy publisher's group position,
-                # matcher, condition, and siblings by replacing only its inner
-                # hook. Remaining exact legacy publishers are duplicates.
-                first_group, first_hook = legacy[0]
-                preserved = {
-                    key: copy.deepcopy(value)
-                    for key, value in first_hook.items()
-                    if key not in {"type", "command", "timeout"}
-                }
-                first_hook.clear()
-                first_hook.update(preserved)
-                first_hook.update(copy.deepcopy(gen_bb[0]))
-                live_bb = [(first_group, first_hook)]
-            for group in groups:
-                group["hooks"] = [
-                    hook
-                    for hook in group.get("hooks", [])
-                    if not _is_legacy_deckard_attention(
-                        hook.get("command") if isinstance(hook, dict) else None,
-                        event,
-                    )
-                ]
-            groups = [group for group in groups if group.get("hooks")]
-            hooks[event] = groups
-        if live_bb:
-            _, lh = live_bb[0]
-            gh = gen_bb[0]
-            lh["command"] = gh["command"]
-            if "timeout" in gh:
-                lh["timeout"] = gh["timeout"]
-            for g, h in live_bb[1:]:  # drop any duplicate publisher hooks
-                if h in g.get("hooks", []):
-                    g["hooks"].remove(h)
-            hooks[event] = [g for g in groups if g.get("hooks")]
+    for event in dict.fromkeys([*hooks, *generated_hooks]):
+        groups = hooks.get(event, [])
+        kept = []
+        for group in groups:
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                kept.append(group)
+                continue
+            foreign = [h for h in group["hooks"] if not (
+                isinstance(h, dict) and (
+                    _has_marker(h.get("command", ""), markers)
+                    or (event in attention_replacements and
+                        _is_legacy_deckard_attention(h.get("command"), event))
+                )
+            )]
+            if foreign:
+                kept.append({**group, "hooks": foreign})
+        generated = [copy.deepcopy(g) for g in generated_hooks.get(event, [])
+                     if any(_has_marker(h.get("command", ""), markers)
+                            for h in g.get("hooks", []) if isinstance(h, dict))]
+        if kept or generated:
+            hooks[event] = kept + generated
         else:
-            groups.extend(gen_groups)
+            hooks.pop(event, None)
     return live
 
 
 def _norm(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, ensure_ascii=False)
-
-
-def _backup(path: Path) -> Path:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    bak = path.with_name(path.name + f".bak-{stamp}")
-    shutil.copy2(path, bak)
-    return bak
 
 
 def _splice_top_level_block(raw: str, key: str, block_yaml: str) -> str:
@@ -820,6 +800,108 @@ def _splice_top_level_block(raw: str, key: str, block_yaml: str) -> str:
             end = j
             break
     return "".join(lines[:start]) + block_yaml + "".join(lines[end:])
+
+
+def discover_hermes_configs(agent: dict, *, proc_root: Path = Path("/proc")) -> list[tuple[str, Path, Path]]:
+    """The same real config inventory is used by install and health checks.
+
+    Current Hermes launchers use profiles, while a few running agents still
+    use a legacy HERMES_HOME. Registry role directories alone miss the fleet.
+    Only inspect HERMES_HOME in proc environments; never expose other values.
+    """
+    candidates: list[tuple[str, Path]] = []
+    if agent.get("live_target"):
+        candidates.append(("default", _expand(agent["live_target"])))
+    profiles = _expand(agent.get("profiles_dir", "~/.hermes/profiles"))
+    profile_count = 0
+    if profiles.is_dir():
+        for path in sorted(profiles.glob("*/config.yaml")):
+            if not any(token in path.parent.name.lower() for token in (".bak", "backup")):
+                candidates.append((path.parent.name, path))
+                profile_count += 1
+    if proc_root.is_dir():
+        for proc in proc_root.iterdir():
+            if not proc.name.isdigit():
+                continue
+            try:
+                env = (proc / "environ").read_bytes().split(b"\0")
+            except (OSError, PermissionError):
+                continue
+            for item in env:
+                if item.startswith(b"HERMES_HOME="):
+                    home = Path(os.fsdecode(item.split(b"=", 1)[1]))
+                    path = home / "config.yaml"
+                    if path.is_file():
+                        candidates.append((f"active:{home.name}", path))
+                    break
+    registry = _expand(agent["fleet_registry"]) if agent.get("fleet_registry") else None
+    # Registry role/runtime paths describe the pre-profile launcher layout.
+    # Use them only on older installations; live legacy homes were added above.
+    if not profile_count and registry and registry.is_file():
+        import yaml
+        rd = yaml.safe_load(registry.read_text()) or {}
+        for aid, meta in (rd.get("agents") or {}).items():
+            role = (meta or {}).get("role_dir")
+            if role:
+                path = Path(role) / agent.get("runtime_subdir", "runtime") / "config.yaml"
+                if path.is_file():
+                    candidates.append((f"legacy:{aid}", path))
+    out, seen = [], set()
+    for label, path in candidates:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        out.append((label, path, path.parent / agent.get("allowlist_filename", "shell-hooks-allowlist.json")))
+    return out
+
+
+def _merge_kimi_toml(raw: str, generated: list[dict], markers: list[str]) -> str:
+    """Replace managed [[hooks]] sections without rewriting other TOML values."""
+    starts = list(re.finditer(r"(?m)^\s*\[\[hooks\]\]\s*(?:#.*)?$", raw))
+    spans = []
+    for match in starts:
+        next_section = re.search(r"(?m)^\s*\[", raw[match.end():])
+        end = match.end() + next_section.start() if next_section else len(raw)
+        fragment = raw[match.start():end]
+        row = tomllib.loads(fragment)["hooks"][0]
+        if _has_marker(row.get("command"), markers):
+            spans.append((match.start(), end))
+    for start, end in reversed(spans):
+        raw = raw[:start] + raw[end:]
+    additions = []
+    for row in generated:
+        lines = ["[[hooks]]"]
+        for key in ("event", "matcher", "command", "timeout"):
+            if key in row:
+                lines.append(f"{key} = {json.dumps(row[key], ensure_ascii=False)}")
+        additions.append("\n".join(lines))
+    return raw.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
+
+
+def _ensure_hub_client_link() -> int:
+    source = SERVICE_DIR.parent / "hook-hub" / "client" / "bb-hook"
+    if not source.is_file():
+        raise FileNotFoundError(f"hook hub client is missing: {source}")
+    changed = 0
+    for dest in (HOOKS_DIR / "bb-hook", Path.home() / ".local/bin/bb-hook"):
+        if dest.is_symlink() and dest.resolve() == source.resolve():
+            continue
+        if dest.exists() and not dest.is_symlink():
+            raise FileExistsError(f"refusing to overwrite unrelated executable: {dest}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.unlink(missing_ok=True)
+        dest.symlink_to(source)
+        changed += 1
+    hub_link = HOOKS_DIR / "hub"
+    hub_source = SERVICE_DIR.parent / "hook-hub"
+    if not (hub_link.is_symlink() and hub_link.resolve() == hub_source.resolve()):
+        if hub_link.exists() and not hub_link.is_symlink():
+            raise FileExistsError(f"refusing to replace unrelated hooks directory: {hub_link}")
+        hub_link.unlink(missing_ok=True)
+        hub_link.symlink_to(hub_source, target_is_directory=True)
+        changed += 1
+    return changed
 
 
 def _install_hermes_one(
@@ -877,8 +959,6 @@ def _install_hermes_one(
         block_yaml = yaml.safe_dump({"hooks": block}, sort_keys=False, allow_unicode=True)
         new_text = _splice_top_level_block(raw, "hooks", block_yaml)
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        if cfg_path.exists():
-            _backup(cfg_path)
         cfg_path.write_text(new_text)
         changed += 1
 
@@ -901,8 +981,6 @@ def _install_hermes_one(
                 added += 1
     if added or not alw_path.exists():
         alw_path.parent.mkdir(parents=True, exist_ok=True)
-        if alw_path.exists():
-            _backup(alw_path)
         with alw_path.open("w") as f:
             json.dump(alw, f, indent=2, sort_keys=True)
             f.write("\n")
@@ -928,26 +1006,8 @@ def _install_hermes_fleet(name: str, agent: dict) -> int:
         return 0
     gen_hooks = _load_json(src).get("hooks", {})
     markers = _publisher_markers(name, agent)
-    runtime_subdir = agent.get("runtime_subdir", "runtime")
     alw_name = agent.get("allowlist_filename", "shell-hooks-allowlist.json")
-
-    targets: list[tuple[str, Path]] = []
-    reg = agent.get("fleet_registry")
-    if reg:
-        reg_path = _expand(reg)
-        if reg_path.exists():
-            try:
-                rd = yaml.safe_load(reg_path.read_text()) or {}
-            except yaml.YAMLError:
-                rd = {}
-            for aid, meta in (rd.get("agents") or {}).items():
-                role_dir = (meta or {}).get("role_dir")
-                if role_dir:
-                    targets.append((aid, Path(role_dir) / runtime_subdir))
-        else:
-            print(f"hooks-sync: WARN {name}: fleet registry {reg_path} not found")
-    if agent.get("live_target"):  # optional explicit extra target
-        targets.append(("(explicit)", _expand(agent["live_target"]).parent))
+    targets = [(label, path.parent) for label, path, _ in discover_hermes_configs(agent)]
 
     if not targets:
         print(f"hooks-sync: WARN {name}: no fleet targets discovered")
@@ -1001,6 +1061,8 @@ def cmd_install(master: dict) -> int:
     watcher/runtime → skipped (no hook-config surface).
     """
     changed = _ensure_bloodbank_hook_link()
+    if any(a.get("publisher") == "bb-hook" for a in master["agents"].values()):
+        changed += _ensure_hub_client_link()
     for name, agent in master["agents"].items():
         dialect = agent.get("dialect")
         cfg = agent.get("config_target")
@@ -1031,7 +1093,7 @@ def cmd_install(master: dict) -> int:
             print(f"hooks-sync: {name} linked {dest} -> {src}")
             continue
 
-        if dialect in ("claude_settings", "codex"):
+        if dialect in ("claude_settings", "codex", "gemini_settings"):
             markers = _publisher_markers(name, agent)
             gen_hooks = _load_json(src).get("hooks", {})
             if dest.exists():
@@ -1043,6 +1105,10 @@ def cmd_install(master: dict) -> int:
             else:
                 liveobj = {}
             original = copy.deepcopy(liveobj)
+            prior_trust = None
+            if dialect == "codex" and agent.get("publisher") == "bb-hook":
+                from codex_native import capture_trust
+                prior_trust = capture_trust()
             merged = _merge_hooks(
                 liveobj,
                 gen_hooks,
@@ -1050,17 +1116,47 @@ def cmd_install(master: dict) -> int:
                 _attention_replacement_events(agent),
             )
             if dest.exists() and _norm(merged) == _norm(original):
+                if prior_trust is not None:
+                    from codex_native import reconcile_trust
+                    reconcile_trust(prior_trust, dest)
                 print(f"hooks-sync: {name} {dest} up to date")
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
-            if dest.exists():
-                bak = _backup(dest)
-                print(f"hooks-sync: {name} backed up {dest} -> {bak.name}")
             with dest.open("w") as f:
                 json.dump(merged, f, indent=2, ensure_ascii=False)
                 f.write("\n")
             changed += 1
+            if prior_trust is not None:
+                from codex_native import reconcile_trust
+                reconcile_trust(prior_trust, dest)
             print(f"hooks-sync: {name} installed into {dest}")
+            continue
+
+        if dialect == "kimi_toml":
+            raw = dest.read_text() if dest.exists() else ""
+            merged = _merge_kimi_toml(raw, _load_json(src)["hooks"], _publisher_markers(name, agent))
+            # Parsing the full result protects unrelated config section placement.
+            tomllib.loads(merged)
+            if raw != merged:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(merged)
+                changed += 1
+            print(f"hooks-sync: {name} installed into {dest}")
+            continue
+
+        if dialect == "opencode_plugin":
+            source = SERVICE_DIR / agent["plugin_source"]
+            if not source.is_file():
+                raise FileNotFoundError(source)
+            if dest.is_symlink() and dest.resolve() == source.resolve():
+                continue
+            if dest.exists() and not dest.is_symlink():
+                raise FileExistsError(f"refusing to replace unrelated plugin: {dest}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.unlink(missing_ok=True)
+            dest.symlink_to(source)
+            changed += 1
+            print(f"hooks-sync: {name} linked {dest} -> {source}")
             continue
 
         if dialect == "antigravity_bundle":
@@ -1087,9 +1183,6 @@ def cmd_install(master: dict) -> int:
             merged = copy.deepcopy(liveobj)
             merged[bundle] = gen_bundle
             dest.parent.mkdir(parents=True, exist_ok=True)
-            if dest.exists():
-                bak = _backup(dest)
-                print(f"hooks-sync: {name} backed up {dest} -> {bak.name}")
             with dest.open("w") as f:
                 json.dump(merged, f, indent=2, ensure_ascii=False)
                 f.write("\n")
@@ -1105,6 +1198,7 @@ def cmd_install(master: dict) -> int:
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description="Propagate hooks.master.json to all agents.")
     p.add_argument("--check", action="store_true", help="read-only drift/ambiguity report")
+    p.add_argument("--check-installed", action="store_true", help="read-only deployed native hook inventory")
     p.add_argument("--apply", action="store_true", help="write generated artifacts")
     p.add_argument("--install", action="store_true", help="deploy generated configs to live agent locations")
     p.add_argument("--resolve", action="store_true", help="interactively resolve open ambiguities")
@@ -1113,6 +1207,12 @@ def main(argv: list[str]) -> int:
 
     master = load_master()
     lock = load_lock()
+
+    if args.check_installed:
+        from health.installed_inventory import collect_installed_inventory
+        report = collect_installed_inventory(master)
+        print(json.dumps(report, indent=2))
+        return 0 if report["status"] == "healthy" else 4
 
     if args.resolve and not args.apply:
         amb = detect_ambiguities(master, lock)

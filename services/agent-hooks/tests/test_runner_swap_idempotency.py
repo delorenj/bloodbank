@@ -98,8 +98,8 @@ class TestRunnerSwap(unittest.TestCase):
         })
         cmds = commands(live)
         self.assertEqual(
-            cmds, [NEW_RETRIGGER, FOREIGN],
-            "expected in-place replacement preserving the foreign sibling",
+            cmds, [FOREIGN, NEW_RETRIGGER],
+            "expected canonical group and preserved foreign sibling",
         )
 
     def test_repeated_installs_are_byte_identical(self):

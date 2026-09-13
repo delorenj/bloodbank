@@ -1,0 +1,83 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native SessionStart --deadline 15 --trailer passive",
+            "timeout": 16000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native SessionEnd --trailer passive",
+            "timeout": 4000
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native BeforeAgent --deadline 15 --trailer passive",
+            "timeout": 16000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native AfterAgent --trailer passive",
+            "timeout": 4000
+          }
+        ]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native BeforeTool --trailer passive",
+            "timeout": 4000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native AfterTool --trailer passive",
+            "timeout": 4000
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native Notification --trailer passive",
+            "timeout": 4000
+          }
+        ]
+      }
+    ]
+  }
+}

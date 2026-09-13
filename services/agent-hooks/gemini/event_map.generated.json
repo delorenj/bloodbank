@@ -1,0 +1,35 @@
+{
+  "_do_not_edit": "GENERATED from hooks.master.json by sync.py — run `mise run hooks:sync`.",
+  "map": {
+    "SessionStart": [
+      "bloodbank.agent.session.started",
+      "session"
+    ],
+    "SessionEnd": [
+      "bloodbank.agent.session.ended",
+      "session"
+    ],
+    "BeforeAgent": [
+      "bloodbank.conversation.turn.started",
+      "thread"
+    ],
+    "AfterAgent": [
+      "bloodbank.conversation.turn.completed",
+      "thread"
+    ],
+    "BeforeTool": [
+      "bloodbank.agent.tool.requested",
+      "invocation"
+    ],
+    "AfterTool": [
+      "bloodbank.agent.tool.completed",
+      "invocation"
+    ]
+  },
+  "alerts": {
+    "Notification": "attention"
+  },
+  "alert_kinds": {
+    "Notification": "gate"
+  }
+}

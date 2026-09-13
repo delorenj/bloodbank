@@ -47,6 +47,8 @@ class ClaudeAdapter(ClientAdapter):
         "session-start": ("bloodbank.agent.session.started", "session"),
         "session-end": ("bloodbank.agent.session.ended", "session"),
         "session-stop": ("bloodbank.agent.session.ended", "session"),
+        "Stop": ("bloodbank.conversation.turn.completed", "thread"),
+        "SessionEnd": ("bloodbank.agent.session.ended", "session"),
         "prompt-submitted": ("bloodbank.conversation.turn.started", "thread"),
         "tool-request": ("bloodbank.agent.tool.requested", "invocation"),
         "tool-action": ("bloodbank.agent.tool.completed", "invocation"),
@@ -82,7 +84,8 @@ class ClaudeAdapter(ClientAdapter):
             }
 
         if ce_type == "bloodbank.agent.session.ended":
-            end_reason = argv[2] if len(argv) > 2 else "user_stop"
+            end_reason = (payload.get("reason") or payload.get("end_reason")
+                          or (argv[2] if len(argv) > 2 else "user_stop"))
             try:
                 started = datetime.fromisoformat(
                     session.started_at.replace("Z", "+00:00")
@@ -117,13 +120,19 @@ class ClaudeAdapter(ClientAdapter):
                 "git_branch": git_branch(cwd),
             }
 
+        if ce_type == "bloodbank.conversation.turn.completed":
+            return {"thread_id": session.session_id,
+                    "turn_id": str(payload.get("turn_id") or f"{session.session_id}:{session.turn_number}"),
+                    "outcome": "failed" if payload.get("error") else "completed",
+                    "working_directory": cwd}
+
         if ce_type == "bloodbank.agent.tool.requested":
             tool_name = str(payload.get("tool_name", "unknown"))
             tool_input = payload.get("tool_input") or {}
             turn_number = session.turn_number + 1
             return {
                 "invocation_id": session.session_id,
-                "tool_call_id": _tool_call_id(session, tool_name, turn_number),
+                "tool_call_id": payload.get("tool_use_id") or payload.get("tool_call_id") or _tool_call_id(session, tool_name, turn_number),
                 "tool_name": tool_name,
                 "arguments": tool_input,
                 "working_directory": cwd,
@@ -137,7 +146,7 @@ class ClaudeAdapter(ClientAdapter):
             turn_number = session.turn_number + 1
             return {
                 "invocation_id": session.session_id,
-                "tool_call_id": _tool_call_id(session, tool_name, turn_number),
+                "tool_call_id": payload.get("tool_use_id") or payload.get("tool_call_id") or _tool_call_id(session, tool_name, turn_number),
                 "tool_name": tool_name,
                 "arguments": tool_input,
                 "outcome": _tool_outcome(payload),
@@ -197,7 +206,7 @@ def _tool_call_id(session: SessionState, tool_name: str, turn_number: int) -> st
 
 def _tool_outcome(payload: dict) -> str:
     if isinstance(payload, dict):
-        if payload.get("is_error"):
+        if payload.get("is_error") or payload.get("hook_event_name") == "PostToolUseFailure":
             return "error"
         resp = payload.get("tool_response") or payload.get("tool_result")
         if isinstance(resp, dict) and (resp.get("error") or resp.get("is_error")):

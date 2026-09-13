@@ -3,15 +3,15 @@
     "PreInvocation": [
       {
         "type": "command",
-        "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client antigravity --hook PreInvocation ; printf '{}\\n'",
-        "timeout": 5
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli antigravity --native PreInvocation --trailer passive",
+        "timeout": 4
       }
     ],
     "PostInvocation": [
       {
         "type": "command",
-        "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client antigravity --hook PostInvocation ; printf '{}\\n'",
-        "timeout": 5
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli antigravity --native PostInvocation --trailer passive",
+        "timeout": 4
       }
     ],
     "PostToolUse": [
@@ -20,8 +20,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client antigravity --hook PostToolUse ; printf '{}\\n'",
-            "timeout": 5
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli antigravity --native PostToolUse --trailer passive",
+            "timeout": 4
           }
         ]
       }
@@ -29,8 +29,8 @@
     "Stop": [
       {
         "type": "command",
-        "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client antigravity --hook Stop ; printf '{\"decision\":\"\"}\\n'",
-        "timeout": 5
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli antigravity --native Stop --trailer stop",
+        "timeout": 4
       }
     ]
   }

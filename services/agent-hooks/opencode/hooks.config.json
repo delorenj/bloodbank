@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "session.created": "/home/delorenj/.agents/hooks/bb-hook --cli opencode --native session.created --deadline 15",
+    "session.deleted": "/home/delorenj/.agents/hooks/bb-hook --cli opencode --native session.deleted",
+    "chat.message": "/home/delorenj/.agents/hooks/bb-hook --cli opencode --native chat.message --deadline 15",
+    "session.idle": "/home/delorenj/.agents/hooks/bb-hook --cli opencode --native session.idle",
+    "tool.execute.before": "/home/delorenj/.agents/hooks/bb-hook --cli opencode --native tool.execute.before",
+    "tool.execute.after": "/home/delorenj/.agents/hooks/bb-hook --cli opencode --native tool.execute.after",
+    "session.error": "/home/delorenj/.agents/hooks/bb-hook --cli opencode --native session.error",
+    "permission.asked": "/home/delorenj/.agents/hooks/bb-hook --cli opencode --native permission.asked"
+  }
+}

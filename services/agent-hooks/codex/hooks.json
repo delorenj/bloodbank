@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{}' | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook SessionStart",
-            "timeout": 3000
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native SessionStart --deadline 15",
+            "timeout": 16
           }
         ]
       }
@@ -16,8 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{}' | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook Stop user_stop",
-            "timeout": 3000
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native Stop",
+            "timeout": 4
           }
         ]
       }
@@ -27,8 +27,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook UserPromptSubmit",
-            "timeout": 3000
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native UserPromptSubmit --deadline 15",
+            "timeout": 16
           }
         ]
       }
@@ -39,8 +39,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook PreToolUse",
-            "timeout": 3000
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native PreToolUse",
+            "timeout": 4
           }
         ]
       }
@@ -51,8 +51,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook PostToolUse",
-            "timeout": 3000
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native PostToolUse",
+            "timeout": 4
           }
         ]
       }
@@ -62,8 +62,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook SubagentStart",
-            "timeout": 3000
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native SubagentStart",
+            "timeout": 4
           }
         ]
       }
@@ -73,8 +73,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook SubagentStop",
-            "timeout": 3000
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native SubagentStop",
+            "timeout": 4
           }
         ]
       }
@@ -84,8 +84,30 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client codex --hook PermissionRequest",
-            "timeout": 2000
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native PermissionRequest",
+            "timeout": 4
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native SessionEnd",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native Interrupt",
+            "timeout": 3
           }
         ]
       }

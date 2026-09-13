@@ -2,39 +2,75 @@
   "hooks": {
     "on_session_start": [
       {
-        "command": "python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client hermes --hook on_session_start",
-        "timeout": 5
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native on_session_start --deadline 15",
+        "timeout": 16
       }
     ],
     "on_session_end": [
       {
-        "command": "python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client hermes --hook on_session_end",
-        "timeout": 5
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native on_session_end",
+        "timeout": 4
       }
     ],
     "pre_llm_call": [
       {
-        "command": "python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client hermes --hook pre_llm_call",
-        "timeout": 5
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native pre_llm_call --deadline 15",
+        "timeout": 16
       }
     ],
     "pre_tool_call": [
       {
-        "command": "python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client hermes --hook pre_tool_call",
-        "timeout": 5,
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native pre_tool_call",
+        "timeout": 4,
         "fail_closed": false
       }
     ],
     "post_tool_call": [
       {
-        "command": "python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client hermes --hook post_tool_call",
-        "timeout": 5
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native post_tool_call",
+        "timeout": 4
       }
     ],
     "subagent_stop": [
       {
-        "command": "python3 /home/delorenj/.agents/hooks/bloodbank/publish.py --client hermes --hook subagent_stop",
-        "timeout": 5
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native subagent_stop",
+        "timeout": 4
+      }
+    ],
+    "post_llm_call": [
+      {
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native post_llm_call",
+        "timeout": 4
+      }
+    ],
+    "pre_approval_request": [
+      {
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native pre_approval_request",
+        "timeout": 4
+      }
+    ],
+    "post_approval_response": [
+      {
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native post_approval_response",
+        "timeout": 4
+      }
+    ],
+    "on_session_finalize": [
+      {
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native on_session_finalize",
+        "timeout": 4
+      }
+    ],
+    "on_session_reset": [
+      {
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native on_session_reset",
+        "timeout": 4
+      }
+    ],
+    "subagent_start": [
+      {
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native subagent_start",
+        "timeout": 4
       }
     ]
   }

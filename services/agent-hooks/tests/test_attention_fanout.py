@@ -236,7 +236,7 @@ class AttentionFanoutTests(unittest.TestCase):
         merged = SYNC._merge_hooks(
             foreign,
             {"Notification": notification},
-            ["bloodbank/publish.py"],
+            SYNC._publisher_markers("claude", claude),
         )
         commands = [
             hook["command"]
@@ -244,15 +244,15 @@ class AttentionFanoutTests(unittest.TestCase):
             for hook in group["hooks"]
         ]
         self.assertIn("foreign-notification-hook", commands)
-        self.assertTrue(any("bloodbank/publish.py" in command for command in commands))
+        self.assertTrue(any("bb-hook" in command for command in commands))
 
     def test_alert_timeouts_are_per_binding_without_shortening_lifecycle_hooks(self) -> None:
         master = SYNC.load_master()
         lock = SYNC.load_lock()
         expected = {
-            "claude": ("Notification", "timeout", 2, "SessionStart", 3),
-            "codex": ("PermissionRequest", "timeout", 2000, "SessionStart", 3000),
-            "copilot": ("permissionRequest", "timeoutSec", 2, "sessionStart", 5),
+            "claude": ("Notification", "timeout", 4, "SessionStart", 16),
+            "codex": ("PermissionRequest", "timeout", 4, "SessionStart", 16),
+            "copilot": ("permissionRequest", "timeoutSec", 4, "sessionStart", 16),
         }
         for agent_name, (alert, field, alert_timeout, lifecycle, default) in expected.items():
             config = SYNC.render_config(
@@ -420,12 +420,13 @@ class AttentionFanoutTests(unittest.TestCase):
             with (
                 mock.patch.object(SYNC, "SERVICE_DIR", service),
                 mock.patch.object(SYNC, "_ensure_bloodbank_hook_link", return_value=0),
+                mock.patch.object(SYNC, "_ensure_hub_client_link", return_value=0),
             ):
                 self.assertEqual(SYNC.cmd_install(install_master), 0)
                 first_bytes = live_path.read_bytes()
                 first_inode = live_path.stat().st_ino
                 first_backups = sorted(live_path.parent.glob("settings.json.bak-*"))
-                self.assertEqual(len(first_backups), 1)
+                self.assertEqual(len(first_backups), 0)
 
                 changed = json.loads(first_bytes)
                 self.assertEqual(changed["theme"], live["theme"])
@@ -462,8 +463,8 @@ class AttentionFanoutTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         canonical_group.get("matcher"),
-                        "legacy-only",
-                        "first legacy publisher was not replaced in place",
+                        None,
+                        "managed publisher must use canonical event matcher",
                     )
                     canonical_hook = next(
                         hook
@@ -471,9 +472,9 @@ class AttentionFanoutTests(unittest.TestCase):
                         if SYNC._has_marker(hook.get("command", ""), markers)
                     )
                     self.assertEqual(
-                        canonical_hook.get("condition"), {"interactive": True}
+                        canonical_hook.get("condition"), None
                     )
-                    self.assertEqual(canonical_hook.get("foreign_meta"), "keep")
+                    self.assertNotIn("foreign_meta", canonical_hook)
                     mixed = next(group for group in groups if group.get("matcher") == "mixed")
                     self.assertEqual(mixed["condition"], {"preserve": True})
 

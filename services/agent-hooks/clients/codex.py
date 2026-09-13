@@ -49,7 +49,8 @@ class CodexAdapter(ClientAdapter):
     default_map = {
         "SessionStart": ("bloodbank.agent.session.started", "session"),
         "session-start": ("bloodbank.agent.session.started", "session"),
-        "Stop": ("bloodbank.agent.session.ended", "session"),
+        "Stop": ("bloodbank.conversation.turn.completed", "thread"),
+        "Interrupt": ("bloodbank.conversation.turn.completed", "thread"),
         "SessionEnd": ("bloodbank.agent.session.ended", "session"),
         "session-end": ("bloodbank.agent.session.ended", "session"),
         "UserPromptSubmit": ("bloodbank.conversation.turn.started", "thread"),
@@ -161,6 +162,8 @@ class CodexAdapter(ClientAdapter):
 
         if ce_type == "bloodbank.conversation.turn.completed":
             outcome = "completed" if _tool_outcome(payload) == "success" else "failed"
+            if hook_name == "Interrupt":
+                outcome = "canceled"
             return {
                 "thread_id": session.session_id,
                 "turn_id": _turn_id(session, payload),
@@ -217,6 +220,11 @@ class CodexAdapter(ClientAdapter):
                 **raw,
             }
 
+        if ce_type == "bloodbank.agent.invocation.failed":
+            return {"invocation_id": _invocation_id(session, payload),
+                    "stop_reason": str(_value(payload, "reason", "error_type") or "failed"),
+                    "working_directory": cwd, **raw}
+
         return raw
 
     def post_publish(
@@ -272,7 +280,7 @@ def _tool_arguments(payload: Any) -> dict[str, Any]:
 
 
 def _tool_result(payload: Any) -> Any:
-    return _value(payload, "tool_output", "toolOutput", "result", "output")
+    return _value(payload, "tool_output", "toolOutput", "tool_response", "result", "output")
 
 
 def _tool_outcome(payload: Any) -> str:
@@ -282,6 +290,11 @@ def _tool_outcome(payload: Any) -> str:
         if str(payload.get("status", "")).lower() in {"error", "failed", "failure"}:
             return "error"
         if payload.get("exit_code") not in (None, 0, "0"):
+            return "error"
+        response = _tool_result(payload)
+        if isinstance(response, dict) and (response.get("error") or response.get("is_error")):
+            return "error"
+        if payload.get("hook_event_name") in {"PostToolUseFailure", "StopFailure"}:
             return "error"
     return "success"
 
