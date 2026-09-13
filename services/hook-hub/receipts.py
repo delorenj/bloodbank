@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
-TERMINAL = frozenset({"succeeded", "failed", "timed_out", "skipped"})
+TERMINAL = frozenset({"succeeded", "failed", "timed_out", "skipped", "interrupted"})
 
 
 def now_iso() -> str:
@@ -180,12 +180,39 @@ class ReceiptStore:
             db.execute("INSERT INTO receipt_events(invocation_id,handler_id,status,reason,at) VALUES(?,?,?,?,?)", (iid, handler_id, status, reason, at))
             self._finish(db, iid, at)
 
+    def interrupt(self, iid: str, handler_id: str, reason: str = "shutdown_grace_expired") -> None:
+        """Cancellation cannot overwrite a terminal transport receipt."""
+        at = now_iso()
+        with self.connect() as db:
+            cur = db.execute("""UPDATE executions SET status='interrupted',reason=?,finished_at=?,
+                publish_status=CASE WHEN handler_id='bloodbank-publisher' THEN 'unknown' ELSE publish_status END
+                WHERE invocation_id=? AND handler_id=? AND status IN ('selected','started')""",
+                (reason, at, iid, handler_id))
+            if cur.rowcount:
+                db.execute("INSERT INTO receipt_events(invocation_id,handler_id,status,reason,at) VALUES(?,?,'interrupted',?,?)", (iid, handler_id, reason, at))
+                self._finish(db, iid, at)
+
+    def interrupt_pending(self, reason: str = "shutdown_grace_expired") -> None:
+        # A request can be canceled between claim and complete selection, or a
+        # queued coroutine before its body starts. Finalize those receipts too.
+        with self.connect() as db:
+            pending = db.execute("SELECT invocation_id,handler_id FROM executions WHERE status IN ('selected','started')").fetchall()
+        for row in pending:
+            self.interrupt(*row, reason=reason)
+        at = now_iso()
+        with self.connect() as db:
+            rows = db.execute("SELECT invocation_id FROM invocations WHERE status='received'").fetchall()
+            for row in rows:
+                db.execute("INSERT INTO receipt_events(invocation_id,status,reason,at) VALUES(?,'interrupted',?,?)", (row[0], reason, at))
+            db.execute("UPDATE invocations SET status='interrupted',updated_at=? WHERE status='received'", (at,))
+
     @staticmethod
     def _finish(db: sqlite3.Connection, iid: str, at: str) -> None:
         statuses = [r[0] for r in db.execute("SELECT status FROM executions WHERE invocation_id=?", (iid,))]
         if any(s in {"selected", "started"} for s in statuses):
             return
         result = ("failed" if any(s in {"failed", "timed_out"} for s in statuses)
+                  else "interrupted" if "interrupted" in statuses
                   else "succeeded" if "succeeded" in statuses else "skipped")
         db.execute("UPDATE invocations SET status=?,updated_at=? WHERE invocation_id=?", (result, at, iid))
 
@@ -239,7 +266,8 @@ class ReceiptStore:
             totals = dict(db.execute("SELECT status,COUNT(*) FROM invocations GROUP BY status").fetchall())
             counts = [dict(r) for r in db.execute("""SELECT cli,native,COUNT(*) AS invocations,
                 MAX(received_at) AS last_received_at,SUM(deduplicated) AS deduplicated,
-                SUM(status='failed') AS failed FROM invocations GROUP BY cli,native""")]
+                SUM(status='failed') AS failed,SUM(status='interrupted') AS interrupted
+                FROM invocations GROUP BY cli,native""")]
             executions = [dict(r) for r in db.execute("""SELECT e.handler_id,i.cli,e.status,COUNT(*) AS count,
                 MAX(COALESCE(e.finished_at,e.started_at,e.selected_at)) AS last_at,
                 AVG(e.duration_ms) AS mean_duration_ms

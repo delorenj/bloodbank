@@ -52,6 +52,8 @@ REGISTRY = Path(os.environ.get("HOOK_HUB_REGISTRY", SERVICE_DIR / "handlers.toml
 
 MAX_REQUEST_BYTES = 1 << 20
 ASYNC_SLOTS = int(os.environ.get("HOOK_HUB_ASYNC_SLOTS", "8"))
+PUBLISH_SLOTS = max(1, int(os.environ.get("HOOK_HUB_PUBLISH_SLOTS", "2")))
+SHUTDOWN_GRACE = min(2.0, max(0.0, float(os.environ.get("HOOK_HUB_SHUTDOWN_GRACE", "2.0"))))
 SYNC_BUDGET = float(os.environ.get("HOOK_HUB_SYNC_BUDGET", "2.5"))
 MAX_SYNC_BUDGET = float(os.environ.get("HOOK_HUB_MAX_SYNC_BUDGET", "14.0"))
 LOG_MAX_BYTES = 1 << 20
@@ -470,7 +472,10 @@ class Server:
     def __init__(self) -> None:
         self.cfg = Config()
         self.slots = asyncio.Semaphore(ASYNC_SLOTS)
+        self.publish_slots = asyncio.Semaphore(PUBLISH_SLOTS)
         self.background: set[asyncio.Task] = set()
+        self.connections: set[asyncio.Task] = set()
+        self.draining = False
         self.pending: dict[str, asyncio.Future] = {}
         self.replies: OrderedDict[str, dict] = OrderedDict()
         self.session_locks: dict[tuple[str, str], asyncio.Lock] = {}
@@ -504,16 +509,16 @@ class Server:
     async def execute(self, h: Handler, req: dict, role: str | None,
                       stdin_bytes: bytes, budget_s: float) -> HandlerResult:
         iid = req["invocation_id"]
-        await self.journal("update", iid, h.id, "started")
         try:
+            await self.journal("update", iid, h.id, "started")
             result = await run_handler(h, req, role, stdin_bytes, budget_s)
+            await self.journal("update", iid, h.id, result.status, reason=result.reason,
+                               duration_ms=result.duration_ms, exit_code=result.exit_code,
+                               event_id=result.event_id, event_type=result.event_type,
+                               publish_status=result.publish_status)
         except asyncio.CancelledError:
-            await self.journal("update", iid, h.id, "failed", reason="hub_shutdown")
+            await self.journal("interrupt", iid, h.id)
             raise
-        await self.journal("update", iid, h.id, result.status, reason=result.reason,
-                           duration_ms=result.duration_ms, exit_code=result.exit_code,
-                           event_id=result.event_id, event_type=result.event_type,
-                           publish_status=result.publish_status)
         return result
 
     def spawn_async(self, h: Handler, req: dict, role: str | None,
@@ -522,7 +527,8 @@ class Server:
         related = self.session_tasks.setdefault(key, {})
         dependencies = [task for task, handler_id in related.items() if handler_id in h.after]
         async def work() -> None:
-            async with self.slots:
+            slots = self.publish_slots if h.id == "bloodbank-publisher" else self.slots
+            async with slots:
                 await self.execute(h, req, role, stdin_bytes, h.timeout_ms / 1000.0)
 
         async def guarded() -> None:
@@ -542,6 +548,7 @@ class Server:
                 else:
                     await work()
             except asyncio.CancelledError:
+                await self.journal("interrupt", req["invocation_id"], h.id)
                 raise
             except Exception as exc:
                 log(f"async handler {h.id} failed: {type(exc).__name__}")
@@ -552,6 +559,28 @@ class Server:
             if not related:
                 self.session_tasks.pop(key, None)
         task.add_done_callback(release)
+
+    async def drain(self) -> None:
+        """Finish accepted work before a bounded, explicitly recorded stop."""
+        self.draining = True
+        log(f"draining {len(self.connections)} connections and {len(self.background)} handlers for at most {SHUTDOWN_GRACE:.1f}s")
+        deadline = time.monotonic() + SHUTDOWN_GRACE
+        # Closing the listener prevents new accepts; run already queued
+        # connection callbacks before taking the first task snapshot.
+        await asyncio.sleep(0)
+        while time.monotonic() < deadline:
+            active = {task for task in self.connections | self.background if not task.done()}
+            if not active:
+                break
+            await asyncio.wait(active, timeout=max(0.0, deadline - time.monotonic()),
+                               return_when=asyncio.FIRST_COMPLETED)
+        remaining = {task for task in self.connections | self.background if not task.done()}
+        for task in remaining:
+            task.cancel()
+        if remaining:
+            await asyncio.gather(*remaining, return_exceptions=True)
+        await self.journal("interrupt_pending")
+        log(f"shutdown drain finished; interrupted {len(remaining)} remaining tasks")
 
     def publisher(self, cli: str, native: str, binding: dict | None) -> Handler | None:
         if not PUBLISH_ENABLED or native == "transition" or binding is None:
@@ -707,7 +736,7 @@ class Server:
                                "timeout_ms": 10000, "order": 0, "require_env": [],
                                "match_tool": None, "state": "configured"})
         return {"schema_version": SCHEMA_VERSION, "generated_at": now_iso(),
-                "hub": {"state": "failed" if self.cfg.error or self.journal_error or transport_error else "running",
+                "hub": {"state": "failed" if self.cfg.error or self.journal_error or transport_error else "draining" if getattr(self, "draining", False) else "running",
                         "started_at": self.started_at, "pid": os.getpid(),
                         "registry_error": self.cfg.error, "journal_error": self.journal_error,
                         "transport_error": transport_error,
@@ -745,6 +774,27 @@ class Server:
             return self.inventory
 
     async def http(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await self.connection(self.http_request, reader, writer)
+
+    async def connection(self, callback, reader: asyncio.StreamReader,
+                         writer: asyncio.StreamWriter) -> None:
+        task = asyncio.current_task()
+        self.connections.add(task)
+        try:
+            await callback(reader, writer)
+        finally:
+            try:
+                if task.cancelling():
+                    writer.transport.abort()
+                else:
+                    writer.close()
+                    await writer.wait_closed()
+            except (OSError, ConnectionError):
+                pass
+            finally:
+                self.connections.discard(task)
+
+    async def http_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         code, body = 200, {}
         try:
             headers = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=2)
@@ -781,12 +831,13 @@ class Server:
             await writer.drain()
         except (OSError, ConnectionError):
             pass
-        finally:
-            writer.close()
-            await writer.wait_closed()
 
     async def handle(self, reader: asyncio.StreamReader,
                      writer: asyncio.StreamWriter) -> None:
+        await self.connection(self.handle_request, reader, writer)
+
+    async def handle_request(self, reader: asyncio.StreamReader,
+                             writer: asyncio.StreamWriter) -> None:
         try:
             raw = await asyncio.wait_for(reader.read(MAX_REQUEST_BYTES + 1), timeout=SYNC_BUDGET + 1)
             if len(raw) > MAX_REQUEST_BYTES:
@@ -803,12 +854,6 @@ class Server:
             await writer.drain()
         except (OSError, ConnectionError):
             pass
-        finally:
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except (OSError, ConnectionError):
-                pass
 
 
 def listener() -> socket.socket | None:
@@ -875,15 +920,16 @@ async def main() -> int:
             await asyncio.sleep(300)
 
     maintenance_task = asyncio.create_task(maintenance())
-    async with server:
-        await stop
+    await stop
+    server.close()
     if http_server is not None:
         http_server.close()
-        await http_server.wait_closed()
     maintenance_task.cancel()
-    for task in list(server_obj.background):
-        task.cancel()
-    await asyncio.gather(maintenance_task, *server_obj.background, return_exceptions=True)
+    await server_obj.drain()
+    await server.wait_closed()
+    if http_server is not None:
+        await http_server.wait_closed()
+    await asyncio.gather(maintenance_task, return_exceptions=True)
     log("shutting down")
     return 0
 

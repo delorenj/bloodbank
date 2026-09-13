@@ -15,6 +15,11 @@ Type=simple
 ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/hook-hub/hub.py
 Restart=on-failure
 RestartSec=2
+# SIGTERM reaches only the hub so accepted publisher/behavior children can
+# finish during its bounded drain. systemd still kills the entire cgroup if
+# the service exceeds the outer stop timeout.
+KillMode=mixed
+TimeoutStopSec=5s
 # The hub only ever reads its config and spawns handlers the user already runs.
 NoNewPrivileges=yes
 
