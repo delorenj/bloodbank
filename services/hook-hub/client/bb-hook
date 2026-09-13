@@ -100,6 +100,7 @@ ENV_ALLOWLIST = (
     "ORCA_WORKTREE_ID",
     "ORCA_AGENT_HOOK_ENV",
     "ORCA_AGENT_HOOK_VERSION",
+    "ORCA_AGENT_LAUNCH_TOKEN",
 )
 
 # Second gate, independent of the first. Anything credential-shaped is dropped
@@ -108,7 +109,9 @@ ENV_ALLOWLIST = (
 SECRET_SHAPED = re.compile(
     r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|SESSION_BUS_ADDRESS$)"
 )
-_SECRET_EXEMPT = frozenset({"DBUS_SESSION_BUS_ADDRESS"})
+# Orca's per-terminal launch authority must survive dispatch; its separate HTTP
+# credential is resolved from the endpoint file by the handler. Neither is logged.
+_SECRET_EXEMPT = frozenset({"DBUS_SESSION_BUS_ADDRESS", "ORCA_AGENT_LAUNCH_TOKEN"})
 
 
 def captured_env() -> dict:
@@ -118,6 +121,8 @@ def captured_env() -> dict:
         if not value:
             continue
         if key not in _SECRET_EXEMPT and SECRET_SHAPED.search(key):
+            continue
+        if key == "ORCA_AGENT_LAUNCH_TOKEN" and (len(value) > 128 or any(ord(c) < 32 for c in value)):
             continue
         out[key] = value
     return out

@@ -690,7 +690,7 @@ class Server:
                         "started_at": self.started_at, "pid": os.getpid(),
                         "registry_error": self.cfg.error, "journal_error": self.journal_error,
                         "publish_enabled": PUBLISH_ENABLED, "async_running": len(self.background)},
-                "bindings": bindings, "handlers": handlers, "installation": inventory, **summary}
+                "bindings": bindings, "handlers": handlers, "installed_inventory": inventory, **summary}
 
     async def installed_inventory(self) -> dict:
         async with self.inventory_lock:

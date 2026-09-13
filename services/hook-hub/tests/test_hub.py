@@ -416,6 +416,13 @@ class TestEnvCapture(unittest.TestCase):
         got = self._captured({"ZELLIJ_PANE_ID": "", "ZELLIJ_SESSION_NAME": "W"})
         self.assertEqual(set(got), {"ZELLIJ_SESSION_NAME"})
 
+    def test_only_bounded_orca_launch_authority_survives(self):
+        self.assertEqual(self._captured({
+            "ORCA_AGENT_LAUNCH_TOKEN": "launch-authority",
+            "ORCA_AGENT_HOOK_TOKEN": "http-credential",
+        }), {"ORCA_AGENT_LAUNCH_TOKEN": "launch-authority"})
+        self.assertEqual(self._captured({"ORCA_AGENT_LAUNCH_TOKEN": "x" * 129}), {})
+
 
 class TestProcessReaping(unittest.TestCase):
     """A timed-out handler must not leave descendants running.
