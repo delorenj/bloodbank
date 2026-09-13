@@ -1,7 +1,7 @@
 # Portable behavioral handlers. Native CLIs have one bb-hook per event.
 # Command wrappers emit explicit _hook_hub status metadata; the hub records it
 # and only returns their nested stdout to the originating native CLI.
-# Behavioral rows are staged OFF until cutover.py retires their native owners.
+# Behavioral rows were activated after cutover.py retired their native owners.
 # Keep the ASM rows active: they already have a single publisher-owned source.
 #
 # `on` matches lifecycle roles in agent-hooks/hooks.master.json, `on_native`
@@ -15,7 +15,7 @@ on = ["prompt_submit", "invocation_start"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "skill-reminder"]
 timeout_ms = 1000
 order = 0
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "hindsight-recall"
@@ -24,7 +24,7 @@ on = ["prompt_submit"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-recall"]
 timeout_ms = 11000
 order = 10
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "hindsight-retain"
@@ -33,7 +33,7 @@ on = ["post_tool"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-retain"]
 timeout_ms = 3000
 order = 20
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "hindsight-session-end"
@@ -43,7 +43,7 @@ after = ["hindsight-retain"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-session-end"]
 timeout_ms = 50000
 order = 30
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "hindsight-journal"
@@ -52,7 +52,7 @@ on = ["session_end"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-journal"]
 timeout_ms = 6000
 order = 40
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "hindsight-jot-flush"
@@ -61,7 +61,7 @@ on = ["session_end"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-jot-flush"]
 timeout_ms = 185000
 order = 50
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "skill-lint"
@@ -70,7 +70,7 @@ on = ["post_tool"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "skill-lint"]
 timeout_ms = 4000
 order = 60
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "codegraph-prompt"
@@ -80,7 +80,7 @@ clis = ["claude", "codex", "copilot", "kimi", "gemini", "opencode", "hermes"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "codegraph-prompt"]
 timeout_ms = 2000
 order = 20
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "code-review-graph-status"
@@ -90,7 +90,7 @@ clis = ["claude", "codex", "opencode"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "code-review-graph-status"]
 timeout_ms = 8000
 order = 20
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "code-review-graph-update"
@@ -100,7 +100,7 @@ clis = ["claude", "codex", "opencode"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "code-review-graph-update"]
 timeout_ms = 35000
 order = 60
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "code-review-graph-before-commit"
@@ -110,7 +110,7 @@ clis = ["opencode"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "code-review-graph-before-commit"]
 timeout_ms = 2000
 order = 20
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "project-notebook-start"
@@ -119,7 +119,7 @@ on = ["session_start"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "project-notebook-start"]
 timeout_ms = 5000
 order = 10
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "project-notebook-end"
@@ -128,7 +128,7 @@ on = ["session_end"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "project-notebook-end"]
 timeout_ms = 5000
 order = 40
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "merge-forward"
@@ -137,7 +137,7 @@ on = ["session_end"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "merge-forward"]
 timeout_ms = 905000
 order = 80
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "claude-notify"
@@ -147,7 +147,7 @@ clis = ["claude", "codex"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "claude-notify"]
 timeout_ms = 6000
 order = 50
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "codex-turn-notify"
@@ -157,18 +157,18 @@ clis = ["codex"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "claude-notify"]
 timeout_ms = 6000
 order = 50
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "nanoleaf"
 mode = "async"
-on = ["session_start", "session_end", "turn_completed", "subagent_start", "subagent_stop", "tool_failed"]
+on = ["session_start", "session_end", "prompt_submit", "turn_completed", "subagent_start", "subagent_stop", "tool_failed"]
 on_native = ["Notification", "PermissionRequest", "StopFailure", "PostToolUseFailure"]
 clis = ["claude"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "nanoleaf"]
 timeout_ms = 3000
 order = 50
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "zellij-notify"
@@ -178,7 +178,7 @@ clis = ["opencode"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "zellij-notify"]
 timeout_ms = 2000
 order = 50
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "orca-status"
@@ -189,7 +189,7 @@ clis = ["claude", "codex", "copilot", "kimi", "hermes", "antigravity"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "orca-status"]
 timeout_ms = 2500
 order = 50
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "git-checkpoint"
@@ -199,7 +199,7 @@ clis = ["opencode"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "git-checkpoint"]
 timeout_ms = 125000
 order = 70
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 [[handler]]
 id = "opencode-session-notify"
@@ -209,7 +209,7 @@ clis = ["opencode"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "claude-notify"]
 timeout_ms = 6000
 order = 60
-enabled = false # cutover-managed
+enabled = true # cutover-managed
 
 # ------------------------------------------------- agent state machine (ASM)
 # native = "transition" is emitted by core/asm.py inside the hook process, never

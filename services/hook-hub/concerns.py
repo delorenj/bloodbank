@@ -235,7 +235,7 @@ def dispatch(concern: str, raw: dict) -> dict:
     if concern == "orca-status":
         return orca(raw, cli, native)
     if concern == "nanoleaf":
-        event = {"session_start": "session-start", "session_end": "session-end", "turn_completed": "turn-end",
+        event = {"session_start": "session-start", "session_end": "session-end", "prompt_submit": "prompt-submit", "turn_completed": "turn-end",
                  "subagent_start": "subagent-start", "subagent_stop": "subagent-stop", "tool_failed": "tool-failure"}.get(role)
         event = event or {"Notification": "notification", "PermissionRequest": "permission-request",
                           "StopFailure": "error", "PostToolUseFailure": "tool-failure"}.get(native)
