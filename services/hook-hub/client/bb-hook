@@ -284,7 +284,7 @@ def main(argv: list[str]) -> int:
         "native": native,
         "cwd": os.environ.get("PWD") or _getcwd(),
         "pid": os.getpid(),
-        "parent_pid": os.getppid(),
+        "parent_pid": int(os.environ.get("BB_HOOK_CALLER_PID", str(os.getppid()))),
         "budget_s": max(left() - 0.25, 0.0),
         "env": captured_env(),
         "payload": payload,

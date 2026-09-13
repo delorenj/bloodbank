@@ -157,6 +157,9 @@ def test_read_api_reports_registry_separately_from_observation_and_paginates(tmp
         assert status["observed_since"]
         unseen = next(b for b in status["bindings"] if b["cli"] == "copilot")
         assert unseen["observed_state"] == "unobserved"
+        planned = [b for b in status["bindings"] if b["support_status"] != "supported"]
+        assert planned
+        assert all(b["state"] == "unsupported" and not b["configured"] and not b["handler_ids"] for b in planned)
         with urlopen(base + "/v1/hooks/invocations?cli=claude&handler=context&limit=1", timeout=3) as response:
             page = json.load(response)
         assert page["total"] == 2 and len(page["items"]) == 1
@@ -173,6 +176,40 @@ def test_ordinary_tool_hook_does_not_wait_for_async_work(tmp_path):
         reply = request(hub, native="PostToolUse")
         assert time.monotonic() - started < .5
         assert reply["handled"] == ["slow"]
+
+
+def test_session_end_waits_for_prior_candidate_writes_only_in_its_session(tmp_path):
+    script = tmp_path / "retention.py"
+    script.write_text(f"import json,sys,time\nfrom pathlib import Path\np=json.load(sys.stdin)\ns=p['session_id']\nroot=Path({str(tmp_path)!r})\nif sys.argv[1]=='candidate':\n time.sleep(.5)\n (root/(s+'.candidate')).write_text('retained')\nelse:\n source=root/(s+'.candidate')\n (root/(s+'.summary')).write_text(source.read_text() if source.exists() else 'empty')\n")
+    reg = f'''[[handler]]
+id="candidate"
+mode="async"
+on=["post_tool"]
+command=["{sys.executable}","{script}","candidate"]
+timeout_ms=2000
+[[handler]]
+id="end"
+mode="async"
+on=["session_end"]
+after=["candidate"]
+command=["{sys.executable}","{script}","end"]
+timeout_ms=2000
+'''
+    with HubHarness(tmp_path, reg) as hub:
+        request(hub, native="PostToolUse", payload={"session_id": "one"})
+        began = time.monotonic()
+        request(hub, native="SessionEnd", payload={"session_id": "one"})
+        request(hub, native="SessionEnd", payload={"session_id": "other"})
+        assert time.monotonic() - began < .3
+        deadline = time.monotonic() + .4
+        while not (tmp_path / "other.summary").exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert (tmp_path / "other.summary").read_text() == "empty"
+        assert not (tmp_path / "one.summary").exists()
+        deadline = time.monotonic() + 3
+        while not (tmp_path / "one.summary").exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert (tmp_path / "one.summary").read_text() == "retained"
 
 
 def test_central_publisher_emits_one_event_for_duplicate_native_delivery(tmp_path):

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -62,7 +63,9 @@ def test_report_disambiguates_sent_failed_and_disabled(tmp_path, monkeypatch, en
     if want == "succeeded":
         envelope = json.loads(publish.call_args.args[1])
         assert report["event_id"] == envelope["id"]
-        assert envelope["correlationid"] == "native-test-session"
+        assert str(uuid.UUID(envelope["correlationid"])) == envelope["correlationid"]
+        assert envelope["correlationid"] == str(uuid.uuid5(uuid.NAMESPACE_URL, "bloodbank:test:native-test-session"))
+        assert envelope["data"]["session_id"] == "native-test-session"
 
 
 def test_unsupported_native_event_reports_skip(tmp_path):

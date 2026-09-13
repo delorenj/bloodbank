@@ -64,6 +64,7 @@ def invocation_identity(req: dict[str, Any]) -> tuple[str, str]:
         "pretooluse", "posttooluse", "posttoolusefailure", "pretoolusefailure",
         "on_tool_start", "on_tool_end", "beforetool", "aftertool",
         "tool.execute.before", "tool.execute.after", "pre_tool_use", "post_tool_use",
+        "pre_tool_call", "post_tool_call",
     }:
         for name in ("tool_use_id", "tool_call_id", "toolCallId", "call_id", "callID"):
             key = identifier(payload.get(name))

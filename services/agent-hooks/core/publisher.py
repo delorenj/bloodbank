@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import subprocess
 import sys
 from typing import Any
 
@@ -187,6 +189,9 @@ def run(adapter: ClientAdapter, argv: list[str], *, report: dict | None = None) 
     Returns 0 on success or fail-open skip, 1 in strict mode on error,
     2 on usage error (no hook name).
     """
+    forwarded = _forward_legacy_hook(adapter, argv)
+    if forwarded is not None:
+        return forwarded
     payload = adapter.read_payload(argv)
     hook_name = adapter.resolve_hook_name(argv, payload)
     if not hook_name:
@@ -217,6 +222,8 @@ def run(adapter: ClientAdapter, argv: list[str], *, report: dict | None = None) 
     resume = isinstance(payload, dict) and payload.get("source") == "resume"
     if adapter.should_reset_session(ce_type, hook_name) and not (resume and native_id == session.session_id):
         session.reset(native_id)
+    if ce_type == "bloodbank.conversation.turn.started":
+        session.begin_turn(adapter.native_turn_id(payload))
 
     correlation_id = adapter.get_correlation_id(session, payload)
     causation_id = adapter.get_causation_id(
@@ -281,6 +288,44 @@ def run(adapter: ClientAdapter, argv: list[str], *, report: dict | None = None) 
     adapter.after_publish_attempt(session, ce_type, payload, argv, published=True)
     adapter.log(f"published {subject}")
     return 0
+
+
+def _forward_legacy_hook(adapter: ClientAdapter, argv: list[str]) -> int | None:
+    """Cached native commands converge on the hub after their CLI's cutover."""
+    if os.environ.get("BB_HOOK_HUB") == "off":
+        return None
+    manifest = Path(os.environ.get("BB_HOOK_OWNERSHIP", Path.home() / ".config/33god/hook-hub/ownership.json"))
+    owned = False
+    try:
+        ownership = json.loads(manifest.read_text())
+        if ownership.get("version") != 1 or adapter.name not in ownership.get("clis", []):
+            return None
+        owned = True
+        service_dir = Path(__file__).resolve().parents[1]
+        client = service_dir.parent / "hook-hub/client/bb-hook"
+        if not client.is_file():
+            return 0
+        master = json.loads((service_dir / "hooks.master.json").read_text())
+        payload = adapter.read_payload(argv)
+        hook = adapter.resolve_hook_name(argv, payload)
+        binding = next((b for b in master["agents"][adapter.name]["bindings"]
+                        if hook in (b.get("native"), b.get("arg"))), None)
+        if binding is None:
+            return 0
+        deadline = "15" if binding.get("role") in {"prompt_submit", "session_start"} else "3"
+        env = {**os.environ, "BB_HOOK_CALLER_PID": str(os.getppid())}
+        proc = subprocess.run([sys.executable, str(client), "--cli", adapter.name,
+                               "--native", binding["native"], "--deadline", deadline],
+                              input=json.dumps(payload).encode(), env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              timeout=float(deadline) + .5)
+        if proc.stdout:
+            sys.stdout.write(proc.stdout.decode("utf-8", "replace"))
+        if proc.returncode == 2 and proc.stderr:
+            sys.stderr.write(proc.stderr.decode("utf-8", "replace"))
+        return 2 if proc.returncode == 2 else 0
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+        return 0 if owned else None
 
 
 def _fanout_alert(

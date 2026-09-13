@@ -97,7 +97,7 @@ class Handler:
 
     __slots__ = ("id", "mode", "on", "on_native", "command", "timeout_ms",
                  "match_tool", "match_transition", "require_env", "order",
-                 "enabled", "clis")
+                 "enabled", "clis", "after")
 
     def __init__(self, raw: dict[str, Any]) -> None:
         self.id: str = str(raw["id"])
@@ -105,6 +105,7 @@ class Handler:
         self.on: set[str] = set(raw.get("on", []) or [])
         self.on_native: set[str] = set(raw.get("on_native", []) or [])
         self.clis: set[str] = set(raw.get("clis", []) or [])
+        self.after: set[str] = set(raw.get("after", []) or [])
         self.command: list[str] = [
             os.path.expanduser(str(part)) for part in raw["command"]
         ]
@@ -473,6 +474,7 @@ class Server:
         self.pending: dict[str, asyncio.Future] = {}
         self.replies: OrderedDict[str, dict] = OrderedDict()
         self.session_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self.session_tasks: dict[tuple[str, str], dict[asyncio.Task, str]] = {}
         self.store = ReceiptStore(RECEIPT_PATH)
         self.store.recover()
         self.started_at = now_iso()
@@ -514,17 +516,21 @@ class Server:
 
     def spawn_async(self, h: Handler, req: dict, role: str | None,
                     stdin_bytes: bytes) -> None:
+        key = (str(req.get("cli")), native_session_id(req) or str(req.get("cwd", "")))
+        related = self.session_tasks.setdefault(key, {})
+        dependencies = [task for task, handler_id in related.items() if handler_id in h.after]
         async def work() -> None:
             async with self.slots:
                 await self.execute(h, req, role, stdin_bytes, h.timeout_ms / 1000.0)
 
         async def guarded() -> None:
             try:
+                if dependencies:
+                    await asyncio.gather(*dependencies, return_exceptions=True)
                 if h.id == "bloodbank-publisher":
                     # Causation chains and counters belong to one native
                     # session. Preserve event arrival order within it while
                     # independent sessions publish concurrently.
-                    key = (str(req.get("cli")), native_session_id(req) or str(req.get("cwd", "")))
                     lock = self.session_locks.setdefault(key, asyncio.Lock())
                     async with lock:
                         await work()
@@ -537,7 +543,13 @@ class Server:
                 raise
             except Exception as exc:
                 log(f"async handler {h.id} failed: {type(exc).__name__}")
-        self.task(guarded())
+        task = self.task(guarded())
+        related[task] = h.id
+        def release(done: asyncio.Task) -> None:
+            related.pop(done, None)
+            if not related:
+                self.session_tasks.pop(key, None)
+        task.add_done_callback(release)
 
     def publisher(self, cli: str, native: str, binding: dict | None) -> Handler | None:
         if not PUBLISH_ENABLED or native == "transition" or binding is None:
@@ -656,6 +668,7 @@ class Server:
                 state = "idle" if age > 3600 else "active"
             installation = deployed.get((cli, native))
             observed_state = state
+            supported = binding.get("support_status", "supported") == "supported"
             if installation and installation.get("status") == "missing":
                 state = "missing"
             elif installation and installation.get("status") in {"duplicate", "drift"}:
@@ -665,16 +678,20 @@ class Server:
                            and (binding.get("role") in h.on or native in h.on_native)]
             if self.publisher(cli, native, binding):
                 handler_ids.insert(0, "bloodbank-publisher")
+            if not supported:
+                state = "unsupported"
+                handler_ids = []
             bindings.append({"cli": cli, "native": native, "role": binding.get("role"),
                              "support_status": binding.get("support_status", "supported"),
                              "event_type": binding.get("event_type"), "state": state,
                              "observed_state": observed_state,
-                             "configured": True, "activity": observed,
+                             "configured": supported, "activity": observed,
                              "installation": installation,
                              "handler_ids": handler_ids})
         handlers = [{"id": h.id, "mode": h.mode, "on": sorted(h.on),
                      "on_native": sorted(h.on_native), "clis": sorted(h.clis),
                      "enabled": h.enabled, "timeout_ms": h.timeout_ms, "order": h.order,
+                     "after": sorted(h.after),
                      "require_env": h.require_env,
                      "match_tool": h.match_tool.pattern if h.match_tool else None,
                      "state": "configured" if h.enabled else "disabled"}
@@ -707,6 +724,9 @@ class Server:
                     raise ImportError("inventory_loader_unavailable")
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[name] = module
+                sync_module = sys.modules.get("sync")
+                if sync_module is not None and Path(getattr(sync_module, "__file__", "")).resolve() == (AGENT_HOOKS_DIR / "sync.py").resolve():
+                    importlib.reload(sync_module)
                 spec.loader.exec_module(module)
                 return module.collect_installed_inventory()
 
