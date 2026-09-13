@@ -4,17 +4,17 @@ from __future__ import annotations
 import json
 import os
 import select
-import shutil
 import subprocess
 import time
 import tomllib
 from pathlib import Path
 from typing import Any
+from cli_paths import find_cli_binary
 
 
 class CodexAppServer:
     def __init__(self, *, binary: str | None = None, config_home: Path | None = None):
-        executable = binary or shutil.which("codex")
+        executable = binary or find_cli_binary("codex")
         if not executable:
             raise FileNotFoundError("codex executable unavailable for native hook verification")
         child_env = dict(os.environ)

@@ -7,9 +7,7 @@ no payload/configuration secrets are returned.
 from __future__ import annotations
 
 import json
-import os
 import shlex
-import shutil
 import sys
 import tomllib
 from datetime import datetime, timezone
@@ -20,6 +18,7 @@ SERVICE_DIR = Path(__file__).resolve().parents[1]
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 import sync
+from cli_paths import find_cli_binary
 
 DIRECT_MARKERS = (
     "/hindsight/hindsight-", "hindsight-session-end", "reminder-for-skill-check.sh",
@@ -100,10 +99,7 @@ def _is_direct(command: Any, markers: list[str]) -> bool:
 
 
 def _binary_available(name: str) -> bool:
-    if shutil.which(name):
-        return True
-    known = {"kimi": "~/.kimi-code/bin/kimi", "antigravity": "~/.local/bin/agy"}
-    return bool(name in known and os.access(sync._expand(known[name]), os.X_OK))
+    return find_cli_binary(name) is not None
 
 
 def collect_installed_inventory(master: dict | None = None, *, probe_native: bool = True) -> dict:

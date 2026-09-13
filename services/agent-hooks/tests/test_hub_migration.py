@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from clients import get_adapter
+from cli_paths import find_cli_binary
 from codex_native import trust_edits
 from codex_native import CodexAppServer, capture_trust, reconcile_trust
 from core.event_map import resolve_map
@@ -251,6 +252,19 @@ def test_inventory_keeps_codex_native_trust_scoped_to_its_config_home(tmp_path, 
     result = collect_installed_inventory(master)
     assert result["status"] == "healthy"
     assert all(row["actual_hub_count"] == row["expected_count"] == 2 for row in result["clis"][0]["natives"])
+
+
+def test_cli_discovery_works_with_user_service_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    data = tmp_path / "mise"
+    monkeypatch.setenv("MISE_DATA_DIR", str(data))
+    copilot = data / "installs/node/26.5.0/bin/copilot"
+    copilot.parent.mkdir(parents=True)
+    copilot.write_text("#!/bin/sh\nexit 0\n")
+    copilot.chmod(0o755)
+    assert find_cli_binary("copilot") == str(copilot)
+    assert find_cli_binary("gemini") is None
 
 
 def test_opencode_native_bridge_keeps_session_identity_context_and_failed_tool_once(tmp_path):
