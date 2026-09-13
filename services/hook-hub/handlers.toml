@@ -39,6 +39,7 @@ enabled = false # cutover-managed
 id = "hindsight-session-end"
 mode = "async"
 on = ["session_end"]
+after = ["hindsight-retain"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-session-end"]
 timeout_ms = 50000
 order = 30

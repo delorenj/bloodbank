@@ -199,7 +199,7 @@ def activate(home: Path) -> dict:
     write(REGISTRY, text)
     manifest = {"version": 1, "registry": str(REGISTRY), "clis": CLIS, "handler_ids": handlers,
                 "installed_at": datetime.now(timezone.utc).isoformat()}
-    path = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state")) / "33god/hook-hub/ownership.json"
+    path = home / ".config/33god/hook-hub/ownership.json"
     write(path, json.dumps(manifest, indent=2) + "\n")
     return {"activated": handlers, "manifest": str(path)}
 

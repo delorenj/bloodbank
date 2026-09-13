@@ -17,7 +17,7 @@ from pathlib import Path
 def owns(handler: str, cli: str = "") -> bool:
     if os.environ.get("BB_HOOK_HUB") == "off":
         return False
-    path = Path(os.environ.get("BB_HOOK_OWNERSHIP", Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "33god/hook-hub/ownership.json"))
+    path = Path(os.environ.get("BB_HOOK_OWNERSHIP", Path.home() / ".config/33god/hook-hub/ownership.json"))
     try:
         data = json.loads(path.read_text())
         if data.get("version") != 1 or handler not in data.get("handler_ids", []):
