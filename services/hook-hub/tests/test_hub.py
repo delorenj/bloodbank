@@ -56,6 +56,7 @@ class HubHarness:
             HOOK_HUB_RECEIPTS=str(self.tmp / "receipts.sqlite3"),
             HOOK_HUB_HTTP_PORT="0",
             HOOK_HUB_PUBLISH="false",
+            HOOK_HUB_OBSERVATIONS_PUBLISH="false",
             HOOK_HUB_SYNC_BUDGET="2.0",
         )
         env.update(self.env_extra)

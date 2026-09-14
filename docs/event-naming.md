@@ -301,6 +301,7 @@ Segment 4 of `type` MUST be one of:
 | `request`          | `llm`                    | A request sent to an LLM provider.                          |
 | `response`         | `llm`                    | A response received from an LLM provider.                   |
 | `tool`             | `agent`                  | A tool-use action performed by an agent or subagent.        |
+| `hook`             | `agent`, `system`        | Payload-free hook invocation revisions and hook-hub inventory/health observations. |
 | `heartbeat`        | `system`                 | Liveness/health beat.                                       |
 | `decision`         | `repo`                   | PM decision recorded for a repo; repo slug lives in data.    |
 | `intake`           | `repo`                   | Incoming repo request triaged; repo slug lives in data.      |

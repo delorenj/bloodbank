@@ -44,6 +44,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from receipts import (SCHEMA_VERSION, ReceiptStore, invocation_identity,
                       native_session_id, now_iso)
+from facts import configuration_fingerprint
+from observations import OutboxWorker
 
 SERVICE_DIR = Path(__file__).resolve().parent
 AGENT_HOOKS_DIR = SERVICE_DIR.parent / "agent-hooks"
@@ -66,6 +68,9 @@ RECEIPT_PATH = Path(os.environ.get("HOOK_HUB_RECEIPTS", STATE_DIR / "receipts.sq
 HTTP_HOST = os.environ.get("HOOK_HUB_HTTP_HOST", "127.0.0.1")
 HTTP_PORT = int(os.environ.get("HOOK_HUB_HTTP_PORT", "8685"))
 PUBLISH_ENABLED = os.environ.get("HOOK_HUB_PUBLISH", "true") == "true"
+OBSERVATIONS_ENABLED = (os.environ.get("HOOK_HUB_OBSERVATIONS_PUBLISH", str(PUBLISH_ENABLED).lower()) == "true"
+                        and os.environ.get("BLOODBANK_ENABLED", "true") == "true")
+OBSERVATION_INTERVAL = max(1.0, float(os.environ.get("HOOK_HUB_OBSERVATION_INTERVAL", "30")))
 MAX_HANDLER_OUTPUT = 1 << 20
 
 SD_LISTEN_FDS_START = 3
@@ -482,6 +487,7 @@ class Server:
         self.session_tasks: dict[tuple[str, str], dict[asyncio.Task, str]] = {}
         self.store = ReceiptStore(RECEIPT_PATH)
         self.store.recover()
+        self.observations = OutboxWorker(self.store, log=log)
         self.started_at = now_iso()
         self.journal_error: str | None = None
         self.inventory: dict | None = None
@@ -494,6 +500,8 @@ class Server:
         try:
             result = await asyncio.to_thread(getattr(self.store, method), *args, **kwargs)
             self.journal_error = None
+            if method in {"claim", "select", "update", "finish", "interrupt", "interrupt_pending", "observe_snapshot"}:
+                self.observations.wake.set()
             return result
         except Exception as exc:
             self.journal_error = type(exc).__name__
@@ -683,6 +691,7 @@ class Server:
     async def status(self) -> dict[str, Any]:
         self.cfg.maybe_reload()
         summary = await self.journal("summary")
+        observation_delivery = {**await self.journal("observation_status"), "enabled": OBSERVATIONS_ENABLED}
         inventory = await self.installed_inventory()
         socket_present = self.socket_path.is_socket() if self.socket_path else None
         transport_error = "socket_path_missing" if socket_present is False else None
@@ -742,8 +751,39 @@ class Server:
                         "transport_error": transport_error,
                         "socket": {"path": str(self.socket_path) if self.socket_path else None,
                                    "present": socket_present, "activated": self.socket_activated},
-                        "publish_enabled": PUBLISH_ENABLED, "async_running": len(self.background)},
+                        "publish_enabled": PUBLISH_ENABLED, "async_running": len(self.background),
+                        "observation_delivery": observation_delivery},
                 "bindings": bindings, "handlers": handlers, "installed_inventory": inventory, **summary}
+
+    async def observe(self) -> None:
+        """Publish inventory changes and compact health, never native payloads.
+
+        Send a full inventory before backfill starts. Hourly snapshots ensure a
+        new collector can bootstrap even after broker retention expires the
+        initial startup/configuration event.
+        """
+        fingerprint = None
+        last_full = 0.0
+        worker = None
+        try:
+            while True:
+                try:
+                    snapshot = await self.status()
+                    current = configuration_fingerprint(snapshot)
+                    full = current != fingerprint or time.monotonic() - last_full >= 3600
+                    await self.journal("observe_snapshot", snapshot, heartbeat=not full)
+                    fingerprint = current
+                    if full:
+                        last_full = time.monotonic()
+                except Exception as exc:
+                    log(f"hook snapshot observation retry: {type(exc).__name__}")
+                if worker is None:
+                    worker = asyncio.create_task(self.observations.run())
+                await asyncio.sleep(OBSERVATION_INTERVAL)
+        finally:
+            if worker is not None:
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
 
     async def installed_inventory(self) -> dict:
         async with self.inventory_lock:
@@ -920,12 +960,18 @@ async def main() -> int:
             await asyncio.sleep(300)
 
     maintenance_task = asyncio.create_task(maintenance())
+    observation_task = asyncio.create_task(server_obj.observe()) if OBSERVATIONS_ENABLED else None
     await stop
     server.close()
     if http_server is not None:
         http_server.close()
     maintenance_task.cancel()
     await server_obj.drain()
+    if observation_task is not None:
+        # Accepted handler completions are already in the durable outbox.
+        # Shutdown does not wait for an unavailable broker; restart retries.
+        observation_task.cancel()
+        await asyncio.gather(observation_task, return_exceptions=True)
     await server.wait_closed()
     if http_server is not None:
         await http_server.wait_closed()

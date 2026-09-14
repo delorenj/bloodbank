@@ -68,7 +68,7 @@ ALLOWED_ENTITIES = frozenset({
     "invocation",
     "session", "process", "stdout", "stderr",
     "request", "response",
-    "tool",
+    "tool", "hook",
     "heartbeat",
     "decision", "intake", "task", "board", "maintenance", "skill",
     "approval_request",

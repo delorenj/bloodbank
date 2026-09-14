@@ -16,15 +16,18 @@ flowchart LR
   Hub --> Publish[Single Bloodbank publisher]
   Publish --> NATS[NATS]
   NATS --> Candystore[Candystore]
-  Hub --> Journal[Execution receipt journal]
-  Journal --> Holocene[Holocene Hooks page]
+  Hub --> Journal[Receipt journal and transactional outbox]
+  Journal --> Facts[Background observation publisher]
+  Facts -->|JetStream storage acknowledgement| NATS
+  NATS --> Holocene[Holocene event collector and views]
 ```
 
 Claude, Codex, Copilot, Hermes, Antigravity, Gemini, Kimi, and OpenCode have
 adapters. Installed inventory separately reports whether each executable and
 native configuration exist. OpenClaw is explicitly unsupported. Some Hermes
-signals have no Bloodbank event contract; these can run local handlers without
-inventing an event type.
+signals have no canonical agent lifecycle event; these can run local handlers.
+Their receipt changes still have the registered `bloodbank.agent.hook.updated`
+observability contract.
 
 ## Runtime ownership
 
@@ -33,8 +36,9 @@ CLI path. Background handlers and NATS publication are supervised by the hub.
 Handlers receive bounded launch context for host integrations such as Orca and
 Zellij, plus `BB_HOOK_HUB=off` to prevent recursion.
 
-The internal `bloodbank-publish` handler is the sole publisher for a native
-invocation. Cached legacy `publish.py` commands forward to the hub once its
+The internal `bloodbank-publish` handler is the sole publisher of the original
+agent lifecycle fact for a native invocation. Observation revisions are separate
+facts and do not invoke this handler. Cached legacy `publish.py` commands forward to the hub once its
 ownership manifest is active. Explicit native invocation, event, or tool-call IDs
 provide durable duplicate suppression. A fresh UUID is used when the CLI supplies
 no usable identity; matching prompt text alone never suppresses legitimate work.
@@ -123,9 +127,65 @@ The read-only HTTP API binds to loopback by default:
 | `/v1/hooks/invocations/{id}` | One receipt with its lifecycle timeline |
 
 History accepts `cli`, `native`, `role`, `handler`, `status`, `limit`, and `offset`.
-Holocene proxies these under `/api/modules/hooks` and presents them at `/hooks`.
-Configuration proves wiring; a receipt proves observed execution. Quiet hooks
-remain visibly unobserved.
+This API is a local operator diagnostic interface. Holocene consumes Bloodbank
+events and owns its collected read model; it does not proxy this API or read the
+hub's SQLite database. Configuration proves wiring; a receipt proves observed
+execution. Quiet hooks remain visibly unobserved.
+
+Two schema-backed CloudEvents feed that collector:
+
+| Type | Data |
+| --- | --- |
+| `bloodbank.agent.hook.updated` | A complete invocation revision with execution outcomes and recent timeline, including unmapped native signals, skips, failures, recovery, and deduplicated requests |
+| `bloodbank.system.hook.updated` | Either a full `snapshot` of installed wiring and hub health, or a compact `heartbeat` containing health and aggregate activity |
+
+Both carry `schema_version`, a persistent UUID `hub_id`, and equal monotonic
+`sequence`/`revision` values. UUIDv5 event IDs remain unchanged on transport
+retries; the same ID is also the `Nats-Msg-Id` header. Consumers deduplicate
+envelope IDs and only apply a newer revision to the same hub/invocation. The
+producer's observed timestamp is retained; broker delivery time cannot make old
+health appear fresh. System observations expire after 90 seconds.
+
+Full snapshots are sent at startup, when inventory/configuration changes, and
+hourly so a new collector can bootstrap within broker retention. Compact health
+is sent every 30 seconds and only merges into a snapshot from the same `hub_id`.
+The September 13 deployed inventory yields a 221,261-byte full event and a
+23,550-byte compact event, below the broker's 1 MiB limit. All events are bounded
+to 900,000 bytes including envelope metadata. Receipt projections retain the
+latest 512 timeline entries with explicit `timeline_total` and
+`timeline_truncated` fields; every new transition remains its own bus fact.
+Snapshot fields are selected through the shared schema allowlist, so newly added
+raw config, command, or environment keys cannot silently enter the feed.
+
+Receipt mutations and the serialized observation are committed in one SQLite
+transaction. The background worker retries from its outbox until a matching
+JetStream PubAck confirms storage in `BLOODBANK_EVENTS`; PONG alone never removes
+the row. A crash between that acknowledgement and outbox removal may redeliver
+the same event ID. Broker deduplication is time-bounded, so consumers must retain
+their own ID/revision checks. Publication is independent of handler execution;
+outage recovery never reruns a behavioral handler. Pending observations survive
+local receipt pruning.
+
+Startup automatically backfills previous receipts as latest full projections in
+resumable batches of 50. Each invocation gets a durable migration marker; a live
+mutation also creates that marker, preventing an older backfill from replacing
+newer state. Backfill does not replay old handlers or original lifecycle events.
+The status metadata `hub.observation_delivery` reports pending count, last
+acknowledged sequence/time, and a sanitized error class. An unavailable broker
+can grow the durable outbox; inspect that counter and runtime disk capacity when
+an outage persists.
+
+Deployment of these producer changes requires only:
+
+```sh
+systemctl --user restart hook-hub.service
+```
+
+The existing socket unit keeps its pathname. The receipt database upgrades
+additively in place; no new dependency, broker topology, or runtime path is
+required. The outbox uses the existing `BLOODBANK_NATS_HOST` /
+`BLOODBANK_NATS_PORT` configuration and preserves queued observations when
+publication is temporarily disabled.
 
 A publication receipt marked `sent` means NATS transport succeeded. It is not a
 Candystore persistence acknowledgment. Durable delivery acceptance must separately
@@ -172,6 +232,9 @@ terminating the remaining process group. Status reports `draining` while it runs
 | `HOOK_HUB_HTTP_HOST` | `127.0.0.1` | Read-only API bind address |
 | `HOOK_HUB_HTTP_PORT` | `8685` | Read-only API port; zero disables it |
 | `HOOK_HUB_PUBLISH` | `true` | Central publisher enabled |
+| `HOOK_HUB_OBSERVATIONS_PUBLISH` | value of `HOOK_HUB_PUBLISH` | Publish durable observation facts; a separate flag permits isolated producer tests |
+| `HOOK_HUB_OBSERVATION_INTERVAL` | `30` | Compact health observation interval, seconds |
+| `BLOODBANK_ENABLED` | `true` | Global publication switch; `false` also pauses observation delivery |
 
 Unset XDG state/runtime paths use the user's standard local state and runtime
 locations. Runtime files remain outside the source checkout.

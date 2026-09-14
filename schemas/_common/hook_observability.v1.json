@@ -1,0 +1,928 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/_common/hook_observability.v1.json",
+  "title": "Payload-free hook observability projections",
+  "description": "Allowlisted receipt and installed inventory metadata. No native input, prompts, commands, transcripts, stdout, stderr or environment values. Long receipt timelines retain their latest 512 transitions with explicit total/truncation metadata.",
+  "$defs": {
+    "execution": {
+      "type": "object",
+      "properties": {
+        "invocation_id": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "handler_id": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "mode": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "selected_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "finished_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "duration_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "event_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "event_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "publish_status": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "handler_id",
+        "mode",
+        "status",
+        "selected_at"
+      ],
+      "additionalProperties": false
+    },
+    "transition": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "handler_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "sequence",
+        "status",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "invocation": {
+      "type": "object",
+      "properties": {
+        "invocation_id": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "cli": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "native": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "event_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "identity_kind": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "deduplicated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "executions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/execution"
+          }
+        },
+        "timeline": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/transition"
+          }
+        },
+        "timeline_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeline_truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "invocation_id",
+        "cli",
+        "native",
+        "received_at",
+        "updated_at",
+        "status",
+        "executions",
+        "timeline"
+      ],
+      "additionalProperties": false
+    },
+    "native_activity": {
+      "type": "object",
+      "properties": {
+        "cli": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "native": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "invocations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_received_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deduplicated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "interrupted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "cli",
+        "native",
+        "invocations"
+      ],
+      "additionalProperties": false
+    },
+    "handler_activity": {
+      "type": "object",
+      "properties": {
+        "handler_id": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "cli": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "mean_duration_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "handler_id",
+        "cli",
+        "status",
+        "count"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "hub_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "direct_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "source",
+        "hub_count",
+        "direct_count",
+        "issues"
+      ],
+      "additionalProperties": false
+    },
+    "native_installation": {
+      "type": "object",
+      "properties": {
+        "native": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "expected_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actual_hub_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "direct_managed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "native",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "source",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "cli": {
+      "type": "object",
+      "properties": {
+        "cli": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "support_status": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "binary_available": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "trust_verification": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "configs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/config"
+          }
+        },
+        "natives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/native_installation"
+          }
+        }
+      },
+      "required": [
+        "cli",
+        "support_status",
+        "status",
+        "configs",
+        "natives"
+      ],
+      "additionalProperties": false
+    },
+    "inventory": {
+      "type": "object",
+      "properties": {
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "clis": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cli"
+          }
+        }
+      },
+      "required": [
+        "generated_at",
+        "status",
+        "clis"
+      ],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "cli": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "native": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "support_status": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "event_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "observed_state": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "activity": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "cli": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "native": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "invocations": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "last_received_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "deduplicated": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "interrupted": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "cli",
+            "native",
+            "invocations"
+          ],
+          "additionalProperties": false
+        },
+        "installation": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "native": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "role": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 4096
+            },
+            "expected_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "actual_hub_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "direct_managed_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/source"
+              }
+            },
+            "status": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "native",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "handler_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "cli",
+        "native",
+        "configured",
+        "handler_ids"
+      ],
+      "additionalProperties": false
+    },
+    "handler": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "mode": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "on": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "on_native": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "clis": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "order": {
+          "type": "integer"
+        },
+        "after": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "require_env": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "match_tool": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "id",
+        "mode",
+        "enabled",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "delivery": {
+      "type": "object",
+      "properties": {
+        "pending": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_acked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "last_acked_sequence": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pending",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "hub": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "registry_error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "journal_error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "transport_error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "socket": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 4096
+            },
+            "present": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "activated": {
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "publish_enabled": {
+          "type": "boolean"
+        },
+        "async_running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observation_delivery": {
+          "$ref": "#/$defs/delivery"
+        }
+      },
+      "required": [
+        "state",
+        "started_at",
+        "publish_enabled"
+      ],
+      "additionalProperties": false
+    },
+    "snapshot": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "hub": {
+          "$ref": "#/$defs/hub"
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/binding"
+          }
+        },
+        "handlers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handler"
+          }
+        },
+        "installed_inventory": {
+          "$ref": "#/$defs/inventory"
+        },
+        "totals": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "native_activity": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/native_activity"
+          }
+        },
+        "handler_activity": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handler_activity"
+          }
+        },
+        "observed_since": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "schema_version",
+        "generated_at",
+        "hub",
+        "bindings",
+        "handlers",
+        "totals",
+        "handler_activity"
+      ],
+      "additionalProperties": false
+    },
+    "heartbeat": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "hub": {
+          "$ref": "#/$defs/hub"
+        },
+        "totals": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "native_activity": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/native_activity"
+          }
+        },
+        "handler_activity": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handler_activity"
+          }
+        },
+        "observed_since": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "schema_version",
+        "generated_at",
+        "hub",
+        "totals",
+        "handler_activity"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -11,9 +11,13 @@ import hashlib
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+
+from facts import (INVOCATION_TYPE, SNAPSHOT_TYPE, MAX_TIMELINE, HEARTBEAT_KEYS, envelope,
+                   expires_at, serialize, snapshot_projection)
 
 SCHEMA_VERSION = 1
 TERMINAL = frozenset({"succeeded", "failed", "timed_out", "skipped", "interrupted"})
@@ -117,17 +121,40 @@ class ReceiptStore:
                 CREATE INDEX IF NOT EXISTS invocation_recent ON invocations(received_at DESC);
                 CREATE INDEX IF NOT EXISTS invocation_cli ON invocations(cli, native, received_at DESC);
                 CREATE INDEX IF NOT EXISTS receipt_invocation ON receipt_events(invocation_id, sequence);
-                PRAGMA user_version = 1;
+                CREATE TABLE IF NOT EXISTS observation_metadata (
+                    key TEXT PRIMARY KEY, value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS observation_outbox (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT UNIQUE, envelope TEXT,
+                    created_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT
+                );
+                CREATE TABLE IF NOT EXISTS observation_revisions (
+                    invocation_id TEXT PRIMARY KEY REFERENCES invocations ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL
+                );
+                PRAGMA user_version = 2;
             """)
+            db.execute("INSERT OR IGNORE INTO observation_metadata(key,value) VALUES('hub_id',?)", (str(uuid.uuid4()),))
+            self.hub_id = db.execute("SELECT value FROM observation_metadata WHERE key='hub_id'").fetchone()[0]
         self.path.chmod(0o600)
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.path, timeout=2)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA synchronous=FULL")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA synchronous=FULL")
+            with db:
+                yield db
+        finally:
+            # sqlite's transaction context alone does not close a connection.
+            # A continuous publisher must not wait for cyclic GC to release
+            # the handles/caches from thousands of receipt and outbox writes.
+            db.close()
 
     def recover(self) -> None:
         """Previously started side effects are uncertain; never replay them."""
@@ -135,9 +162,14 @@ class ReceiptStore:
         with self.connect() as db:
             rows = db.execute("SELECT invocation_id, handler_id FROM executions WHERE status IN ('selected','started')").fetchall()
             for row in rows:
+                db.execute("UPDATE executions SET status='failed',reason='hub_restarted',finished_at=? WHERE invocation_id=? AND handler_id=?", (at, *row))
                 db.execute("INSERT INTO receipt_events(invocation_id,handler_id,status,reason,at) VALUES(?,?,'failed','hub_restarted',?)", (*row, at))
-            db.execute("UPDATE executions SET status='failed', reason='hub_restarted', finished_at=? WHERE status IN ('selected','started')", (at,))
-            db.execute("UPDATE invocations SET status='failed', updated_at=? WHERE status='received'", (at,))
+                self._finish(db, row[0], at)
+                self._observe(db, row[0], at)
+            for row in db.execute("SELECT invocation_id FROM invocations WHERE status='received'").fetchall():
+                db.execute("UPDATE invocations SET status='failed',updated_at=? WHERE invocation_id=?", (at, row[0]))
+                db.execute("INSERT INTO receipt_events(invocation_id,status,reason,at) VALUES(?,'failed','hub_restarted',?)", (row[0], at))
+                self._observe(db, row[0], at)
 
     def claim(self, invocation: dict[str, Any]) -> bool:
         at = now_iso()
@@ -150,6 +182,7 @@ class ReceiptStore:
             if not fresh:
                 db.execute("UPDATE invocations SET deduplicated=deduplicated+1, updated_at=? WHERE invocation_id=?", (at, invocation["invocation_id"]))
             db.execute("INSERT INTO receipt_events(invocation_id,status,at) VALUES(?,?,?)", (invocation["invocation_id"], "received" if fresh else "deduplicated", at))
+            self._observe(db, invocation["invocation_id"], at)
             return fresh
 
     def select(self, iid: str, handler_id: str, mode: str, *, reason: str | None = None) -> None:
@@ -161,6 +194,8 @@ class ReceiptStore:
                 VALUES(?,?,?,?,?,?,?)""", (iid, handler_id, mode, status, reason, at, at if reason else None))
             if cur.rowcount:
                 db.execute("INSERT INTO receipt_events(invocation_id,handler_id,status,reason,at) VALUES(?,?,?,?,?)", (iid, handler_id, status, reason, at))
+                db.execute("UPDATE invocations SET updated_at=? WHERE invocation_id=?", (at, iid))
+                self._observe(db, iid, at)
 
     def update(self, iid: str, handler_id: str, status: str, *, reason: str | None = None,
                duration_ms: float | None = None, exit_code: int | None = None,
@@ -179,6 +214,7 @@ class ReceiptStore:
                  event_id, event_type, publish_status, iid, handler_id))
             db.execute("INSERT INTO receipt_events(invocation_id,handler_id,status,reason,at) VALUES(?,?,?,?,?)", (iid, handler_id, status, reason, at))
             self._finish(db, iid, at)
+            self._observe(db, iid, at)
 
     def interrupt(self, iid: str, handler_id: str, reason: str = "shutdown_grace_expired") -> None:
         """Cancellation cannot overwrite a terminal transport receipt."""
@@ -191,6 +227,7 @@ class ReceiptStore:
             if cur.rowcount:
                 db.execute("INSERT INTO receipt_events(invocation_id,handler_id,status,reason,at) VALUES(?,?,'interrupted',?,?)", (iid, handler_id, reason, at))
                 self._finish(db, iid, at)
+                self._observe(db, iid, at)
 
     def interrupt_pending(self, reason: str = "shutdown_grace_expired") -> None:
         # A request can be canceled between claim and complete selection, or a
@@ -204,10 +241,12 @@ class ReceiptStore:
             rows = db.execute("SELECT invocation_id FROM invocations WHERE status='received'").fetchall()
             for row in rows:
                 db.execute("INSERT INTO receipt_events(invocation_id,status,reason,at) VALUES(?,'interrupted',?,?)", (row[0], reason, at))
-            db.execute("UPDATE invocations SET status='interrupted',updated_at=? WHERE status='received'", (at,))
+                db.execute("UPDATE invocations SET status='interrupted',updated_at=? WHERE invocation_id=?", (at, row[0]))
+                self._observe(db, row[0], at)
 
     @staticmethod
     def _finish(db: sqlite3.Connection, iid: str, at: str) -> None:
+        db.execute("UPDATE invocations SET updated_at=? WHERE invocation_id=?", (at, iid))
         statuses = [r[0] for r in db.execute("SELECT status FROM executions WHERE invocation_id=?", (iid,))]
         if any(s in {"selected", "started"} for s in statuses):
             return
@@ -218,7 +257,86 @@ class ReceiptStore:
 
     def finish(self, iid: str) -> None:
         with self.connect() as db:
-            self._finish(db, iid, now_iso())
+            at = now_iso()
+            before = db.execute("SELECT status FROM invocations WHERE invocation_id=?", (iid,)).fetchone()
+            if not before or before[0] != "received" or db.execute("SELECT 1 FROM executions WHERE invocation_id=? AND status IN ('selected','started') LIMIT 1", (iid,)).fetchone():
+                return
+            self._finish(db, iid, at)
+            after = db.execute("SELECT status FROM invocations WHERE invocation_id=?", (iid,)).fetchone()
+            if before and after and before[0] != after[0]:
+                db.execute("INSERT INTO receipt_events(invocation_id,status,at) VALUES(?,?,?)", (iid, after[0], at))
+                self._observe(db, iid, at)
+
+    def _enqueue(self, db: sqlite3.Connection, ce_type: str, data: dict, at: str) -> int:
+        cur = db.execute("INSERT INTO observation_outbox(created_at) VALUES(?)", (at,))
+        sequence = cur.lastrowid
+        fact = envelope(self.hub_id, sequence, ce_type, data, at)
+        db.execute("UPDATE observation_outbox SET event_id=?,envelope=? WHERE sequence=?", (fact["id"], serialize(fact), sequence))
+        return sequence
+
+    def _observe(self, db: sqlite3.Connection, iid: str, at: str, *, backfill: bool = False) -> None:
+        # Read using the SAME transaction as the receipt mutation. A process
+        # crash can leave both committed or neither, never a missing fact.
+        item = dict(db.execute("SELECT * FROM invocations WHERE invocation_id=?", (iid,)).fetchone())
+        item["executions"] = [dict(r) for r in db.execute("SELECT * FROM executions WHERE invocation_id=? ORDER BY selected_at,handler_id", (iid,))]
+        timeline = db.execute("SELECT sequence,handler_id,status,reason,at FROM receipt_events WHERE invocation_id=? ORDER BY sequence DESC LIMIT ?", (iid, MAX_TIMELINE)).fetchall()
+        item["timeline"] = [dict(r) for r in reversed(timeline)]
+        item["timeline_total"] = db.execute("SELECT COUNT(*) FROM receipt_events WHERE invocation_id=?", (iid,)).fetchone()[0]
+        item["timeline_truncated"] = item["timeline_total"] > len(timeline)
+        data = {"invocation": item, **({"backfill": True} if backfill else {})}
+        sequence = self._enqueue(db, INVOCATION_TYPE, data, at)
+        db.execute("INSERT INTO observation_revisions(invocation_id,sequence) VALUES(?,?) ON CONFLICT(invocation_id) DO UPDATE SET sequence=excluded.sequence", (iid, sequence))
+
+    def observe_snapshot(self, snapshot: dict, *, heartbeat: bool = False) -> int:
+        snapshot = snapshot_projection(snapshot)
+        at = snapshot["generated_at"]
+        key = "heartbeat" if heartbeat else "snapshot"
+        if heartbeat:
+            snapshot = {key: value for key, value in snapshot.items() if key in HEARTBEAT_KEYS}
+        with self.connect() as db:
+            return self._enqueue(db, SNAPSHOT_TYPE, {key: snapshot, "expires_at": expires_at(at)}, at)
+
+    def backfill(self, limit: int = 50) -> int:
+        """Latest old projections, in bounded resumable transactions.
+
+        A concurrent new mutation also creates the marker, so old state can
+        never overwrite its newer projection. Pruning cannot delete pending
+        facts because the outbox deliberately has no invocation foreign key.
+        """
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute("""SELECT i.invocation_id FROM invocations i
+                LEFT JOIN observation_revisions r USING(invocation_id)
+                WHERE r.invocation_id IS NULL ORDER BY i.received_at DESC,i.invocation_id
+                LIMIT ?""", (min(max(limit, 1), 200),)).fetchall()
+            for row in rows:
+                self._observe(db, row[0], now_iso(), backfill=True)
+            return len(rows)
+
+    def pending_observations(self, limit: int = 20) -> list[dict]:
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM observation_outbox ORDER BY sequence LIMIT ?", (min(max(limit, 1), 200),))]
+
+    def observation_sent(self, sequence: int) -> None:
+        with self.connect() as db:
+            db.execute("DELETE FROM observation_outbox WHERE sequence=?", (sequence,))
+            for key, value in (("last_acked_sequence", str(sequence)), ("last_acked_at", now_iso())):
+                db.execute("INSERT INTO observation_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+    def observation_failed(self, sequence: int, reason: str) -> None:
+        # Exception class/reason token only; never exception messages carrying
+        # server replies, payloads, endpoints or credentials.
+        with self.connect() as db:
+            db.execute("UPDATE observation_outbox SET attempts=attempts+1,last_error=? WHERE sequence=?", (reason, sequence))
+
+    def observation_status(self) -> dict:
+        with self.connect() as db:
+            pending = db.execute("SELECT COUNT(*) FROM observation_outbox").fetchone()[0]
+            metadata = dict(db.execute("SELECT key,value FROM observation_metadata"))
+            error = db.execute("SELECT last_error FROM observation_outbox WHERE last_error IS NOT NULL ORDER BY sequence LIMIT 1").fetchone()
+        return {"pending": pending, "last_acked_at": metadata.get("last_acked_at"),
+                "last_acked_sequence": int(metadata["last_acked_sequence"]) if "last_acked_sequence" in metadata else None,
+                "error": error[0] if error else None}
 
     def detail(self, iid: str) -> dict[str, Any] | None:
         with self.connect() as db:

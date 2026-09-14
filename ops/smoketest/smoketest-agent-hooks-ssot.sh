@@ -43,6 +43,7 @@ sys.path.insert(0, str(service_dir))
 import sync  # SSOT loader + effective_type
 from clients import get_adapter
 from core.envelope import build_envelope
+from core.event_map import resolve_map, resolve_alert_map
 from core.publisher import (
     DECKARD_ATTENTION_SUBJECT,
     DECKARD_ATTENTION_TYPE,
@@ -51,20 +52,6 @@ from core.publisher import (
     serialize_attention_envelope,
 )
 from core.validate import load_schema_for
-
-import claude.publish as cl
-import copilot.publish as cp
-import codex.publish as cx
-import hermes.publish as hm
-import antigravity.publish as ag
-
-IDENT = {
-    "claude": dict(source=cl.CLAUDE_SOURCE, producer=cl.CLAUDE_PRODUCER, service=cl.CLAUDE_SERVICE, actor=cl.CLAUDE_ACTOR),
-    "copilot": dict(source=cp.COPILOT_SOURCE, producer=cp.COPILOT_PRODUCER, service=cp.COPILOT_SERVICE, actor=cp.COPILOT_ACTOR),
-    "codex": dict(source=cx.CODEX_SOURCE, producer=cx.CODEX_PRODUCER, service=cx.CODEX_SERVICE, actor=cx.CODEX_ACTOR),
-    "hermes": dict(source=hm.HERMES_SOURCE, producer=hm.HERMES_PRODUCER, service=hm.HERMES_SERVICE, actor=hm.HERMES_ACTOR),
-    "antigravity": dict(source=ag.ANTIGRAVITY_SOURCE, producer=ag.ANTIGRAVITY_PRODUCER, service=ag.ANTIGRAVITY_SERVICE, actor=ag.ANTIGRAVITY_ACTOR),
-}
 
 UUID = "00000000-0000-0000-0000-000000000001"
 
@@ -100,7 +87,9 @@ checked = 0
 for agent_name, agent in master["agents"].items():
     if agent.get("dialect") in ("watcher", "runtime"):
         continue
-    ident = IDENT[agent_name]
+    adapter = get_adapter(agent_name)
+    ident = dict(source=adapter.source, producer=adapter.producer,
+                 service=adapter.service, actor=adapter.actor_base)
     for b in agent.get("bindings", []):
         if b.get("publish", True) is False:
             if b.get("alert") == "attention":
@@ -129,8 +118,17 @@ for agent_name, agent in master["agents"].items():
                     fails += 1
                     print(f"  FAIL [{agent_name}] {b['native']:<20} -> deckard attention: {exc!r}")
             else:
-                fails += 1
-                print(f"  FAIL [{agent_name}] {b['native']:<20} -> invalid alert metadata")
+                try:
+                    assert b.get("role"), "local signal must declare its dispatch role"
+                    assert not b.get("alert"), "unknown alert metadata"
+                    events = resolve_map(adapter.agent_dir, adapter.default_map)
+                    alerts = resolve_alert_map(adapter.agent_dir)
+                    assert all(name not in events and name not in alerts for name in (b["arg"], b["native"])), "local signal leaked into a publisher map"
+                    checked += 1
+                    print(f"  PASS [{agent_name}] {b['native']:<20} -> local dispatch; observed through hook receipts")
+                except Exception as exc:
+                    fails += 1
+                    print(f"  FAIL [{agent_name}] {b['native']:<20} -> local signal: {exc!r}")
             continue
         ce_type, bucket = sync.effective_type(b, lifecycle, lock)
         try:
