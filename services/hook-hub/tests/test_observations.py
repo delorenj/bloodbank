@@ -286,3 +286,27 @@ def test_offline_observation_worker_does_not_block_or_repeat_native_hook(tmp_pat
         assert "PRIVATE-PROMPT" not in json.dumps(facts(store))
         receipt = store.detail(reply["invocation_id"])
         assert len(receipt["executions"]) == 1
+
+
+def test_snapshot_failure_cannot_block_valid_receipt_delivery(tmp_path, monkeypatch):
+    import hub
+    monkeypatch.setattr(hub, "RECEIPT_PATH", tmp_path / "receipts.sqlite3")
+    monkeypatch.setattr(hub, "LOG_PATH", tmp_path / "hub.log")
+    delivered = threading.Event()
+    def acknowledge(event, body):
+        assert event["type"] == "bloodbank.agent.hook.updated"
+        delivered.set()
+    async def broken_status():
+        raise ValueError("simulated inventory failure")
+    async def run():
+        server = hub.Server()
+        server.store.claim(invocation())
+        server.status = broken_status
+        server.observations.publisher = acknowledge
+        task = asyncio.create_task(server.observe())
+        try:
+            assert await asyncio.to_thread(delivered.wait, 2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(run())
