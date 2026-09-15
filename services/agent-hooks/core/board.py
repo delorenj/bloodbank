@@ -35,7 +35,7 @@ def find_manifest(start: str | Path) -> Path | None:
 
 
 def board_for(cwd: str | Path) -> dict | None:
-    """Return {board_id, identifier, workspace, repo_path, slug} or None.
+    """Return board binding plus canonical project_id and its legacy slug alias.
 
     None means "this directory has no board", which is a real and common answer
     -- not an error. A manifest that fails to parse also returns None rather
@@ -49,13 +49,18 @@ def board_for(cwd: str | Path) -> dict | None:
         data = json.loads(manifest.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(data, dict):
+        return None
     provider = data.get("ticket_provider")
     if not isinstance(provider, dict) or not provider.get("board_id"):
         return None
+    declared_id = data.get("project_id", data.get("project_slug", ""))
+    project_id = declared_id.strip().lower() if isinstance(declared_id, str) else ""
     return {
         "board_id": provider.get("board_id", ""),
         "identifier": provider.get("identifier", ""),
         "workspace": provider.get("workspace", ""),
-        "slug": data.get("project_slug", ""),
+        "project_id": project_id,
+        "slug": project_id,
         "repo_path": str(manifest.parent),
     }

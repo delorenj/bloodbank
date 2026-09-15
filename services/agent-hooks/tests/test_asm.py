@@ -811,6 +811,42 @@ class GatewayPidParseTest(unittest.TestCase):
 class BoardWalkUpTest(unittest.TestCase):
     """cwd -> board. No inheritance, exact match, broken manifests stop the walk."""
 
+    def test_project_id_is_case_insensitive_and_owns_the_slug_alias(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / ".project.json"
+            nested = Path(directory) / "src"
+            nested.mkdir()
+            for spelling in ("px", "PX", "Px"):
+                with self.subTest(project_id=spelling):
+                    manifest.write_text(json.dumps({
+                        "project_id": spelling,
+                        "project_slug": "obsolete-name",
+                        "ticket_provider": {"board_id": "plane-uuid", "identifier": "PX"},
+                    }))
+                    resolved = board.board_for(nested)
+                    self.assertEqual(resolved["project_id"], "px")
+                    self.assertEqual(resolved["slug"], resolved["project_id"])
+                    self.assertEqual(resolved["board_id"], "plane-uuid")
+                    self.assertEqual(resolved["identifier"], "PX")
+
+    def test_legacy_manifest_identity_is_normalized_without_a_second_key(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / ".project.json").write_text(json.dumps({
+                "project_slug": "LEGACY",
+                "ticket_provider": {"board_id": "legacy-board"},
+            }))
+            resolved = board.board_for(directory)
+            self.assertEqual(resolved["project_id"], "legacy")
+            self.assertEqual(resolved["slug"], "legacy")
+
+    def test_non_object_manifest_stops_the_walk(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / ".project.json").write_text("[]")
+            self.assertIsNone(board.board_for(directory))
+
     def test_a_submodule_resolves_to_its_own_board_not_the_parents(self):
         """Four registered projects live under 33GOD, so a naive
         cwd.startswith(repo_path) hands every submodule agent to 33GOD."""
