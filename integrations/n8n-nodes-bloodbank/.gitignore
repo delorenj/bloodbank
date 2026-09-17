@@ -1,3 +1,6 @@
 node_modules/
 dist/
 *.log
+
+# Generated from canonical schemas by npm run codegen.
+/src/nodes/Bloodbank/eventSchemas.ts

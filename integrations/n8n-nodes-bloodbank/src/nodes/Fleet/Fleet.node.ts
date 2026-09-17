@@ -323,6 +323,16 @@ export class Fleet implements INodeType {
         }
         const route = resolveFleetAgentForBoard(registry, facts.boardId, facts.repo);
 
+        if (route.projectPath) {
+          // Read canonical enrollment every dispatch; never trust a stale registry copy.
+          const manifest = JSON.parse(await readFile(`${route.projectPath}/.project.json`, 'utf8'));
+          if (manifest.execution && manifest.execution.mode !== 'legacy') {
+            out.push({ json: { invoked: false, skipped: true, boardId: facts.boardId,
+              reason: 'Krebs owns managed/shadow execution; legacy fleet dispatch fenced' }, pairedItem: { item: i } });
+            continue;
+          }
+        }
+
         if (!route.eligible) {
           const onIneligible = this.getNodeParameter('onIneligible', i, 'skip') as string;
           if (onIneligible === 'error') {

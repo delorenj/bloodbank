@@ -684,6 +684,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    p_call = subparsers.add_parser("call", help="Wait for a correlated controller receipt; envelope from stdin")
+    p_call.add_argument("--timeout", type=float, default=30)
+    def call_command(args):
+        from call import call
+        print(json.dumps(call(json.load(sys.stdin), args.timeout)))
+        return 0
+    p_call.set_defaults(func=call_command)
+
     p_doctor = subparsers.add_parser(
         "doctor",
         help="static local scaffold check (no network, no Docker)",

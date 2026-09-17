@@ -51,7 +51,7 @@ for (const file of walk(eventSchemasRoot)) {
   const props = schema.properties || {};
   const type = props.type && props.type.const;
   if (!type) continue;
-  const kind = (props.kind && props.kind.const) || 'event';
+  const kind = (props.kind && (props.kind.const || (props.kind.enum?.includes('command') ? 'command' : undefined))) || 'event';
   if (kind !== 'event' && kind !== 'command') continue;
   const domain = (props.domain && props.domain.const) || type.split('.')[2];
   const dataProps = (props.data && props.data.properties) || {};

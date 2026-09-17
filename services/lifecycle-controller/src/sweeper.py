@@ -1,32 +1,13 @@
-"""Periodic sweeper — enqueues all active lifecycles for reconciliation.
+"""Compatibility entrypoint; canonical project-health implementation is in Krebs.
 
-This is the backstop for silence/time-based failures. Even if no sentinel
-emits observations, the sweeper ensures lifecycles are re-evaluated on
-cadence so staleness (stalled, blocked, degraded observers) is detected.
+Existing database tables and data are unchanged. Install krebs-execution when
+running this component standalone.
 """
-from __future__ import annotations
-
-import asyncio
-
-import structlog
-
-from db.repository import LifecycleRepository
-
-logger = structlog.get_logger()
-
-
-class Sweeper:
-    def __init__(self, repo: LifecycleRepository) -> None:
-        self.repo = repo
-
-    async def run_once(self) -> int:
-        """Enqueue all active lifecycles. Returns count enqueued."""
-        count = await self.repo.enqueue_sweep()
-        logger.info("sweep_enqueued", count=count)
-        return count
-
-    async def run_loop(self, interval_seconds: float = 300.0) -> None:
-        """Run sweep every N seconds."""
-        while True:
-            await self.run_once()
-            await asyncio.sleep(interval_seconds)
+from pathlib import Path
+import sys
+_checkout = Path(__file__).resolve().parents[4] / "krebs" / "src"
+if _checkout.is_dir():
+    sys.path.insert(0, str(_checkout))
+import importlib
+_canonical = importlib.import_module("krebs.project_health.sweeper")
+globals().update({name: value for name, value in vars(_canonical).items() if not name.startswith("__")})
