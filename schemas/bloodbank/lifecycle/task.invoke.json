@@ -48,7 +48,12 @@
                       "get",
                       "comment",
                       "update",
-                      "create"
+                      "create",
+                      "plan",
+                      "reevaluate",
+                      "override",
+                      "reconcile",
+                      "planner"
                     ]
                   },
                   "command_id": {
@@ -214,7 +219,12 @@
                     "get",
                     "comment",
                     "update",
-                    "create"
+                    "create",
+                    "plan",
+                    "reevaluate",
+                    "override",
+                    "reconcile",
+                    "planner"
                   ]
                 },
                 "command_id": {

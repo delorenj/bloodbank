@@ -359,3 +359,13 @@ function t_ctx() {
 test.after(async () => {
   for (const fn of cleanups) await fn();
 });
+
+for (const mode of ['managed','shadow']) test(`${mode} canonical manifest prevents actual fleet publication`,async t=>{
+ const dir=await mkdtemp(join(__dirname,'../node_modules/.fence-test-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ await writeFile(join(dir,'.project.json'),JSON.stringify({execution:{mode}}));
+ const registryFile=await writeRegistry(t,registry({'james-brennan-pm':agent({project_path:dir})}));
+ for(const operation of ['groomTicket','delegateTicket']){
+  const {calls,send}=recorder();const context=executionContext({operation,registryFile},[{json:operation==='groomTicket'?CREATED:MOVED_TO_TODO}]);
+  const [out]=await Fleet.prototype.execute.call(context,send);assert.equal(calls.length,0);assert.equal(out[0].json.skipped,true);assert.match(out[0].json.reason,/Krebs/);
+ }
+});
