@@ -30,6 +30,20 @@ plane:
   workspace: "33god"
   project_id: "10d06f8d-c110-4ce5-beaa-0914534b090a"
   identifier: "BB"
+# Ticket-provider binding (linear | plane | trello). Board/workspace come from
+# repo-root .project.json; this block supplies the normalized-state -> Plane
+# lane map, which is REQUIRED on this board: Plane's `started` group holds 4
+# lanes and `unstarted` holds 2, so the adapter refuses to guess and every
+# transition fails until each band is named here.
+ticket_provider:
+  name: plane
+  backlog:   "Backlog"
+  unstarted: "Todo"
+  started:   "In Progress"
+  in_review: "E2E Testing & QA"
+  completed: "Done"
+  cancelled: "Cancelled"
+
 # Bloodbank wiring (consumed + produced subjects).
 bloodbank:
   subscribe:

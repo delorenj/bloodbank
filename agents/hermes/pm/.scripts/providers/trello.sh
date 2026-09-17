@@ -81,8 +81,14 @@ list_id_for() {
   [ -n "$BOARD" ] || die "ticket_provider.board not set"
   want="$(list_name_for "$1")"
   api GET "boards/$BOARD/lists" | NM="$want" python3 -c 'import sys,json,os
-rows=json.load(sys.stdin); nm=os.environ["NM"].lower()
-print(next((l["id"] for l in rows if l.get("name","").lower()==nm), ""))'
+rows=json.load(sys.stdin); nm=os.environ["NM"].strip().casefold()
+matches=[row for row in rows if str(row.get("name") or "").strip().casefold()==nm]
+if len(matches) != 1:
+    raise SystemExit("trello: exact list name %r resolved %d lists; exactly one is required" % (os.environ["NM"], len(matches)))
+list_id=str(matches[0].get("id") or "")
+if not list_id:
+    raise SystemExit("trello: resolved list omitted its id")
+print(list_id)'
 }
 
 # All Trello ops require credentials; fail fast and clean before any pipe.
@@ -134,14 +140,33 @@ print(json.dumps({"id":c.get("id",""),"key":c.get("id",""),"title":c.get("name",
   comment)
     ID="${1:?usage: comment <id> <body>}"; BODY="${2:?}"
     api POST "cards/$ID/actions/comments" "text=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$BODY")" \
-      | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))'
+      | EXPECTED_ID="$ID" python3 -c 'import sys,json,os
+action=json.load(sys.stdin)
+if not isinstance(action,dict):
+    raise SystemExit("trello: comment response was not an action object")
+action_id=action.get("id")
+if not isinstance(action_id,str) or not action_id.strip():
+    raise SystemExit("trello: comment response omitted its action id")
+data=action.get("data")
+card=data.get("card") if isinstance(data,dict) else None
+if not isinstance(card,dict) or str(card.get("id") or "").strip()!=os.environ["EXPECTED_ID"]:
+    raise SystemExit("trello: comment response did not identify the requested card")
+print(action_id.strip())'
     ;;
 
   transition)
     ID="${1:?usage: transition <id> <normalized-state>}"; TARGET="${2:?}"
     LID="$(list_id_for "$TARGET")"
     [ -n "$LID" ] || die "no Trello list mapped for normalized '$TARGET' (check state_map)"
-    api PUT "cards/$ID" "idList=$LID" | python3 -c 'import sys,json; c=json.load(sys.stdin); print("ok "+c.get("id",""))'
+    api PUT "cards/$ID" "idList=$LID" >/dev/null
+    api GET "cards/$ID" "fields=id,idList" \
+      | EXPECTED_ID="$ID" EXPECTED_LIST_ID="$LID" python3 -c 'import sys,json,os
+card=json.load(sys.stdin)
+if str(card.get("id") or "") != os.environ["EXPECTED_ID"]:
+    raise SystemExit("trello: transition read-back did not identify the requested card")
+if str(card.get("idList") or "") != os.environ["EXPECTED_LIST_ID"]:
+    raise SystemExit("trello: transition read-back did not confirm the exact target list")
+print("ok " + str(card.get("id") or ""))'
     ;;
 
   describe_board)

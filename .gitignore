@@ -47,8 +47,11 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored to the repo root: an unanchored `lib/` also ignored
+# agents/hermes/pm/.scripts/lib/, silently untracking the ticket-provider
+# dispatcher so it could never ship in a clone.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -67,8 +70,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
