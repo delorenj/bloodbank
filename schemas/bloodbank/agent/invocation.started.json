@@ -45,6 +45,14 @@
             "null"
           ],
           "description": "Set on nested invocations (sub-agents)."
+        },
+        "context": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Echo of the originating bloodbank.agent.invocation.start command's data.context, verbatim. Ticket turns carry reason (ticket-grooming|ticket-delegation), repo, ticket_key, ticket_id, board_id, workspace, title and phase so consumers can act statelessly. Omitted when the command carried no context.",
+          "additionalProperties": true
         }
       },
       "required": [

@@ -7,6 +7,7 @@ boundary between an untrusted broker message and the Hermes gateway adapter.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 COMMAND_TYPE = "bloodbank.agent.invocation.start"
@@ -224,7 +227,7 @@ class ProfileResolver:
                 isinstance(profile, str)
                 and profile.strip()
                 and isinstance(bloodbank, dict)
-                and bloodbank.get("enabled") is True
+                and registry_bloodbank_enabled(agent_id, bloodbank)
                 and bloodbank.get("gateway_scope") == "fleet"
                 and bloodbank.get("target_agent_id") == agent_id
             ):
@@ -265,6 +268,30 @@ class ProfileResolver:
             raise RouteInvalid(f"target_agent_id {target!r} maps to a missing profile")
         return normalized
 
+
+
+def registry_bloodbank_enabled(agent_id: str, bloodbank: Mapping[str, Any]) -> bool:
+    """Return the effective activation of one registry row's Bloodbank block.
+
+    No key means enabled: an ABSENT ``bloodbank.enabled`` activates the row.
+    An explicit ``false`` quarantines it and an explicit ``true`` enables it.
+    A present value that is not a YAML boolean (``"true"``, ``yes`` parsed as a
+    string, ``null``, ``1``) is invalid: the row is treated as disabled and the
+    gateway logs a loud error naming the field, so a typo never silently
+    widens or narrows dispatch.
+    """
+    if "enabled" not in bloodbank:
+        return True
+    value = bloodbank["enabled"]
+    if value is True or value is False:
+        return value
+    logger.error(
+        "fleet registry agents.%s.bloodbank.enabled must be a strict YAML "
+        "boolean (got %s); treating the agent as disabled",
+        agent_id,
+        type(value).__name__,
+    )
+    return False
 
 @dataclass(frozen=True)
 class Invocation:
@@ -348,6 +375,19 @@ def lifecycle_event(
     }
 
 
+def _command_context(invocation: Invocation) -> dict[str, Any]:
+    """Echo the command's ``data.context`` onto invocation lifecycle events.
+
+    Downstream consumers (the n8n ticket workflows) act on a finished ticket
+    turn statelessly: ``context.reason``, ``board_id``, ``ticket_id``,
+    ``workspace`` and ``ticket_key`` ride on started/completed/failed instead
+    of being remembered in workflow static data keyed by correlation id.
+    Additive and only present when the command carried an object context.
+    """
+    context = invocation.envelope.get("data", {}).get("context")
+    return {"context": context} if isinstance(context, dict) else {}
+
+
 def started_events(invocation: Invocation) -> tuple[dict[str, Any], dict[str, Any]]:
     turn = lifecycle_event(
         invocation,
@@ -368,6 +408,7 @@ def started_events(invocation: Invocation) -> tuple[dict[str, Any], dict[str, An
             "thread_id": invocation.thread_id,
             "turn_id": invocation.turn_id,
             "parent_invocation_id": None,
+            **_command_context(invocation),
         },
     )
     return turn, started
@@ -392,6 +433,7 @@ def terminal_events(
                 "invocation_id": invocation.invocation_id,
                 "thread_id": invocation.thread_id,
                 "turn_id": invocation.turn_id,
+                **_command_context(invocation),
             },
         )
         turn_outcome = "completed"
@@ -417,6 +459,7 @@ def terminal_events(
                     else failure_message
                     or "Hermes processing did not complete successfully"
                 ),
+                **_command_context(invocation),
             },
         )
         turn_outcome = "canceled" if cancelled else "failed"

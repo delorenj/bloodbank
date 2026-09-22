@@ -184,8 +184,11 @@ def collect_installed_inventory(master: dict | None = None, *, probe_native: boo
                         for field in ("command", "matcher", "timeout", "condition"):
                             if hook.get(field) != want.get(field):
                                 issues.append(f"{field}_drift")
-                    if hook.get("enabled") is False:
+                    hook_enabled = hook.get("enabled", True)
+                    if hook_enabled is False:
                         issues.append("disabled")
+                    elif hook_enabled is not True:
+                        issues.append("enabled_invalid")
                     if hook.get("trust_error"):
                         issues.append(hook["trust_error"])
                     if hook.get("malformed"):
@@ -199,8 +202,13 @@ def collect_installed_inventory(master: dict | None = None, *, probe_native: boo
                             if not loaded:
                                 issues.append("native_loader_missing")
                             for loaded_hook in loaded:
-                                if not loaded_hook.get("enabled"):
+                                # No key means enabled; only an explicit false
+                                # disables, and a present non-boolean is invalid.
+                                native_enabled = loaded_hook.get("enabled", True)
+                                if native_enabled is False:
                                     issues.append("native_disabled")
+                                elif native_enabled is not True:
+                                    issues.append("native_enabled_invalid")
                                 if loaded_hook.get("trustStatus") != "trusted":
                                     issues.append("native_untrusted")
                                 if want and loaded_hook.get("timeoutSec") != want.get("timeout"):

@@ -111,13 +111,6 @@ def test_active_registry_route_requires_exact_bloodbank_policy(tmp_path):
         {
             "profile_name": "operations",
             "bloodbank": {
-                "gateway_scope": "fleet",
-                "target_agent_id": "fleet-agent",
-            },
-        },
-        {
-            "profile_name": "operations",
-            "bloodbank": {
                 "enabled": False,
                 "gateway_scope": "fleet",
                 "target_agent_id": "fleet-agent",
@@ -161,7 +154,6 @@ def test_active_registry_route_requires_exact_bloodbank_policy(tmp_path):
         "unrelated-runtime-signals",
         "null-bloodbank",
         "malformed-bloodbank",
-        "missing-enabled",
         "false-enabled",
         "non-boolean-enabled",
         "wrong-scope",
@@ -169,12 +161,64 @@ def test_active_registry_route_requires_exact_bloodbank_policy(tmp_path):
         "blank-profile",
     ),
 )
-def test_registry_route_policy_is_strict_default_deny(tmp_path, record):
+def test_registry_route_policy_rejects_ineligible_records(tmp_path, record):
     registry = {"schema_version": 1, "agents": {"fleet-agent": record}}
     (tmp_path / "agents-registry.yaml").write_text(yaml.safe_dump(registry))
 
     with pytest.raises(RouteInvalid, match="registry-defined but not eligible"):
         _resolver(tmp_path).resolve("fleet-agent")
+
+
+def test_absent_enabled_key_means_enabled(tmp_path):
+    """No key means enabled: a routing record without `enabled` is eligible."""
+    registry = {
+        "schema_version": 1,
+        "agents": {
+            "fleet-agent": {
+                "profile_name": "operations",
+                "bloodbank": {
+                    "gateway_scope": "fleet",
+                    "target_agent_id": "fleet-agent",
+                },
+            }
+        },
+    }
+    (tmp_path / "agents-registry.yaml").write_text(yaml.safe_dump(registry))
+
+    assert _resolver(tmp_path).resolve("fleet-agent") == "operations"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["true", "yes", 1, None],
+    ids=("string-true", "string-yes", "integer", "explicit-null"),
+)
+def test_present_non_boolean_enabled_is_invalid_disabled_and_loud(
+    tmp_path, caplog, value
+):
+    registry = {
+        "schema_version": 1,
+        "agents": {
+            "fleet-agent": {
+                "profile_name": "operations",
+                "bloodbank": {
+                    "enabled": value,
+                    "gateway_scope": "fleet",
+                    "target_agent_id": "fleet-agent",
+                },
+            }
+        },
+    }
+    (tmp_path / "agents-registry.yaml").write_text(yaml.safe_dump(registry))
+
+    with caplog.at_level("ERROR", logger="bloodbank_hermes_gateway.contract"):
+        with pytest.raises(RouteInvalid, match="registry-defined but not eligible"):
+            _resolver(tmp_path).resolve("fleet-agent")
+    assert any(
+        "agents.fleet-agent.bloodbank.enabled must be a strict YAML boolean"
+        in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_static_target_profile_is_an_explicit_registry_independent_override(tmp_path):
@@ -335,3 +379,53 @@ def test_lifecycle_events_use_existing_schema_contracts(
 
     assert events[2]["type"] == invocation_type
     assert events[3]["data"]["outcome"] == turn_outcome
+
+    # Invocation lifecycle events echo the command's data.context so a
+    # downstream consumer can act on a ticket turn statelessly; the turn
+    # events do not carry it.
+    assert events[1]["data"]["context"] == valid_command["data"]["context"]
+    assert events[2]["data"]["context"] == valid_command["data"]["context"]
+    assert "context" not in events[0]["data"]
+    assert "context" not in events[3]["data"]
+
+
+def test_invocation_events_omit_context_when_command_has_none(
+    valid_command, repo_root
+):
+    command = json.loads(json.dumps(valid_command))
+    command["data"]["context"] = None
+    invocation = Invocation.from_envelope(command, "bloodbank-pm")
+    events = (
+        *started_events(invocation),
+        *terminal_events(invocation, outcome="success"),
+    )
+    for event in events:
+        assert "context" not in event["data"]
+
+
+def test_ticket_context_rides_on_started_completed_and_failed(valid_command, repo_root):
+    ticket = {
+        "reason": "ticket-grooming",
+        "repo": "33GOD",
+        "ticket_key": "GOD-1",
+        "ticket_id": "c0ffee00-0000-4000-8000-000000000001",
+        "board_id": "c0ffee00-0000-4000-8000-000000000002",
+        "workspace": "delorenj",
+        "title": "Groom me",
+        "phase": "grooming",
+    }
+    command = json.loads(json.dumps(valid_command))
+    command["data"]["context"] = ticket
+    invocation = Invocation.from_envelope(command, "bloodbank-pm")
+
+    import sys
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    _, started = started_events(invocation)
+    completed, _ = terminal_events(invocation, outcome="success")
+    failed, _ = terminal_events(invocation, outcome="failure")
+    for event in (started, completed, failed):
+        validate_envelope(event)
+        assert event["data"]["context"] == ticket

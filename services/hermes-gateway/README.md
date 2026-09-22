@@ -14,9 +14,11 @@ or Hermes failures receive a delayed negative acknowledgement.
 
 ## Hard rollout gate
 
-The DNET-4 review snapshot reports **zero currently eligible entries** in the
-live fleet registry. Do not deploy or restart this gateway code first: strict
-default-deny would make every registry-derived target unroutable. PJangler and
+Historical (DNET-4): the review snapshot reported **zero currently eligible
+entries** in the live fleet registry, and the then-strict default-deny would
+have made every registry-derived target unroutable. Since 2026-09-22 an absent
+`bloodbank.enabled` means enabled, so a routing record without the key is
+eligible; the backfill note below is kept for the record. PJangler and
 the Hermes template must first project the accepted `metadata.bloodbank`
 contract, an explicitly approved backfill must enable the intended agents, and
 a read-only audit must show the expected nonzero eligible set. Only then may an
@@ -75,11 +77,16 @@ exactly:
 
 - `agents.<agent_id>.profile_name` is a nonblank string;
 - `agents.<agent_id>.bloodbank` is a mapping;
-- `bloodbank.enabled is true` as a YAML boolean, not a truthy substitute;
+- `bloodbank.enabled` is **absent** or the YAML boolean `true` (no key means
+  enabled; only an explicit `false` quarantines the agent);
 - `bloodbank.gateway_scope == "fleet"`;
 - `bloodbank.target_agent_id == <agent_id>`.
 
-Missing, false, malformed, or mismatched route policy is default-deny. The
+A present `bloodbank.enabled` that is not a YAML boolean (`"true"`, `yes` as a
+string, `null`, `1`) is invalid: the row is treated as disabled and the gateway
+logs an ERROR naming `agents.<agent_id>.bloodbank.enabled`. A missing
+`bloodbank` mapping, an explicit `false`, or a mismatched scope/target is not
+routable. The
 gateway does not infer eligibility from Telegram configuration, systemd units,
 lifecycle state, or profile existence. It reloads and rechecks the registry
 after durable claim and again immediately before Hermes dispatch, including
@@ -167,6 +174,16 @@ dedicated shared Bloodbank process must also set
 `gateway.multiplex_secondary_adapters: false`; Telegram and Slack continue in
 their existing profile-scoped gateway processes. This plugin does not work
 around, replace, or mutate Hermes internals.
+
+## Lifecycle events carry the command context
+
+`bloodbank.agent.invocation.started`, `.completed` and `.failed` echo the
+command's `data.context` object verbatim as `data.context` (omitted when the
+command carried none). The ticket workflows put `reason`
+(`ticket-grooming`/`ticket-delegation`), `repo`, `ticket_key`, `ticket_id`,
+`board_id`, `workspace`, `title` and `phase` there, so a consumer can act on a
+finished ticket turn statelessly instead of remembering the correlation id.
+The `agent.turn.*` events do not carry it.
 
 ## Tests
 
