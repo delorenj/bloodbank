@@ -12,6 +12,16 @@
 id = "skill-reminder"
 mode = "sync"
 on = ["prompt_submit", "invocation_start"]
+# No "hermes": it renders a strictly stronger version of this natively. Every
+# turn, prompt_builder.py scans skills.external_dirs and emits a
+# "## Skills (mandatory)" / <available_skills> block naming every skill with
+# its description under "you MUST load it with skill_view(name)" -- where this
+# reminder only names a directory. Dispatching it to hermes spent a python3 +
+# a bash on output hermes then discarded as non-JSON (417 such warnings across
+# 6 agents; 100% of the discarded text was this reminder).
+# No "openclaw" either: support_status "planned", config_target null, so it has
+# no deployed hook to receive it. Add it when it ships.
+clis = ["claude", "codex", "copilot", "kimi", "gemini", "opencode", "antigravity"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "skill-reminder"]
 timeout_ms = 1000
 order = 0

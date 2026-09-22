@@ -73,8 +73,13 @@ def context_output(text: str, cli: str, native: str) -> str:
         return json.dumps({"hookSpecificOutput": {"hookEventName": native, "additionalContext": text}}, ensure_ascii=False)
     if cli == "antigravity":
         return json.dumps({"injectSteps": [{"ephemeralMessage": text}]}, ensure_ascii=False)
+    if cli == "hermes":
+        # Hermes json.loads() every hook's stdout (agent/shell_hooks.py) and
+        # keeps only {"context": "..."}; anything unparseable is logged and
+        # dropped. Plain text here was silently discarded, never injected.
+        return json.dumps({"context": text}, ensure_ascii=False)
     # Kimi treats successful stdout as context; OpenCode's native bridge adds
-    # it to its message parts. Hermes and Copilot accept plain context.
+    # it to its message parts. Copilot accepts plain context.
     return text
 
 
