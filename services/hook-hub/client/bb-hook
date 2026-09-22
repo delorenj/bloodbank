@@ -299,9 +299,36 @@ def main(argv: list[str]) -> int:
 
     reply = exchange(line)
 
-    # In trailer mode the CLI parses our stdout as JSON, so handler output must
-    # not be relayed -- those dialects have no context-injection surface anyway.
+    # In trailer mode the CLI parses our stdout as JSON. The trailer exists to
+    # guarantee such a dialect ALWAYS receives a JSON object -- including on the
+    # failure paths -- not to silence handlers. Returning the bare trailer threw
+    # away real output: concerns.py::context_output shapes a proper envelope for
+    # both gemini ({"hookSpecificOutput": ...}) and antigravity ({"injectSteps":
+    # ...}), and every gemini BeforeAgent received a literal "{}" instead.
+    # Merge the handler object OVER the trailer so the guarantee still holds and
+    # the content arrives; fall back to the bare trailer when there is nothing
+    # to say or the reply is not a JSON object. Exit code stays 0 either way --
+    # never wedge an agent.
     if trailer is not None:
+        relayed = reply.get("stdout")
+        if isinstance(relayed, str) and relayed.strip():
+            try:
+                payload = json.loads(relayed)
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict):
+                try:
+                    merged = json.loads(trailer)
+                except ValueError:
+                    merged = {}
+                if not isinstance(merged, dict):
+                    merged = {}
+                merged.update(payload)
+                try:
+                    print(json.dumps(merged, ensure_ascii=False))
+                except (TypeError, ValueError):
+                    return finish()
+                return 0
         return finish()
 
     out = reply.get("stdout")
