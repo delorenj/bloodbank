@@ -7,6 +7,7 @@ byte-for-byte, which proves the field survives an edit, not that anyone reads it
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -124,6 +125,116 @@ class OrderingTests(unittest.TestCase):
         with registry(REGISTRY), mock.patch.dict(os.environ, {"HINDSIGHT_FANOUT": "0", "HINDSIGHT_GLOBAL_BANKS": "infra"}), \
              mock.patch.object(hindsight, "ancestor_banks", return_value=["33GOD"]):
             self.assertEqual(hindsight.recall_banks("claude", "flume"), ["flume", "33GOD", "general", "infra"])
+
+
+class RetainRoutingTests(unittest.TestCase):
+    """EXPERIENCE to the person, WORLD to the project.
+
+    The API exposes no type on write -- no `--type` on retain, no type field on
+    the item schema -- so a bank's MISSION is the router. Verified with
+    dry-run-extract: one identical summary yields "Agent built buildOrgChart ...
+    | Involving: agent" in the identity bank and "Built an org chart renderer in
+    tree.ts that reconciles ..." in the project bank. Episodic and semantic from
+    the same bytes.
+    """
+
+    def test_a_declared_agent_writes_to_the_person_then_the_project(self):
+        with registry(REGISTRY), mock.patch.dict(os.environ, {"HERMES_HOME": "/p/delonet-company-reporter"}):
+            self.assertEqual(hindsight.retain_targets("hermes", "flume"),
+                             ["delonet-company", "flume"])
+
+    def test_the_person_leads_so_a_partial_failure_keeps_the_irreplaceable_half(self):
+        # The project's copy can be rebuilt from the repo by a later session.
+        # The agent's memory of having been there cannot be rebuilt by anything.
+        with registry(REGISTRY), mock.patch.dict(os.environ, {"HERMES_HOME": "/p/delonet-company-reporter"}):
+            self.assertEqual(hindsight.retain_targets("hermes", "flume")[0], "delonet-company")
+
+    def test_an_undeclared_agent_writes_only_to_the_project(self):
+        with registry(REGISTRY), mock.patch.dict(os.environ, {"HERMES_HOME": "/p/33god-pm"}):
+            self.assertEqual(hindsight.retain_targets("hermes", "flume"), ["flume"])
+
+    def test_a_non_agent_cli_is_unchanged(self):
+        with registry(REGISTRY), mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HERMES_HOME", None)
+            self.assertEqual(hindsight.retain_targets("claude", "flume"), ["flume"])
+
+    def test_a_personal_bank_equal_to_the_project_is_written_once(self):
+        with registry(REGISTRY.replace("write_bank: delonet-company", "write_bank: flume")), \
+             mock.patch.dict(os.environ, {"HERMES_HOME": "/p/delonet-company-reporter"}):
+            self.assertEqual(hindsight.retain_targets("hermes", "flume"), ["flume"])
+
+
+class EndToEndRetainTests(unittest.TestCase):
+    """`end()` really issues one retain per bank."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.calls = self.root / "calls.jsonl"
+        fake = self.root / "hindsight"
+        fake.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json,os,sys\n"
+            "from pathlib import Path\n"
+            "with Path(os.environ['CALL_LOG']).open('a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
+            # argv[0] is the script; argv[1:] is what hook-hub passed, so the
+            # bank -- `memory retain <BANK> ...` -- lands at argv[3].
+            "bank = sys.argv[3] if len(sys.argv) > 3 else ''\n"
+            "if bank and bank == os.environ.get('FAIL_BANK',''): raise SystemExit(1)\n"
+            "print(json.dumps({'success':True,'document_id':'accepted'}))\n")
+        fake.chmod(0o700)
+        self.environment = mock.patch.dict(os.environ, {
+            "HINDSIGHT_BIN": str(fake), "HINDSIGHT_BANK": "flume",
+            "HS_JOURNAL_DIR": str(self.root / "journal"), "CALL_LOG": str(self.calls),
+            "HERMES_HOME": "/p/delonet-company-reporter", "BB_HOOK_INVOCATION_ID": "t"}, clear=False)
+        self.environment.start()
+        self.bank = mock.patch.object(hindsight, "bank", return_value="flume")
+        self.bank.start()
+
+    def tearDown(self):
+        self.bank.stop(); self.environment.stop(); self.temporary.cleanup()
+
+    def payload(self):
+        return {"session_id": "route", "last_assistant_message":
+                "I built the org chart renderer and marked inferred edges so they stay distinguishable."}
+
+    def banks_written(self):
+        return [json.loads(line)[2] for line in self.calls.read_text().splitlines()
+                if json.loads(line)[:2] == ["memory", "retain"]]
+
+    def test_one_session_is_retained_into_both_banks(self):
+        with registry(REGISTRY):
+            outcome = hindsight.end(self.payload(), "hermes")
+        self.assertEqual(outcome["_hook_hub"]["reason"], "session_summary_retained")
+        self.assertEqual(sorted(self.banks_written()), ["delonet-company", "flume"])
+
+    def test_both_copies_share_one_document_id(self):
+        with registry(REGISTRY):
+            hindsight.end(self.payload(), "hermes")
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        doc_ids = {call[call.index("--doc-id") + 1] for call in calls if "--doc-id" in call}
+        self.assertEqual(len(doc_ids), 1, "a retry must replace the same document in each bank")
+
+    def test_a_partial_write_succeeds_with_a_named_gap_and_retries_only_the_gap(self):
+        # Reporting a partial write as failed would invite a retry that
+        # re-retains the bank which already accepted.
+        with registry(REGISTRY), mock.patch.dict(os.environ, {"FAIL_BANK": "flume"}):
+            first = hindsight.end(self.payload(), "hermes")
+        self.assertEqual(first["_hook_hub"]["reason"], "session_summary_retained_partially")
+        self.assertEqual(first["_hook_hub"]["status"], "succeeded")
+        self.calls.write_text("")
+        with registry(REGISTRY):
+            second = hindsight.end(self.payload(), "hermes")
+        self.assertEqual(self.banks_written(), ["flume"], "only the bank that failed is retried")
+        self.assertEqual(second["_hook_hub"]["reason"], "session_summary_retained")
+
+    def test_a_fully_retained_session_is_not_written_again(self):
+        with registry(REGISTRY):
+            hindsight.end(self.payload(), "hermes")
+            self.calls.write_text("")
+            again = hindsight.end(self.payload(), "hermes")
+        self.assertEqual(again["_hook_hub"]["reason"], "session_summary_already_retained")
+        self.assertEqual(self.calls.read_text(), "")
 
 
 if __name__ == "__main__":

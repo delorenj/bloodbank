@@ -246,6 +246,32 @@ def recall_banks(cli: str, primary: str) -> list[str]:
     return list(dict.fromkeys([name for name in ordered if name]))[:cap]
 
 
+def retain_targets(cli: str, primary: str) -> list[str]:
+    """Where a session summary is written: the person, then the project.
+
+    NOT a copy. The same event yields a different memory in each bank because a
+    bank's MISSION drives extraction. Verified against `dry-run-extract` with
+    one identical session summary:
+
+        agent-33god-pm  ->  "Agent built buildOrgChart ... | Involving: agent"
+                            "Agent initially anchored ancestry on the process cwd"
+        33GOD           ->  "Built an org chart renderer in tree.ts that reconciles ..."
+                            "Inferred edges in the org chart are marked with a tilde"
+
+    Episodic on one side, semantic on the other, from the same bytes. That is
+    the whole of "EXPERIENCE to the person, WORLD to the project" -- the API
+    exposes no type on write (there is no `--type` on retain and no type field
+    on the item schema), so the mission is the only router there is, and it
+    turns out to be the right one.
+
+    The person leads so that a partial failure loses the project's copy, which
+    a later session can rebuild from the repo, rather than the agent's memory of
+    having been there, which nothing can.
+    """
+    personal, _ = declared_banks(cli)
+    return list(dict.fromkeys([name for name in (personal, primary) if name]))
+
+
 def binary() -> str | None:
     candidate = os.environ.get("HINDSIGHT_BIN") or str(Path.home() / ".local/bin/hindsight")
     return candidate if os.access(candidate, os.X_OK) else shutil.which("hindsight")
@@ -371,26 +397,57 @@ def end(payload: dict, cli: str) -> dict:
         if not summary:
             return result("skipped", "no_retention_candidates")
         fingerprint = hashlib.sha256(summary.encode()).hexdigest()
-        if any(item.get("event") == "retain_receipt" and item.get("retained") and item.get("fingerprint") == fingerprint for item in history):
-            return result("skipped", "session_summary_already_retained")
         primary = bank()
+        targets = retain_targets(cli, primary)
+        # Per BANK, not per fingerprint. The same summary is retained once into
+        # each target, and having landed in one says nothing about the other --
+        # a single shared check would let a partial failure look complete.
+        settled = {item.get("bank") for item in history
+                   if item.get("event") == "retain_receipt" and item.get("retained")
+                   and item.get("fingerprint") == fingerprint}
+        pending = [target for target in targets if target not in settled]
+        if not pending:
+            return result("skipped", "session_summary_already_retained")
         doc_id = "hook-session-" + hashlib.sha256(f"{cli}:{payload['session_id']}".encode()).hexdigest()[:32]
         tags = f"user:{safe(os.environ.get('HINDSIGHT_USER', os.environ.get('USER', 'unknown')))},agent:{safe(cli)},host:{safe(socket.gethostname().split('.')[0])}"
-        try:
-            process = subprocess.run([command, "memory", "retain", primary, summary, "--context", "session-summary",
-                                      "--doc-id", doc_id, "--output", "json", "--document-tags", tags],
-                                     capture_output=True, text=True, timeout=45, env=cli_environment(cli))
-            response = json.loads(process.stdout) if process.returncode == 0 else {}
-        except subprocess.TimeoutExpired:
-            journal(payload, cli, {"event": "retain_receipt", "retained": False, "fingerprint": fingerprint, "reason": "retain_deadline_exceeded"})
-            return result("failed", "retain_deadline_exceeded", exit_code=1)
-        except (OSError, ValueError):
-            return result("failed", "retain_response_invalid", exit_code=1)
-        accepted = process.returncode == 0 and isinstance(response, dict) and bool(response) and not response.get("error") and response.get("success") is not False
-        journal(payload, cli, {"event": "retain_receipt", "bank": primary, "retained": accepted,
-                              "fingerprint": fingerprint, "document_id": doc_id,
-                              "response_keys": sorted(response) if isinstance(response, dict) else []})
-        return result("succeeded" if accepted else "failed", "session_summary_retained" if accepted else "retain_command_failed", exit_code=0 if accepted else 1)
+
+        def store(target: str) -> tuple[str, bool, str, dict]:
+            try:
+                process = subprocess.run([command, "memory", "retain", target, summary, "--context", "session-summary",
+                                          "--doc-id", doc_id, "--output", "json", "--document-tags", tags],
+                                         capture_output=True, text=True, timeout=45, env=cli_environment(cli))
+                response = json.loads(process.stdout) if process.returncode == 0 else {}
+            except subprocess.TimeoutExpired:
+                return target, False, "retain_deadline_exceeded", {}
+            except (OSError, ValueError):
+                return target, False, "retain_response_invalid", {}
+            accepted = (process.returncode == 0 and isinstance(response, dict) and bool(response)
+                        and not response.get("error") and response.get("success") is not False)
+            return target, accepted, "" if accepted else "retain_command_failed", response
+
+        # Concurrent for the same reason recall is: two sequential retains put a
+        # 90s ceiling on a session-end hook, and the banks are independent.
+        if len(pending) == 1:
+            outcomes = [store(pending[0])]
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(pending)) as pool:
+                outcomes = list(pool.map(store, pending))
+
+        for target, accepted, reason, response in outcomes:
+            journal(payload, cli, {"event": "retain_receipt", "bank": target, "retained": accepted,
+                                  "fingerprint": fingerprint, "document_id": doc_id,
+                                  **({"reason": reason} if reason else {}),
+                                  "response_keys": sorted(response) if isinstance(response, dict) else []})
+        stored = [target for target, accepted, _, _ in outcomes if accepted]
+        failures = [(target, reason) for target, accepted, reason, _ in outcomes if not accepted]
+        if not stored:
+            return result("failed", failures[0][1] or "retain_command_failed", exit_code=1)
+        # A partial write is a SUCCESS with a named gap, not a failure: the
+        # session ended and what landed is real. Reporting it as failed would
+        # invite a retry that re-retains the bank that already accepted.
+        return result("succeeded",
+                      "session_summary_retained" if not failures else "session_summary_retained_partially",
+                      exit_code=0)
 
 
 def dispatch(concern: str, payload: dict, cli: str, native: str) -> dict:
