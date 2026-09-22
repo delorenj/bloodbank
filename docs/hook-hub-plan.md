@@ -165,7 +165,8 @@ Two properties make this right over "everything over NATS request/reply":
    `zellij action rename-tab-by-id`; `claude-notify` needs the host audio session;
    deckard already proves pane context is available at hook time. A container on
    `bloodbank-network` can do none of that. Precedent for a host-side Bloodbank
-   service: `services/plane-webhook-bridge/` ships its own systemd unit.
+   service: the fleet gateway (`services/hermes-gateway/`) runs as the user unit
+   `hermes-fleet-bloodbank-gateway.service`.
 
 Fail-open is absolute: missing socket, dead daemon, or blown deadline → the CLI
 behaves exactly as if no hook were installed.
