@@ -101,6 +101,151 @@ def bank() -> str:
     return root.name if root else "general"
 
 
+# The invoking agent's identity. Same signal agent-hooks/core/asm.py uses at its
+# rung 2: HERMES_HOME is present in every Hermes process and names the profile
+# exactly, which beats any pid. The exclusion set is asm.py's too -- the
+# fleet-shared command router presents exactly like a profile but represents
+# every PM at once, and it answers to two different names depending on source.
+IDENTITY_ENV_FOR_CLI = {"hermes": "HERMES_HOME"}
+NOT_AN_AGENT_PROFILE = frozenset({"fleet-bloodbank-gateway", "fleet-bloodbank"})
+
+
+def agent_profile(cli: str) -> str:
+    """The invoking agent's profile name, or "" when the caller is not an agent."""
+    env_var = IDENTITY_ENV_FOR_CLI.get(cli)
+    if not env_var:
+        return ""
+    raw = os.environ.get(env_var, "").rstrip("/")
+    profile = os.path.basename(raw) if raw else ""
+    return profile if profile and profile not in NOT_AN_AGENT_PROFILE else ""
+
+
+def registry_row(profile: str) -> dict:
+    """The agent's registry row, or {}. Never raises -- a recall must not fail a prompt."""
+    if not profile:
+        return {}
+    path = Path(os.environ.get("HERMES_AGENTS_REGISTRY", Path.home() / ".hermes/agents-registry.yaml"))
+    try:
+        import yaml
+        agents = (yaml.safe_load(path.read_text()) or {}).get("agents") or {}
+        for key, row in agents.items():
+            # The map key and profile_name are identical for all 24 rows today,
+            # but the schema does not require it, so match either.
+            if isinstance(row, dict) and (key == profile or row.get("profile_name") == profile):
+                return row
+    except Exception:
+        return {}
+    return {}
+
+
+def declared_banks(cli: str) -> tuple[str, list[str]]:
+    """`(personal, recall)` as the agent's registry row DECLARES them.
+
+    Both fields existed in the registry and were read by nothing until now:
+    `delonet-company-reporter` has declared `write_bank: delonet-company` and
+    `recall_banks: [delonet-company, exec-office]` for months while its rendered
+    profile config carried only `bank_id_template: agent-{profile}`, so it read
+    and wrote the post-keyed bank and its declaration reached nowhere.
+    """
+    hindsight = registry_row(agent_profile(cli)).get("hindsight") or {}
+    personal = str(hindsight.get("write_bank") or "").strip()
+    declared = [str(item).strip() for item in (hindsight.get("recall_banks") or []) if str(item).strip()]
+    return personal, declared
+
+
+def bank_at(root: Path) -> str:
+    """The bank a given checkout resolves to, by the same rules as `bank()`."""
+    try:
+        override = root / ".hindsight/bank"
+        if override.is_file():
+            for line in override.read_text().splitlines():
+                if line.strip() and not line.lstrip().startswith("#"):
+                    return line.strip()
+        remote = subprocess.run(["git", "remote", "get-url", "origin"],
+                                capture_output=True, text=True, timeout=1, cwd=root)
+        if remote.returncode == 0 and remote.stdout.strip():
+            return remote.stdout.strip().removesuffix(".git").rsplit("/", 1)[-1]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return root.name
+
+
+def bank_is_declared() -> bool:
+    """True when the primary bank came from an explicit operator declaration."""
+    if os.environ.get("HINDSIGHT_BANK"):
+        return True
+    root = repository()
+    if not root:
+        return False
+    try:
+        return (Path(root) / ".hindsight/bank").is_file()
+    except OSError:
+        return False
+
+
+def ancestor_banks(limit: int = 3) -> list[str]:
+    """Banks of the superprojects above this checkout, nearest first.
+
+    A submodule's work is also its parent's work -- an hour spent in
+    33GOD/flume is an hour of 33GOD. Git has always known the parent
+    (`--show-superproject-working-tree` returns it) and nothing has ever asked.
+    Bounded and opt-out because it costs one git call per level.
+
+    Walks from the root `repository()` resolved, NOT from the process cwd. The
+    two diverge whenever the caller is not standing in the repo the recall is
+    about -- under test most obviously, but also for any hook invoked with a
+    different working directory than the agent's. `bank()` answers for that
+    root, so its ancestors must be that root's.
+    """
+    if os.environ.get("HINDSIGHT_ANCESTRY", "1") == "0":
+        return []
+    # An explicit bank is a declaration, and ancestry is an inference from git
+    # topology. When the operator has named the bank -- via `.hindsight/bank` or
+    # $HINDSIGHT_BANK -- they have already said where this work belongs, and
+    # walking up to contradict them is exactly the wrong move.
+    if bank_is_declared():
+        return []
+    start = repository()
+    if not start:
+        return []
+    found: list[str] = []
+    cwd: str | None = str(start)
+    for _ in range(max(0, limit)):
+        try:
+            walked = subprocess.run(["git", "rev-parse", "--show-superproject-working-tree"],
+                                    capture_output=True, text=True, timeout=1, cwd=cwd)
+        except (OSError, subprocess.SubprocessError):
+            break
+        parent = walked.stdout.strip() if walked.returncode == 0 else ""
+        if not parent:
+            break
+        found.append(bank_at(Path(parent)))
+        cwd = parent
+    return [name for name in found if name]
+
+
+def recall_banks(cli: str, primary: str) -> list[str]:
+    """Every bank this recall should read, in priority order.
+
+    The personal bank leads and is never dropped by the cap: an agent that
+    cannot remember what it has done is the defect this ordering exists to
+    prevent. Project banks follow -- the repo, then its superprojects -- then
+    whatever the row declares, then the global fan-out.
+    """
+    cap = max(2, min(12, int(os.environ.get("HINDSIGHT_RECALL_MAX_BANKS", "8") or 8)))
+    personal, declared = declared_banks(cli)
+    ordered = [
+        *([personal] if personal else []),
+        primary,
+        *ancestor_banks(),
+        *declared,
+        "general",
+        *os.environ.get("HINDSIGHT_GLOBAL_BANKS", "infra").split(),
+        *linked_banks(primary),
+    ]
+    return list(dict.fromkeys([name for name in ordered if name]))[:cap]
+
+
 def binary() -> str | None:
     candidate = os.environ.get("HINDSIGHT_BIN") or str(Path.home() / ".local/bin/hindsight")
     return candidate if os.access(candidate, os.X_OK) else shutil.which("hindsight")
@@ -141,12 +286,16 @@ def recall(payload: dict, cli: str, native: str) -> dict:
     if not command:
         return result("skipped", "hindsight_binary_missing")
     primary = bank()
-    banks = list(dict.fromkeys([primary, "general", *os.environ.get("HINDSIGHT_GLOBAL_BANKS", "infra").split(), *linked_banks(primary)]))[:7]
+    personal, _ = declared_banks(cli)
+    banks = recall_banks(cli, primary)
     deadline = max(0.2, min(10.0, float(os.environ.get("HINDSIGHT_RECALL_TIMEOUT", "9"))))
+    # The agent's own memory is worth as much as the project's, so it gets the
+    # same budget. Everything else is context, not identity.
+    deep = {primary, personal} - {""}
 
     def fetch(target: str) -> tuple[str, list[str], str]:
         args = [command, "memory", "recall", target, prompt, "--output", "json",
-                "--budget", "mid" if target == primary else "low", "--max-tokens", "2048" if target == primary else "1024"]
+                "--budget", "mid" if target in deep else "low", "--max-tokens", "2048" if target in deep else "1024"]
         try:
             completed = subprocess.run(args, capture_output=True, text=True, timeout=deadline, env=cli_environment(cli))
             if completed.returncode:
