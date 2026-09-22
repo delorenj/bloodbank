@@ -37,33 +37,15 @@
         "timeout": 4
       }
     ],
-    "post_llm_call": [
-      {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native post_llm_call",
-        "timeout": 4
-      }
-    ],
     "pre_approval_request": [
       {
         "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native pre_approval_request",
         "timeout": 4
       }
     ],
-    "post_approval_response": [
-      {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native post_approval_response",
-        "timeout": 4
-      }
-    ],
     "on_session_finalize": [
       {
         "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native on_session_finalize",
-        "timeout": 4
-      }
-    ],
-    "on_session_reset": [
-      {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native on_session_reset",
         "timeout": 4
       }
     ],

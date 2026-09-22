@@ -505,13 +505,6 @@
           "payload": "stdin"
         },
         {
-          "native": "post_llm_call",
-          "role": "after_response",
-          "arg": "post_llm_call",
-          "publish": false,
-          "payload": "stdin"
-        },
-        {
           "native": "pre_approval_request",
           "role": "attention",
           "arg": "pre_approval_request",
@@ -521,24 +514,10 @@
           "payload": "stdin"
         },
         {
-          "native": "post_approval_response",
-          "role": "permission_resolved",
-          "arg": "post_approval_response",
-          "publish": false,
-          "payload": "stdin"
-        },
-        {
           "native": "on_session_finalize",
           "role": "session_end",
           "arg": "on_session_finalize",
           "lifecycle": "agent.session.ended",
-          "payload": "stdin"
-        },
-        {
-          "native": "on_session_reset",
-          "role": "session_reset",
-          "arg": "on_session_reset",
-          "publish": false,
           "payload": "stdin"
         },
         {
