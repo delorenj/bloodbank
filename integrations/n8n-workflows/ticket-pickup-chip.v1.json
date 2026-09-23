@@ -1,0 +1,346 @@
+[
+  {
+    "id": "wWXgCZiiIBWaRRzE",
+    "name": "Ticket Pickup Chip",
+    "description": null,
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "events": [
+            "bloodbank.agent.invocation.started"
+          ],
+          "dataMatch": {
+            "conditions": [
+              {
+                "path": "data.context.reason",
+                "values": "ticket-grooming,ticket-delegation"
+              }
+            ]
+          },
+          "connection": {}
+        },
+        "id": "1a4f5ee5-dd90-5b25-80bb-dc48568f35f0",
+        "name": "Invocation Started",
+        "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          -112
+        ]
+      },
+      {
+        "parameters": {
+          "events": [
+            "bloodbank.agent.invocation.completed",
+            "bloodbank.agent.invocation.failed"
+          ],
+          "dataMatch": {
+            "conditions": [
+              {
+                "path": "data.context.reason",
+                "values": "ticket-grooming,ticket-delegation"
+              }
+            ]
+          },
+          "connection": {}
+        },
+        "id": "9ae6ffaf-0560-5009-bbd7-9efd42f5433a",
+        "name": "Invocation Ended",
+        "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// One gateway invocation lifecycle event -> the Plane ticket it is about and\n// what to do with its agent:working chip. The triggers' data filter already\n// dropped every turn no ticket command launched (Claude/Codex sessions etc.),\n// and everything needed rides on data.context: no static data, no board map.\n// Boards Krebs owns (managed/shadow execution) are listed in the n8n env var\n// KREBS_FENCED_BOARDS (JSON array of board ids); Krebs keeps its own chips.\nlet fenced = [];\ntry {\n  const raw = $env.KREBS_FENCED_BOARDS;\n  fenced = raw ? JSON.parse(raw) : [];\n} catch (error) {\n  fenced = [];\n}\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const env = items[i].json || {};\n  const data = env.data || {};\n  const ctx = data.context || {};\n  if (!ctx.workspace || !ctx.board_id || !ctx.ticket_id) continue;\n  if (Array.isArray(fenced) && fenced.includes(ctx.board_id)) continue;\n  const type = String(env.type || '');\n  out.push({\n    json: {\n      action: type.endsWith('.started') ? 'add' : 'remove',\n      ws: ctx.workspace,\n      board: ctx.board_id,\n      ticketId: ctx.ticket_id,\n      ticketKey: ctx.ticket_key ?? null,\n      reason: ctx.reason ?? null,\n      agentId: data.target_agent_id ?? null,\n      eventType: type,\n      eventId: env.id ?? null,\n      correlationid: env.correlationid ?? null,\n    },\n    pairedItem: { item: i },\n  });\n}\nreturn out;"
+        },
+        "id": "71ecb74c-efa7-5a3a-ba68-25fee01f33cb",
+        "name": "Chip — Target",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          240,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://plane.delo.sh/api/v1/workspaces/{{ $json.ws }}/projects/{{ $json.board }}/labels/",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "28bc0124-1d9e-50a5-9580-84fb6880b0ff",
+        "name": "Chip — List Labels",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          480,
+          0
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "TpxVVgOnmjHaE6h7",
+            "name": "Plane API (33GOD + AutomaticAI)"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Resolve the chip label BY NAME on this board. A board without one\n// (CANDY/CANDYS carry a soft-deleted row Plane will not recreate) simply gets\n// no chip: skip quietly, never fail the lane.\nconst LABEL = 'agent:working';\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const target = $('Chip — Target').itemMatching(i).json;\n  const body = items[i].json || {};\n  const labels = Array.isArray(body.results) ? body.results : [];\n  const hit = labels.find((l) => l && typeof l.name === 'string' && l.name.trim().toLowerCase() === LABEL);\n  if (!hit) continue;\n  out.push({ json: { ...target, labelId: hit.id }, pairedItem: { item: i } });\n}\nreturn out;"
+        },
+        "id": "d0f5133d-74f3-5f78-92de-4d44d2e23919",
+        "name": "Chip — Resolve Label",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          720,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://plane.delo.sh/api/v1/workspaces/{{ $json.ws }}/projects/{{ $json.board }}/issues/{{ $json.ticketId }}/",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "9db897ff-0fd2-53c4-ac4b-5b7f6007eed3",
+        "name": "Chip — Read Issue",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          960,
+          0
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "TpxVVgOnmjHaE6h7",
+            "name": "Plane API (33GOD + AutomaticAI)"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Read-modify-write of the ticket's label set. No-op writes are dropped: the\n// chip is already on (add) or already gone (remove).\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const t = $('Chip — Resolve Label').itemMatching(i).json;\n  const issue = items[i].json || {};\n  const current = (issue.labels || [])\n    .map((l) => (l && typeof l === 'object' ? l.id : l))\n    .filter(Boolean);\n  const has = current.includes(t.labelId);\n  if (t.action === 'add' ? has : !has) continue;\n  const labels = t.action === 'add' ? [...current, t.labelId] : current.filter((id) => id !== t.labelId);\n  out.push({ json: { ...t, labels }, pairedItem: { item: i } });\n}\nreturn out;"
+        },
+        "id": "6d8bb350-2c37-5d59-845c-d86f9e0dd73e",
+        "name": "Chip — Plan Write",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1200,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "=https://plane.delo.sh/api/v1/workspaces/{{ $json.ws }}/projects/{{ $json.board }}/issues/{{ $json.ticketId }}/",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0"
+              }
+            ]
+          },
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ labels: $json.labels }) }}"
+        },
+        "id": "432a2e52-9686-510b-97f0-9de41c4ec91f",
+        "name": "Chip — Write Labels",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1440,
+          0
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "TpxVVgOnmjHaE6h7",
+            "name": "Plane API (33GOD + AutomaticAI)"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Invocation Started": {
+        "main": [
+          [
+            {
+              "node": "Chip — Target",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Invocation Ended": {
+        "main": [
+          [
+            {
+              "node": "Chip — Target",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Chip — Target": {
+        "main": [
+          [
+            {
+              "node": "Chip — List Labels",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Chip — List Labels": {
+        "main": [
+          [
+            {
+              "node": "Chip — Resolve Label",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Chip — Resolve Label": {
+        "main": [
+          [
+            {
+              "node": "Chip — Read Issue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Chip — Read Issue": {
+        "main": [
+          [
+            {
+              "node": "Chip — Plan Write",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Chip — Plan Write": {
+        "main": [
+          [
+            {
+              "node": "Chip — Write Labels",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "saveManualExecutions": true
+    },
+    "pinData": {
+      "Invocation Started": [
+        {
+          "json": {
+            "actor": {
+              "agent_id": "33god-pm",
+              "cli": "hermes",
+              "model": null,
+              "provider": null,
+              "type": "agent_api"
+            },
+            "causationid": "0ae79218-d908-5838-9512-d0d292bf55d0",
+            "correlationid": "da3d890f-01ca-5dfc-bafb-5e66ebf33908",
+            "data": {
+              "command_id": "ff6ac024-e8e1-5727-8f29-06a879d53c12",
+              "context": {
+                "board_id": "15258893-0206-4e8f-aea6-340eb217988c",
+                "phase": "Todo",
+                "previous_phase": "",
+                "provider_event_type": "plane.ticket.created",
+                "reason": "ticket-grooming",
+                "repo": "33god",
+                "ticket_id": "83a8159e-d869-4268-a0e8-0e87bcb959ef",
+                "ticket_key": "33GOD-65",
+                "title": "[smoke] triage pipeline check — safe to delete",
+                "workspace": "33god"
+              },
+              "idempotency_key": "agent.invocation.start:target:33god-pm:command:ff6ac024-e8e1-5727-8f29-06a879d53c12",
+              "invocation_id": "ff6ac024-e8e1-5727-8f29-06a879d53c12",
+              "parent_invocation_id": null,
+              "profile_name": "33god-pm",
+              "target_agent_id": "33god-pm",
+              "thread_id": "bloodbank:da3d890f-01ca-5dfc-bafb-5e66ebf33908",
+              "turn_id": "ff6ac024-e8e1-5727-8f29-06a879d53c12"
+            },
+            "datacontenttype": "application/json",
+            "dataschema": "apicurio://holyfields/bloodbank.agent.invocation.started/versions/1",
+            "domain": "agent",
+            "id": "361f4a3e-a49c-567e-b85e-feb605e063b7",
+            "kind": "event",
+            "ordering_key": "turn:ff6ac024-e8e1-5727-8f29-06a879d53c12",
+            "producer": "hermes-agent:33god-pm",
+            "schemaref": "bloodbank.agent.invocation.started.v1",
+            "service": "bloodbank-hermes-gateway",
+            "source": "urn:33god:service:bloodbank-hermes-gateway",
+            "specversion": "1.0",
+            "subject": "bloodbank.evt.agent.invocation.started",
+            "time": "2026-09-23T00:56:45.672948Z",
+            "type": "bloodbank.agent.invocation.started"
+          }
+        }
+      ]
+    },
+    "tags": [
+      {
+        "id": "6vMYaFRLOHXXq3G5",
+        "name": "33GOD"
+      },
+      {
+        "id": "Hgex1M1TJuQ3HccH",
+        "name": "lifecycle"
+      },
+      {
+        "id": "UArKOM4NFnfz94g3",
+        "name": "plane"
+      }
+    ]
+  }
+]

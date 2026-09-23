@@ -2,7 +2,9 @@
   {
     "id": "iMw484J1ZCqKME2C",
     "name": "Plane → Bloodbank",
-    "active": false,
+    "description": null,
+    "active": true,
+    "isArchived": false,
     "nodes": [
       {
         "parameters": {
@@ -28,7 +30,6 @@
         "parameters": {
           "verifySignature": true,
           "webhookSecretReferences": "{\"24bc401a-00fa-46cd-bfff-65e14ca1707a\":\"op://DeLoSecrets/PlaneWebhook-33GOD/credential\",\"4eb4732b-6005-4c9d-ac6f-7e643470768e\":\"op://DeLoSecrets/PlaneWebhook-AutomaticAI/credential\"}",
-          "registryFile": "~/.hermes/agents-registry.yaml",
           "connection": {
             "natsHost": "localhost",
             "natsPort": 4222,
@@ -38,11 +39,42 @@
         "id": "9df8998d-c344-43b3-a8c6-9bcf4bbcceeb",
         "name": "Normalize and Publish",
         "type": "n8n-nodes-bloodbank.planeBloodbank",
-        "typeVersion": 1,
+        "typeVersion": 2,
         "position": [
           0,
           0
         ]
+      },
+      {
+        "parameters": {
+          "topic": "lifecycle",
+          "message": "=Unrouted Plane board {{ $json.board_id }} ({{ $json.plane_event }}) — add it to pjangler/.project.json\nworkspace: {{ $json.workspace || 'unknown' }} | {{ $json.reason }}",
+          "title": "Unrouted Plane board",
+          "tags": "=warning,plane,unrouted",
+          "additionalHeaders": {
+            "header": [
+              {
+                "name": "X-Click",
+                "value": "={{ $json.workspace && $json.workspace !== 'unknown' ? 'https://plane.delo.sh/' + $json.workspace + '/projects/' + $json.board_id + '/issues/' : '' }}"
+              }
+            ]
+          }
+        },
+        "id": "981c0250-d312-54a3-9180-a55f9ec7120c",
+        "name": "Unrouted Board",
+        "type": "n8n-nodes-ntfy-client.ntfySend",
+        "typeVersion": 1,
+        "position": [
+          256,
+          128
+        ],
+        "credentials": {
+          "ntfyApi": {
+            "id": "CMsMifZmcZA2DGcM",
+            "name": "Ntfy account (n8n token)"
+          }
+        },
+        "onError": "continueRegularOutput"
       }
     ],
     "connections": {
@@ -56,18 +88,53 @@
             }
           ]
         ]
+      },
+      "Normalize and Publish": {
+        "main": [
+          [],
+          [
+            {
+              "node": "Unrouted Board",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "settings": {
       "executionOrder": "v1",
       "saveManualExecutions": true,
       "callerPolicy": "workflowsFromSameOwner",
-      "availableInMCP": false
+      "availableInMCP": false,
+      "binaryMode": "separate"
     },
-    "staticData": null,
     "pinData": {},
-    "versionId": "d64e7946-2611-461f-8caa-989ca655f976",
-    "triggerCount": 1,
-    "tags": []
+    "tags": [
+      {
+        "id": "6vMYaFRLOHXXq3G5",
+        "name": "33GOD"
+      },
+      {
+        "id": "GV3E6aRXSlraYtSN",
+        "name": "bloodbank"
+      },
+      {
+        "id": "Hgex1M1TJuQ3HccH",
+        "name": "lifecycle"
+      },
+      {
+        "id": "UArKOM4NFnfz94g3",
+        "name": "plane"
+      },
+      {
+        "id": "niSA8CjFAgeIqIEl",
+        "name": "webhook"
+      },
+      {
+        "id": "qkJMiiB1AOBecu5I",
+        "name": "tickets"
+      }
+    ]
   }
 ]
