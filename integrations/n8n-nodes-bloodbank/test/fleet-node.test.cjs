@@ -332,6 +332,16 @@ test('with no board id and no checkout path there is nothing to point at', () =>
   assert.doesNotMatch(prompt, /Where things are/);
 });
 
+test('both lanes tell the agent agent:working is pipeline-owned and labels change one at a time', () => {
+  // 33GOD-69: a grooming turn removed agent:working as "stale" because nothing said who owns it.
+  const facts = ticketFactsFromEnvelope(CREATED);
+  for (const prompt of [groomingPrompt(facts, ''), delegationPrompt(facts, '')]) {
+    assert.match(prompt, /`agent:working` belongs to the\s+pipeline/);
+    assert.match(prompt, /Never add or remove it yourself/);
+    assert.match(prompt, /never rewrite the whole label list/);
+  }
+});
+
 test('the delegation prompt gates on the groomed label and states the board rules', () => {
   const prompt = delegationPrompt(ticketFactsFromEnvelope(MOVED_TO_TODO), '/home/delorenj/code/james-brennan');
   assert.match(prompt, /lifecycle:triaged/);

@@ -263,6 +263,13 @@ function ticketRef(facts: TicketFacts): string {
 }
 
 /** Grooming: enrich one existing ticket in place, and stamp that it happened. */
+/** Both lanes: how an agent may touch labels without clobbering the pipeline's. */
+const LABEL_RULES =
+  '\nLabels: change them one at a time with the Plane tool\'s add/remove label ' +
+  'actions; never rewrite the whole label list. `agent:working` belongs to the ' +
+  'pipeline: it shows a turn is running on this ticket and is cleared ' +
+  'automatically when your turn ends. Never add or remove it yourself.\n';
+
 export function groomingPrompt(
   facts: TicketFacts,
   projectPath?: string,
@@ -301,6 +308,7 @@ export function groomingPrompt(
     'invent scope or commitments. If you genuinely cannot tell what the ticket ' +
     'means, comment asking for the detail you need instead of guessing.\n' +
     stamp +
+    LABEL_RULES +
     provenance(facts)
   );
 }
@@ -343,6 +351,7 @@ export function delegationPrompt(
     'something only a person can answer — do not move it to In Progress. Say ' +
     'what it is waiting on in a comment and move it to the state the board uses ' +
     'for that, so it stops looking like available work.\n' +
+    LABEL_RULES +
     provenance(facts)
   );
 }
