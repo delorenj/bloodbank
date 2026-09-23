@@ -208,8 +208,76 @@ test('the sweep removes only chips whose ticket\'s last turn ended and settled',
   // What it emits is what Chip — Target already understands: a remove.
   const targets = run('Chip — Target', swept);
   assert.deepEqual(targets.map((i) => i.json.action), ['remove', 'remove']);
+  // ...marked as a sweep, with the time the turn ended, for Chip — Plan Write.
+  for (const t of targets) {
+    assert.equal(t.json.sweep, true);
+    const row = rows.find((r) => r.data.context.ticket_id === t.json.ticketId && /completed|failed/.test(r.type));
+    assert.equal(t.json.eventTime, row.time);
+  }
   assert.equal(run('Sweep — Ended Tickets', [{ json: { events: [] } }]).length, 0);
   assert.equal(run('Sweep — Ended Tickets', [{ json: {} }]).length, 0);
+});
+
+test('live lifecycle events are not sweeps', () => {
+  const [live] = run('Chip — Target', [event('bloodbank.agent.invocation.completed', context)]);
+  assert.equal(live.json.sweep, false);
+  // A forged or stray `sweep: "yes"` does not turn the guard on or off by accident.
+  const stray = { json: { ...event('bloodbank.agent.invocation.completed', context).json, sweep: 'yes' } };
+  assert.equal(run('Chip — Target', [stray])[0].json.sweep, false);
+});
+
+// agent:working is also pilot's claim marker (`px claim` adds it, `px close`
+// removes it). The sweep runs up to 48h after a turn, so it may only take off a
+// chip nobody has touched since that turn ended.
+test('the sweep leaves a chip alone on a ticket changed after the turn ended', () => {
+  const ended = '2026-09-23T04:46:06.653596Z';
+  const at = (offsetMs) => new Date(Date.parse(ended) + offsetMs).toISOString();
+  const sweepTarget = (extra = {}) => ({
+    'Chip — Resolve Label': [{ json: { action: 'remove', labelId, sweep: true, eventTime: ended, ...extra } }],
+  });
+  const issue = (updated_at) => [{ json: { labels: ['a', labelId], updated_at } }];
+
+  // Delegation turn ends at T, the worker it spawned runs `px claim` at T+20min:
+  // the claim marker stays.
+  assert.equal(run('Chip — Plan Write', issue(at(20 * 60000)), { upstream: sweepTarget() }).length, 0);
+  // Anything later than the slack counts, however small the change.
+  assert.equal(run('Chip — Plan Write', issue(at(31000)), { upstream: sweepTarget() }).length, 0);
+  // Untouched since the turn: the stuck chip comes off. Plane reports
+  // updated_at in the server's local offset; that is the same instant.
+  assert.deepEqual(run('Chip — Plan Write', issue(at(-5 * 60000)), { upstream: sweepTarget() })[0].json.labels, ['a']);
+  assert.deepEqual(run('Chip — Plan Write', issue('2026-09-23T00:46:07.100000-04:00'), { upstream: sweepTarget() })[0].json.labels, ['a']);
+  // Unknown times prove nothing: the chip stays.
+  assert.equal(run('Chip — Plan Write', issue(undefined), { upstream: sweepTarget() }).length, 0);
+  assert.equal(run('Chip — Plan Write', issue(at(0)), { upstream: sweepTarget({ eventTime: null }) }).length, 0);
+});
+
+test('the live lane still removes at the real turn end, whatever updated_at says', () => {
+  const upstream = { 'Chip — Resolve Label': [{ json: { action: 'remove', labelId, sweep: false, eventTime: '2026-09-23T04:46:06Z' } }] };
+  const touched = [{ json: { labels: ['a', labelId], updated_at: '2026-09-23T05:30:00Z' } }];
+  assert.deepEqual(run('Chip — Plan Write', touched, { upstream })[0].json.labels, ['a']);
+});
+
+test('the sweep, end to end through the chip line, spares a claimed ticket', () => {
+  const rows = [
+    sweepRow('bloodbank.agent.invocation.started', 40, 'claimed'),
+    sweepRow('bloodbank.agent.invocation.completed', 30, 'claimed'),
+    sweepRow('bloodbank.agent.invocation.started', 40, 'stuck'),
+    sweepRow('bloodbank.agent.invocation.completed', 30, 'stuck'),
+  ];
+  const targets = run('Chip — Target', run('Sweep — Ended Tickets', [{ json: { events: rows } }]));
+  const resolved = targets.map((i) => ({ json: { ...i.json, labelId } }));
+  const upstream = { 'Chip — Resolve Label': resolved };
+  const endedAt = Object.fromEntries(targets.map((i) => [i.json.ticketId, Date.parse(i.json.eventTime)]));
+  const issues = targets.map((i) => ({
+    json: {
+      id: i.json.ticketId,
+      labels: [labelId],
+      // 'claimed' was `px claim`ed 20 minutes after its turn; 'stuck' was not touched.
+      updated_at: new Date(endedAt[i.json.ticketId] + (i.json.ticketId === 'claimed' ? 20 * 60000 : -1000)).toISOString(),
+    },
+  }));
+  const writes = run('Chip — Plan Write', issues, { upstream });
+  assert.deepEqual(writes.map((w) => [w.json.ticketId, w.json.labels]), [['stuck', []]]);
 });
 
 test('chip target maps started to add and completed/failed to remove', () => {

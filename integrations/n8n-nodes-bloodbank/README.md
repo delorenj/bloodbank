@@ -372,9 +372,16 @@ Sweep* runs hourly at minute 51 (pinned; left unset, n8n picks a random minute
 on every activation): it asks Candystore for the gateway's invocation events of
 the last 48 h, and for every ticket whose latest one is a `completed`/`failed`
 at least 10 minutes old it sends that event down the chip line as a remove. The
-line only writes when `agent:working` is actually still on the ticket. It is the
-net under a failed chip write (a Plane 5xx), an outage longer than the catch-up
-window, or an expired durable. Candystore is read at `$CANDYSTORE_URL`
+line only writes when `agent:working` is actually still on the ticket **and the
+ticket has not changed since that turn ended** (its `updated_at` is no later
+than the ending event's `time` plus 30 s). `agent:working` is also pilot's claim
+marker (`px claim` adds it, `px close` removes it) and the label cannot say who
+put it there, so a ticket a worker claimed after the PM's turn keeps it; so does
+any ticket edited since, and any ticket whose times cannot be read. The live
+lane is unchanged: it removes at the real turn end. The sweep is the net under a
+failed chip write (a Plane 5xx), an outage longer than the catch-up window, or
+an expired durable; a chip that got stuck on a ticket someone then edited has to
+come off by hand. Candystore is read at `$CANDYSTORE_URL`
 (default `http://127.0.0.1:8683`; the public host sits behind Google OIDC).
 
 ## Branding
