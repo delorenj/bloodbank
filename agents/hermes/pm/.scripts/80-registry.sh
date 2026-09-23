@@ -62,7 +62,9 @@ if p.is_symlink():
     raise SystemExit(f"refusing to update registry symlink: {p}")
 data = yaml.safe_load(p.read_text()) or {"schema_version": 1, "agents": {}}
 if bloodbank_enabled == "":
-    bloodbank_enabled_value = False
+    # No key means enabled: an absent bloodbank.enabled activates the agent.
+    # Only an explicit `false` quarantines it.
+    bloodbank_enabled_value = True
 elif bloodbank_enabled == "true":
     bloodbank_enabled_value = True
 elif bloodbank_enabled == "false":
