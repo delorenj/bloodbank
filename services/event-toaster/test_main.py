@@ -35,7 +35,7 @@ def env(event_type: str, **data) -> dict:
     return {"type": event_type, "source": "urn:test", "data": data}
 
 
-def make(replies=None, rate_per_min=60.0, burst=2, policy=None):
+def make(replies=None, rate_per_min=60.0, burst=2, policy=None, per_type_per_min=0.0, per_type_burst=3):
     clock = Clock()
     ntfy = FakeNtfy(replies)
     toaster = main.Toaster(
@@ -44,6 +44,8 @@ def make(replies=None, rate_per_min=60.0, burst=2, policy=None):
         post=ntfy,
         bucket=main.TokenBucket(rate_per_min / 60.0, burst, clock=clock),
         clock=clock,
+        per_type_rate_per_min=per_type_per_min,
+        per_type_burst=per_type_burst,
     )
     return toaster, ntfy, clock
 
@@ -114,6 +116,36 @@ class DispositionTest(unittest.TestCase):
         run(toaster.handle(env("x.a"), "s"))
         self.assertFalse(toaster.paused())
         self.assertEqual(toaster.stats["http_403"], 1)
+
+
+class PerTypeCapTest(unittest.TestCase):
+    def test_one_chatty_type_cannot_spend_the_shared_budget(self):
+        toaster, ntfy, clock = make(rate_per_min=600.0, burst=20, per_type_per_min=6.0, per_type_burst=3)
+        noisy = [run(toaster.handle(env("bloodbank.agent.invocation.started"), "s")) for _ in range(10)]
+        self.assertEqual(noisy.count("toasted"), 3)
+        self.assertEqual(noisy.count("rate-limited"), 7)
+        self.assertEqual(toaster.overflow["bloodbank.agent.invocation.started"], 7)
+        # Another type still has its own burst and the shared bucket to spend.
+        self.assertEqual(run(toaster.handle(env("bloodbank.agent.session.ended"), "s")), "toasted")
+        # The noisy type refills at its own rate: one more token after 10s.
+        clock.now += 10
+        self.assertEqual(run(toaster.handle(env("bloodbank.agent.invocation.started"), "s")), "toasted")
+        self.assertEqual(run(toaster.handle(env("bloodbank.agent.invocation.started"), "s")), "rate-limited")
+        self.assertEqual(len(ntfy.posts), 5)
+
+    def test_tracked_types_are_bounded(self):
+        toaster, _, _ = make(rate_per_min=6000.0, burst=1000, per_type_per_min=6.0)
+        toaster.max_tracked_types = 4
+        for i in range(10):
+            run(toaster.handle(env(f"bloodbank.test.t{i}.happened"), "s"))
+        self.assertEqual(len(toaster.type_buckets), 4)
+
+    def test_zero_turns_the_per_type_cap_off(self):
+        toaster, ntfy, _ = make(rate_per_min=6000.0, burst=100, per_type_per_min=0.0)
+        for _ in range(10):
+            run(toaster.handle(env("bloodbank.agent.invocation.started"), "s"))
+        self.assertEqual(len(ntfy.posts), 10)
+        self.assertEqual(toaster.type_buckets, {})
 
 
 class DigestTest(unittest.TestCase):

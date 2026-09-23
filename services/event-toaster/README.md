@@ -13,7 +13,7 @@ person wants to hear about into desktop/phone notifications on
    |-------------|---------------|--------------|
    | **mute**    | `bloodbank.agent.hook.updated`, `bloodbank.system.hook.updated` | Counted, never posted. These are hook-hub state pulses (~9/s in a busy session); Holocene and Candystore are their read side. |
    | **digest**  | `bloodbank.agent.tool.*` | Counted and rolled into one low-priority summary toast every `DIGEST_SECONDS`. |
-   | **toast**   | everything else | One toast each at `NTFY_PRIORITY`, through a token bucket (`TOAST_RATE_PER_MIN`, `TOAST_BURST`). Overflow joins the digest. |
+   | **toast**   | everything else | One toast each at `NTFY_PRIORITY`, through a token bucket (`TOAST_RATE_PER_MIN`, `TOAST_BURST`), behind a smaller per-type bucket (`TOAST_PER_TYPE_PER_MIN`, `TOAST_PER_TYPE_BURST`) so one chatty type cannot spend the shared budget. Overflow joins the digest. |
 
 3. Respects ntfy pushback: a 429 or 5xx pauses posting for `Retry-After` (or an
    exponential backoff from 10s to 5m when there is none), and anything arriving
@@ -60,6 +60,8 @@ Compose maps `BLOODBANK_TOASTER_*` from your shell onto these.
 | `TOASTER_DIGEST_TYPES` | `bloodbank.agent.tool.*` | Comma list of globs rolled into the digest. Empty turns it off. |
 | `TOAST_RATE_PER_MIN`   | `20`                   | Sustained individual toasts per minute |
 | `TOAST_BURST`          | `10`                   | Individual toasts allowed back to back |
+| `TOAST_PER_TYPE_PER_MIN` | `6`                  | Sustained toasts per minute for any one event type; `0` turns the per-type cap off |
+| `TOAST_PER_TYPE_BURST` | `3`                    | Toasts of one event type allowed back to back |
 | `DIGEST_SECONDS`       | `300`                  | Digest interval (sent only when it has something to say) |
 | `STATS_SECONDS`        | `60`                   | Interval of the `stats` log line |
 | `MAX_BODY_CHARS`       | `400`                  | Truncate the data payload in the toast body |

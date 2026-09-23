@@ -25,6 +25,10 @@ So every event now gets exactly one of three dispositions:
           rolled into one low-priority summary toast every DIGEST_SECONDS.
   toast   Everything else: one toast each, through a token bucket
           (TOAST_RATE_PER_MIN, TOAST_BURST). Overflow joins the digest.
+          Each event type also has its own smaller bucket
+          (TOAST_PER_TYPE_PER_MIN, TOAST_PER_TYPE_BURST), so one chatty type
+          (a burst of agent.invocation.started, say) cannot spend the shared
+          budget and silence everything else; its excess joins the digest.
 
 ntfy pushback is respected: a 429 (or 5xx) pauses posting for Retry-After, or
 an exponential backoff when the header is absent, and everything that arrives
@@ -183,6 +187,10 @@ class Toaster:
     digest_seconds: float = 300.0
     backoff_min: float = 10.0
     backoff_max: float = 300.0
+    # Per-event-type cap in front of the shared bucket; 0 turns it off.
+    per_type_rate_per_min: float = 0.0
+    per_type_burst: int = 3
+    max_tracked_types: int = 256
 
     digested: Counter = field(default_factory=Counter)
     overflow: Counter = field(default_factory=Counter)
@@ -190,6 +198,7 @@ class Toaster:
     stats: Counter = field(default_factory=Counter)
     paused_until: float = 0.0
     backoff: float = 0.0
+    type_buckets: dict[str, TokenBucket] = field(default_factory=dict)
 
     # -- ntfy pushback --------------------------------------------------------
 
@@ -218,6 +227,18 @@ class Toaster:
             log.warning("ntfy answered %s for %s", status, title)
         return False
 
+    def _type_allows(self, event_type: str) -> bool:
+        if self.per_type_rate_per_min <= 0:
+            return True
+        bucket = self.type_buckets.get(event_type)
+        if bucket is None:
+            if len(self.type_buckets) >= self.max_tracked_types:
+                # Evict the oldest; a bucket untouched that long is full anyway.
+                self.type_buckets.pop(next(iter(self.type_buckets)))
+            bucket = TokenBucket(self.per_type_rate_per_min / 60.0, self.per_type_burst, clock=self.clock)
+            self.type_buckets[event_type] = bucket
+        return bucket.take()
+
     # -- per event ------------------------------------------------------------
 
     async def handle(self, envelope: dict[str, Any], subject: str) -> str:
@@ -233,7 +254,7 @@ class Toaster:
             self.stats["digested"] += 1
             log.info("digested: %s", event_type)
             return "digested"
-        if self.paused() or not self.bucket.take():
+        if self.paused() or not self._type_allows(event_type) or not self.bucket.take():
             self.overflow[event_type] += 1
             self.stats["rate_limited"] += 1
             log.info("rate-limited: %s", event_type)
@@ -357,6 +378,8 @@ async def run() -> None:
                 int(_env_float("TOAST_BURST", 10)),
             ),
             digest_seconds=_env_float("DIGEST_SECONDS", 300),
+            per_type_rate_per_min=_env_float("TOAST_PER_TYPE_PER_MIN", 6),
+            per_type_burst=int(_env_float("TOAST_PER_TYPE_BURST", 3)),
         )
 
         nc = await nats.connect(
