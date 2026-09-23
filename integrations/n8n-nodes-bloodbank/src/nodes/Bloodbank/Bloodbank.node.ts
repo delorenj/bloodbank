@@ -4,7 +4,6 @@ import { homedir } from 'node:os';
 import type {
   IExecuteFunctions,
   INodeExecutionData,
-  INodeProperties,
   INodeType,
   INodeTypeDescription,
 } from 'n8n-workflow';
@@ -12,32 +11,11 @@ import { NodeOperationError } from 'n8n-workflow';
 import { parse as parseYaml } from 'yaml';
 
 import { publish } from '../../nats';
+import { commandOptions, eventOptions } from '../../options';
 import { resolveFleetTargetForRepo } from '../../registry';
 import { commandSchemas, eventSchemas } from './eventSchemas';
 
 const INVOCATION_COMMAND_TYPE = 'bloodbank.agent.invocation.start';
-
-function schemaOptions(schemas: typeof eventSchemas): NonNullable<INodeProperties['options']> {
-  return schemas.map((schema) => {
-    const required = schema.dataFields.filter((field) => field.required).map((field) => field.name);
-    const note = required.length ? ` — data requires: ${required.join(', ')}` : '';
-    return {
-      name: schema.type,
-      value: schema.type,
-      description: (schema.description || schema.title) + note,
-    };
-  });
-}
-
-function eventOptions(): NonNullable<INodeProperties['options']> {
-  return schemaOptions(eventSchemas);
-}
-
-function commandOptions(): NonNullable<INodeProperties['options']> {
-  return schemaOptions(
-    commandSchemas.filter((schema) => schema.type === INVOCATION_COMMAND_TYPE),
-  );
-}
 
 function expandHome(path: string): string {
   if (path === '~') return homedir();
@@ -115,7 +93,7 @@ export class Bloodbank implements INodeType {
         name: 'event',
         type: 'options',
         noDataExpression: true,
-        options: eventOptions(),
+        options: eventOptions({ withRequired: true }),
         default: eventSchemas.length ? eventSchemas[0].type : '',
         required: true,
         displayOptions: { show: { mode: ['event'] } },
@@ -135,7 +113,10 @@ export class Bloodbank implements INodeType {
         name: 'command',
         type: 'options',
         noDataExpression: true,
-        options: commandOptions(),
+        options: commandOptions(
+          (schema) => schema.type === INVOCATION_COMMAND_TYPE,
+          { withRequired: true },
+        ),
         default: INVOCATION_COMMAND_TYPE,
         required: true,
         displayOptions: { show: { mode: ['command'] } },

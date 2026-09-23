@@ -59,7 +59,27 @@
         "provider_event_type": {
           "type": "string",
           "minLength": 1,
-          "description": "Provider provenance name, for example plane.ticket.transitioned."
+          "description": "Provider provenance name, for example plane.ticket.transitioned.",
+          "x-provider-aliases": [
+            {
+              "value": "plane.ticket.updated",
+              "provider": "plane",
+              "label": "On Ticket Updated",
+              "description": "A Plane issue changed without a state transition"
+            },
+            {
+              "value": "plane.ticket.transitioned",
+              "provider": "plane",
+              "label": "On Ticket Transitioned",
+              "description": "A Plane issue moved to another state"
+            },
+            {
+              "value": "plane.ticket.deleted",
+              "provider": "plane",
+              "label": "On Ticket Deleted",
+              "description": "A Plane issue was deleted; a terminal update with phase=deleted"
+            }
+          ]
         },
         "previous_phase": {
           "type": ["string", "null"]

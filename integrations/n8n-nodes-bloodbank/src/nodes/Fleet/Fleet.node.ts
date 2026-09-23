@@ -1,34 +1,40 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 
 import type {
   IExecuteFunctions,
   INodeExecutionData,
+  INodeProperties,
   INodeType,
   INodeTypeDescription,
 } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
-import { parse as parseYaml } from 'yaml';
 
 import {
   delegationPrompt,
+  fleetCommandId,
   groomingPrompt,
   resolveFleetAgentForBoard,
   ticketCorrelationId,
   ticketFactsFromEnvelope,
 } from '../../fleet';
-import type { TicketFacts } from '../../fleet';
-import { publish } from '../../nats';
+import type { FleetRoute, TicketFacts } from '../../fleet';
+import { splitList } from '../../match';
+import { deterministicUuid, publish } from '../../nats';
+import { providerAliasOptions } from '../../options';
+import { hermesRegistryPath, loadHermesRegistry } from '../../registry';
 
 const INVOCATION_COMMAND_TYPE = 'bloodbank.agent.invocation.start';
-const DEFAULT_REGISTRY = '~/.hermes/agents-registry.yaml';
+const INVOCATION_SKIPPED_TYPE = 'bloodbank.agent.invocation.skipped';
 const GROOMED_LABEL = 'lifecycle:triaged';
+const FLEET_SOURCE = 'urn:33god:integration:n8n:agent-fleet';
 
-function expandHome(path: string): string {
-  if (path === '~') return homedir();
-  if (path.startsWith('~/')) return `${homedir()}/${path.slice(2)}`;
-  return path;
-}
+export type SkipCode =
+  | 'provider_event_guard'
+  | 'phase_guard'
+  | 'ineligible'
+  | 'invalid_policy'
+  | 'fenced'
+  | 'no_route';
 
 function nonblank(value: unknown, name: string): string {
   if (typeof value !== 'string' || !value.trim()) {
@@ -37,12 +43,23 @@ function nonblank(value: unknown, name: string): string {
   return value.trim();
 }
 
+/** A mapped parameter's value, or undefined when it resolved to nothing.
+ *
+ * Mapping parameters default to expressions over the incoming envelope. When
+ * the path is missing, n8n may hand back undefined, null, '' or — for a
+ * stringified miss — the literal text; all of them mean "not mapped".
+ */
 function optionalText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === 'undefined' || trimmed === 'null') return undefined;
+  return trimmed;
 }
 
 function jsonObject(value: unknown, name: string): Record<string, unknown> {
   let parsed = value;
+  if (parsed === undefined || parsed === null) return {};
   if (typeof value === 'string') {
     try {
       parsed = value.trim() ? JSON.parse(value) : {};
@@ -56,19 +73,50 @@ function jsonObject(value: unknown, name: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-function listValues(value: unknown): string[] {
-  return String(value ?? '')
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
 /** Case-insensitive membership, so a guard can name a state or its group. */
 function matchesAny(candidate: string, allowed: string[]): boolean {
   if (!allowed.length) return true;
   const needle = candidate.trim().toLowerCase();
   return allowed.some((entry) => entry.toLowerCase() === needle);
 }
+
+function invocationReason(operation: string): string {
+  if (operation === 'groomTicket') return 'ticket-grooming';
+  if (operation === 'delegateTicket') return 'ticket-delegation';
+  return 'fleet-invoke';
+}
+
+/** `.project.json` `execution.mode`, or 'legacy' when there is nothing to read.
+ *
+ * A repo with no manifest, an unreadable one, or one that is not JSON has not
+ * opted into Krebs-managed execution, and that is exactly what legacy means.
+ * The fence must never be the reason a dispatch crashes.
+ */
+export async function executionMode(projectPath: string): Promise<string> {
+  try {
+    const manifest = JSON.parse(await readFile(`${projectPath}/.project.json`, 'utf8'));
+    const execution = manifest && typeof manifest === 'object' ? manifest.execution : undefined;
+    const mode = execution && typeof execution === 'object' ? execution.mode : undefined;
+    return typeof mode === 'string' && mode.trim() ? mode.trim() : 'legacy';
+  } catch {
+    return 'legacy';
+  }
+}
+
+const mapping = (
+  displayName: string,
+  name: string,
+  expression: string,
+  description: string,
+  extra: Partial<INodeProperties> = {},
+): INodeProperties => ({
+  displayName,
+  name,
+  type: 'string',
+  default: expression,
+  description,
+  ...extra,
+});
 
 export class Fleet implements INodeType {
   description: INodeTypeDescription = {
@@ -79,10 +127,11 @@ export class Fleet implements INodeType {
     version: 1,
     subtitle: '={{$parameter["operation"]}}',
     description:
-      'Hand a ticket to the fleet agent that owns its board — registry-resolved, one thread per ticket, ineligible projects skipped',
+      'Hand a ticket to the fleet agent that owns its board — registry-resolved, one thread per ticket, every non-dispatch on its own output and on the bus',
     defaults: { name: '33GOD Agent Fleet' },
     inputs: ['main'],
-    outputs: ['main'],
+    outputs: ['main', 'main'],
+    outputNames: ['Dispatched', 'Skipped'],
     usableAsTool: true,
     properties: [
       {
@@ -155,60 +204,63 @@ export class Fleet implements INodeType {
       {
         displayName: 'Only When Provider Event Is',
         name: 'providerEventGuard',
-        type: 'string',
+        type: 'multiOptions',
+        options: providerAliasOptions(),
+        default: [],
+        description:
+          'Skip the item unless data.provider_event_type is one of these. Strict: with any selected, an item that carries no provider_event_type is skipped too. Select none to accept every item.',
+      },
+      {
+        displayName:
+          'Ticket fields below default to the incoming Bloodbank envelope. Clear one to fall back to lifting it from the envelope; set one to override it.',
+        name: 'mappingNotice',
+        type: 'notice',
         default: '',
-        placeholder: 'plane.ticket.created',
-        description:
-          'Skip the item unless data.provider_event_type matches. Leave empty to accept any. One shared trigger can then feed several operations.',
       },
+      mapping('Repository', 'repo', '={{ $json.data?.repo }}', 'Repo slug of the ticket\'s project'),
+      mapping(
+        'Board ID',
+        'boardId',
+        '={{ $json.data?.board_id ?? $json.data?.project_id }}',
+        'Provider board id. Resolves the owning agent before the repo slug does.',
+      ),
+      mapping('Ticket Key', 'ticketKey', '={{ $json.data?.ticket_key }}', 'Human ticket key, e.g. JIMB-273'),
+      mapping(
+        'Ticket ID',
+        'ticketId',
+        '={{ $json.data?.ticket_id ?? $json.data?.task_id ?? $json.data?.ticket?.id }}',
+        'Provider ticket id. Keys the ticket\'s conversation (correlation) when the envelope carries none.',
+      ),
+      mapping('Title', 'title', '={{ $json.data?.title ?? $json.data?.ticket?.name }}', 'Ticket title'),
+      mapping('Workspace', 'workspace', '={{ $json.data?.workspace }}', 'Provider workspace slug'),
+      mapping(
+        'Provider Event Type',
+        'providerEventType',
+        '={{ $json.data?.provider_event_type }}',
+        'Provider provenance the guard above checks, e.g. plane.ticket.created',
+      ),
+      mapping('Phase', 'phase', '={{ $json.data?.phase }}', 'State the ticket landed in', {
+        displayOptions: { show: { operation: ['delegateTicket'] } },
+      }),
+      mapping(
+        'Correlation ID',
+        'correlationId',
+        '={{ $json.correlationid }}',
+        'Thread the command joins. Blank: derived from the ticket (plane:<board>:<ticket id>).',
+      ),
+      mapping(
+        'Causation ID',
+        'causationId',
+        '={{ $json.id }}',
+        'Event that caused this dispatch. Also makes the command id — and so its idempotency key — deterministic.',
+      ),
       {
-        displayName: 'On Ineligible Agent',
-        name: 'onIneligible',
-        type: 'options',
-        noDataExpression: true,
-        options: [
-          {
-            name: 'Skip',
-            value: 'skip',
-            description:
-              'Report the reason and publish nothing. A switched-off project stays a green execution.',
-          },
-          { name: 'Error', value: 'error', description: 'Fail the item' },
-        ],
-        default: 'skip',
+        displayName: 'Publish Skip Events',
+        name: 'publishSkips',
+        type: 'boolean',
+        default: true,
         description:
-          'What to do when the registry route exists but bloodbank.enabled, gateway_scope or target_agent_id says the bus may not address it',
-      },
-      {
-        displayName: 'Ticket',
-        name: 'ticket',
-        type: 'collection',
-        placeholder: 'Add field',
-        default: {},
-        description:
-          'Overrides for the incoming item. By default every field is lifted from the Bloodbank envelope on the input, so a trigger can feed this node with no mapping at all.',
-        options: [
-          {
-            displayName: 'Ticket Event (JSON)',
-            name: 'event',
-            type: 'json',
-            default: '',
-            description:
-              'A whole Bloodbank envelope or bare data object to read instead of the input item',
-          },
-          { displayName: 'Repository', name: 'repo', type: 'string', default: '' },
-          { displayName: 'Board ID', name: 'boardId', type: 'string', default: '' },
-          { displayName: 'Ticket Key', name: 'ticketKey', type: 'string', default: '' },
-          { displayName: 'Title', name: 'title', type: 'string', default: '' },
-        ],
-      },
-      {
-        displayName: 'Hermes Registry File',
-        name: 'registryFile',
-        type: 'string',
-        default: DEFAULT_REGISTRY,
-        required: true,
-        description: 'Canonical fleet registry, re-read on every execution',
+          'Whether to publish bloodbank.agent.invocation.skipped for every item sent to the Skipped output, so a ticket nobody picked up is explainable from the bus',
       },
       {
         displayName: 'Connection',
@@ -234,6 +286,12 @@ export class Fleet implements INodeType {
         default: 'n8n-agent-fleet',
         description: 'Recorded as the command producer, so executions are traceable to a workflow',
       },
+      // Retired UI parameters. Kept as hidden values so workflows saved before
+      // 0.5.0 keep their meaning; n8n drops parameters a node no longer
+      // declares, so deleting these would silently change saved behaviour.
+      { displayName: 'Ticket (legacy overrides)', name: 'ticket', type: 'hidden', default: {} },
+      { displayName: 'Hermes Registry File (legacy)', name: 'registryFile', type: 'hidden', default: '' },
+      { displayName: 'On Ineligible Agent (legacy)', name: 'onIneligible', type: 'hidden', default: 'skip' },
     ],
   };
 
@@ -242,60 +300,148 @@ export class Fleet implements INodeType {
     publishMessage?: unknown,
   ): Promise<INodeExecutionData[][]> {
     const items = this.getInputData();
-    const out: INodeExecutionData[] = [];
+    const dispatched: INodeExecutionData[] = [];
+    const skipped: INodeExecutionData[] = [];
     const send = typeof publishMessage === 'function' ? (publishMessage as typeof publish) : publish;
+    let registry: { path: string; value: unknown } | undefined;
 
     for (let i = 0; i < items.length; i++) {
       try {
-        const operation = this.getNodeParameter('operation', i) as string;
-        const overrides = jsonObject(this.getNodeParameter('ticket', i, {}), 'ticket overrides');
+        const operation = this.getNodeParameter('operation', i, 'groomTicket') as string;
         const conn = this.getNodeParameter('connection', i, {}) as {
           natsHost?: string;
           natsPort?: number;
           timeoutMs?: number;
         };
+        const service = optionalText(this.getNodeParameter('service', i, '')) || 'n8n-agent-fleet';
+        const param = (name: string): string | undefined =>
+          optionalText(this.getNodeParameter(name, i, ''));
 
-        const declared = optionalText(overrides.event);
+        // Legacy `ticket` collection: explicit overrides saved before 0.5.0.
+        const legacy = jsonObject(this.getNodeParameter('ticket', i, {}), 'ticket overrides');
+        const declared = optionalText(legacy.event);
         const envelope = declared
           ? jsonObject(declared, 'ticket event')
           : ((items[i].json || {}) as Record<string, unknown>);
         const lifted = ticketFactsFromEnvelope(envelope);
+        // With a legacy declared event, the mapping expressions still point at
+        // the input item, not at that event, so only the legacy values apply.
+        const mapped = (name: string): string | undefined => (declared ? undefined : param(name));
+        const pick = (legacyKey: string, name: string, fallback: string): string =>
+          optionalText(legacy[legacyKey]) || mapped(name) || fallback;
         const facts: TicketFacts = {
           ...lifted,
-          repo: optionalText(overrides.repo) || lifted.repo,
-          boardId: optionalText(overrides.boardId) || lifted.boardId,
-          ticketKey: optionalText(overrides.ticketKey) || lifted.ticketKey,
-          title: optionalText(overrides.title) || lifted.title,
+          repo: pick('repo', 'repo', lifted.repo),
+          boardId: pick('boardId', 'boardId', lifted.boardId),
+          ticketKey: pick('ticketKey', 'ticketKey', lifted.ticketKey),
+          ticketId: pick('ticketId', 'ticketId', lifted.ticketId),
+          title: pick('title', 'title', lifted.title),
+          workspace: pick('workspace', 'workspace', lifted.workspace),
+          providerEventType: pick('providerEventType', 'providerEventType', lifted.providerEventType),
+          phase: operation === 'delegateTicket' ? pick('phase', 'phase', lifted.phase) : lifted.phase,
+        };
+        const correlationId =
+          mapped('correlationId') ||
+          optionalText(envelope.correlationid) ||
+          ticketCorrelationId(facts.boardId, facts.ticketId || facts.ticketKey);
+        const causationId = mapped('causationId') || optionalText(envelope.id);
+        const reasonForInvocation = invocationReason(operation);
+
+        const ticketJson = {
+          operation,
+          repo: facts.repo,
+          boardId: facts.boardId,
+          ticketKey: facts.ticketKey,
+          ticketId: facts.ticketId,
+          title: facts.title,
+          workspace: facts.workspace,
+          phase: facts.phase,
+          providerEventType: facts.providerEventType,
         };
 
-        const providerGuard = listValues(this.getNodeParameter('providerEventGuard', i, ''));
-        if (facts.providerEventType && !matchesAny(facts.providerEventType, providerGuard)) {
-          out.push({
-            json: {
-              invoked: false,
-              skipped: true,
-              reason: `provider_event_type is ${facts.providerEventType}, not ${providerGuard.join(' or ')}`,
-              operation,
-              ticketKey: facts.ticketKey,
-            },
-            pairedItem: { item: i },
-          });
-          continue;
+        const skip = async (code: SkipCode, reason: string, route?: FleetRoute): Promise<void> => {
+          const target = route && code !== 'no_route' ? route.agentId || null : null;
+          const json: Record<string, unknown> = {
+            invoked: false,
+            skipped: true,
+            code,
+            reason,
+            ...ticketJson,
+            agentId: target,
+            matchedBy: route?.matchedBy ?? 'none',
+          };
+          if (this.getNodeParameter('publishSkips', i, true) !== false) {
+            try {
+              const result = await send({
+                type: INVOCATION_SKIPPED_TYPE,
+                kind: 'event',
+                validate: true,
+                data: {
+                  reason,
+                  skip_code: code,
+                  operation,
+                  target_agent_id: target,
+                  matched_by: route?.matchedBy ?? 'none',
+                  context: {
+                    reason: reasonForInvocation,
+                    repo: facts.repo || null,
+                    ticket_key: facts.ticketKey || null,
+                    ticket_id: facts.ticketId || null,
+                    board_id: facts.boardId || null,
+                    workspace: facts.workspace || null,
+                    title: facts.title || null,
+                    phase: facts.phase || null,
+                    provider_event_type: facts.providerEventType || null,
+                  },
+                },
+                eventId: causationId
+                  ? deterministicUuid(`agent.invocation.skipped:${operation}:${causationId}`)
+                  : undefined,
+                correlationId,
+                causationId,
+                orderingKey: facts.ticketId
+                  ? `task:${facts.repo || facts.boardId || 'unknown'}:${facts.ticketId}`
+                  : undefined,
+                source: FLEET_SOURCE,
+                producer: 'n8n',
+                service,
+                host: conn.natsHost || undefined,
+                port: conn.natsPort ? Number(conn.natsPort) : undefined,
+                timeoutMs: conn.timeoutMs ? Number(conn.timeoutMs) : undefined,
+              });
+              json.skipEvent = { published: true, subject: result.subject, eventId: result.eventId };
+            } catch (error) {
+              // Losing the audit event must not lose the item.
+              json.skipEvent = { published: false, error: (error as Error).message };
+            }
+          } else {
+            json.skipEvent = { published: false, disabled: true };
+          }
+          skipped.push({ json: json as never, pairedItem: { item: i } });
+        };
+
+        const providerGuard = splitList(this.getNodeParameter('providerEventGuard', i, []));
+        if (providerGuard.length) {
+          if (!facts.providerEventType) {
+            await skip(
+              'provider_event_guard',
+              `provider_event_type is absent, not ${providerGuard.join(' or ')}`,
+            );
+            continue;
+          }
+          if (!matchesAny(facts.providerEventType, providerGuard)) {
+            await skip(
+              'provider_event_guard',
+              `provider_event_type is ${facts.providerEventType}, not ${providerGuard.join(' or ')}`,
+            );
+            continue;
+          }
         }
 
         if (operation === 'delegateTicket') {
-          const phaseGuard = listValues(this.getNodeParameter('phaseGuard', i, ''));
+          const phaseGuard = splitList(this.getNodeParameter('phaseGuard', i, ''));
           if (phaseGuard.length && !matchesAny(facts.phase, phaseGuard)) {
-            out.push({
-              json: {
-                invoked: false,
-                skipped: true,
-                reason: `phase is ${facts.phase || '(none)'}, not ${phaseGuard.join(' or ')}`,
-                operation,
-                ticketKey: facts.ticketKey,
-              },
-              pairedItem: { item: i },
-            });
+            await skip('phase_guard', `phase is ${facts.phase || '(none)'}, not ${phaseGuard.join(' or ')}`);
             continue;
           }
         }
@@ -308,65 +454,52 @@ export class Fleet implements INodeType {
           );
         }
 
-        const registryPath = expandHome(
-          nonblank(this.getNodeParameter('registryFile', i), 'fleet registry path'),
-        );
-        let registry: unknown;
-        try {
-          registry = parseYaml(await readFile(registryPath, 'utf8'));
-        } catch (error) {
-          throw new NodeOperationError(
-            this.getNode(),
-            `Cannot read the fleet registry at ${registryPath}: ${(error as Error).message}`,
-            { itemIndex: i },
-          );
+        const registryPath = hermesRegistryPath(this.getNodeParameter('registryFile', i, ''));
+        if (!registry || registry.path !== registryPath) {
+          try {
+            registry = { path: registryPath, value: await loadHermesRegistry(registryPath) };
+          } catch (error) {
+            throw new NodeOperationError(
+              this.getNode(),
+              `Cannot read the fleet registry at ${registryPath}: ${(error as Error).message}`,
+              { itemIndex: i },
+            );
+          }
         }
-        const route = resolveFleetAgentForBoard(registry, facts.boardId, facts.repo);
+        const route = resolveFleetAgentForBoard(registry.value, facts.boardId, facts.repo);
 
+        if (!route.eligible) {
+          if (this.getNodeParameter('onIneligible', i, 'skip') === 'error' && route.code !== 'no_route') {
+            throw new NodeOperationError(this.getNode(), route.why, { itemIndex: i });
+          }
+          await skip(route.code || 'ineligible', route.why, route);
+          continue;
+        }
+
+        // Read canonical enrollment every dispatch; never trust a stale copy.
+        // Evaluated after eligibility so a switched-off project reports that,
+        // not a fence it would never have reached.
         if (route.projectPath) {
-          // Read canonical enrollment every dispatch; never trust a stale registry copy.
-          const manifest = JSON.parse(await readFile(`${route.projectPath}/.project.json`, 'utf8'));
-          if (manifest.execution && manifest.execution.mode !== 'legacy') {
-            out.push({ json: { invoked: false, skipped: true, boardId: facts.boardId,
-              reason: 'Krebs owns managed/shadow execution; legacy fleet dispatch fenced' }, pairedItem: { item: i } });
+          const mode = await executionMode(route.projectPath);
+          if (mode !== 'legacy') {
+            await skip(
+              'fenced',
+              `Krebs owns ${mode} execution for ${route.agentId}; legacy fleet dispatch is fenced`,
+              route,
+            );
             continue;
           }
         }
 
-        if (!route.eligible) {
-          const onIneligible = this.getNodeParameter('onIneligible', i, 'skip') as string;
-          if (onIneligible === 'error') {
-            throw new NodeOperationError(this.getNode(), route.why, { itemIndex: i });
-          }
-          out.push({
-            json: {
-              invoked: false,
-              skipped: true,
-              reason: route.why,
-              operation,
-              agentId: route.agentId,
-              matchedBy: route.matchedBy,
-              ticketKey: facts.ticketKey,
-              boardId: facts.boardId,
-            },
-            pairedItem: { item: i },
-          });
-          continue;
-        }
-
         let prompt: string;
-        let reason: string;
         if (operation === 'groomTicket') {
           const label = optionalText(this.getNodeParameter('groomedLabel', i, GROOMED_LABEL)) || '';
           prompt = groomingPrompt(facts, route.projectPath, label);
-          reason = 'ticket-grooming';
         } else if (operation === 'delegateTicket') {
           const label = optionalText(this.getNodeParameter('requiredLabel', i, GROOMED_LABEL)) || '';
           prompt = delegationPrompt(facts, route.projectPath, label);
-          reason = 'ticket-delegation';
         } else if (operation === 'invoke') {
           prompt = nonblank(this.getNodeParameter('prompt', i), 'prompt');
-          reason = 'fleet-invoke';
         } else {
           throw new NodeOperationError(
             this.getNode(),
@@ -375,15 +508,12 @@ export class Fleet implements INodeType {
           );
         }
 
-        // A command's correlation id defaults to its own command id, which would
-        // give every invocation its own thread. Derive it from the ticket so the
-        // ticket is the conversation, and a redelivered webhook lands on the same
-        // idempotency key instead of starting a second one.
-        const inherited = optionalText((envelope as Record<string, unknown>).correlationid);
-        const correlationId =
-          inherited || ticketCorrelationId(facts.boardId, facts.ticketKey || facts.ticketId);
-        const causationId = optionalText((envelope as Record<string, unknown>).id);
-
+        // The ticket is the conversation: correlation comes from the causing
+        // envelope, else from the ticket itself. Idempotency is separate: the
+        // command id is derived from the causing event id, so a redelivered
+        // trigger event republishes the same command_id and idempotency_key and
+        // the gateway drops the duplicate.
+        const commandId = fleetCommandId(causationId, operation, route.agentId);
         const result = await send({
           type: INVOCATION_COMMAND_TYPE,
           kind: 'command',
@@ -391,7 +521,7 @@ export class Fleet implements INodeType {
             target_agent_id: route.agentId,
             prompt,
             context: {
-              reason,
+              reason: reasonForInvocation,
               repo: facts.repo,
               ticket_key: facts.ticketKey,
               ticket_id: facts.ticketId,
@@ -403,39 +533,39 @@ export class Fleet implements INodeType {
               provider_event_type: facts.providerEventType,
             },
           },
+          commandId,
+          eventId: commandId,
           correlationId,
           causationId,
+          source: FLEET_SOURCE,
           host: conn.natsHost || undefined,
           port: conn.natsPort ? Number(conn.natsPort) : undefined,
           timeoutMs: conn.timeoutMs ? Number(conn.timeoutMs) : undefined,
           producer: 'n8n',
-          service: optionalText(this.getNodeParameter('service', i, '')) || 'n8n-agent-fleet',
+          service,
         });
 
-        out.push({
+        dispatched.push({
           json: {
             invoked: true,
             skipped: false,
-            operation,
-            reason,
+            reason: reasonForInvocation,
+            ...ticketJson,
             subject: result.subject,
-            commandId: result.commandId,
+            commandId: result.commandId ?? null,
             eventId: result.eventId,
             correlationid: result.correlationid,
             agentId: route.agentId,
-            profileName: route.profileName,
-            projectPath: route.projectPath,
+            profileName: route.profileName ?? null,
+            projectPath: route.projectPath ?? null,
             matchedBy: route.matchedBy,
-            repo: facts.repo,
-            boardId: facts.boardId,
-            ticketKey: facts.ticketKey,
           },
           pairedItem: { item: i },
         });
       } catch (error) {
         if (this.continueOnFail()) {
-          out.push({
-            json: { invoked: false, error: (error as Error).message },
+          skipped.push({
+            json: { invoked: false, skipped: true, code: 'error', error: (error as Error).message },
             pairedItem: { item: i },
           });
           continue;
@@ -444,6 +574,6 @@ export class Fleet implements INodeType {
       }
     }
 
-    return [out];
+    return [dispatched, skipped];
   }
 }

@@ -281,7 +281,15 @@ test('event mode preserves the existing envelope, subject, and output shape', as
   const result = await node.execute.call(executionContext({
     mode: 'event',
     event: 'bloodbank.repo.task.created',
-    data: { repo: '33GOD', task_id: 'ticket-1', title: 'Test' },
+    data: {
+      repo: '33GOD',
+      task_id: 'ticket-1',
+      ticket_id: 'ticket-1',
+      board_id: 'board-1',
+      title: 'Test',
+      provider: 'plane',
+      provider_event_type: 'plane.ticket.created',
+    },
     connection: { natsHost: 'test-nats', natsPort: 4222 },
   }), capturedPublisher(messages));
 

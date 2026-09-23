@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://33god.dev/schemas/bloodbank/repo/task.created.json",
   "title": "Repo Task Created Event",
-  "description": "A ticket provider or PM created a repo-scoped task. The repo slug and provider provenance belong in data, not in the CloudEvents type.",
+  "description": "A ticket provider observed a task being created. The repo slug and provider provenance belong in data, not in the CloudEvents type.",
   "type": "object",
   "allOf": [
     {
@@ -71,7 +71,15 @@
         "provider_event_type": {
           "type": "string",
           "minLength": 1,
-          "description": "Provider provenance name, for example plane.ticket.created."
+          "description": "Provider provenance name, for example plane.ticket.created.",
+          "x-provider-aliases": [
+            {
+              "value": "plane.ticket.created",
+              "provider": "plane",
+              "label": "On Ticket Created",
+              "description": "A Plane issue was created"
+            }
+          ]
         },
         "phase": {
           "type": ["string", "null"]
@@ -91,7 +99,11 @@
       },
       "required": [
         "repo",
-        "title"
+        "title",
+        "provider",
+        "provider_event_type",
+        "board_id",
+        "ticket_id"
       ],
       "additionalProperties": true
     }

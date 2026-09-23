@@ -217,6 +217,8 @@ test('new Plane project webhooks can emit board provenance before registry recon
   assert.equal(event.canonicalType, 'bloodbank.repo.board.created');
   assert.equal(event.providerEventType, 'plane.board.created');
   assert.equal(event.data.slug, 'new');
+  // An unclaimed board names no repo: null, never a slug guessed from its name.
+  assert.equal(event.data.repo, null);
   assert.equal(event.data.workspace, '33god');
   assert.equal(event.data.board.id, 'board-new');
 });

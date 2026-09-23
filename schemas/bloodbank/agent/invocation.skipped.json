@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/agent/invocation.skipped.json",
+  "title": "Agent Invocation Skipped Event",
+  "description": "A dispatcher decided NOT to invoke an agent for a ticket event: a provider-event or phase guard missed, the owning agent is ineligible or fenced, or no agent owns the board. It is the only trace such a decision leaves, so a ticket nobody picked up is explainable from the bus.",
+  "x-n8n-label": "On Invocation Skipped",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.agent.invocation.skipped"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "agent"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.agent.invocation.skipped.",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable reason the invocation was skipped."
+        },
+        "skip_code": {
+          "type": "string",
+          "enum": [
+            "provider_event_guard",
+            "phase_guard",
+            "ineligible",
+            "invalid_policy",
+            "fenced",
+            "no_route"
+          ],
+          "description": "Machine-readable skip class. provider_event_guard and phase_guard are filters the workflow asked for; ineligible, invalid_policy and fenced are registry or manifest policy; no_route means no agent owns the board."
+        },
+        "operation": {
+          "type": ["string", "null"],
+          "description": "Dispatcher operation that skipped, for example groomTicket or delegateTicket."
+        },
+        "target_agent_id": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Agent the ticket would have been addressed to, or null when no agent was resolved."
+        },
+        "matched_by": {
+          "type": ["string", "null"],
+          "enum": ["board", "fallback", "none", null],
+          "description": "How the target was resolved: by board id, by the <repo>-pm convention, or not at all."
+        },
+        "context": {
+          "type": "object",
+          "description": "The same ticket context an agent.invocation.start command would have carried, so a skip and a dispatch are filterable on the same paths.",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Invocation purpose, for example ticket-grooming or ticket-delegation. Not the skip reason."
+            },
+            "repo": { "type": ["string", "null"] },
+            "ticket_key": { "type": ["string", "null"] },
+            "ticket_id": { "type": ["string", "null"] },
+            "board_id": { "type": ["string", "null"] },
+            "workspace": { "type": ["string", "null"] },
+            "title": { "type": ["string", "null"] },
+            "phase": { "type": ["string", "null"] },
+            "provider_event_type": { "type": ["string", "null"] }
+          },
+          "required": ["reason"],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "reason",
+        "skip_code",
+        "target_agent_id",
+        "context"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}

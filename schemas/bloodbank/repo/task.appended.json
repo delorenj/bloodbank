@@ -56,7 +56,15 @@
         "provider_event_type": {
           "type": "string",
           "minLength": 1,
-          "description": "Provider provenance name, for example plane.ticket.commented."
+          "description": "Provider provenance name, for example plane.ticket.commented.",
+          "x-provider-aliases": [
+            {
+              "value": "plane.ticket.commented",
+              "provider": "plane",
+              "label": "On Ticket Commented",
+              "description": "A comment was added to a Plane issue"
+            }
+          ]
         },
         "comment_id": {
           "type": "string",

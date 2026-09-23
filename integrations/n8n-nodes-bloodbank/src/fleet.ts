@@ -1,4 +1,5 @@
 import { deterministicUuid } from './nats';
+import { bloodbankActivation, describeActivation } from './registry';
 
 /** Where a ticket's owning agent came from, and whether the bus may address it.
  *
@@ -11,6 +12,11 @@ export interface FleetRoute {
   profileName?: string;
   eligible: boolean;
   why: string;
+  /** Why an ineligible route is ineligible, in a form a filter can switch on.
+   *  `no_route`: no agent owns the board. `invalid_policy`: the row's
+   *  `bloodbank.enabled` is present but not a boolean. `ineligible`: every
+   *  other policy refusal. Absent when eligible. */
+  code?: 'no_route' | 'invalid_policy' | 'ineligible';
   projectPath?: string;
   workspace?: string;
   identifier?: string;
@@ -66,6 +72,7 @@ export function resolveFleetAgentForBoard(
       agentId: fallback,
       eligible: false,
       why: 'fleet registry has no agents mapping',
+      code: 'no_route',
       matchedBy: 'none',
     };
   }
@@ -98,6 +105,7 @@ export function resolveFleetAgentForBoard(
         why: boardId
           ? `no registry entry matches board ${boardId} and no fallback agent ${fallback || '(none)'} exists`
           : `no board id was given and no fallback agent ${fallback || '(none)'} exists`,
+        code: 'no_route',
         matchedBy: 'none',
       };
     }
@@ -120,43 +128,84 @@ export function resolveFleetAgentForBoard(
   // only when all four of these agree, and refuses the command otherwise. We
   // check the same four here so a switched-off project is a readable skip
   // rather than a RouteInvalid buried in gateway logs.
+  //
+  // `bloodbank.enabled` follows the fleet rule that no key means enabled: an
+  // ABSENT key activates the row, explicit `false` switches it off, and a
+  // present non-boolean is invalid (and therefore off) rather than guessed at.
   if (!base.profileName) {
-    return { ...base, eligible: false, why: `${agentId} has no profile_name` };
+    return { ...base, eligible: false, code: 'ineligible', why: `${agentId} has no profile_name` };
   }
   const bloodbank = mapping(entry.bloodbank);
   if (!bloodbank) {
-    return { ...base, eligible: false, why: `${agentId} has no bloodbank block` };
+    return { ...base, eligible: false, code: 'ineligible', why: `${agentId} has no bloodbank block` };
   }
-  if (bloodbank.enabled !== true) {
+  const activation = bloodbankActivation(bloodbank);
+  if (activation === 'disabled') {
     return {
       ...base,
       eligible: false,
-      why: `${agentId} is registry-defined but bloodbank.enabled is not true`,
+      code: 'ineligible',
+      why: `${agentId} is registry-defined but bloodbank.enabled is false`,
+    };
+  }
+  if (activation === 'invalid') {
+    return {
+      ...base,
+      eligible: false,
+      code: 'invalid_policy',
+      why: `${agentId} has an invalid bloodbank.enabled (${describeActivation(bloodbank)}); it must be a YAML boolean or absent`,
     };
   }
   if (bloodbank.gateway_scope !== 'fleet') {
-    return { ...base, eligible: false, why: `${agentId} gateway_scope is not 'fleet'` };
+    return { ...base, eligible: false, code: 'ineligible', why: `${agentId} gateway_scope is not 'fleet'` };
   }
   if (text(bloodbank.target_agent_id) !== agentId) {
     return {
       ...base,
       eligible: false,
+      code: 'ineligible',
       why: `${agentId} target_agent_id mismatch (${text(bloodbank.target_agent_id) || 'unset'})`,
     };
   }
   return { ...base, eligible: true, why: 'eligible' };
 }
 
-/** One correlation id per ticket, stable across replays of the same webhook.
+/** One correlation id per ticket: the ticket is the conversation.
  *
  * The generic fallback hashes the event type, which is a constant: every
- * invocation would share one correlation id, and therefore one thread and one
- * idempotency key, collapsing distinct tickets into a single conversation and
- * colliding on dedup. Deriving from the ticket gives each its own thread while
- * keeping a redelivered webhook idempotent.
+ * invocation would share one correlation id, and therefore one thread,
+ * collapsing distinct tickets into a single conversation. Deriving from the
+ * ticket gives each its own thread.
+ *
+ * Pass the provider ticket id (UUID) when there is one: that is exactly what
+ * the Plane webhook ingress derives (`plane:<board_id>:<ticket_id>`), so a
+ * command built here lands on the same correlation id as the fact that caused
+ * it. The ticket key is only a fallback for callers that have nothing else.
+ *
+ * Correlation is NOT idempotency. Deduplication keys on the command id, which
+ * the fleet node derives from the triggering event id (`fleetCommandId`).
  */
 export function ticketCorrelationId(boardId: string, ticketRef: string): string {
   return deterministicUuid(`plane:${text(boardId)}:${text(ticketRef)}`);
+}
+
+/** A command id that is a pure function of the event that caused it.
+ *
+ * A redelivered trigger event (same event id — the Plane ingress derives event
+ * ids deterministically from the webhook, so a Plane retry qualifies) yields the
+ * same command id and therefore the same `idempotency_key`
+ * (`agent.invocation.start:target:<agent>:command:<command_id>`), which is what
+ * the gateway deduplicates on. Returns undefined when there is no causing event
+ * id, so the publisher mints a fresh one.
+ */
+export function fleetCommandId(
+  causationId: string | undefined,
+  operation: string,
+  agentId: string,
+): string | undefined {
+  const cause = text(causationId);
+  if (!cause) return undefined;
+  return deterministicUuid(`agent.invocation.start:${text(operation)}:${text(agentId)}:${cause}`);
 }
 
 /** Lift ticket facts from a full CloudEvent envelope or a bare data object. */

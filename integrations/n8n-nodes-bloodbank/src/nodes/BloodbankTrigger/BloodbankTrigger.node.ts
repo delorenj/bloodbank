@@ -1,6 +1,5 @@
 import type {
   IDataObject,
-  INodeProperties,
   INodeType,
   INodeTypeDescription,
   IRun,
@@ -9,38 +8,22 @@ import type {
 } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 
+import { bindingMatches, bindingSubject, canonicalTypeFor, sampleEnvelope } from '../../bindings';
+import {
+  COMMANDS_STREAM,
+  EVENTS_STREAM,
+  findLatestMatching,
+  withDirectGet,
+} from '../../jetstream';
+import type { StoredMessage } from '../../jetstream';
+import { matchesDataConditions, parseDataConditions } from '../../match';
+import type { DataCondition } from '../../match';
 import { publishReply, subjectFor, subscribe } from '../../nats';
-import { planeBindingMatches, planeEventBindings } from '../../plane';
-import { commandSchemas, eventSchemas } from '../Bloodbank/eventSchemas';
+import { commandOptions, eventOptions } from '../../options';
+import { commandSchemas } from '../Bloodbank/eventSchemas';
 
-function eventOptions(): NonNullable<INodeProperties['options']> {
-  const canonical = eventSchemas.map((schema) => ({
-    name: schema.type,
-    value: schema.type,
-    description: schema.description || schema.title,
-  }));
-  const plane = planeEventBindings.map(({ name, value, description }) => ({
-    name,
-    value,
-    description,
-  }));
-  return [...plane, ...canonical];
-}
-
-function commandOptions(): NonNullable<INodeProperties['options']> {
-  return commandSchemas.map((schema) => ({
-    name: schema.type,
-    value: schema.type,
-    description: schema.description || schema.title,
-  }));
-}
-
-function eventSubject(binding: string): string {
-  if (binding.startsWith('bloodbank.')) return subjectFor(binding, 'event');
-  const alias = planeEventBindings.find((candidate) => candidate.value === binding);
-  if (!alias) throw new Error(`unknown Bloodbank event binding: ${binding}`);
-  return subjectFor(alias.canonicalType, 'event');
-}
+type Kind = 'event' | 'command';
+type TestEventSource = 'replay' | 'sample' | 'live';
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -88,6 +71,61 @@ async function commandRun(
   }
 }
 
+/** Does an envelope pass this trigger's bindings and data filter? */
+export function triggerAccepts(
+  kind: Kind,
+  bindings: string[],
+  conditions: DataCondition[],
+  envelope: Record<string, unknown>,
+): boolean {
+  const bound = kind === 'event'
+    ? bindings.some((binding) => bindingMatches(binding, envelope))
+    : envelope.type === bindings[0];
+  return bound && matchesDataConditions(envelope, conditions);
+}
+
+export interface ReplayResult {
+  envelope: Record<string, unknown>;
+  origin: 'replay' | 'sample';
+  stored?: Pick<StoredMessage, 'seq' | 'subject' | 'time'>;
+  note?: string;
+}
+
+/** What a manual test run emits: the newest real match, else a sample. */
+export async function manualTestEnvelope(
+  kind: Kind,
+  bindings: string[],
+  conditions: DataCondition[],
+  source: Exclude<TestEventSource, 'live'>,
+  replay: (stream: string, subject: string, accepts: (envelope: Record<string, unknown>) => boolean) => Promise<StoredMessage | null>,
+): Promise<ReplayResult> {
+  let note: string | undefined;
+  if (source === 'replay') {
+    const stream = kind === 'event' ? EVENTS_STREAM : COMMANDS_STREAM;
+    const subjects = [...new Set(bindings.map((binding) => bindingSubject(binding, kind)))];
+    let best: StoredMessage | null = null;
+    try {
+      for (const subject of subjects) {
+        const found = await replay(stream, subject, (envelope) =>
+          triggerAccepts(kind, bindings, conditions, envelope),
+        );
+        if (found && (!best || found.seq > best.seq)) best = found;
+      }
+    } catch (error) {
+      note = `replay unavailable: ${(error as Error).message}`;
+    }
+    if (best) {
+      return {
+        envelope: best.envelope,
+        origin: 'replay',
+        stored: { seq: best.seq, subject: best.subject, time: best.time },
+      };
+    }
+    note = note || 'no retained message matched; emitted a generated sample';
+  }
+  return { envelope: sampleEnvelope(bindings[0], kind), origin: 'sample', note };
+}
+
 export class BloodbankTrigger implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'Bloodbank Trigger',
@@ -125,12 +163,12 @@ export class BloodbankTrigger implements INodeType {
         name: 'events',
         type: 'multiOptions',
         noDataExpression: true,
-        options: eventOptions(),
+        options: eventOptions({ includeAliases: true }),
         default: [],
         required: true,
         displayOptions: { show: { messageKind: ['event'] } },
         description:
-          'Bind any number of canonical Bloodbank events or Plane provenance aliases. Plane aliases filter provider_event_type while subscribing to the canonical repo.* subject.',
+          'Bind any number of canonical Bloodbank events or provider aliases. An alias (e.g. Plane · On Ticket Created) subscribes to its canonical subject and filters data.provider_event_type.',
       },
       {
         displayName: 'Command',
@@ -173,6 +211,68 @@ export class BloodbankTrigger implements INodeType {
         description: 'Consumers in the same group compete so one workflow receives each command.',
       },
       {
+        displayName: 'Only When Data Matches',
+        name: 'dataMatch',
+        type: 'fixedCollection',
+        typeOptions: { multipleValues: true },
+        placeholder: 'Add condition',
+        default: {},
+        description:
+          'Drop a message before it starts an execution unless every condition holds. A message that fails never becomes an execution, so a busy subject costs nothing for the ones you do not want.',
+        options: [
+          {
+            name: 'conditions',
+            displayName: 'Condition',
+            values: [
+              {
+                displayName: 'Path',
+                name: 'path',
+                type: 'string',
+                default: '',
+                placeholder: 'data.context.reason',
+                description: 'Dot path into the whole envelope, e.g. data.context.reason, data.provider, type',
+              },
+              {
+                displayName: 'Values',
+                name: 'values',
+                type: 'string',
+                default: '',
+                placeholder: 'ticket-grooming,ticket-delegation',
+                description:
+                  'Comma-separated. The value at Path must equal one of them (any element, for an array). Leave empty to require only that Path is present and non-empty.',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        displayName: 'Test Event Source',
+        name: 'testEventSource',
+        type: 'options',
+        noDataExpression: true,
+        options: [
+          {
+            name: 'Replay Last Matching',
+            value: 'replay',
+            description:
+              'Emit the newest retained message that passes the bindings and data filter (JetStream direct get; no consumer is created), else a generated sample',
+          },
+          {
+            name: 'Generated Sample',
+            value: 'sample',
+            description: 'Emit a sample envelope built from the bound schema',
+          },
+          {
+            name: 'Wait for Live',
+            value: 'live',
+            description: 'Subscribe and wait for the next matching message',
+          },
+        ],
+        default: 'replay',
+        description:
+          'What a manual "Test step" or "Test workflow" emits. An active workflow always consumes live messages.',
+      },
+      {
         displayName: 'Connection',
         name: 'connection',
         type: 'collection',
@@ -193,7 +293,7 @@ export class BloodbankTrigger implements INodeType {
   };
 
   async trigger(this: ITriggerFunctions): Promise<ITriggerResponse> {
-    const kind = this.getNodeParameter('messageKind') as 'event' | 'command';
+    const kind = this.getNodeParameter('messageKind') as Kind;
     const processing = kind === 'command'
       ? (this.getNodeParameter('commandProcessing') as 'async' | 'sync')
       : 'async';
@@ -206,13 +306,45 @@ export class BloodbankTrigger implements INodeType {
     if (kind === 'command' && bindings.length !== 1) {
       throw new NodeOperationError(this.getNode(), 'A command trigger must bind exactly one command');
     }
+    for (const binding of bindings) {
+      try {
+        canonicalTypeFor(binding);
+      } catch (error) {
+        throw new NodeOperationError(this.getNode(), (error as Error).message);
+      }
+    }
+    const conditions = parseDataConditions(this.getNodeParameter('dataMatch', {}));
     const connection = this.getNodeParameter('connection', {}) as {
       natsHost?: string;
       natsPort?: number;
       timeoutMs?: number;
     };
+    const natsOptions = {
+      host: connection.natsHost || undefined,
+      port: connection.natsPort ? Number(connection.natsPort) : undefined,
+      timeoutMs: connection.timeoutMs ? Number(connection.timeoutMs) : undefined,
+    };
+
+    const testSource = String(this.getNodeParameter('testEventSource', 'replay')) as TestEventSource;
+    if (this.getMode() === 'manual' && testSource !== 'live') {
+      const manualTriggerFunction = async (): Promise<void> => {
+        const result = await manualTestEnvelope(
+          kind,
+          bindings,
+          conditions,
+          testSource,
+          (stream, subject, accepts) =>
+            withDirectGet(natsOptions, (get) => findLatestMatching(get, stream, subject, accepts)),
+        );
+        // The item is exactly what a live delivery would carry. A generated
+        // sample is recognisable by its top-level `sample: true` extension.
+        this.emit([[{ json: result.envelope as IDataObject }]]);
+      };
+      return { closeFunction: async () => {}, manualTriggerFunction };
+    }
+
     const subjects = kind === 'event'
-      ? bindings.map(eventSubject)
+      ? [...new Set(bindings.map((binding) => bindingSubject(binding, 'event')))]
       : [subjectFor(bindings[0], 'command')];
     const queue = kind === 'command'
       ? String(this.getNodeParameter('queueGroup')).trim()
@@ -224,9 +356,7 @@ export class BloodbankTrigger implements INodeType {
     const subscription = await subscribe({
       subjects,
       queue,
-      host: connection.natsHost || undefined,
-      port: connection.natsPort ? Number(connection.natsPort) : undefined,
-      timeoutMs: connection.timeoutMs ? Number(connection.timeoutMs) : undefined,
+      ...natsOptions,
       name: `n8n-bloodbank-${kind}-trigger`,
       onError: (error) => this.emitError(error),
       onMessage: async (message) => {
@@ -239,12 +369,9 @@ export class BloodbankTrigger implements INodeType {
           if (envelope.kind !== kind) {
             throw new Error(`subject delivered kind=${String(envelope.kind)} to ${kind} trigger`);
           }
-          const matches = kind === 'event'
-            ? bindings.some(
-                (binding) => binding === envelope.type || planeBindingMatches(binding, envelope),
-              )
-            : envelope.type === bindings[0];
-          if (!matches) return;
+          // Bindings and the data filter both decide BEFORE emit: a message
+          // that fails either never becomes an execution.
+          if (!triggerAccepts(kind, bindings, conditions, envelope)) return;
           if (kind === 'command' && envelope.delivery !== 'single_consumer') {
             throw new Error('command delivery must be single_consumer');
           }

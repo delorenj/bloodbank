@@ -39,6 +39,9 @@ export interface EmitOptions extends NatsConnectionOptions {
   idempotencyKey?: string;
   actor?: Record<string, unknown>;
   extensions?: Record<string, string | number | boolean | null>;
+  /** Validate the finished envelope against its canonical schema before any
+   *  connection is opened. Always on for commands; opt-in for events. */
+  validate?: boolean;
 }
 
 export interface IncomingNatsMessage {
@@ -290,7 +293,7 @@ export async function publish(
 ): Promise<{ subject: string; correlationid: string; eventId: string; commandId?: string }> {
   const { subject, envelope } = buildEnvelope(opts);
   const commandType = commandSchemas.some((schema) => schema.type === opts.type);
-  if (opts.kind === 'command' || commandType) validateEnvelope(opts.type, envelope);
+  if (opts.kind === 'command' || commandType || opts.validate) validateEnvelope(opts.type, envelope);
   const connection = await (connectNats ?? connect)({
     servers: serverUrl(opts.host, opts.port),
     name: 'n8n-bloodbank-publisher',

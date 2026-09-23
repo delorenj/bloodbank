@@ -1,9 +1,15 @@
+import { providerAliases } from './nodes/Bloodbank/eventSchemas';
+import { optionName } from './options';
+import type { ProjectBoard } from './projects';
+
 export interface PlaneProjectRoute {
   boardId: string;
   repo: string;
   slug: string;
   workspace: string;
   boardKey?: string;
+  /** Which enrollment record supplied this route. */
+  source?: 'pjangler' | 'hermes' | 'manifest';
 }
 
 export interface PlaneEventBinding {
@@ -13,44 +19,41 @@ export interface PlaneEventBinding {
   description: string;
 }
 
-export const planeEventBindings: PlaneEventBinding[] = [
-  {
-    name: 'On Board Created (plane.board.created)',
-    value: 'plane.board.created',
-    canonicalType: 'bloodbank.repo.board.created',
-    description: 'Plane project creation normalized to repo.board.created',
-  },
-  {
-    name: 'On Ticket Created (plane.ticket.created)',
-    value: 'plane.ticket.created',
-    canonicalType: 'bloodbank.repo.task.created',
-    description: 'Plane issue creation normalized to repo.task.created',
-  },
-  {
-    name: 'On Ticket Updated (plane.ticket.updated)',
-    value: 'plane.ticket.updated',
-    canonicalType: 'bloodbank.repo.task.updated',
-    description: 'Non-state Plane issue update normalized to repo.task.updated',
-  },
-  {
-    name: 'On Ticket Transitioned (plane.ticket.transitioned)',
-    value: 'plane.ticket.transitioned',
-    canonicalType: 'bloodbank.repo.task.updated',
-    description: 'Plane issue state transition normalized to repo.task.updated',
-  },
-  {
-    name: 'On Ticket Commented (plane.ticket.commented)',
-    value: 'plane.ticket.commented',
-    canonicalType: 'bloodbank.repo.task.appended',
-    description: 'Plane issue comment normalized to repo.task.appended',
-  },
-  {
-    name: 'On Ticket Deleted (plane.ticket.deleted)',
-    value: 'plane.ticket.deleted',
-    canonicalType: 'bloodbank.repo.task.updated',
-    description: 'Plane issue deletion normalized to a terminal repo.task.updated fact',
-  },
-];
+/** Every provider_event_type this normalizer can emit.
+ *
+ * Each one MUST be declared as an `x-provider-aliases` entry on its canonical
+ * schema — the schema tree is the single source for provider aliases, and the
+ * normalizer looks its canonical type up there rather than hardcoding it. A
+ * test fails the build when the two drift.
+ */
+export const PLANE_PROVIDER_EVENT_TYPES = {
+  boardCreated: 'plane.board.created',
+  ticketCreated: 'plane.ticket.created',
+  ticketUpdated: 'plane.ticket.updated',
+  ticketTransitioned: 'plane.ticket.transitioned',
+  ticketDeleted: 'plane.ticket.deleted',
+  ticketCommented: 'plane.ticket.commented',
+} as const;
+
+/** The Plane trigger aliases, derived from the schema-declared provider aliases. */
+export const planeEventBindings: PlaneEventBinding[] = providerAliases
+  .filter((alias) => alias.provider === 'plane')
+  .map((alias) => ({
+    name: optionName('Plane', alias.label, alias.value),
+    value: alias.value,
+    canonicalType: alias.canonicalType,
+    description: alias.description,
+  }));
+
+export function canonicalTypeForProviderEvent(providerEventType: string): string {
+  const alias = providerAliases.find((candidate) => candidate.value === providerEventType);
+  if (!alias) {
+    throw new Error(
+      `provider event ${providerEventType} is not declared in any schema's x-provider-aliases`,
+    );
+  }
+  return alias.canonicalType;
+}
 
 export interface NormalizedPlaneEvent {
   canonicalType: string;
@@ -61,6 +64,26 @@ export interface NormalizedPlaneEvent {
   dedupeKey: string;
   observedAt: string;
 }
+
+/** What became of one Plane delivery.
+ *
+ * - `routed`: a canonical fact to publish.
+ * - `unrouted`: a supported event on a board no enrolled project claims. This
+ *   is a gap in enrollment, not a no-op, and callers must surface it.
+ * - `unsupported`: an event type Bloodbank does not model (project updates,
+ *   cycles, modules) or a payload too malformed to read. A legitimate no-op.
+ */
+export type PlaneClassification =
+  | { status: 'routed'; event: NormalizedPlaneEvent; route?: PlaneProjectRoute }
+  | {
+      status: 'unrouted';
+      reason: string;
+      boardId: string;
+      providerEvent: string;
+      action: string;
+      workspace?: string;
+    }
+  | { status: 'unsupported'; reason: string; providerEvent?: string; action?: string; boardId?: string };
 
 /** Build the Plane board-id routing table from the shared Hermes registry. */
 export function planeRoutesFromRegistry(registryValue: unknown): Map<string, PlaneProjectRoute> {
@@ -79,9 +102,69 @@ export function planeRoutesFromRegistry(registryValue: unknown): Map<string, Pla
       slug: firstText(entry.slug) ?? repo,
       workspace: firstText(plane.workspace) ?? 'unknown',
       boardKey: firstText(plane.identifier),
+      source: 'hermes',
     });
   }
   return routes;
+}
+
+/** Project paths of Hermes rows that name no Plane board of their own. */
+export function unboundRegistryProjectPaths(registryValue: unknown): string[] {
+  const root = record(registryValue);
+  const agents = record(root.agents ?? root);
+  const paths: string[] = [];
+  for (const agent of Object.values(agents)) {
+    const entry = record(agent);
+    const plane = record(entry.plane);
+    if (firstText(plane.project_id, plane.board_id)) continue;
+    const path = firstText(entry.project_path, entry.repo_path);
+    if (path && !paths.includes(path)) paths.push(path);
+  }
+  return paths;
+}
+
+/** One routing table from every enrollment record.
+ *
+ * pjangler (the index of every repo's `.project.json`) is canonical project
+ * identity, so it wins: its slug becomes `data.repo`. Hermes rows fill in
+ * boards pjangler does not index, and fill workspace/identifier gaps. A
+ * manifest read directly (a Hermes row with a project path but no board) is the
+ * last resort for repos neither index knows by board.
+ */
+export function mergePlaneRoutes(
+  hermes: ReadonlyMap<string, PlaneProjectRoute>,
+  projects: ProjectBoard[] = [],
+  manifests: ProjectBoard[] = [],
+): Map<string, PlaneProjectRoute> {
+  const routes = new Map<string, PlaneProjectRoute>();
+  for (const board of manifests) {
+    if (routes.has(board.boardId)) continue;
+    routes.set(board.boardId, routeFromBoard(board));
+  }
+  for (const [boardId, route] of hermes) routes.set(boardId, { ...route });
+  for (const board of projects) {
+    const known = routes.get(board.boardId);
+    routes.set(board.boardId, {
+      boardId: board.boardId,
+      repo: board.repo,
+      slug: board.repo,
+      workspace: board.workspace || usableWorkspace(known?.workspace) || 'unknown',
+      boardKey: board.identifier || known?.boardKey,
+      source: 'pjangler',
+    });
+  }
+  return routes;
+}
+
+function routeFromBoard(board: ProjectBoard): PlaneProjectRoute {
+  return {
+    boardId: board.boardId,
+    repo: board.repo,
+    slug: board.repo,
+    workspace: board.workspace || 'unknown',
+    boardKey: board.identifier,
+    source: board.source,
+  };
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -102,6 +185,14 @@ function firstText(...values: unknown[]): string | undefined {
     if (candidate) return candidate;
   }
   return undefined;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function usableWorkspace(value: unknown): string | undefined {
+  const candidate = text(value);
+  if (!candidate || candidate === 'unknown' || UUID.test(candidate)) return undefined;
+  return candidate;
 }
 
 function entityId(value: unknown): string | undefined {
@@ -183,10 +274,30 @@ function ticketKey(route: PlaneProjectRoute, data: Record<string, unknown>): str
   return `${route.boardKey}-${sequence}`;
 }
 
-function workspaceFromEntity(value: unknown): string | undefined {
-  if (typeof value !== 'object' || value === null) return firstText(value);
-  const workspace = value as Record<string, unknown>;
-  return firstText(workspace.slug, workspace.name, workspace.id);
+/** The workspace SLUG for this delivery — never its UUID.
+ *
+ * Plane puts the slug at the top level (`workspace_slug`) and the UUID in
+ * `data.workspace`. A registry-declared slug wins; the payload fills the gap.
+ */
+function workspaceSlug(
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>,
+  route?: PlaneProjectRoute,
+): string {
+  const entity = (value: unknown): string | undefined => {
+    if (typeof value !== 'object' || value === null) return usableWorkspace(value);
+    const workspace = value as Record<string, unknown>;
+    return usableWorkspace(workspace.slug) ?? usableWorkspace(workspace.name);
+  };
+  return (
+    usableWorkspace(route?.workspace) ??
+    usableWorkspace(payload.workspace_slug) ??
+    entity(payload.workspace_detail) ??
+    entity(data.workspace_detail) ??
+    entity(data.workspace) ??
+    entity(payload.workspace) ??
+    'unknown'
+  );
 }
 
 function normalizeAction(value: unknown): string {
@@ -202,95 +313,121 @@ function normalizeAction(value: unknown): string {
   return aliases[action] ?? action;
 }
 
-/** Normalize one Plane webhook into exactly one provider-neutral Bloodbank fact.
+function supported(event: string, action: string): boolean {
+  if (event === 'project') return action === 'created';
+  if (event === 'issue') return ['created', 'updated', 'deleted'].includes(action);
+  if (event === 'issue_comment') return ['created', 'commented'].includes(action);
+  return false;
+}
+
+/** Classify one Plane webhook and, when it is routable, normalize it into
+ *  exactly one provider-neutral Bloodbank fact.
  *
  * Plane names remain available as data.provider_event_type and as n8n trigger
  * aliases. They intentionally do not enter CloudEvents type/subject tokens.
  */
-export function normalizePlaneWebhook(
+export function classifyPlaneWebhook(
   payloadValue: unknown,
   routes: ReadonlyMap<string, PlaneProjectRoute>,
   receivedAt = new Date().toISOString(),
-): NormalizedPlaneEvent | null {
+): PlaneClassification {
   const payload = record(payloadValue);
   const event = firstText(payload.event)?.toLowerCase();
   const action = normalizeAction(payload.action);
   const data = record(payload.data);
-  if (!event || !Object.keys(data).length) return null;
+  if (!event || !Object.keys(data).length) {
+    return { status: 'unsupported', reason: 'payload has no event or no data', providerEvent: event, action };
+  }
+  if (!supported(event, action)) {
+    return { status: 'unsupported', reason: `Plane ${event}.${action} is not modelled on the bus`, providerEvent: event, action };
+  }
 
   const rawProject = data.project ?? data.project_id ?? payload.project;
   const boardId = event === 'project'
     ? firstText(data.id, data.project_id)
     : entityId(rawProject);
-  if (!boardId) return null;
-
-  let route = routes.get(boardId);
-  if (!route && event === 'project' && action === 'created') {
-    const workspace = workspaceFromEntity(data.workspace ?? payload.workspace) ?? 'unknown';
-    const slug = slugify(firstText(data.slug, data.identifier, data.name) ?? boardId);
-    route = {
-      boardId,
-      repo: slug,
-      slug,
-      workspace,
-      boardKey: firstText(data.identifier),
-    };
+  if (!boardId) {
+    return { status: 'unsupported', reason: `Plane ${event}.${action} carries no board id`, providerEvent: event, action };
   }
-  if (!route) return null;
 
+  const route = routes.get(boardId);
   const observedAt = normalizeTimestamp(
     data.updated_at ?? data.created_at ?? payload.timestamp ?? payload.created_at,
     receivedAt,
   );
-  const base = {
-    repo: route.repo,
-    slug: route.slug,
-    workspace: route.workspace,
-    board_id: route.boardId,
-    project_id: route.boardId,
-    provider: 'plane',
-  };
-  const extensions = {
-    workspace: route.workspace,
-    board_id: route.boardId,
-    slug: route.slug,
-  };
 
-  if (event === 'project' && action === 'created') {
-    const providerEventType = 'plane.board.created';
+  if (event === 'project') {
+    // A board nobody has claimed yet is still a fact worth publishing: it is
+    // what a project provisioner waits for. It carries repo=null rather than a
+    // slug guessed from the board name, which would name a repo that may never
+    // exist.
+    const workspace = workspaceSlug(payload, data, route);
+    const boardKey = route?.boardKey ?? firstText(data.identifier);
+    const slug = route?.slug ?? slugify(firstText(data.slug, data.identifier, data.name) ?? boardId);
+    const providerEventType = PLANE_PROVIDER_EVENT_TYPES.boardCreated;
     return {
-      canonicalType: 'bloodbank.repo.board.created',
-      providerEventType,
-      observedAt,
-      orderingKey: `board:${route.boardId}`,
-      dedupeKey: `${providerEventType}:${route.boardId}:${observedAt}`,
-      extensions: { ...extensions, provider_event_type: providerEventType },
-      data: {
-        ...base,
-        board_key: route.boardKey ?? null,
-        provider_event_type: providerEventType,
-        timestamp: observedAt,
-        board: data,
+      status: 'routed',
+      route,
+      event: {
+        canonicalType: canonicalTypeForProviderEvent(providerEventType),
+        providerEventType,
+        observedAt,
+        orderingKey: `board:${boardId}`,
+        dedupeKey: `${providerEventType}:${boardId}:${observedAt}`,
+        extensions: { workspace, board_id: boardId, slug, provider_event_type: providerEventType },
+        data: {
+          repo: route?.repo ?? null,
+          slug,
+          workspace,
+          board_id: boardId,
+          project_id: boardId,
+          provider: 'plane',
+          board_key: boardKey ?? null,
+          provider_event_type: providerEventType,
+          timestamp: observedAt,
+          board: data,
+        },
       },
     };
   }
 
+  if (!route) {
+    return {
+      status: 'unrouted',
+      reason: `no enrolled project claims Plane board ${boardId}`,
+      boardId,
+      providerEvent: event,
+      action,
+      workspace: workspaceSlug(payload, data),
+    };
+  }
+
+  const workspace = workspaceSlug(payload, data, route);
+  const base = {
+    repo: route.repo,
+    slug: route.slug,
+    workspace,
+    board_id: route.boardId,
+    project_id: route.boardId,
+    provider: 'plane',
+  };
+  const extensions = { workspace, board_id: route.boardId, slug: route.slug };
+
   if (event === 'issue') {
     const ticketId = firstText(data.id);
-    if (!ticketId) return null;
+    if (!ticketId) {
+      return { status: 'unsupported', reason: 'Plane issue payload carries no issue id', providerEvent: event, action, boardId };
+    }
     const fields = changedFields(payload, data);
     const activity = record(payload.activity ?? data.activity);
     const isTransition = action === 'updated' && fields.some((field) => field === 'state' || field === 'state_id');
     const providerEventType = action === 'created'
-      ? 'plane.ticket.created'
+      ? PLANE_PROVIDER_EVENT_TYPES.ticketCreated
       : action === 'deleted'
-        ? 'plane.ticket.deleted'
+        ? PLANE_PROVIDER_EVENT_TYPES.ticketDeleted
         : isTransition
-          ? 'plane.ticket.transitioned'
-          : 'plane.ticket.updated';
-    const canonicalType = action === 'created'
-      ? 'bloodbank.repo.task.created'
-      : 'bloodbank.repo.task.updated';
+          ? PLANE_PROVIDER_EVENT_TYPES.ticketTransitioned
+          : PLANE_PROVIDER_EVENT_TYPES.ticketUpdated;
     const currentState = data.state_detail ?? data.state;
     const previousState = activity.old_value ?? activity.previous_value;
     const normalizedFields = action === 'deleted' && !fields.length ? ['deleted'] : fields;
@@ -308,34 +445,43 @@ export function normalizePlaneWebhook(
       ticket: data,
     };
     return {
-      canonicalType,
-      providerEventType,
-      observedAt,
-      orderingKey: `task:${route.repo}:${ticketId}`,
-      dedupeKey: `${providerEventType}:${route.boardId}:${ticketId}:${observedAt}:${stateValue(currentState) ?? ''}`,
-      extensions: { ...extensions, provider_event_type: providerEventType },
-      data: action === 'created'
-        ? common
-        : {
-            ...common,
-            previous_phase: stateValue(previousState),
-            previous_tp_band: tpBand(previousState),
-            changed_fields: normalizedFields,
-            trigger_source: firstText(payload.trigger_source, data.trigger_source) ?? 'plane-webhook',
-          },
+      status: 'routed',
+      route,
+      event: {
+        canonicalType: canonicalTypeForProviderEvent(providerEventType),
+        providerEventType,
+        observedAt,
+        orderingKey: `task:${route.repo}:${ticketId}`,
+        dedupeKey: `${providerEventType}:${route.boardId}:${ticketId}:${observedAt}:${stateValue(currentState) ?? ''}`,
+        extensions: { ...extensions, provider_event_type: providerEventType },
+        data: action === 'created'
+          ? common
+          : {
+              ...common,
+              previous_phase: stateValue(previousState),
+              previous_tp_band: tpBand(previousState),
+              changed_fields: normalizedFields,
+              trigger_source: firstText(payload.trigger_source, data.trigger_source) ?? 'plane-webhook',
+            },
+      },
     };
   }
 
-  if (event === 'issue_comment' && ['created', 'commented'].includes(action)) {
-    const issue = data.issue;
-    const ticket = record(issue);
-    const ticketId = entityId(issue) ?? firstText(data.issue_id);
-    const commentId = firstText(data.id);
-    if (!ticketId || !commentId) return null;
-    const providerEventType = 'plane.ticket.commented';
-    const body = firstText(data.comment_html, data.comment_json, data.body, data.comment) ?? '';
-    return {
-      canonicalType: 'bloodbank.repo.task.appended',
+  // issue_comment created/commented
+  const issue = data.issue;
+  const ticket = record(issue);
+  const ticketId = entityId(issue) ?? firstText(data.issue_id);
+  const commentId = firstText(data.id);
+  if (!ticketId || !commentId) {
+    return { status: 'unsupported', reason: 'Plane comment payload carries no issue or comment id', providerEvent: event, action, boardId };
+  }
+  const providerEventType = PLANE_PROVIDER_EVENT_TYPES.ticketCommented;
+  const body = firstText(data.comment_html, data.comment_json, data.body, data.comment) ?? '';
+  return {
+    status: 'routed',
+    route,
+    event: {
+      canonicalType: canonicalTypeForProviderEvent(providerEventType),
       providerEventType,
       observedAt,
       orderingKey: `task:${route.repo}:${ticketId}`,
@@ -352,10 +498,18 @@ export function normalizePlaneWebhook(
         appended_at: observedAt,
         comment: data,
       },
-    };
-  }
+    },
+  };
+}
 
-  return null;
+/** Back-compatible wrapper: the fact, or null for anything not routable. */
+export function normalizePlaneWebhook(
+  payloadValue: unknown,
+  routes: ReadonlyMap<string, PlaneProjectRoute>,
+  receivedAt = new Date().toISOString(),
+): NormalizedPlaneEvent | null {
+  const result = classifyPlaneWebhook(payloadValue, routes, receivedAt);
+  return result.status === 'routed' ? result.event : null;
 }
 
 export function planeBindingMatches(

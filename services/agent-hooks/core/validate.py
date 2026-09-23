@@ -89,6 +89,7 @@ EVENT_ACTIONS = frozenset({
     "updated", "reached", "resolved",
     "detected", "flagged", "routed", "breached", "clocked_in", "clocked_out",
     "delegated", "raised", "released", "expired",
+    "skipped",
 })
 
 COMMAND_ACTIONS = frozenset({

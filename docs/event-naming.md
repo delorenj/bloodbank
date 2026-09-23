@@ -352,7 +352,7 @@ emit an entity not paired with it here.
 `closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`,
 `recorded`, `triaged`, `updated`, `reached`, `resolved`, `detected`,
 `flagged`, `routed`, `breached`, `clocked_in`, `clocked_out`.
-`delegated`, `raised`, `released`, `expired`.
+`delegated`, `raised`, `released`, `expired`, `skipped`.
 
 ### 8.2 Command actions (imperative present)
 
