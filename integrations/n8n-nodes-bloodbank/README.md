@@ -313,6 +313,19 @@ still held exactly one creation fact for the ticket. A webhook-born creation
 published the same day (33GOD-70, `9fb9af41…`) carries the same
 `uuid5(plane.ticket.created:<board>:<ticket>)` id and `Nats-Msg-Id`.
 
+**Proven live on 2026-09-23 (0.7.1).** Sweep execution 241148 (07:43) ran the
+0.7.1 node: `ok: true`, 30 of 30 boards checked, `max_recoveries: 20`,
+`deferred: 0`. FLUME-16, 17, 19, 21 and 22 (created 2026-09-22 15:40–18:25Z,
+before the sweep existed) were recovered once by driving the node's own
+`execute()` with a 20 h lookback: a dry run over all 30 boards found exactly
+those five missing (FLUME-18 and 20 are Done and were skipped as closed), and
+the real run published them at stream seq 4029445–4029449, each with
+`Nats-Msg-Id` equal to its event id and `trigger_source: plane-reconcile`.
+Ticket Grooming executions 241143–241147 skipped each one `no_route` (flume has
+no agent). Four `labels` updates at 07:46 (seq 4030030–4030033) are the first
+update facts published without a `Nats-Msg-Id`; update facts before the deploy
+(e.g. seq 4028630–4028631) carried one.
+
 Keep the lookback inside Ticket Grooming's catch-up window (24 h), or a
 recovered fact is acked without grooming. The Plane API key is the n8n Header
 Auth credential *Plane API (33GOD + AutomaticAI)* (`X-API-Key`).

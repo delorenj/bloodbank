@@ -2,7 +2,7 @@
   {
     "id": "U4hYm3BYPPeZNDHQ",
     "name": "Plane Ingress Reconcile",
-    "description": "Plane ingress reconcile. Plane does not retry a webhook that failed with an HTTP 5xx, so a ticket created while n8n was down or restarting never became a repo.task.created fact. Every 10 minutes (minute 3, 13, ...) Reconcile Missed Tickets lists what each routed, unarchived board created in the last 6h, finds the tickets with no creation fact in BLOODBANK_EVENTS, and publishes theirs through the webhook normalizer (data.trigger_source = plane-reconcile; event id and Nats-Msg-Id keyed on board+ticket, so a late webhook cannot double it). One ntfy lifecycle push per recovered ticket; the sweep summary is on the Report output.",
+    "description": "Plane ingress reconcile. Plane does not retry a webhook that failed with an HTTP 5xx, so a ticket created while n8n was down or restarting never became a repo.task.created fact. Every 10 minutes (minute 3, 13, ...) Reconcile Missed Tickets lists what each routed, unarchived board created in the last 6h, finds the tickets with no creation fact in BLOODBANK_EVENTS, and publishes theirs through the webhook normalizer (data.trigger_source = plane-reconcile; event id and Nats-Msg-Id keyed on board+ticket, so a late webhook cannot double it). At most 20 recoveries per sweep, oldest first (the rest are reported as deferred and go out on the next sweeps), and a ticket that fails to publish is reported under failures without stopping the rest. One ntfy lifecycle push per recovered ticket; the sweep summary is on the Report output.",
     "active": true,
     "isArchived": false,
     "nodes": [
