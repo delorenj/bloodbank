@@ -261,6 +261,19 @@ the **Recovered** output (the workflow pushes *Recovered missed ticket
 - A sweep that can read no board at all (expired key, Plane down) fails the
   execution; one bad board is reported and the rest carry on.
 
+**Proven live on 2026-09-23 (0.7.0).** n8n was stopped with `pm2 stop n8n`
+(06:25:35Z) and `px backlog create` made 33GOD-69 a second later; Plane logged
+that delivery as HTTP 502 with `retry_count 0`, and `BLOODBANK_EVENTS` held no
+creation fact for it. After `pm2 start n8n`, sweep execution 241079 (06:33)
+recovered it: fact `310f012f…` at stream seq 4027260, `Nats-Msg-Id` equal to
+the event id, `trigger_source: plane-reconcile`, `time` = the ticket's
+`created_at`. Ticket Grooming execution 241080 dispatched it (`invoked: true`,
+`33god-pm`) and ntfy got *Recovered missed ticket 33GOD-69*. The next sweep
+(241087, 06:43) reported `already_on_bus: 10, recovered: 0`, and the stream
+still held exactly one creation fact for the ticket. A webhook-born creation
+published the same day (33GOD-70, `9fb9af41…`) carries the same
+`uuid5(plane.ticket.created:<board>:<ticket>)` id and `Nats-Msg-Id`.
+
 Keep the lookback inside Ticket Grooming's catch-up window (24 h), or a
 recovered fact is acked without grooming. The Plane API key is the n8n Header
 Auth credential *Plane API (33GOD + AutomaticAI)* (`X-API-Key`).
@@ -429,6 +442,14 @@ in a `started` state keeps its chip. Grooming turns neither move a ticket into
 `started` nor assign it, so their chip still comes off at the end. One
 consequence: a delegation turn that parks a blocked ticket in a `started`-group
 state such as *Needs Attention* also keeps its chip.
+
+*Proven live on 2026-09-23 (0.7.0):* 33GOD-70's grooming turn started at
+06:44:30Z (chip on at :31); `px claim 33GOD-70` ran at 06:49:34 while the turn
+was still going (state → In Progress, assignee Jarad, no label row); the turn
+completed at 06:51:14 and chip execution 241097 planned no write, so the ticket
+kept `agent:working`. Replayed on that execution's own inputs, the pre-0.7.0
+Plan Write takes the label off. 33GOD-71, never claimed: chip execution 241111
+removed the label 0.6 s after its turn completed.
 
 **The chip is ordered and swept.** Started and ended arrive on ONE trigger, so
 they share one durable and one queue: a turn's `started` execution always
