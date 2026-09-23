@@ -11,7 +11,7 @@ person wants to hear about into desktop/phone notifications on
 
    | Disposition | Default types | What happens |
    |-------------|---------------|--------------|
-   | **mute**    | `bloodbank.agent.hook.updated`, `bloodbank.system.hook.updated` | Counted, never posted. These are hook-hub state pulses (~9/s in a busy session); Holocene and Candystore are their read side. |
+   | **mute**    | `bloodbank.agent.hook.updated`, `bloodbank.system.hook.updated` | Counted, never posted. These are hook-hub state pulses (~2/s in a busy session since 2026-09-23 coalescing; ~9/s before); Holocene and Candystore are their read side. |
    | **digest**  | `bloodbank.agent.tool.*` | Counted and rolled into one low-priority summary toast every `DIGEST_SECONDS`. |
    | **toast**   | everything else | One toast each at `NTFY_PRIORITY`, through a token bucket (`TOAST_RATE_PER_MIN`, `TOAST_BURST`), behind a smaller per-type bucket (`TOAST_PER_TYPE_PER_MIN`, `TOAST_PER_TYPE_BURST`) so one chatty type cannot spend the shared budget. Overflow joins the digest. |
 
@@ -26,7 +26,7 @@ by design. If the toaster is down when an event fires, that event is missed
 ### Why it filters
 
 Until 2026-09-22 it posted every envelope, one request per event. hook-hub's
-`agent.hook.updated` alone runs at ~9/s, so ntfy answered ~65% of the posts with
+`agent.hook.updated` alone ran at ~9/s (hook-hub now coalesces it to ~2/s), so ntfy answered ~65% of the posts with
 429 (thousands every 10 minutes). Every publisher on this host reaches ntfy from
 the same IP, and a user without an ntfy tier is limited per IP, so the flood also
 429'd n8n's `lifecycle` pushes: the lane skip notifications silently never
