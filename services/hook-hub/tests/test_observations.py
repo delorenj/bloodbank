@@ -39,26 +39,172 @@ def snapshot():
             "installed_inventory": {"generated_at": now_iso(), "status": "healthy", "clis": []}}
 
 
-def test_every_receipt_transition_is_an_immutable_full_revision(tmp_path):
+def test_receipt_burst_coalesces_into_one_immutable_latest_revision(tmp_path):
+    """Consumers keep only the newest revision per invocation; the bus carries
+    only that. Each mutation still gets a new, higher revision and identity."""
     store = ReceiptStore(tmp_path / "receipts.sqlite3")
     row = invocation()
     assert store.claim(row)
     first = facts(store)[0]
+    assert first["data"]["invocation"]["executions"] == []
     store.select(row["invocation_id"], "retention", "async")
     store.update(row["invocation_id"], "retention", "started")
     store.update(row["invocation_id"], "retention", "timed_out", reason="timeout", duration_ms=30)
     assert not store.claim(row)
     result = facts(store)
-    assert len(result) == 5
-    assert result[0] == first
-    assert first["data"]["invocation"]["executions"] == []
-    assert [event["data"]["revision"] for event in result] == [1, 2, 3, 4, 5]
-    assert len({event["id"] for event in result}) == 5
-    assert result[-1]["data"]["invocation"]["deduplicated"] == 1
-    assert result[-1]["data"]["invocation"]["executions"][0]["status"] == "timed_out"
-    for event in result:
-        validate_envelope(event)
-        assert event["time"] == event["data"]["invocation"]["timeline"][-1]["at"]
+    assert len(result) == 1
+    latest = result[0]
+    assert latest["id"] != first["id"]
+    assert latest["data"]["revision"] == 5 > first["data"]["revision"]
+    assert latest["data"]["invocation"]["deduplicated"] == 1
+    assert latest["data"]["invocation"]["executions"][0]["status"] == "timed_out"
+    assert [step["status"] for step in latest["data"]["invocation"]["timeline"]] == [
+        "received", "selected", "started", "timed_out", "deduplicated"]
+    validate_envelope(latest)
+    assert latest["time"] == latest["data"]["invocation"]["timeline"][-1]["at"]
+    # Invocations never coalesce with each other.
+    store.claim(invocation("receipt-two"))
+    assert [event["data"]["invocation"]["invocation_id"] for event in facts(store)] == [
+        "receipt-one", "receipt-two"]
+
+
+class Clock:
+    def __init__(self, now: float = 1_000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def due(store):
+    return [json.loads(row["envelope"]) for row in store.due_observations(200)]
+
+
+def test_unsettled_invocation_waits_for_quiet_then_publishes_latest(tmp_path):
+    clock = Clock()
+    store = ReceiptStore(tmp_path / "receipts.sqlite3", debounce=2.0, max_delay=10.0, clock=clock)
+    store.claim(invocation())
+    store.select("receipt-one", "slow", "async")
+    assert due(store) == []
+    assert store.next_due_in() == pytest.approx(2.0)
+    clock.now += 1.5
+    store.update("receipt-one", "slow", "started")
+    clock.now += 1.5
+    assert due(store) == [], "each change restarts the quiet window"
+    clock.now += 0.5
+    [interim] = due(store)
+    assert interim["data"]["invocation"]["status"] == "received"
+    assert interim["data"]["invocation"]["executions"][0]["status"] == "started"
+
+
+def test_settled_invocation_is_due_at_once(tmp_path):
+    clock = Clock()
+    store = ReceiptStore(tmp_path / "receipts.sqlite3", debounce=2.0, max_delay=10.0, clock=clock)
+    store.claim(invocation())
+    store.select("receipt-one", "quick", "async")
+    store.update("receipt-one", "quick", "started")
+    assert due(store) == []
+    store.update("receipt-one", "quick", "succeeded", duration_ms=4)
+    [settled] = due(store)
+    assert settled["data"]["invocation"]["status"] == "succeeded"
+    # All handlers skipped: finish() settles it too.
+    store.claim(invocation("skipped"))
+    store.select("skipped", "never", "async", reason="not_applicable")
+    store.finish("skipped")
+    assert [event["data"]["invocation"]["status"] for event in due(store)] == ["succeeded", "skipped"]
+
+
+def test_continuous_changes_cannot_starve_publication_past_max_delay(tmp_path):
+    clock = Clock()
+    store = ReceiptStore(tmp_path / "receipts.sqlite3", debounce=2.0, max_delay=5.0, clock=clock)
+    row = invocation()
+    store.claim(row)
+    store.select("receipt-one", "slow", "async")
+    for _ in range(4):
+        clock.now += 1.0
+        assert not store.claim(row)
+        assert due(store) == []
+    clock.now += 1.0
+    [capped] = due(store)
+    assert capped["data"]["invocation"]["deduplicated"] == 4
+    # Once that revision is acknowledged, the next change starts a fresh cap.
+    store.observation_sent(store.due_observations(1)[0]["sequence"])
+    store.claim(row)
+    assert store.next_due_in() == pytest.approx(2.0)
+
+
+def test_in_flight_revision_is_superseded_not_lost(tmp_path):
+    store = ReceiptStore(tmp_path / "receipts.sqlite3")
+    store.claim(invocation())
+    store.finish("receipt-one")
+    delivered = []
+    def publisher(event, body):
+        # A hook mutates the invocation while this revision is on the wire.
+        if not delivered:
+            store.claim(invocation())
+        delivered.append(event["data"]["revision"])
+        return {"stream": "BLOODBANK_EVENTS", "seq": len(delivered)}
+    worker = OutboxWorker(store, publisher=publisher)
+    assert asyncio.run(worker.flush())
+    assert asyncio.run(worker.flush())
+    assert not store.pending_observations()
+    assert len(delivered) == 2 and delivered[0] < delivered[1]
+
+
+def test_worker_stops_scanning_for_backfill_once_a_pass_finds_nothing(tmp_path):
+    store = ReceiptStore(tmp_path / "receipts.sqlite3")
+    with store.connect() as db:
+        for i in range(3):
+            row = invocation(f"old-{i}")
+            db.execute("""INSERT INTO invocations(invocation_id,cli,native,role,event_type,
+                session_id,identity_kind,received_at,updated_at,status)
+                VALUES(:invocation_id,:cli,:native,:role,:event_type,:session_id,
+                :identity_kind,:received_at,:received_at,'skipped')""", row)
+    calls = []
+    original = store.backfill
+    def counted(limit=50):
+        calls.append(limit)
+        return original(2)
+    store.backfill = counted
+    published = []
+    worker = OutboxWorker(store, publisher=lambda event, body: published.append(event["id"]))
+    async def run():
+        task = asyncio.create_task(worker.run())
+        for _ in range(8):
+            worker.wake.set()
+            await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(run())
+    assert worker.backfill_complete
+    assert len(calls) == 3, "2 + 1 + the empty pass, then never again"
+    assert len(published) == 3
+
+
+def test_newer_snapshot_or_heartbeat_supersedes_unpublished_one(tmp_path):
+    store = ReceiptStore(tmp_path / "receipts.sqlite3")
+    store.observe_snapshot(snapshot())
+    for _ in range(3):
+        store.observe_snapshot(snapshot(), heartbeat=True)
+    kinds = [next(k for k in ("snapshot", "heartbeat") if k in event["data"]) for event in facts(store)]
+    assert kinds == ["snapshot", "heartbeat"]
+
+
+def test_pre_coalescing_outbox_rows_migrate_and_stay_due(tmp_path):
+    import sqlite3
+    path = tmp_path / "receipts.sqlite3"
+    store = ReceiptStore(path)
+    store.claim(invocation())
+    with sqlite3.connect(path) as db:
+        db.execute("DROP INDEX outbox_coalesce")
+        db.execute("ALTER TABLE observation_outbox DROP COLUMN deadline")
+        db.execute("ALTER TABLE observation_outbox DROP COLUMN due_at")
+        db.execute("ALTER TABLE observation_outbox DROP COLUMN coalesce_key")
+    upgraded = ReceiptStore(path, debounce=2.0, clock=Clock())
+    [legacy] = upgraded.due_observations(10)
+    assert legacy["coalesce_key"] is None and legacy["due_at"] is None
+    upgraded.claim(invocation("fresh"))
+    assert len(upgraded.pending_observations(10)) == 2
 
 
 def test_unmapped_skip_and_restart_recovery_are_bus_facts(tmp_path):
@@ -292,6 +438,8 @@ def test_snapshot_failure_cannot_block_valid_receipt_delivery(tmp_path, monkeypa
     import hub
     monkeypatch.setattr(hub, "RECEIPT_PATH", tmp_path / "receipts.sqlite3")
     monkeypatch.setattr(hub, "LOG_PATH", tmp_path / "hub.log")
+    # The claimed invocation below never settles; do not wait out the debounce.
+    monkeypatch.setattr(hub, "OBSERVATION_DEBOUNCE", 0.0)
     delivered = threading.Event()
     def acknowledge(event, body):
         assert event["type"] == "bloodbank.agent.hook.updated"

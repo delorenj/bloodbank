@@ -136,7 +136,7 @@ Two schema-backed CloudEvents feed that collector:
 
 | Type | Data |
 | --- | --- |
-| `bloodbank.agent.hook.updated` | A complete invocation revision with execution outcomes and recent timeline, including unmapped native signals, skips, failures, recovery, and deduplicated requests |
+| `bloodbank.agent.hook.updated` | The latest complete invocation revision with execution outcomes and recent timeline, including unmapped native signals, skips, failures, recovery, and deduplicated requests; bursts are coalesced (below) |
 | `bloodbank.system.hook.updated` | Either a full `snapshot` of installed wiring and hub health, or a compact `heartbeat` containing health and aggregate activity |
 
 Both carry `schema_version`, a persistent UUID `hub_id`, and equal monotonic
@@ -153,9 +153,34 @@ The September 13 deployed inventory yields a 221,261-byte full event and a
 23,550-byte compact event, below the broker's 1 MiB limit. All events are bounded
 to 900,000 bytes including envelope metadata. Receipt projections retain the
 latest 512 timeline entries with explicit `timeline_total` and
-`timeline_truncated` fields; every new transition remains its own bus fact.
-Snapshot fields are selected through the shared schema allowlist, so newly added
+`timeline_truncated` fields. Snapshot fields are selected through the shared schema allowlist, so newly added
 raw config, command, or environment keys cannot silently enter the feed.
+
+### Coalescing (2026-09-23)
+
+One native hook mutates its receipt about 13 times in a second or two: the
+claim, then every handler's select, start and finish. Publishing each of those
+as a full revision put ~20 `bloodbank.agent.hook.updated` events per second on
+`bloodbank.evt.>` under a busy multi-agent session (about 93% of everything
+Candystore stored), although Holocene keeps only the newest revision per
+invocation. The outbox now coalesces instead:
+
+- An unpublished revision is **superseded**, not queued behind: the next change
+  to the same invocation deletes it and enqueues the new projection under a new,
+  higher `sequence`/`revision` in the same transaction. A row already on the
+  wire is simply superseded; its late acknowledgement deletes nothing.
+- A **settled** invocation (no execution selected or started, status no longer
+  `received`) is due at once. An unsettled one waits for
+  `HOOK_HUB_OBSERVATION_DEBOUNCE` seconds of quiet, and never longer than
+  `HOOK_HUB_OBSERVATION_MAX_DELAY` after its first unpublished change, so a
+  long handler still shows as `started` and a duplicate storm cannot starve it.
+- Snapshots and heartbeats coalesce by kind the same way, so a broker outage
+  releases only the latest of each instead of a backlog.
+
+The payload contract is unchanged: every published event is still one full,
+immutable, schema-valid revision with a unique UUIDv5 ID. What changed is that
+intermediate revisions nobody reads are no longer published, so `sequence` has
+gaps. The timeline inside each revision still records every transition.
 
 Receipt mutations and the serialized observation are committed in one SQLite
 transaction. The background worker retries from its outbox until a matching
@@ -234,6 +259,8 @@ terminating the remaining process group. Status reports `draining` while it runs
 | `HOOK_HUB_PUBLISH` | `true` | Central publisher enabled |
 | `HOOK_HUB_OBSERVATIONS_PUBLISH` | value of `HOOK_HUB_PUBLISH` | Publish durable observation facts; a separate flag permits isolated producer tests |
 | `HOOK_HUB_OBSERVATION_INTERVAL` | `30` | Compact health observation interval, seconds |
+| `HOOK_HUB_OBSERVATION_DEBOUNCE` | `2.0` | Quiet window before an unsettled invocation's latest revision publishes, seconds; `0` publishes every coalesced revision at once |
+| `HOOK_HUB_OBSERVATION_MAX_DELAY` | `10.0` | Longest an unsettled invocation's change can wait for quiet, seconds |
 | `BLOODBANK_ENABLED` | `true` | Global publication switch; `false` also pauses observation delivery |
 
 Unset XDG state/runtime paths use the user's standard local state and runtime

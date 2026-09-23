@@ -14,13 +14,14 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from facts import (INVOCATION_TYPE, SNAPSHOT_TYPE, MAX_TIMELINE, HEARTBEAT_KEYS, envelope,
                    expires_at, serialize, snapshot_projection)
 
 SCHEMA_VERSION = 1
 TERMINAL = frozenset({"succeeded", "failed", "timed_out", "skipped", "interrupted"})
+PENDING_EXECUTION = frozenset({"selected", "started"})
 
 
 def now_iso() -> str:
@@ -93,7 +94,15 @@ def invocation_identity(req: dict[str, Any]) -> tuple[str, str]:
 
 
 class ReceiptStore:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, debounce: float = 0.0, max_delay: float = 10.0,
+                 clock: Callable[[], float] = time.time) -> None:
+        """`debounce` is the quiet window an unsettled invocation waits before
+        its latest revision becomes publishable; `max_delay` caps that wait
+        from the first unpublished change. Both are seconds on `clock`.
+        """
+        self.debounce = max(float(debounce), 0.0)
+        self.max_delay = max(float(max_delay), self.debounce)
+        self.clock = clock
         self.path = path.expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
@@ -134,8 +143,21 @@ class ReceiptStore:
                     invocation_id TEXT PRIMARY KEY REFERENCES invocations ON DELETE CASCADE,
                     sequence INTEGER NOT NULL
                 );
-                PRAGMA user_version = 2;
             """)
+            # Additive v3 outbox columns. A pending row that carries a
+            # coalesce key is replaced by the next revision of the same thing
+            # instead of queueing behind it; due_at defers unsettled work.
+            columns = {row[1] for row in db.execute("PRAGMA table_info(observation_outbox)")}
+            for name, kind in (("coalesce_key", "TEXT"), ("due_at", "REAL"), ("deadline", "REAL")):
+                if name not in columns:
+                    try:
+                        db.execute(f"ALTER TABLE observation_outbox ADD COLUMN {name} {kind}")
+                    except sqlite3.OperationalError as exc:
+                        # Another opener of the same journal migrated first.
+                        if "duplicate column" not in str(exc):
+                            raise
+            db.execute("CREATE INDEX IF NOT EXISTS outbox_coalesce ON observation_outbox(coalesce_key)")
+            db.execute("PRAGMA user_version = 3")
             db.execute("INSERT OR IGNORE INTO observation_metadata(key,value) VALUES('hub_id',?)", (str(uuid.uuid4()),))
             self.hub_id = db.execute("SELECT value FROM observation_metadata WHERE key='hub_id'").fetchone()[0]
         self.path.chmod(0o600)
@@ -267,8 +289,29 @@ class ReceiptStore:
                 db.execute("INSERT INTO receipt_events(invocation_id,status,at) VALUES(?,?,?)", (iid, after[0], at))
                 self._observe(db, iid, at)
 
-    def _enqueue(self, db: sqlite3.Connection, ce_type: str, data: dict, at: str) -> int:
-        cur = db.execute("INSERT INTO observation_outbox(created_at) VALUES(?)", (at,))
+    def _enqueue(self, db: sqlite3.Connection, ce_type: str, data: dict, at: str, *,
+                 key: str | None = None, settled: bool = True) -> int:
+        """Queue one immutable revision; supersede an unpublished one of `key`.
+
+        One native hook used to leave ~13 revisions on the bus (claim, every
+        handler's select/start/finish), each a full projection, although every
+        consumer keeps only the newest revision per invocation. A pending row
+        with the same key is deleted in the same transaction and replaced by a
+        NEW sequence, so revisions stay monotonic and a row already in flight
+        is simply superseded (its late delete is a no-op). Unsettled work waits
+        for `debounce` seconds of quiet, never longer than `max_delay` from its
+        first unpublished change; settled work is due at once.
+        """
+        now = self.clock()
+        deadline = now + self.max_delay
+        if key is not None:
+            prior = db.execute("SELECT MIN(deadline) FROM observation_outbox WHERE coalesce_key=?", (key,)).fetchone()[0]
+            if prior is not None:
+                deadline = min(deadline, prior)
+            db.execute("DELETE FROM observation_outbox WHERE coalesce_key=?", (key,))
+        due = now if settled or not self.debounce else min(deadline, now + self.debounce)
+        cur = db.execute("INSERT INTO observation_outbox(created_at,coalesce_key,due_at,deadline) VALUES(?,?,?,?)",
+                         (at, key, due, deadline))
         sequence = cur.lastrowid
         fact = envelope(self.hub_id, sequence, ce_type, data, at)
         db.execute("UPDATE observation_outbox SET event_id=?,envelope=? WHERE sequence=?", (fact["id"], serialize(fact), sequence))
@@ -284,7 +327,9 @@ class ReceiptStore:
         item["timeline_total"] = db.execute("SELECT COUNT(*) FROM receipt_events WHERE invocation_id=?", (iid,)).fetchone()[0]
         item["timeline_truncated"] = item["timeline_total"] > len(timeline)
         data = {"invocation": item, **({"backfill": True} if backfill else {})}
-        sequence = self._enqueue(db, INVOCATION_TYPE, data, at)
+        settled = item["status"] != "received" and not any(
+            execution["status"] in PENDING_EXECUTION for execution in item["executions"])
+        sequence = self._enqueue(db, INVOCATION_TYPE, data, at, key="invocation:" + iid, settled=settled)
         db.execute("INSERT INTO observation_revisions(invocation_id,sequence) VALUES(?,?) ON CONFLICT(invocation_id) DO UPDATE SET sequence=excluded.sequence", (iid, sequence))
 
     def observe_snapshot(self, snapshot: dict, *, heartbeat: bool = False) -> int:
@@ -294,7 +339,10 @@ class ReceiptStore:
         if heartbeat:
             snapshot = {key: value for key, value in snapshot.items() if key in HEARTBEAT_KEYS}
         with self.connect() as db:
-            return self._enqueue(db, SNAPSHOT_TYPE, {key: snapshot, "expires_at": expires_at(at)}, at)
+            # A newer snapshot or heartbeat makes an unpublished one of the same
+            # kind worthless; after a broker outage only the latest goes out.
+            return self._enqueue(db, SNAPSHOT_TYPE, {key: snapshot, "expires_at": expires_at(at)}, at,
+                                 key="system:" + key)
 
     def backfill(self, limit: int = 50) -> int:
         """Latest old projections, in bounded resumable transactions.
@@ -316,6 +364,21 @@ class ReceiptStore:
     def pending_observations(self, limit: int = 20) -> list[dict]:
         with self.connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM observation_outbox ORDER BY sequence LIMIT ?", (min(max(limit, 1), 200),))]
+
+    def due_observations(self, limit: int = 20) -> list[dict]:
+        """Pending rows whose debounce has elapsed; pre-v3 rows are always due."""
+        with self.connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT * FROM observation_outbox WHERE due_at IS NULL OR due_at<=? ORDER BY sequence LIMIT ?",
+                (self.clock(), min(max(limit, 1), 200)))]
+
+    def next_due_in(self) -> float | None:
+        """Seconds until the earliest pending row is due; None when none is pending."""
+        with self.connect() as db:
+            row = db.execute("SELECT COUNT(*), MIN(COALESCE(due_at, 0)) FROM observation_outbox").fetchone()
+        if not row[0]:
+            return None
+        return max(row[1] - self.clock(), 0.0)
 
     def observation_sent(self, sequence: int) -> None:
         with self.connect() as db:

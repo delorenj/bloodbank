@@ -71,6 +71,13 @@ PUBLISH_ENABLED = os.environ.get("HOOK_HUB_PUBLISH", "true") == "true"
 OBSERVATIONS_ENABLED = (os.environ.get("HOOK_HUB_OBSERVATIONS_PUBLISH", str(PUBLISH_ENABLED).lower()) == "true"
                         and os.environ.get("BLOODBANK_ENABLED", "true") == "true")
 OBSERVATION_INTERVAL = max(1.0, float(os.environ.get("HOOK_HUB_OBSERVATION_INTERVAL", "30")))
+# One native hook mutates its receipt ~13 times in a second or two (claim, then
+# every handler's select/start/finish). Consumers keep only the newest revision
+# per invocation, so an unsettled invocation publishes after this much quiet,
+# and never later than MAX_DELAY after its first unpublished change. A settled
+# invocation publishes at once.
+OBSERVATION_DEBOUNCE = max(0.0, float(os.environ.get("HOOK_HUB_OBSERVATION_DEBOUNCE", "2.0")))
+OBSERVATION_MAX_DELAY = max(OBSERVATION_DEBOUNCE, float(os.environ.get("HOOK_HUB_OBSERVATION_MAX_DELAY", "10.0")))
 MAX_HANDLER_OUTPUT = 1 << 20
 
 SD_LISTEN_FDS_START = 3
@@ -485,7 +492,8 @@ class Server:
         self.replies: OrderedDict[str, dict] = OrderedDict()
         self.session_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self.session_tasks: dict[tuple[str, str], dict[asyncio.Task, str]] = {}
-        self.store = ReceiptStore(RECEIPT_PATH)
+        self.store = ReceiptStore(RECEIPT_PATH, debounce=OBSERVATION_DEBOUNCE,
+                                  max_delay=OBSERVATION_MAX_DELAY)
         self.store.recover()
         self.observations = OutboxWorker(self.store, log=log)
         self.started_at = now_iso()

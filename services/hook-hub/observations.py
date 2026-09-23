@@ -73,10 +73,20 @@ class OutboxWorker:
         self.publisher = publisher
         self.log = log
         self.wake = asyncio.Event()
+        # Backfill is a one-time migration: every live mutation writes its own
+        # revision marker, so once a pass finds nothing it never will again in
+        # this process. Its anti-join scans every invocation under the write
+        # lock (~0.3s at 100k rows on a loaded host); repeating it on every
+        # wake held the lock long enough to time out native hook writes.
+        self.backfill_complete = False
 
     async def flush(self, limit: int = 20) -> bool:
-        """One bounded batch; stop at the first failure to preserve order."""
-        rows = await asyncio.to_thread(self.store.pending_observations, limit)
+        """One bounded batch of due rows; stop at the first failure to preserve order.
+
+        Rows still inside their debounce window are not due: the store will
+        either supersede them with a newer revision or release them later.
+        """
+        rows = await asyncio.to_thread(self.store.due_observations, limit)
         for row in rows:
             try:
                 fact = json.loads(row["envelope"])
@@ -97,11 +107,12 @@ class OutboxWorker:
                 status = await asyncio.to_thread(self.store.observation_status)
                 # Do not flood disk with a whole historical migration in one
                 # transaction or starve live facts behind a large backfill.
-                if status["pending"] < 100:
-                    await asyncio.to_thread(self.store.backfill, 50)
+                if not self.backfill_complete and status["pending"] < 100:
+                    if not await asyncio.to_thread(self.store.backfill, 50):
+                        self.backfill_complete = True
                 if await self.flush():
                     delay = 0.1
-                    if await asyncio.to_thread(self.store.pending_observations, 1):
+                    if await asyncio.to_thread(self.store.due_observations, 1):
                         await asyncio.sleep(0)
                         continue
                 else:
@@ -115,7 +126,20 @@ class OutboxWorker:
                 self.log(f"hook observation worker retry: {type(exc).__name__}")
                 await asyncio.sleep(min(delay, 30))
                 delay = min(delay * 2, 30)
+            # Sleep until woken by a journal write or the next debounced row
+            # comes due, whichever is first (and at least once a second, which
+            # also paces backfill). Every hook write wakes this loop; a row that
+            # is not yet due is left for its own deadline, not busy-polled.
+            timeout = 1.0
             try:
-                await asyncio.wait_for(self.wake.wait(), timeout=1)
+                due_in = await asyncio.to_thread(self.store.next_due_in)
+                if due_in is not None:
+                    timeout = min(timeout, max(due_in, 0.02))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(self.wake.wait(), timeout=timeout)
             except asyncio.TimeoutError:
                 pass
