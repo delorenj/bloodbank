@@ -124,8 +124,22 @@ for sp in schemas:
         print(f"FAIL {rel}: properties.type.const missing")
         fail_count += 1
         continue
-    if "const" not in kind_prop:
-        print(f"FAIL {rel}: properties.kind.const missing")
+    # kind is a const for single-kind schemas. A command's reply shares the
+    # command's type and therefore its schema file (_schema_path_for maps
+    # type -> file 1:1; event-naming.md §5: a reply mirrors the command it
+    # answers), so a command schema may declare kind as enum [command, reply].
+    # Any other enum (e.g. mixing event with command) is a naming defect.
+    if "const" in kind_prop:
+        kinds = [kind_prop["const"]]
+    elif isinstance(kind_prop.get("enum"), list) and kind_prop["enum"]:
+        kinds = list(kind_prop["enum"])
+        if "command" not in kinds or not set(kinds) <= {"command", "reply"}:
+            print(f"FAIL {rel}: properties.kind.enum {kinds!r} must be [command, reply] "
+                  f"(only a command may share its schema, with its reply)")
+            fail_count += 1
+            continue
+    else:
+        print(f"FAIL {rel}: properties.kind.const (or a [command, reply] enum) missing")
         fail_count += 1
         continue
     if "const" not in domain_prop:
@@ -134,7 +148,6 @@ for sp in schemas:
         continue
 
     ce_type = type_prop["const"]
-    kind = kind_prop["const"]
     domain = domain_prop["const"]
 
     # type segment 2 must equal domain.const
@@ -143,22 +156,26 @@ for sp in schemas:
         fail_count += 1
         continue
 
-    env = minimal_envelope(ce_type, kind)
-
-    try:
-        assert_contract(env)
-    except ContractViolation as exc:
-        action = ce_type.split(".")[-1]
-        hint = ""
-        if kind == "event" and action not in EVENT_ACTIONS:
-            hint = f" (hint: action {action!r} missing from EVENT_ACTIONS allowlist in validate.py §8.1)"
-        elif kind == "command" and action not in COMMAND_ACTIONS:
-            hint = f" (hint: action {action!r} missing from COMMAND_ACTIONS allowlist in validate.py §8.2)"
-        print(f"FAIL {ce_type}: {exc}{hint}")
+    failed = False
+    for kind in kinds:
+        env = minimal_envelope(ce_type, kind)
+        try:
+            assert_contract(env)
+        except ContractViolation as exc:
+            action = ce_type.split(".")[-1]
+            hint = ""
+            if kind == "event" and action not in EVENT_ACTIONS:
+                hint = f" (hint: action {action!r} missing from EVENT_ACTIONS allowlist in validate.py §8.1)"
+            elif kind in ("command", "reply") and action not in COMMAND_ACTIONS:
+                hint = f" (hint: action {action!r} missing from COMMAND_ACTIONS allowlist in validate.py §8.2)"
+            label = f"{ce_type} [{kind}]" if len(kinds) > 1 else ce_type
+            print(f"FAIL {label}: {exc}{hint}")
+            failed = True
+    if failed:
         fail_count += 1
         continue
 
-    print(f"PASS {ce_type}")
+    print(f"PASS {ce_type}" + (f" [{', '.join(kinds)}]" if len(kinds) > 1 else ""))
     pass_count += 1
 
 print(f"smoketest-schema-contract-consistency: {pass_count} pass, {fail_count} fail")
