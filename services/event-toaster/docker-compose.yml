@@ -1,8 +1,11 @@
 # event-toaster — standalone compose
 #
-# Joins the existing bloodbank-network and shouts every `bloodbank.evt.>`
-# envelope at ntfy.delo.sh — the version-free grammar, matching SUBJECT_FILTER
-# below and the running container. There is no contract-version token in a
+# Joins the existing bloodbank-network, subscribes to every `bloodbank.evt.>`
+# envelope — the version-free grammar, matching SUBJECT_FILTER below and the
+# running container — and toasts the ones worth a person's attention at
+# ntfy.delo.sh. hook-hub state pulses are muted, tool calls are rolled into a
+# periodic low-priority digest, and individual toasts are rate-limited, because
+# forwarding all of it 429'd ntfy for every publisher on the host (see main.py). There is no contract-version token in a
 # subject; the retired `bloodbank.evt.v1.>` wildcard named here would have
 # matched nothing that is published today.
 # Independent of the broader bloodbank compose lifecycle.
@@ -39,6 +42,12 @@ services:
       NTFY_TAGS: "${BLOODBANK_TOASTER_NTFY_TAGS:-drop_of_blood,zap}"
       NTFY_TOKEN: "${BLOODBANK_TOASTER_NTFY_TOKEN:-}"
       MAX_BODY_CHARS: "${BLOODBANK_TOASTER_MAX_BODY_CHARS:-400}"
+      # `-` not `:-`: an explicitly empty value turns the list off.
+      TOASTER_MUTE_TYPES: "${BLOODBANK_TOASTER_MUTE_TYPES-bloodbank.agent.hook.updated,bloodbank.system.hook.updated}"
+      TOASTER_DIGEST_TYPES: "${BLOODBANK_TOASTER_DIGEST_TYPES-bloodbank.agent.tool.*}"
+      TOAST_RATE_PER_MIN: "${BLOODBANK_TOASTER_RATE_PER_MIN:-20}"
+      TOAST_BURST: "${BLOODBANK_TOASTER_BURST:-10}"
+      DIGEST_SECONDS: "${BLOODBANK_TOASTER_DIGEST_SECONDS:-300}"
       LOG_LEVEL: "${BLOODBANK_TOASTER_LOG_LEVEL:-INFO}"
     networks:
       - bloodbank-network
