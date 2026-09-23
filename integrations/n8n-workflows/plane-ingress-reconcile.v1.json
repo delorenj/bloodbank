@@ -1,0 +1,140 @@
+[
+  {
+    "id": "U4hYm3BYPPeZNDHQ",
+    "name": "Plane Ingress Reconcile",
+    "description": "Plane ingress reconcile. Plane does not retry a webhook that failed with an HTTP 5xx, so a ticket created while n8n was down or restarting never became a repo.task.created fact. Every 10 minutes (minute 3, 13, ...) Reconcile Missed Tickets lists what each routed, unarchived board created in the last 6h, finds the tickets with no creation fact in BLOODBANK_EVENTS, and publishes theirs through the webhook normalizer (data.trigger_source = plane-reconcile; event id and Nats-Msg-Id keyed on board+ticket, so a late webhook cannot double it). One ntfy lifecycle push per recovered ticket; the sweep summary is on the Report output.",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "3-59/10 * * * *"
+              }
+            ]
+          }
+        },
+        "id": "7d84ac18-98da-5cbb-b506-e92d25d4b950",
+        "name": "Every 10 Minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "reconcile",
+          "reconcile": {},
+          "connection": {
+            "natsHost": "localhost",
+            "natsPort": 4222,
+            "timeoutMs": 3000
+          }
+        },
+        "id": "18d43ba2-9ec6-5afd-8861-4ffbc145bba5",
+        "name": "Reconcile Missed Tickets",
+        "type": "n8n-nodes-bloodbank.planeBloodbank",
+        "typeVersion": 2,
+        "position": [
+          240,
+          0
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "TpxVVgOnmjHaE6h7",
+            "name": "Plane API (33GOD + AutomaticAI)"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "topic": "lifecycle",
+          "message": "=Recovered missed ticket {{ $json.ticket_key || $json.ticket_id }} — {{ $json.title }}\n{{ $json.repo }} · created {{ $json.created_at }} · its Plane webhook never reached the bus; the creation fact is published now and grooming picks it up.",
+          "title": "=Recovered missed ticket {{ $json.ticket_key || $json.ticket_id }}",
+          "tags": "=plane,recovered,repo:{{ $json.repo }}",
+          "additionalHeaders": {
+            "header": [
+              {
+                "name": "X-Click",
+                "value": "={{ $json.url || '' }}"
+              }
+            ]
+          }
+        },
+        "id": "ee0c0081-7ed2-530c-b98b-8e18eb83f10c",
+        "name": "Recovered Ticket",
+        "type": "n8n-nodes-ntfy-client.ntfySend",
+        "typeVersion": 1,
+        "position": [
+          500,
+          -100
+        ],
+        "credentials": {
+          "ntfyApi": {
+            "id": "CMsMifZmcZA2DGcM",
+            "name": "Ntfy account (n8n token)"
+          }
+        },
+        "onError": "continueRegularOutput"
+      }
+    ],
+    "connections": {
+      "Every 10 Minutes": {
+        "main": [
+          [
+            {
+              "node": "Reconcile Missed Tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Reconcile Missed Tickets": {
+        "main": [
+          [
+            {
+              "node": "Recovered Ticket",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "saveManualExecutions": true,
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "pinData": {},
+    "tags": [
+      {
+        "id": "6vMYaFRLOHXXq3G5",
+        "name": "33GOD"
+      },
+      {
+        "id": "GV3E6aRXSlraYtSN",
+        "name": "bloodbank"
+      },
+      {
+        "id": "Hgex1M1TJuQ3HccH",
+        "name": "lifecycle"
+      },
+      {
+        "id": "UArKOM4NFnfz94g3",
+        "name": "plane"
+      },
+      {
+        "id": "qkJMiiB1AOBecu5I",
+        "name": "tickets"
+      }
+    ]
+  }
+]

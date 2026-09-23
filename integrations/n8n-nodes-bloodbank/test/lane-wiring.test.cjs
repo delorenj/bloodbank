@@ -31,8 +31,8 @@ function assertLifecyclePush(wf, name) {
   assert.equal(push.onError, 'continueRegularOutput');
 }
 
-test('the lane is exactly four workflows, all active', () => {
-  const names = ['plane-bloodbank', 'ticket-grooming', 'ticket-delegation', 'ticket-pickup-chip'];
+test('the lane is exactly five workflows, all active', () => {
+  const names = ['plane-bloodbank', 'plane-ingress-reconcile', 'ticket-grooming', 'ticket-delegation', 'ticket-pickup-chip'];
   assert.deepEqual(
     fs.readdirSync(path.join(__dirname, '../../n8n-workflows')).filter((f) => f.endsWith('.v1.json')).sort(),
     names.map((n) => `${n}.v1.json`).sort(),
@@ -52,6 +52,29 @@ test('Plane → Bloodbank pages an unrouted board at most once a day', () => {
   assert.equal(node(wf, 'Plane Webhook').parameters.responseMode, 'lastNode');
   assert.equal(node(wf, 'Unrouted — First Today?').parameters.conditions.conditions[0].leftValue, '={{ $json.notify }}');
   assertLifecyclePush(wf, 'Unrouted Board');
+});
+
+test('Plane Ingress Reconcile sweeps every 10 minutes and pushes each recovered ticket', () => {
+  const wf = workflow('plane-ingress-reconcile');
+  const [every] = node(wf, 'Every 10 Minutes').parameters.rule.interval;
+  assert.equal(node(wf, 'Every 10 Minutes').type, 'n8n-nodes-base.scheduleTrigger');
+  // Off the top of the hour and off the chip sweep's minute 51.
+  assert.deepEqual(every, { field: 'cronExpression', expression: '3-59/10 * * * *' });
+  const reconcile = node(wf, 'Reconcile Missed Tickets');
+  assert.equal(reconcile.type, 'n8n-nodes-bloodbank.planeBloodbank');
+  assert.equal(reconcile.typeVersion, 2); // Recovered + Report outputs
+  assert.equal(reconcile.parameters.operation, 'reconcile');
+  assert.ok(!reconcile.parameters.reconcile?.dryRun, 'the committed sweep publishes');
+  // The chip's Plane key: one credential, one rate budget the sweep leaves room in.
+  assert.equal(reconcile.credentials?.httpHeaderAuth?.name, 'Plane API (33GOD + AutomaticAI)');
+  assert.deepEqual(out(wf, 'Every 10 Minutes', 0), ['Reconcile Missed Tickets']);
+  assert.deepEqual(out(wf, 'Reconcile Missed Tickets', 0), ['Recovered Ticket']);
+  assert.deepEqual(out(wf, 'Reconcile Missed Tickets', 1), []); // the sweep report stays in the execution
+  assertLifecyclePush(wf, 'Recovered Ticket');
+  assert.match(node(wf, 'Recovered Ticket').parameters.message, /^=Recovered missed ticket \{\{ \$json\.ticket_key/);
+  // Same credential id as the chip's Plane calls.
+  const chipCredential = node(workflow('ticket-pickup-chip'), 'Chip — Read Issue').credentials.httpHeaderAuth.id;
+  assert.equal(reconcile.credentials.httpHeaderAuth.id, chipCredential);
 });
 
 test('the once-a-day gate keys on the board and forgets after 24h', () => {
