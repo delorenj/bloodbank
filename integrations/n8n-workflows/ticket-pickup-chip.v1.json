@@ -190,7 +190,8 @@
             "interval": [
               {
                 "field": "hours",
-                "hoursInterval": 1
+                "hoursInterval": 1,
+                "triggerAtMinute": 51
               }
             ]
           }

@@ -165,7 +165,11 @@ test('one durable trigger carries the whole turn, so started is handled before i
 
 test('an hourly sweep over Candystore feeds ended turns into the chip line', () => {
   assert.equal(node(chip, 'Stale Chip Sweep').type, 'n8n-nodes-base.scheduleTrigger');
-  assert.deepEqual(node(chip, 'Stale Chip Sweep').parameters.rule.interval, [{ field: 'hours', hoursInterval: 1 }]);
+  const [every] = node(chip, 'Stale Chip Sweep').parameters.rule.interval;
+  assert.equal(every.field, 'hours');
+  assert.equal(every.hoursInterval, 1);
+  // Pinned: without it n8n picks a random minute on every activation.
+  assert.ok(Number.isInteger(every.triggerAtMinute) && every.triggerAtMinute >= 0 && every.triggerAtMinute < 60);
   assert.deepEqual(out(chip, 'Stale Chip Sweep', 0), ['Sweep — Ended Turns']);
   assert.deepEqual(out(chip, 'Sweep — Ended Turns', 0), ['Sweep — Ended Tickets']);
   assert.deepEqual(out(chip, 'Sweep — Ended Tickets', 0), ['Chip — Target']);

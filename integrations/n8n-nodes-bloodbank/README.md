@@ -113,6 +113,16 @@ Inspect the durables with `nats consumer ls BLOODBANK_EVENTS` (or
 `nats consumer rm BLOODBANK_EVENTS n8n-<workflow>-<node>` to make the next
 activation start fresh from the tip.
 
+**Proven live on 2026-09-23 (0.6.0).** *Re-activation gap:* Ticket Grooming was
+deactivated, smoke ticket 33GOD-67 was created (Plane → Bloodbank execution
+241014 published the fact; the durable showed `pending 1`), and on re-activation
+Grooming execution 241015 dispatched it (`invoked: true`). *n8n stopped:* once
+chip execution 241016 had added `agent:working`, n8n was stopped with
+`pm2 stop n8n`. 33god-pm's turn ended while n8n was down
+(`invocation.completed` 6bfd5f83… at 04:46:06Z, the chip still on the ticket).
+After `pm2 start n8n`, chip execution 241018 consumed that event and removed the
+chip seven seconds after startup.
+
 **What a durable cannot cover.** The Plane webhook is received by n8n itself
 (*Plane → Bloodbank*). While n8n is down, Plane's delivery gets a 502 from
 Traefik and Plane does not retry an HTTP error (it retries only connection
@@ -358,7 +368,8 @@ they share one durable and one queue: a turn's `started` execution always
 finishes before its `completed` one starts, even when both land in the same
 catch-up burst after a restart (two triggers would be two durables with no
 order between them, and the add could land after the remove). *Stale Chip
-Sweep* runs hourly: it asks Candystore for the gateway's invocation events of
+Sweep* runs hourly at minute 51 (pinned; left unset, n8n picks a random minute
+on every activation): it asks Candystore for the gateway's invocation events of
 the last 48 h, and for every ticket whose latest one is a `completed`/`failed`
 at least 10 minutes old it sends that event down the chip line as a remove. The
 line only writes when `agent:working` is actually still on the ticket. It is the
