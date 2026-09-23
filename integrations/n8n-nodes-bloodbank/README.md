@@ -461,6 +461,17 @@ kept `agent:working`. Replayed on that execution's own inputs, the pre-0.7.0
 Plan Write takes the label off. 33GOD-71, never claimed: chip execution 241111
 removed the label 0.6 s after its turn completed.
 
+*Proven live on 2026-09-23 (In Progress only, chip version f02e25d3):* two
+grooming turns ran at once from 07:19:52Z. 33GOD-72 was moved to *Needs
+Attention* with `px move` at 07:20:00 while its turn ran, as a delegation turn
+parks a blocked ticket. Its turn completed at 07:24:55.87, and chip execution
+241134 removed `agent:working` at 07:24:56.47 (the ticket stayed in Needs
+Attention). Replayed on 241134's own inputs, 0.7.0's Plan Write plans no write:
+that is the chip it used to strand. 33GOD-73 was `px claim`ed at 07:20:15 (In
+Progress plus assignee Jarad). Its turn completed at 07:27:37.71 and chip
+execution 241137 planned no write, so the label stayed. Replayed with only the
+state row, and again with only the assignee row, the fixed code still keeps it.
+
 **The chip is ordered and swept.** Started and ended arrive on ONE trigger, so
 they share one durable and one queue: a turn's `started` execution always
 finishes before its `completed` one starts, even when both land in the same
