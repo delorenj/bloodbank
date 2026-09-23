@@ -129,7 +129,9 @@ Traefik and Plane does not retry an HTTP error (it retries only connection
 failures), so a ticket event that happens during an n8n outage never reaches the
 bus at all. Durable triggers protect everything that *is* on the bus — agent turn
 events, facts published by other services, and every fact published while a
-workflow is being re-saved.
+workflow is being re-saved. Ticket *creations* lost that way are recovered by
+[the reconcile sweep](#reconcile-missed-tickets); other ticket events (updates,
+transitions, comments) during an outage are still lost.
 
 **Only When Data Matches** (`dataMatch`) drops a message before it becomes an
 execution unless every condition holds. A condition is a dot path into the
@@ -217,6 +219,51 @@ modules) stay on the main output as `unsupported`.
 
 `repo.board.created` for a board no project claims carries `repo: null`; the
 workspace is always the slug (`workspace_slug`), never its UUID.
+
+### Reconcile missed tickets
+
+Operation **Reconcile Missed Tickets** (`operation: reconcile`) is the other half
+of ingress, run by the *Plane Ingress Reconcile* workflow every 10 minutes (at
+minute 3, 13, 23 …). For every board the [routing table](#routing) claims, it
+lists the tickets Plane created in the lookback window (default 6 h, newest
+first, at most 3 pages of 100 per board), asks `BLOODBANK_EVENTS` which of them
+already have a `bloodbank.repo.task.created` fact (a throwaway ordered consumer
+on that one subject from the window start, so the server filters and nothing
+durable is left), and publishes the missing ones. Each recovered ticket leaves on
+the **Recovered** output (the workflow pushes *Recovered missed ticket
+&lt;key&gt;* to ntfy `lifecycle`); one summary item per sweep leaves on **Report**
+(counts, the window, and any board skipped, errored, truncated or unchecked).
+
+- **Same fact as the webhook.** The ticket is read with
+  `expand=state,labels,assignees`, trimmed to the webhook's field set, wrapped as
+  an `issue.created` delivery and sent through `classifyPlaneWebhook` — the
+  webhook's own normalizer — and the same publish path. The only difference in
+  the fact is `data.trigger_source`: `plane-reconcile` instead of
+  `plane-webhook`. Its `time` is the ticket's `created_at`, as a webhook-born
+  creation's now is.
+- **Idempotent.** A creation fact's event id is
+  `uuid5(plane.ticket.created:<board>:<ticket>)` whichever path publishes it,
+  and it is also sent as `Nats-Msg-Id`, so a late webhook racing the sweep
+  inside the stream's 2-minute duplicate window is dropped by JetStream. Outside
+  the window, the sweep finds the fact already on the bus and publishes nothing;
+  and because Ticket Grooming derives its command id from the causing event id,
+  even a duplicate fact would re-dispatch the identical command the gateway
+  already journaled.
+- **Skipped, and reported:** archived boards, boards Plane no longer lists,
+  routes with no workspace slug, drafts, tickets already closed (a ticket
+  created and closed during the outage needs no grooming), and tickets younger
+  than the settle time (2 min: their webhook may still be in flight).
+- **Gentle on the API key.** Plane throttles per key (60/min) and this key is
+  the chip's too: requests are paced (250 ms) and the sweep stops while the key
+  still has 10 requests left this minute. A cut-short sweep is `partial: true`
+  and the board order rotates every 10 minutes, so the next sweep starts
+  elsewhere. A full sweep of 30 boards is ~32 requests and ~10 s.
+- A sweep that can read no board at all (expired key, Plane down) fails the
+  execution; one bad board is reported and the rest carry on.
+
+Keep the lookback inside Ticket Grooming's catch-up window (24 h), or a
+recovered fact is acked without grooming. The Plane API key is the n8n Header
+Auth credential *Plane API (33GOD + AutomaticAI)* (`X-API-Key`).
 
 ### Secrets
 
@@ -308,19 +355,20 @@ even sees it.
 
 ### The lifecycle lane
 
-Four versioned workflows in `../n8n-workflows/` carry a Plane ticket from
-webhook to working agent. Import all four; each export records `active: true`.
+Five versioned workflows in `../n8n-workflows/` carry a Plane ticket from
+webhook to working agent. Import all five; each export records `active: true`.
 
-    for f in plane-bloodbank ticket-grooming ticket-delegation ticket-pickup-chip; do
+    for f in plane-bloodbank plane-ingress-reconcile ticket-grooming ticket-delegation ticket-pickup-chip; do
       n8n import:workflow --input=../n8n-workflows/$f.v1.json
     done
 
 | Workflow (id) | Starts on | Does | Pushes to ntfy `lifecycle` |
 | --- | --- | --- | --- |
 | **Plane → Bloodbank** (`iMw484J1ZCqKME2C`) | Plane webhook | Verifies, normalizes and publishes the `bloodbank.repo.*` fact (see [Plane ingress](#plane-ingress)) | **Unrouted** → *Unrouted — Once a Day* → *Unrouted Board*: a board no enrolled project claims, at most once per board per 24 h |
+| **Plane Ingress Reconcile** (`__RECONCILE_ID__`) | Every 10 minutes (minute 3, 13, …) | **Reconcile Missed Tickets** publishes the `repo.task.created` fact of any ticket a routed board created in the last 6 h that never reached the bus (see [Reconcile missed tickets](#reconcile-missed-tickets)) | **Recovered** → *Recovered Ticket*: one push per recovered ticket |
 | **Ticket Grooming** (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | **Groom Ticket** commands the board's agent to enrich the ticket and stamp `lifecycle:triaged` | **Dispatched** → *Triage Started*; **Skipped** → *Triage Skipped*, every skip |
 | **Ticket Delegation** (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` | **Delegate Ticket** (phase guard `Todo,unstarted`) commands the agent to pick the ticket up and delegate it | **Dispatched** → *Delegation Started*; **Skipped** → *Notable Skip?* → *Delegation Skipped* |
-| **Ticket Pickup Chip** (`wWXgCZiiIBWaRRzE`) | One trigger, *Invocation Lifecycle*, on `agent.invocation.started`, `.completed`, `.failed` with `data.context.reason` in `ticket-grooming,ticket-delegation`; plus *Stale Chip Sweep* hourly | Adds the board's `agent:working` label while the agent's turn runs and removes it when the turn ends; the sweep removes any chip left on a ticket whose last turn ended | none |
+| **Ticket Pickup Chip** (`wWXgCZiiIBWaRRzE`) | One trigger, *Invocation Lifecycle*, on `agent.invocation.started`, `.completed`, `.failed` with `data.context.reason` in `ticket-grooming,ticket-delegation`; plus *Stale Chip Sweep* hourly | Adds the board's `agent:working` label while the agent's turn runs and removes it when the turn ends, unless the ticket was claimed meanwhile; the sweep removes any chip left on a ticket whose last turn ended | none |
 
 **The handshake.** Grooming finishes by labelling the ticket
 `lifecycle:triaged`. A person then promotes it to Todo, and that transition is
@@ -355,13 +403,32 @@ event toaster, which answered most lane pushes with 429.
 `data.context` (`workspace`, `board_id`, `ticket_id`, `ticket_key`, `reason`):
 no static data and no board map. It resolves `agent:working` by name on each
 board and skips boards without one; boards listed in the n8n env var
-`KREBS_FENCED_BOARDS` (a JSON array of board ids) are Krebs's to chip. Its three
-Plane calls (List Labels, Read Issue, Write Labels) run with On Error =
-Continue, and the Code node after each checks the result: 404 or 410 means the
-ticket or board was deleted while the turn was running, so there is nothing to
-chip and the item is dropped with the execution green. Any other failure (an
+`KREBS_FENCED_BOARDS` (a JSON array of board ids) are Krebs's to chip. Its four
+Plane calls (List Labels, Read Issue, Read Activity, Write Labels) run with On
+Error = Continue, and the Code node after each checks the result: 404 or 410
+means the ticket or board was deleted while the turn was running, so there is
+nothing to chip and the item is dropped with the execution green (only a remove
+waits on Read Activity; an add ignores it). Any other failure (an
 expired Plane token, a 5xx) fails the execution with the ticket key in the
 message.
+
+**The chip never strips a claim made during the turn.** `agent:working` is
+also pilot's claim marker, and a ticket can be claimed while the turn that
+chipped it is still running: a worker's `px claim` (moves it to In Progress and
+assigns the caller), or the delegation turn's own move to In Progress, which its
+prompt calls the claim. The chip is already on, so that claim changes no label,
+and before 0.7.0 the turn's remove at the end took the claim marker off with it.
+Now every remove, live or swept, first reads the ticket's activity (*Chip — Read
+Activity*: newest 100 rows; *Chip — Read Issue* expands the state) back to the
+last time `agent:working` went on — the chip's own add at turn start, or a
+claim's — and leaves the label if, since then, the ticket moved into a
+`started`-group state or gained an assignee. The gateway's terminal events carry
+no turn start time, so the label's own add is the turn start as Plane recorded
+it. With no record of the add in that page, the current state decides: a ticket
+in a `started` state keeps its chip. Grooming turns neither move a ticket into
+`started` nor assign it, so their chip still comes off at the end. One
+consequence: a delegation turn that parks a blocked ticket in a `started`-group
+state such as *Needs Attention* also keeps its chip.
 
 **The chip is ordered and swept.** Started and ended arrive on ONE trigger, so
 they share one durable and one queue: a turn's `started` execution always
@@ -422,8 +489,11 @@ npm test covers schema generation and the shared option shape, trigger and
 publisher configuration, canonical envelopes, fail-closed invocation routing,
 fleet eligibility / skips / skip events / fences / idempotent command ids,
 the lifecycle lane's wiring as exported (skip and unrouted pushes, the
-once-a-day unrouted gate, the chip's single ordered trigger, its Code nodes, its
-deleted-ticket guards and the stale-chip sweep), durable trigger delivery
+once-a-day unrouted gate, the reconcile schedule and push, the chip's single
+ordered trigger, its Code nodes, its deleted-ticket guards, the claim-during-turn
+check and the stale-chip sweep), the reconcile sweep (window, settle, paging
+bounds, archived/closed/draft skips, rate-limit reserve and rotation, a recovered
+fact identical to the webhook's, `Nats-Msg-Id` on Plane facts, dry run), durable trigger delivery
 (consumer naming and config, create/update/resume, one-at-a-time ack after the
 execution, catch-up window, close semantics) against a fake transport,
 byte-identical re-dispatch and the command `Nats-Msg-Id`,

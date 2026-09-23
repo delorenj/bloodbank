@@ -43,6 +43,10 @@ export interface EmitOptions extends NatsConnectionOptions {
   /** Validate the finished envelope against its canonical schema before any
    *  connection is opened. Always on for commands; opt-in for events. */
   validate?: boolean;
+  /** JetStream de-duplication id (`Nats-Msg-Id`) for an event whose id is a
+   *  pure function of what it records. Commands always carry their command_id
+   *  and ignore this. */
+  msgId?: string;
 }
 
 export interface IncomingNatsMessage {
@@ -266,22 +270,31 @@ function replyEnvelope(
  * A command's command_id is a pure function of what caused it (see
  * `fleetCommandId`), so stamping it as `Nats-Msg-Id` lets BLOODBANK_COMMANDS
  * drop a republished duplicate inside its duplicate window before any consumer
- * sees it. Events and replies carry no header: their ids are not guaranteed
- * stable, and a header on them would buy nothing.
+ * sees it. An event carries one only when its producer vouches for a stable id
+ * (`explicit`): Plane ingress facts are keyed on what they record, so a webhook
+ * and the reconcile sweep publishing the same ticket creation collapse into
+ * one message in BLOODBANK_EVENTS. Replies never carry one.
  */
-export function messageDedupId(envelope: Record<string, unknown>): string | undefined {
-  if (envelope.kind !== 'command') return undefined;
-  const id = envelope.command_id;
-  return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+export function messageDedupId(
+  envelope: Record<string, unknown>,
+  explicit?: string,
+): string | undefined {
+  if (envelope.kind === 'command') {
+    const id = envelope.command_id;
+    return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+  }
+  if (envelope.kind !== 'event') return undefined;
+  return typeof explicit === 'string' && explicit.trim() ? explicit.trim() : undefined;
 }
 
 async function publishOnConnection(
   connection: NatsConnection,
   subject: string,
   envelope: Record<string, unknown>,
+  msgId?: string,
 ): Promise<void> {
   const payload = Buffer.from(JSON.stringify(envelope), 'utf8');
-  const dedupId = messageDedupId(envelope);
+  const dedupId = messageDedupId(envelope, msgId);
   if (dedupId) {
     const headers = natsHeaders();
     headers.set('Nats-Msg-Id', dedupId);
@@ -323,7 +336,7 @@ export async function publish(
     timeout: opts.timeoutMs ?? 3000,
   });
   try {
-    await publishOnConnection(connection, subject, envelope);
+    await publishOnConnection(connection, subject, envelope, opts.msgId);
   } finally {
     await connection.drain();
   }

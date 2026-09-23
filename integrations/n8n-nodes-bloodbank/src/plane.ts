@@ -351,8 +351,13 @@ export function classifyPlaneWebhook(
   }
 
   const route = routes.get(boardId);
+  // A creation is observed when the ticket was created, not when it was last
+  // touched: the reconcile sweep reads a ticket hours later, and its fact must
+  // carry the same time as the webhook's would have.
   const observedAt = normalizeTimestamp(
-    data.updated_at ?? data.created_at ?? payload.timestamp ?? payload.created_at,
+    event === 'issue' && action === 'created'
+      ? data.created_at ?? data.updated_at ?? payload.timestamp ?? payload.created_at
+      : data.updated_at ?? data.created_at ?? payload.timestamp ?? payload.created_at,
     receivedAt,
   );
 
@@ -432,6 +437,7 @@ export function classifyPlaneWebhook(
     const previousState = activity.old_value ?? activity.previous_value;
     const normalizedFields = action === 'deleted' && !fields.length ? ['deleted'] : fields;
     const key = ticketKey(route, data);
+    const triggerSource = firstText(payload.trigger_source, data.trigger_source) ?? 'plane-webhook';
     const common = {
       ...base,
       task_id: ticketId,
@@ -452,16 +458,21 @@ export function classifyPlaneWebhook(
         providerEventType,
         observedAt,
         orderingKey: `task:${route.repo}:${ticketId}`,
-        dedupeKey: `${providerEventType}:${route.boardId}:${ticketId}:${observedAt}:${stateValue(currentState) ?? ''}`,
+        // A ticket is created once, so its creation fact is keyed on the ticket
+        // alone: the webhook and the reconcile sweep derive the same event id
+        // (and Nats-Msg-Id) and a race between them collapses into one fact.
+        dedupeKey: action === 'created'
+          ? createdDedupeKey(route.boardId, ticketId)
+          : `${providerEventType}:${route.boardId}:${ticketId}:${observedAt}:${stateValue(currentState) ?? ''}`,
         extensions: { ...extensions, provider_event_type: providerEventType },
         data: action === 'created'
-          ? common
+          ? { ...common, trigger_source: triggerSource }
           : {
               ...common,
               previous_phase: stateValue(previousState),
               previous_tp_band: tpBand(previousState),
               changed_fields: normalizedFields,
-              trigger_source: firstText(payload.trigger_source, data.trigger_source) ?? 'plane-webhook',
+              trigger_source: triggerSource,
             },
       },
     };
@@ -499,6 +510,58 @@ export function classifyPlaneWebhook(
         comment: data,
       },
     },
+  };
+}
+
+/** The dedupe key of a ticket's creation fact: (board, ticket, created).
+ *
+ * `deterministicUuid(createdDedupeKey(board, ticket))` is the event id, and
+ * the Nats-Msg-Id, of `repo.task.created` for that ticket, whoever publishes it.
+ */
+export function createdDedupeKey(boardId: string, ticketId: string): string {
+  return `${PLANE_PROVIDER_EVENT_TYPES.ticketCreated}:${boardId}:${ticketId}`;
+}
+
+function pick(value: unknown, keys: string[]): Record<string, unknown> | unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const source = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of keys) if (Object.prototype.hasOwnProperty.call(source, key)) out[key] = source[key];
+  return out;
+}
+
+const WEBHOOK_STATE_KEYS = ['id', 'name', 'color', 'group'];
+const WEBHOOK_LABEL_KEYS = ['id', 'name', 'color'];
+const WEBHOOK_ASSIGNEE_KEYS = ['id', 'email', 'avatar', 'last_name', 'avatar_url', 'first_name', 'display_name'];
+
+/** A Plane REST issue (listed with `expand=state,labels,assignees`) as the
+ *  `issue.created` webhook delivery Plane would have sent for it.
+ *
+ * The reconcile sweep feeds this through `classifyPlaneWebhook`, the same
+ * normalizer a delivered webhook goes through, so a recovered fact is the fact
+ * the webhook would have produced. The expanded state, labels and assignees are
+ * trimmed to the fields Plane's webhook serializer carries; everything else on
+ * the issue passes through untouched into `data.ticket`.
+ */
+export function issueAsWebhookPayload(
+  issueValue: unknown,
+  route: PlaneProjectRoute,
+  triggerSource = 'plane-reconcile',
+): Record<string, unknown> {
+  const issue = { ...record(issueValue) };
+  if (issue.state && typeof issue.state === 'object') issue.state = pick(issue.state, WEBHOOK_STATE_KEYS);
+  if (Array.isArray(issue.labels)) issue.labels = issue.labels.map((label) => pick(label, WEBHOOK_LABEL_KEYS));
+  if (Array.isArray(issue.assignees)) {
+    issue.assignees = issue.assignees.map((assignee) => pick(assignee, WEBHOOK_ASSIGNEE_KEYS));
+  }
+  if (!firstText(issue.project, issue.project_id)) issue.project = route.boardId;
+  return {
+    event: 'issue',
+    action: 'created',
+    webhook_id: null,
+    workspace_slug: usableWorkspace(route.workspace) ?? null,
+    trigger_source: triggerSource,
+    data: issue,
   };
 }
 

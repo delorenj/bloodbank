@@ -358,6 +358,12 @@ test('v2 splits unclaimed boards onto the Unrouted output and publishes the rest
   assert.equal(main[0].json.secret_source, 'fresh');
   assert.equal(unrouted[0].json.secret_source, 'cache');
   assert.deepEqual(published.map((options) => options.data.repo), ['flume', 'bb']);
+  // Webhook facts carry Nats-Msg-Id = event id, the same key the reconcile
+  // sweep derives, so a race between the two is one message on the stream.
+  for (const options of published) {
+    assert.equal(options.msgId, options.eventId);
+    assert.equal(options.data.trigger_source, 'plane-webhook');
+  }
   assert.equal(main[0].json.route_source, 'pjangler');
   // Three signed deliveries, one vault read.
   assert.equal(secretReads(), 1);

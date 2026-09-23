@@ -11,12 +11,20 @@ import { NodeOperationError } from 'n8n-workflow';
 import { deterministicUuid, publish } from '../../nats';
 import {
   classifyPlaneWebhook,
+  issueAsWebhookPayload,
   mergePlaneRoutes,
   planeRoutesFromRegistry,
   unboundRegistryProjectPaths,
 } from '../../plane';
-import type { PlaneProjectRoute } from '../../plane';
+import type { NormalizedPlaneEvent, PlaneProjectRoute } from '../../plane';
 import { boardFromManifest, loadProjectBoards } from '../../projects';
+import {
+  createdTicketIdsSince,
+  planeReader as makePlaneReader,
+  planReconcile,
+  RECONCILE_DEFAULTS,
+} from '../../reconcile';
+import type { PlaneReader } from '../../reconcile';
 import type { ProjectBoard, ProjectBoardsResult, RegistryFetch } from '../../projects';
 import { hermesRegistryPath, loadHermesRegistry } from '../../registry';
 import { cachedSecret, mayForceRefresh, opRead } from '../../secrets';
@@ -152,6 +160,82 @@ export interface PlaneBloodbankDeps {
   publish?: typeof publish;
   readSecret?: SecretReader;
   fetchProjectRegistry?: RegistryFetch;
+  /** Reconcile: Plane reads (default: the REST API with the node's credential). */
+  planeReader?: PlaneReader;
+  /** Reconcile: ticket ids that already have a creation fact (default: BLOODBANK_EVENTS). */
+  knownTicketIds?: (since: Date) => Promise<Set<string>>;
+  /** Reconcile: the sweep's clock. */
+  now?: Date;
+}
+
+interface ConnectionOptions {
+  natsHost?: string;
+  natsPort?: number;
+  timeoutMs?: number;
+}
+
+/** Refuse a normalized fact its schema would reject for a missing field. */
+function assertRequiredData(normalized: NormalizedPlaneEvent): void {
+  const schema = eventSchemas.find((candidate) => candidate.type === normalized.canonicalType);
+  if (!schema) {
+    throw new Error(`normalized event has no registered schema: ${normalized.canonicalType}`);
+  }
+  const missing = schema.dataFields
+    .filter(
+      (field) =>
+        field.required &&
+        !Object.prototype.hasOwnProperty.call(normalized.data, field.name),
+    )
+    .map((field) => field.name);
+  if (missing.length) {
+    throw new Error(
+      `normalized ${normalized.canonicalType} is missing required data: ${missing.join(', ')}`,
+    );
+  }
+}
+
+/** The one way a Plane fact reaches the bus, webhook-born or recovered.
+ *
+ * The event id is derived from the normalizer's dedupe key and is also sent as
+ * `Nats-Msg-Id`, so BLOODBANK_EVENTS drops a second copy of the same fact that
+ * arrives inside its duplicate window. The envelope is identical whichever path
+ * published it; only `data.trigger_source` says which.
+ */
+async function publishFact(
+  send: typeof publish,
+  normalized: NormalizedPlaneEvent,
+  connection: ConnectionOptions,
+): Promise<{ subject: string; eventId: string }> {
+  assertRequiredData(normalized);
+  const eventId = deterministicUuid(normalized.dedupeKey);
+  const correlationId = deterministicUuid(
+    `plane:${String(normalized.data.board_id)}:${String(
+      normalized.data.ticket_id || normalized.data.board_id,
+    )}`,
+  );
+  const sent = await send({
+    type: normalized.canonicalType,
+    data: normalized.data,
+    host: connection.natsHost || undefined,
+    port: connection.natsPort ? Number(connection.natsPort) : undefined,
+    timeoutMs: connection.timeoutMs ? Number(connection.timeoutMs) : undefined,
+    source: 'urn:33god:integration:n8n:plane-webhook',
+    producer: 'n8n-plane-webhook',
+    service: 'n8n',
+    eventId,
+    msgId: eventId,
+    observedAt: normalized.observedAt,
+    correlationId,
+    causationId: eventId,
+    orderingKey: normalized.orderingKey,
+    actor: {
+      type: 'ticket_provider',
+      agent_id: 'bloodbank.integration.plane',
+      provider: 'plane',
+    },
+    extensions: normalized.extensions,
+  });
+  return { subject: sent.subject, eventId: sent.eventId };
 }
 
 interface RoutingTable {
@@ -177,7 +261,140 @@ async function routingTable(
 }
 
 const OUTPUTS_BY_VERSION =
-  '={{ $nodeVersion >= 2 ? [{"type":"main","displayName":"Published"},{"type":"main","displayName":"Unrouted"}] : [{"type":"main"}] }}';
+  '={{ $nodeVersion >= 2 ? ($parameter.operation === "reconcile" ? [{"type":"main","displayName":"Recovered"},{"type":"main","displayName":"Report"}] : [{"type":"main","displayName":"Published"},{"type":"main","displayName":"Unrouted"}]) : [{"type":"main"}] }}';
+
+interface ReconcileSettings {
+  lookbackHours?: number;
+  settleMinutes?: number;
+  maxPagesPerBoard?: number;
+  planeBaseUrl?: string;
+  rateReserve?: number;
+  paceMs?: number;
+  dryRun?: boolean;
+}
+
+function positive(value: unknown, fallback: number): number {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+/** Reconcile Missed Tickets: one sweep, whatever the input items are.
+ *
+ * Returns [recovered, report]: one item per ticket whose creation fact was
+ * published (or would be, on a dry run), and one summary item for the sweep.
+ */
+async function reconcileMissedTickets(
+  this: IExecuteFunctions,
+  table: RoutingTable,
+  seams: PlaneBloodbankDeps,
+  send: typeof publish,
+  routingJson: Record<string, unknown>,
+): Promise<[INodeExecutionData[], INodeExecutionData[]]> {
+  const settings = (this.getNodeParameter('reconcile', 0, {}) || {}) as ReconcileSettings;
+  const connection = (this.getNodeParameter('connection', 0, {}) || {}) as ConnectionOptions;
+  const baseUrl = (settings.planeBaseUrl || 'https://plane.delo.sh').replace(/\/+$/, '');
+  const dryRun = settings.dryRun === true;
+
+  // n8n passes its own argument to execute(); only a seam of the right shape counts.
+  const fakePlane = seams.planeReader;
+  let plane: PlaneReader | undefined =
+    fakePlane && typeof fakePlane.projects === 'function' && typeof fakePlane.issuesPage === 'function'
+      ? fakePlane
+      : undefined;
+  if (!plane) {
+    const credential = (await this.getCredentials('httpHeaderAuth')) as { name?: string; value?: string };
+    plane = makePlaneReader({
+      baseUrl,
+      header: { name: String(credential.name ?? ''), value: String(credential.value ?? '') },
+      rateReserve: settings.rateReserve === undefined ? undefined : Number(settings.rateReserve),
+      paceMs: settings.paceMs === undefined ? undefined : Number(settings.paceMs),
+    });
+  }
+  const knownTicketIds = typeof seams.knownTicketIds === 'function' ? seams.knownTicketIds : ((since: Date) =>
+    createdTicketIdsSince(since, {
+      host: connection.natsHost || undefined,
+      port: connection.natsPort ? Number(connection.natsPort) : undefined,
+      timeoutMs: connection.timeoutMs ? Number(connection.timeoutMs) : undefined,
+    }));
+
+  const plan = await planReconcile({
+    routes: table.routes,
+    plane,
+    knownTicketIds,
+    now: seams.now instanceof Date ? seams.now : undefined,
+    lookbackMs: positive(settings.lookbackHours, RECONCILE_DEFAULTS.lookbackMs / 3_600_000) * 3_600_000,
+    settleMs: positive(settings.settleMinutes, RECONCILE_DEFAULTS.settleMs / 60_000) * 60_000,
+    maxPagesPerBoard: positive(settings.maxPagesPerBoard, RECONCILE_DEFAULTS.maxPagesPerBoard),
+  });
+
+  const errored = plan.boards.filter((board) => board.status === 'error');
+  if (errored.length && !plan.counts.boards_checked && !plan.partial) {
+    // Nothing could be read at all (an expired key, Plane down): that is a
+    // failed sweep, not an empty one.
+    throw new NodeOperationError(
+      this.getNode(),
+      `Plane ingress reconcile read no board: ${errored[0].reason}`,
+    );
+  }
+
+  const recovered: INodeExecutionData[] = [];
+  const failures: Array<Record<string, unknown>> = [];
+  for (const candidate of plan.candidates) {
+    const payload = issueAsWebhookPayload(candidate.issue, candidate.route);
+    const result = classifyPlaneWebhook(payload, table.routes);
+    if (result.status !== 'routed') {
+      failures.push({ ticket_id: candidate.issue.id ?? null, board_id: candidate.route.boardId, reason: result.reason });
+      continue;
+    }
+    const normalized = result.event;
+    const data = normalized.data;
+    const ticketKey = (data.ticket_key as string | null) ?? null;
+    const summary = {
+      recovered: !dryRun,
+      dry_run: dryRun,
+      ticket_key: ticketKey,
+      ticket_id: String(data.ticket_id),
+      title: String(data.title),
+      board_id: String(data.board_id),
+      board_key: candidate.route.boardKey ?? null,
+      repo: String(data.repo),
+      workspace: String(data.workspace),
+      phase: (data.phase as string | null) ?? null,
+      created_at: normalized.observedAt,
+      type: normalized.canonicalType,
+      provider_event_type: normalized.providerEventType,
+      trigger_source: String(data.trigger_source),
+      url: ticketKey ? `${baseUrl}/${String(data.workspace)}/browse/${ticketKey}/` : null,
+    };
+    if (dryRun) {
+      assertRequiredData(normalized);
+      recovered.push({ json: { ok: true, ...summary, event_id: deterministicUuid(normalized.dedupeKey) }, pairedItem: { item: 0 } });
+      continue;
+    }
+    const sent = await publishFact(send, normalized, connection);
+    recovered.push({
+      json: { ok: true, ...summary, event_id: sent.eventId, subject: sent.subject },
+      pairedItem: { item: 0 },
+    });
+  }
+
+  const report = {
+    ok: true,
+    operation: 'reconcile',
+    dry_run: dryRun,
+    window: plan.window,
+    ...plan.counts,
+    recovered: recovered.length,
+    recovered_tickets: recovered.map((item) => item.json.ticket_key ?? item.json.ticket_id),
+    partial: plan.partial,
+    ...(plan.stopped_reason ? { stopped_reason: plan.stopped_reason } : {}),
+    // Only the boards worth a look: skipped, errored, unchecked, truncated, or with tickets in the window.
+    boards: plan.boards.filter((board) => board.status !== 'checked' || board.truncated || board.in_window > 0),
+    ...(failures.length ? { failures } : {}),
+    ...routingJson,
+  };
+  return [recovered, [{ json: report, pairedItem: { item: 0 } }]];
+}
 
 export class PlaneBloodbank implements INodeType {
   description: INodeTypeDescription = {
@@ -194,20 +411,119 @@ export class PlaneBloodbank implements INodeType {
     // "respond with last node" webhook still gets an item to answer with. v2
     // splits boards no enrolled project claims onto their own output.
     outputs: OUTPUTS_BY_VERSION as unknown as INodeTypeDescription['outputs'],
+    credentials: [
+      {
+        // Plane's REST API key as a Header Auth credential (name X-API-Key).
+        name: 'httpHeaderAuth',
+        required: true,
+        displayOptions: { show: { operation: ['reconcile'] } },
+      },
+    ],
     properties: [
+      {
+        displayName: 'Operation',
+        name: 'operation',
+        type: 'options',
+        noDataExpression: true,
+        default: 'webhook',
+        options: [
+          {
+            name: 'Normalize Webhook',
+            value: 'webhook',
+            description: 'Verify one Plane webhook delivery and publish its canonical fact',
+            action: 'Normalize a Plane webhook',
+          },
+          {
+            name: 'Reconcile Missed Tickets',
+            value: 'reconcile',
+            description:
+              'List tickets each routed board created in the lookback window and publish the creation fact of any the bus never received',
+            action: 'Reconcile missed Plane tickets',
+          },
+        ],
+      },
       {
         displayName:
           'Boards no enrolled project claims leave on the Unrouted output. When the webhook responds with the last node, answer Plane immediately instead (Respond: Immediately), or an unrouted delivery has no item to respond with.',
         name: 'unroutedNotice',
         type: 'notice',
         default: '',
-        displayOptions: { show: { '@version': [{ _cnd: { gte: 2 } }] } },
+        displayOptions: { show: { '@version': [{ _cnd: { gte: 2 } }], operation: ['webhook'] } },
+      },
+      {
+        displayName:
+          'Plane does not retry a webhook that failed with an HTTP error, so a ticket created while n8n was down never reached the bus. This finds those tickets on every routed, unarchived board and publishes their repo.task.created fact through the webhook normalizer (data.trigger_source = plane-reconcile). Recovered tickets leave on Recovered, one item each; the sweep summary leaves on Report.',
+        name: 'reconcileNotice',
+        type: 'notice',
+        default: '',
+        displayOptions: { show: { operation: ['reconcile'] } },
+      },
+      {
+        displayName: 'Reconcile',
+        name: 'reconcile',
+        type: 'collection',
+        placeholder: 'Add option',
+        default: {},
+        displayOptions: { show: { operation: ['reconcile'] } },
+        options: [
+          {
+            displayName: 'Lookback (Hours)',
+            name: 'lookbackHours',
+            type: 'number',
+            default: RECONCILE_DEFAULTS.lookbackMs / 3_600_000,
+            description:
+              'Tickets created this far back are checked. Keep it inside the grooming trigger\'s catch-up window (24 h).',
+          },
+          {
+            displayName: 'Settle (Minutes)',
+            name: 'settleMinutes',
+            type: 'number',
+            default: RECONCILE_DEFAULTS.settleMs / 60_000,
+            description: 'Tickets younger than this are left to their webhook, which may still be in flight',
+          },
+          {
+            displayName: 'Max Pages per Board',
+            name: 'maxPagesPerBoard',
+            type: 'number',
+            default: RECONCILE_DEFAULTS.maxPagesPerBoard,
+            description: 'Plane issue pages (100 each, newest first) read per board before giving up on the window start',
+          },
+          {
+            displayName: 'Plane Base URL',
+            name: 'planeBaseUrl',
+            type: 'string',
+            default: 'https://plane.delo.sh',
+          },
+          {
+            displayName: 'Rate Limit Reserve',
+            name: 'rateReserve',
+            type: 'number',
+            default: RECONCILE_DEFAULTS.rateReserve,
+            description:
+              'Stop the sweep while the API key still has this many requests left this minute, leaving them to the chip lane. The next sweep resumes on a rotated board order.',
+          },
+          {
+            displayName: 'Pace (ms)',
+            name: 'paceMs',
+            type: 'number',
+            default: RECONCILE_DEFAULTS.paceMs,
+            description: 'Gap between Plane requests',
+          },
+          {
+            displayName: 'Dry Run',
+            name: 'dryRun',
+            type: 'boolean',
+            default: false,
+            description: 'Whether to report what would be recovered without publishing anything',
+          },
+        ],
       },
       {
         displayName: 'Verify HMAC Signature',
         name: 'verifySignature',
         type: 'boolean',
         default: true,
+        displayOptions: { show: { operation: ['webhook'] } },
         description: 'Whether to verify the raw webhook body before publishing anything',
       },
       {
@@ -216,7 +532,7 @@ export class PlaneBloodbank implements INodeType {
         type: 'json',
         default: '{}',
         required: true,
-        displayOptions: { show: { verifySignature: [true] } },
+        displayOptions: { show: { verifySignature: [true], operation: ['webhook'] } },
         description:
           'JSON object mapping trusted Plane webhook IDs to op:// or env:// secret references. Raw credential values are rejected. Resolved secrets are cached in-process for an hour and served stale if 1Password is unreachable.',
       },
@@ -225,7 +541,7 @@ export class PlaneBloodbank implements INodeType {
         name: 'secretReference',
         type: 'string',
         default: '',
-        displayOptions: { show: { verifySignature: [true] } },
+        displayOptions: { show: { verifySignature: [true], operation: ['webhook'] } },
         description:
           'Backward-compatible fallback used only when the webhook secret map is empty. New workflows must use the allowlist map.',
       },
@@ -298,6 +614,11 @@ export class PlaneBloodbank implements INodeType {
       ...(table.projects.error ? { routing_projects_error: table.projects.error } : {}),
     };
 
+    if (this.getNodeParameter('operation', 0, 'webhook') === 'reconcile') {
+      const [recovered, report] = await reconcileMissedTickets.call(this, table, seams, send, routingJson);
+      return version >= 2 ? [recovered, report] : [[...recovered, ...report]];
+    }
+
     for (let index = 0; index < items.length; index++) {
       try {
         const input = items[index];
@@ -349,54 +670,8 @@ export class PlaneBloodbank implements INodeType {
         }
 
         const normalized = result.event;
-        const schema = eventSchemas.find((candidate) => candidate.type === normalized.canonicalType);
-        if (!schema) {
-          throw new Error(`normalized event has no registered schema: ${normalized.canonicalType}`);
-        }
-        const missing = schema.dataFields
-          .filter(
-            (field) =>
-              field.required &&
-              !Object.prototype.hasOwnProperty.call(normalized.data, field.name),
-          )
-          .map((field) => field.name);
-        if (missing.length) {
-          throw new Error(
-            `normalized ${normalized.canonicalType} is missing required data: ${missing.join(', ')}`,
-          );
-        }
-        const connection = this.getNodeParameter('connection', index, {}) as {
-          natsHost?: string;
-          natsPort?: number;
-          timeoutMs?: number;
-        };
-        const eventId = deterministicUuid(normalized.dedupeKey);
-        const correlationId = deterministicUuid(
-          `plane:${String(normalized.data.board_id)}:${String(
-            normalized.data.ticket_id || normalized.data.board_id,
-          )}`,
-        );
-        const sent = await send({
-          type: normalized.canonicalType,
-          data: normalized.data,
-          host: connection.natsHost || undefined,
-          port: connection.natsPort ? Number(connection.natsPort) : undefined,
-          timeoutMs: connection.timeoutMs ? Number(connection.timeoutMs) : undefined,
-          source: 'urn:33god:integration:n8n:plane-webhook',
-          producer: 'n8n-plane-webhook',
-          service: 'n8n',
-          eventId,
-          observedAt: normalized.observedAt,
-          correlationId,
-          causationId: eventId,
-          orderingKey: normalized.orderingKey,
-          actor: {
-            type: 'ticket_provider',
-            agent_id: 'bloodbank.integration.plane',
-            provider: 'plane',
-          },
-          extensions: normalized.extensions,
-        });
+        const connection = this.getNodeParameter('connection', index, {}) as ConnectionOptions;
+        const sent = await publishFact(send, normalized, connection);
         published.push({
           json: {
             ok: true,

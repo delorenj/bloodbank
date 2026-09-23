@@ -2,7 +2,7 @@
   {
     "id": "wWXgCZiiIBWaRRzE",
     "name": "Ticket Pickup Chip",
-    "description": "agent:working chip for ticket turns. One durable Bloodbank trigger on agent.invocation.started/completed/failed (in order, ack after each execution) adds and removes the label; an hourly sweep over Candystore removes any chip whose ticket's last turn ended.",
+    "description": "agent:working chip for ticket turns. One durable Bloodbank trigger on agent.invocation.started/completed/failed (in order, ack after each execution) adds and removes the label; a remove is skipped when the ticket was claimed after the chip went on (moved into a started state or assigned: px claim, or the delegation turn's own claim); an hourly sweep over Candystore removes any chip whose ticket's last turn ended and that nobody touched since.",
     "active": true,
     "isArchived": false,
     "nodes": [
@@ -92,7 +92,7 @@
       },
       {
         "parameters": {
-          "url": "=https://plane.delo.sh/api/v1/workspaces/{{ $json.ws }}/projects/{{ $json.board }}/issues/{{ $json.ticketId }}/",
+          "url": "=https://plane.delo.sh/api/v1/workspaces/{{ $json.ws }}/projects/{{ $json.board }}/issues/{{ $json.ticketId }}/?expand=state",
           "authentication": "genericCredentialType",
           "genericAuthType": "httpHeaderAuth",
           "sendHeaders": true,
@@ -124,14 +124,46 @@
       },
       {
         "parameters": {
-          "jsCode": "// Read-modify-write of the ticket's label set. No-op writes are dropped: the\n// chip is already on (add) or already gone (remove), or a sweep remove found\n// the ticket changed after the turn ended (see touchedSinceTurn). A ticket that was deleted\n// mid-turn (404/410, or a soft-deleted row) is skipped, not written.\n// The Plane HTTP nodes run with On Error = Continue, so a failed request\n// arrives here as { error } instead of failing the execution. 404/410 means\n// the ticket (or its board) was deleted while the agent's turn was running:\n// there is no chip left to set, so the item is skipped and the execution stays\n// green. Any other failure (auth, 5xx) still fails it, with the ticket named.\nconst GONE = [404, 410];\n// agent:working has two writers: this lane, and pilot's `px claim` (which adds\n// it) / `px close` (which removes it). The label cannot say who put it there.\n// A sweep remove (Stale Chip Sweep, up to 48h after the turn) therefore only\n// takes off a chip nobody has touched since the turn ended: if the ticket's\n// updated_at is later than the ending event's time, a worker's px claim, a\n// new turn's own chip or anyone's edit happened since, and the ticket is left\n// as it is. Unknown times also leave it: when in doubt, the chip stays. The\n// slack is small on purpose: the gateway and Plane share this host's clock,\n// every write of the turn itself lands before its ending event, and a claim\n// made seconds after the turn is exactly what must survive. (This lane's own\n// live remove lands ~0.5s after the end, but when it lands the chip is gone.)\n// The live lane (sweep false) removes at the real turn end.\nconst SWEEP_SLACK_MS = 5 * 1000;\nfunction touchedSinceTurn(t, issue) {\n  const ended = Date.parse(t.eventTime);\n  const updated = Date.parse(issue.updated_at);\n  if (Number.isNaN(ended) || Number.isNaN(updated)) return true;\n  return updated > ended + SWEEP_SLACK_MS;\n}\nfunction httpStatus(err) {\n  if (err && typeof err === 'object') {\n    const candidates = [err.httpCode, err.statusCode, err.status, err.response && err.response.status, err.cause && err.cause.status];\n    for (const v of candidates) {\n      const n = Number(v);\n      if (Number.isInteger(n) && n >= 100 && n < 600) return n;\n    }\n  }\n  const text = err && typeof err === 'object' ? `${err.message || ''} ${err.description || ''}` : String(err || '');\n  const m = text.match(/\\b([1-5]\\d\\d)\\b/);\n  return m ? Number(m[1]) : null;\n}\nfunction failure(step, t, err) {\n  const status = httpStatus(err);\n  if (GONE.includes(status)) return null;\n  const detail = err && typeof err === 'object' ? err.message || err.description || JSON.stringify(err) : String(err);\n  return new Error(`${step} failed for ${t.ticketKey || t.ticketId} (board ${t.board}): HTTP ${status ?? '?'} ${String(detail).slice(0, 200)}`);\n}\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const t = $('Chip — Resolve Label').itemMatching(i).json;\n  const issue = items[i].json || {};\n  if (issue.error) {\n    const err = failure('Chip — Read Issue', t, issue.error);\n    if (err) throw err;\n    continue;\n  }\n  if (issue.deleted_at) continue;\n  const current = (issue.labels || [])\n    .map((l) => (l && typeof l === 'object' ? l.id : l))\n    .filter(Boolean);\n  const has = current.includes(t.labelId);\n  if (t.action === 'add' ? has : !has) continue;\n  if (t.sweep && t.action === 'remove' && touchedSinceTurn(t, issue)) continue;\n  const labels = t.action === 'add' ? [...current, t.labelId] : current.filter((id) => id !== t.labelId);\n  out.push({ json: { ...t, labels }, pairedItem: { item: i } });\n}\nreturn out;\n"
+          "url": "=https://plane.delo.sh/api/v1/workspaces/{{ $('Chip — Resolve Label').item.json.ws }}/projects/{{ $('Chip — Resolve Label').item.json.board }}/issues/{{ $('Chip — Resolve Label').item.json.ticketId }}/activities/?order_by=-created_at&per_page=100",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "ea99ff99-1fad-5a00-8af9-a2e214683968",
+        "name": "Chip — Read Activity",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1180,
+          0
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "TpxVVgOnmjHaE6h7",
+            "name": "Plane API (33GOD + AutomaticAI)"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Read-modify-write of the ticket's label set. No-op writes are dropped: the\n// chip is already on (add) or already gone (remove), a remove would strip a\n// claim made after the chip went on (see claimedSinceChip), or a sweep remove\n// found the ticket changed after the turn ended (see touchedSinceTurn). A ticket\n// that was deleted mid-turn (404/410, or a soft-deleted row) is skipped, not\n// written.\n// The Plane HTTP nodes run with On Error = Continue, so a failed request\n// arrives here as { error } instead of failing the execution. 404/410 means\n// the ticket (or its board) was deleted while the agent's turn was running:\n// there is no chip left to set, so the item is skipped and the execution stays\n// green. Any other failure (auth, 5xx) still fails it, with the ticket named.\nconst GONE = [404, 410];\n// agent:working has two writers: this lane, and pilot's `px claim` (which adds\n// it) / `px close` (which removes it). The label cannot say who put it there.\n//\n// Claims made DURING a turn. A worker (or the PM's own delegation turn, which\n// is told to move the ticket to In Progress to claim it) can claim the ticket\n// while the turn is still running. The chip is already on, so the claim leaves\n// no label change behind, and the turn's own remove at the end used to strip\n// the claim marker. So before ANY remove, live or sweep, Chip — Read Activity\n// reads the ticket's activity (newest first) back to the last time\n// agent:working went on -- this lane's own add at turn start, or a claim's --\n// and the chip stays if, since then, the ticket moved into a `started`-group\n// state (px claim moves it to In Progress) or gained an assignee (px claim\n// assigns the caller). Grooming turns do neither, so their remove stands. The\n// terminal event carries no turn start time; the label's own add is the turn\n// start as Plane recorded it. With no record of the label going on (more than\n// a page of activity since, or none at all) the current state decides: a\n// ticket in a `started` state keeps its chip.\nconst CLAIM_SLACK_MS = 2 * 1000;\nfunction claimedSinceChip(t, issue, activity) {\n  const rows = Array.isArray(activity && activity.results) ? activity.results : [];\n  const at = (row) => Date.parse(row && row.created_at);\n  const state = issue.state && typeof issue.state === 'object' ? issue.state : null;\n  const inStarted = Boolean(state && String(state.group || '').toLowerCase() === 'started');\n  const adds = rows\n    .filter((row) => row && row.field === 'labels' && (\n      (t.labelId && row.new_identifier === t.labelId) ||\n      String(row.new_value || '').trim().toLowerCase() === 'agent:working'))\n    .map(at)\n    .filter((ms) => !Number.isNaN(ms));\n  if (!adds.length) return inStarted;\n  // One PATCH writes a claim's state, assignee and label rows a few ms apart.\n  const since = Math.max(...adds) - CLAIM_SLACK_MS;\n  return rows.some((row) => {\n    const ms = at(row);\n    if (!row || Number.isNaN(ms) || ms < since) return false;\n    if (row.field === 'state') return inStarted && row.new_identifier === state.id;\n    if (row.field === 'assignees') return Boolean(row.new_identifier || String(row.new_value || '').trim());\n    return false;\n  });\n}\n// Claims made AFTER a turn. A sweep remove (Stale Chip Sweep, up to 48h after\n// the turn) only takes off a chip nobody has touched since the turn ended: if\n// the ticket's updated_at is later than the ending event's time, a worker's px\n// claim, a new turn's own chip or anyone's edit happened since, and the ticket\n// is left as it is. Unknown times also leave it: when in doubt, the chip stays.\n// The slack is small on purpose: the gateway and Plane share this host's clock,\n// every write of the turn itself lands before its ending event, and a claim\n// made seconds after the turn is exactly what must survive. (This lane's own\n// live remove lands ~0.5s after the end, but when it lands the chip is gone.)\nconst SWEEP_SLACK_MS = 5 * 1000;\nfunction touchedSinceTurn(t, issue) {\n  const ended = Date.parse(t.eventTime);\n  const updated = Date.parse(issue.updated_at);\n  if (Number.isNaN(ended) || Number.isNaN(updated)) return true;\n  return updated > ended + SWEEP_SLACK_MS;\n}\nfunction httpStatus(err) {\n  if (err && typeof err === 'object') {\n    const candidates = [err.httpCode, err.statusCode, err.status, err.response && err.response.status, err.cause && err.cause.status];\n    for (const v of candidates) {\n      const n = Number(v);\n      if (Number.isInteger(n) && n >= 100 && n < 600) return n;\n    }\n  }\n  const text = err && typeof err === 'object' ? `${err.message || ''} ${err.description || ''}` : String(err || '');\n  const m = text.match(/\\b([1-5]\\d\\d)\\b/);\n  return m ? Number(m[1]) : null;\n}\nfunction failure(step, t, err) {\n  const status = httpStatus(err);\n  if (GONE.includes(status)) return null;\n  const detail = err && typeof err === 'object' ? err.message || err.description || JSON.stringify(err) : String(err);\n  return new Error(`${step} failed for ${t.ticketKey || t.ticketId} (board ${t.board}): HTTP ${status ?? '?'} ${String(detail).slice(0, 200)}`);\n}\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const t = $('Chip — Resolve Label').itemMatching(i).json;\n  const issue = $('Chip — Read Issue').itemMatching(i).json || {};\n  const activity = items[i].json || {};\n  if (issue.error) {\n    const err = failure('Chip — Read Issue', t, issue.error);\n    if (err) throw err;\n    continue;\n  }\n  if (issue.deleted_at) continue;\n  const current = (issue.labels || [])\n    .map((l) => (l && typeof l === 'object' ? l.id : l))\n    .filter(Boolean);\n  const has = current.includes(t.labelId);\n  if (t.action === 'add' ? has : !has) continue;\n  if (t.action === 'remove') {\n    // An add never needs the activity; a remove never goes ahead without it.\n    if (activity.error) {\n      const err = failure('Chip — Read Activity', t, activity.error);\n      if (err) throw err;\n      continue;\n    }\n    if (claimedSinceChip(t, issue, activity)) continue;\n    if (t.sweep && touchedSinceTurn(t, issue)) continue;\n  }\n  const labels = t.action === 'add' ? [...current, t.labelId] : current.filter((id) => id !== t.labelId);\n  out.push({ json: { ...t, labels }, pairedItem: { item: i } });\n}\nreturn out;\n"
         },
         "id": "6d8bb350-2c37-5d59-845c-d86f9e0dd73e",
         "name": "Chip — Plan Write",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          1200,
+          1420,
           0
         ]
       },
@@ -160,7 +192,7 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          1440,
+          1660,
           0
         ],
         "credentials": {
@@ -180,7 +212,7 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          1680,
+          1900,
           0
         ]
       },
@@ -294,7 +326,7 @@
         "main": [
           [
             {
-              "node": "Chip — Plan Write",
+              "node": "Chip — Read Activity",
               "type": "main",
               "index": 0
             }
@@ -361,6 +393,17 @@
           [
             {
               "node": "Chip — Target",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Chip — Read Activity": {
+        "main": [
+          [
+            {
+              "node": "Chip — Plan Write",
               "type": "main",
               "index": 0
             }

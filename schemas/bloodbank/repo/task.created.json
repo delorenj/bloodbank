@@ -95,6 +95,11 @@
           "type": "object",
           "description": "Lossless JSON ticket entity supplied by the provider.",
           "additionalProperties": true
+        },
+        "trigger_source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What observed the creation: plane-webhook (a delivered provider webhook) or plane-reconcile (the ingress reconcile sweep recovering a creation whose webhook never reached the bus). Both publish the same event id for a ticket."
         }
       },
       "required": [

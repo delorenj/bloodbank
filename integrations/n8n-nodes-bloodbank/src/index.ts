@@ -40,6 +40,8 @@ export { executionMode, stableObservedAt } from './nodes/Fleet/Fleet.node';
 export {
   canonicalTypeForProviderEvent,
   classifyPlaneWebhook,
+  createdDedupeKey,
+  issueAsWebhookPayload,
   mergePlaneRoutes,
   normalizePlaneWebhook,
   PLANE_PROVIDER_EVENT_TYPES,
@@ -49,6 +51,25 @@ export {
   unboundRegistryProjectPaths,
 } from './plane';
 export type { PlaneClassification, PlaneProjectRoute } from './plane';
+export {
+  CREATED_SUBJECT,
+  createdFactTicketId,
+  createdTicketIdsSince,
+  planeReader,
+  PlaneRateLimited,
+  planReconcile,
+  RECONCILE_DEFAULTS,
+  sweepOrder,
+} from './reconcile';
+export type {
+  BoardReport,
+  PlaneIssue,
+  PlanePage,
+  PlaneProject,
+  PlaneReader,
+  ReconcileCandidate,
+  ReconcilePlan,
+} from './reconcile';
 export {
   boardFromManifest,
   boardsFromProjectRegistry,

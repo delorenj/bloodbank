@@ -132,13 +132,30 @@ const event = (type, context) => ({
 });
 const context = { reason: 'ticket-grooming', workspace: 'automaticai', board_id: board, ticket_id: 'ticket', ticket_key: 'JIMB-1' };
 
+// Chip — Plan Write's input is Chip — Read Activity (the ticket's activity,
+// newest first); it pairs each item with Chip — Resolve Label (the target) and
+// Chip — Read Issue (the ticket). Unless a test says otherwise, the history is
+// just the chip going on at turn start.
+const chipAdded = (at) => ({ results: [{ field: 'labels', verb: 'updated', old_value: '', new_value: 'agent:working', new_identifier: labelId, created_at: at }] });
+function plan(targets, issues, activities) {
+  const list = (value) => (Array.isArray(value) ? value : [value]);
+  const issueList = list(issues);
+  const acts = activities === undefined ? issueList.map(() => chipAdded('2026-09-23T04:40:00Z')) : list(activities);
+  return run('Chip — Plan Write', acts.map((json) => ({ json })), {
+    upstream: {
+      'Chip — Resolve Label': list(targets).map((json) => ({ json })),
+      'Chip — Read Issue': issueList.map((json) => ({ json })),
+    },
+  });
+}
+
 test('chip is a straight line with every Plane call guarded', () => {
   const line = ['Chip — Target', 'Chip — List Labels', 'Chip — Resolve Label', 'Chip — Read Issue',
-    'Chip — Plan Write', 'Chip — Write Labels', 'Chip — Check Write'];
+    'Chip — Read Activity', 'Chip — Plan Write', 'Chip — Write Labels', 'Chip — Check Write'];
   for (let i = 0; i < line.length - 1; i++) assert.deepEqual(out(chip, line[i], 0), [line[i + 1]], line[i]);
   assert.deepEqual(out(chip, 'Invocation Lifecycle', 0), ['Chip — Target']);
   const planeCalls = chip.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequest' && n.parameters.url.includes('plane.delo.sh'));
-  assert.equal(planeCalls.length, 3);
+  assert.equal(planeCalls.length, 4);
   for (const http of planeCalls) {
     assert.equal(http.onError, 'continueRegularOutput', http.name);
   }
@@ -232,32 +249,114 @@ test('live lifecycle events are not sweeps', () => {
 test('the sweep leaves a chip alone on a ticket changed after the turn ended', () => {
   const ended = '2026-09-23T04:46:06.653596Z';
   const at = (offsetMs) => new Date(Date.parse(ended) + offsetMs).toISOString();
-  const sweepTarget = (extra = {}) => ({
-    'Chip — Resolve Label': [{ json: { action: 'remove', labelId, sweep: true, eventTime: ended, ...extra } }],
-  });
-  const issue = (updated_at) => [{ json: { labels: ['a', labelId], updated_at } }];
+  const sweep = (extra = {}) => ({ action: 'remove', labelId, sweep: true, eventTime: ended, ...extra });
+  const issue = (updated_at) => ({ labels: ['a', labelId], updated_at });
 
   // Delegation turn ends at T, the worker it spawned runs `px claim` at T+20min:
   // the claim marker stays.
-  assert.equal(run('Chip — Plan Write', issue(at(20 * 60000)), { upstream: sweepTarget() }).length, 0);
+  assert.equal(plan(sweep(), issue(at(20 * 60000))).length, 0);
   // A claim seconds after the turn survives too: the live lane took its chip
   // off ~0.5s after the end, so a label present later was put back by someone.
-  assert.equal(run('Chip — Plan Write', issue(at(10000)), { upstream: sweepTarget() }).length, 0);
-  assert.equal(run('Chip — Plan Write', issue(at(5001)), { upstream: sweepTarget() }).length, 0);
+  assert.equal(plan(sweep(), issue(at(10000))).length, 0);
+  assert.equal(plan(sweep(), issue(at(5001))).length, 0);
   // Untouched since the turn: the stuck chip comes off. Plane reports
   // updated_at in the server's local offset; that is the same instant.
-  assert.deepEqual(run('Chip — Plan Write', issue(at(-5 * 60000)), { upstream: sweepTarget() })[0].json.labels, ['a']);
-  assert.deepEqual(run('Chip — Plan Write', issue(at(5000)), { upstream: sweepTarget() })[0].json.labels, ['a']);
-  assert.deepEqual(run('Chip — Plan Write', issue('2026-09-23T00:46:07.100000-04:00'), { upstream: sweepTarget() })[0].json.labels, ['a']);
+  assert.deepEqual(plan(sweep(), issue(at(-5 * 60000)))[0].json.labels, ['a']);
+  assert.deepEqual(plan(sweep(), issue(at(5000)))[0].json.labels, ['a']);
+  assert.deepEqual(plan(sweep(), issue('2026-09-23T00:46:07.100000-04:00'))[0].json.labels, ['a']);
   // Unknown times prove nothing: the chip stays.
-  assert.equal(run('Chip — Plan Write', issue(undefined), { upstream: sweepTarget() }).length, 0);
-  assert.equal(run('Chip — Plan Write', issue(at(0)), { upstream: sweepTarget({ eventTime: null }) }).length, 0);
+  assert.equal(plan(sweep(), issue(undefined)).length, 0);
+  assert.equal(plan(sweep({ eventTime: null }), issue(at(0))).length, 0);
 });
 
 test('the live lane still removes at the real turn end, whatever updated_at says', () => {
-  const upstream = { 'Chip — Resolve Label': [{ json: { action: 'remove', labelId, sweep: false, eventTime: '2026-09-23T04:46:06Z' } }] };
-  const touched = [{ json: { labels: ['a', labelId], updated_at: '2026-09-23T05:30:00Z' } }];
-  assert.deepEqual(run('Chip — Plan Write', touched, { upstream })[0].json.labels, ['a']);
+  const live = { action: 'remove', labelId, sweep: false, eventTime: '2026-09-23T04:46:06Z' };
+  const touched = { labels: ['a', labelId], updated_at: '2026-09-23T05:30:00Z' };
+  assert.deepEqual(plan(live, touched)[0].json.labels, ['a']);
+});
+
+// A claim made WHILE the turn runs. The chip is already on (this lane put it
+// there at turn start), so a worker's `px claim` -- or the delegation turn's own
+// move to In Progress -- changes state and assignees but leaves no label change
+// behind, and the turn's remove at the end used to strip the claim marker.
+const T0 = '2026-09-23T10:00:01.000Z'; // this lane's own add at turn start
+const later = (ms) => new Date(Date.parse(T0) + ms).toISOString();
+const inProgress = { id: 'state-in-progress', name: 'In Progress', color: '#F59E0B', group: 'started' };
+const backlog = { id: 'state-backlog', name: 'Backlog', color: '#60646C', group: 'backlog' };
+const liveRemove = { action: 'remove', labelId, ticketKey: 'JIMB-1', ticketId: 'ticket', board, sweep: false, eventTime: later(5 * 60000) };
+const ticket = (state, extra = {}) => ({ labels: ['a', labelId], state, updated_at: later(4 * 60000), ...extra });
+// Plane serves activity newest first.
+const history = (...rows) => ({ results: [...rows].reverse() });
+const row = (field, ms, extra = {}) => ({ field, verb: 'updated', created_at: later(ms), ...extra });
+const chipOn = row('labels', 0, { old_value: '', new_value: 'agent:working', new_identifier: labelId });
+const toInProgress = (ms) => row('state', ms, { old_value: 'Backlog', new_value: 'In Progress', old_identifier: backlog.id, new_identifier: inProgress.id });
+const assigned = (ms) => row('assignees', ms, { old_value: '', new_value: 'Jarad', new_identifier: 'user-1' });
+
+test('a px claim made during the turn survives the turn end', () => {
+  // px claim: one PATCH, state + assignee (+ the label, already on: no row).
+  assert.equal(plan(liveRemove, ticket(inProgress), history(chipOn, toInProgress(90000), assigned(90002))).length, 0);
+  // Either half is evidence on its own: the delegation turn claims by state
+  // alone (its prompt says leave the assignee empty); a claim onto an already
+  // In Progress ticket only assigns.
+  assert.equal(plan(liveRemove, ticket(inProgress), history(chipOn, toInProgress(90000))).length, 0);
+  assert.equal(plan(liveRemove, ticket(backlog), history(chipOn, assigned(60000))).length, 0);
+  // A claim whose own PATCH put the label on (the chip's add had failed) is
+  // seen too: its state row lands a few ms before its label row.
+  const claimAdds = row('labels', 90003, { old_value: '', new_value: 'agent:working', new_identifier: labelId });
+  assert.equal(plan(liveRemove, ticket(inProgress), history(toInProgress(90000), claimAdds)).length, 0);
+});
+
+test('a grooming turn (no move into started, no assignee) still loses its chip', () => {
+  const groomed = history(
+    chipOn,
+    row('priority', 60000, { old_value: 'none', new_value: 'high' }),
+    row('labels', 120000, { old_value: '', new_value: 'lifecycle:triaged', new_identifier: 'label-triaged' }),
+    row('description', 130000),
+  );
+  assert.deepEqual(plan(liveRemove, ticket(backlog), groomed)[0].json.labels, ['a']);
+  // A move between unstarted states is not a claim.
+  const todo = { id: 'state-todo', name: 'Todo', group: 'unstarted' };
+  const toTodo = row('state', 60000, { new_value: 'Todo', new_identifier: todo.id });
+  assert.deepEqual(plan(liveRemove, ticket(todo), history(chipOn, toTodo))[0].json.labels, ['a']);
+  // An assignee taken off is not an assignee added.
+  const unassigned = row('assignees', 60000, { old_value: 'Jarad', new_value: '', old_identifier: 'user-1', new_identifier: null });
+  assert.deepEqual(plan(liveRemove, ticket(backlog), history(chipOn, unassigned))[0].json.labels, ['a']);
+  // A move into started that was later undone is not a standing claim.
+  assert.deepEqual(plan(liveRemove, ticket(backlog), history(chipOn, toInProgress(60000)))[0].json.labels, ['a']);
+});
+
+test('a claim from before the chip went on is not this turn\'s claim', () => {
+  const old = history(
+    toInProgress(-2 * 3600 * 1000),
+    row('labels', -2 * 3600 * 1000 + 1000, { old_value: 'agent:working', new_value: '', old_identifier: labelId, new_identifier: null }),
+    chipOn,
+  );
+  assert.deepEqual(plan(liveRemove, ticket(inProgress), old)[0].json.labels, ['a']);
+});
+
+test('with no record of the chip going on, the current state decides', () => {
+  assert.equal(plan(liveRemove, ticket(inProgress), { results: [] }).length, 0);
+  assert.deepEqual(plan(liveRemove, ticket(backlog), { results: [] })[0].json.labels, ['a']);
+  assert.deepEqual(plan(liveRemove, ticket(backlog), {})[0].json.labels, ['a']);
+});
+
+test('a claim made during the turn also keeps the sweep off it later', () => {
+  const sweepRemove = { ...liveRemove, sweep: true };
+  // updated_at is before the turn ended, so touchedSinceTurn alone would remove it.
+  assert.equal(plan(sweepRemove, ticket(inProgress), history(chipOn, toInProgress(90000))).length, 0);
+  assert.deepEqual(plan(sweepRemove, ticket(backlog), history(chipOn))[0].json.labels, ['a']);
+});
+
+test('an add never waits on the activity read', () => {
+  const add = { action: 'add', labelId, ticketKey: 'JIMB-1', board };
+  assert.deepEqual(plan(add, { labels: ['a'] }, { error: { httpCode: '502' } })[0].json.labels, ['a', labelId]);
+});
+
+test('Read Activity reads the newest page of the ticket history; Read Issue expands the state', () => {
+  const url = node(chip, 'Chip — Read Activity').parameters.url;
+  assert.match(url, /\/issues\/\{\{ \$\('Chip — Resolve Label'\)\.item\.json\.ticketId \}\}\/activities\/\?order_by=-created_at&per_page=100$/);
+  assert.match(url, /workspaces\/\{\{ \$\('Chip — Resolve Label'\)\.item\.json\.ws \}\}/);
+  assert.match(node(chip, 'Chip — Read Issue').parameters.url, /\/issues\/\{\{ \$json\.ticketId \}\}\/\?expand=state$/);
 });
 
 test('the sweep, end to end through the chip line, spares a claimed ticket', () => {
@@ -268,18 +367,15 @@ test('the sweep, end to end through the chip line, spares a claimed ticket', () 
     sweepRow('bloodbank.agent.invocation.completed', 30, 'stuck'),
   ];
   const targets = run('Chip — Target', run('Sweep — Ended Tickets', [{ json: { events: rows } }]));
-  const resolved = targets.map((i) => ({ json: { ...i.json, labelId } }));
-  const upstream = { 'Chip — Resolve Label': resolved };
+  const resolved = targets.map((i) => ({ ...i.json, labelId }));
   const endedAt = Object.fromEntries(targets.map((i) => [i.json.ticketId, Date.parse(i.json.eventTime)]));
   const issues = targets.map((i) => ({
-    json: {
-      id: i.json.ticketId,
-      labels: [labelId],
-      // 'claimed' was `px claim`ed 20 minutes after its turn; 'stuck' was not touched.
-      updated_at: new Date(endedAt[i.json.ticketId] + (i.json.ticketId === 'claimed' ? 20 * 60000 : -1000)).toISOString(),
-    },
+    id: i.json.ticketId,
+    labels: [labelId],
+    // 'claimed' was `px claim`ed 20 minutes after its turn; 'stuck' was not touched.
+    updated_at: new Date(endedAt[i.json.ticketId] + (i.json.ticketId === 'claimed' ? 20 * 60000 : -1000)).toISOString(),
   }));
-  const writes = run('Chip — Plan Write', issues, { upstream });
+  const writes = plan(resolved, issues);
   assert.deepEqual(writes.map((w) => [w.json.ticketId, w.json.labels]), [['stuck', []]]);
 });
 
@@ -318,12 +414,12 @@ test('chip resolves the label by name and skips boards without one', () => {
 });
 
 test('chip plans only real label changes', () => {
-  const resolved = (action) => ({ 'Chip — Resolve Label': [{ json: { action, labelId } }] });
-  const issue = (labels) => [{ json: { labels } }];
-  assert.deepEqual(run('Chip — Plan Write', issue(['a']), { upstream: resolved('add') })[0].json.labels, ['a', labelId]);
-  assert.equal(run('Chip — Plan Write', issue([labelId]), { upstream: resolved('add') }).length, 0);
-  assert.deepEqual(run('Chip — Plan Write', issue(['a', labelId]), { upstream: resolved('remove') })[0].json.labels, ['a']);
-  assert.equal(run('Chip — Plan Write', issue(['a']), { upstream: resolved('remove') }).length, 0);
+  const resolved = (action) => ({ action, labelId });
+  const issue = (labels) => ({ labels });
+  assert.deepEqual(plan(resolved('add'), issue(['a']))[0].json.labels, ['a', labelId]);
+  assert.equal(plan(resolved('add'), issue([labelId])).length, 0);
+  assert.deepEqual(plan(resolved('remove'), issue(['a', labelId]))[0].json.labels, ['a']);
+  assert.equal(plan(resolved('remove'), issue(['a'])).length, 0);
 });
 
 // What the HTTP Request node (n8n 2.18) hands downstream under
@@ -346,28 +442,29 @@ const broken = [
 ];
 const t = { action: 'add', ws: 'automaticai', board, ticketId: 'ticket', ticketKey: 'JIMB-1', labelId };
 const guarded = [
-  ['Chip — Resolve Label', 'Chip — List Labels', { 'Chip — Target': [{ json: t }] }],
-  ['Chip — Plan Write', 'Chip — Read Issue', { 'Chip — Resolve Label': [{ json: t }] }],
-  ['Chip — Check Write', 'Chip — Write Labels', { 'Chip — Plan Write': [{ json: t }] }],
+  ['Chip — Resolve Label', 'Chip — List Labels', (error) => run('Chip — Resolve Label', [{ json: { error } }], { upstream: { 'Chip — Target': [{ json: t }] } })],
+  ['Chip — Plan Write', 'Chip — Read Issue', (error) => plan(t, { error })],
+  // Only a remove reads the activity (an add never needs it).
+  ['Chip — Plan Write', 'Chip — Read Activity', (error) => plan({ ...t, action: 'remove' }, { labels: [labelId] }, { error })],
+  ['Chip — Check Write', 'Chip — Write Labels', (error) => run('Chip — Check Write', [{ json: { error } }], { upstream: { 'Chip — Plan Write': [{ json: t }] } })],
 ];
 
-for (const [label, step, upstream] of guarded) {
+for (const [label, step, go] of guarded) {
   test(`${label}: a ticket deleted mid-turn (404/410 from ${step}) is a quiet skip`, () => {
     for (const [what, error] of gone) {
-      assert.deepEqual(run(label, [{ json: { error } }], { upstream }), [], what);
+      assert.deepEqual(go(error), [], what);
     }
   });
 
   test(`${label}: any other ${step} failure still fails the execution, ticket named`, () => {
     for (const [what, error] of broken) {
-      assert.throws(() => run(label, [{ json: { error } }], { upstream }), new RegExp(`${step} failed for JIMB-1`), what);
+      assert.throws(() => go(error), new RegExp(`${step} failed for JIMB-1`), what);
     }
   });
 }
 
 test('chip skips a soft-deleted ticket rather than writing to it', () => {
-  const upstream = { 'Chip — Resolve Label': [{ json: t }] };
-  assert.equal(run('Chip — Plan Write', [{ json: { labels: ['a'], deleted_at: '2026-09-22T00:00:00Z' } }], { upstream }).length, 0);
+  assert.equal(plan(t, { labels: ['a'], deleted_at: '2026-09-22T00:00:00Z' }).length, 0);
 });
 
 test('chip check write passes clean writes and ends the line', () => {
