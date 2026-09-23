@@ -201,9 +201,14 @@ slugs matching `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`; whitespace-padded,
 case-variant, or otherwise invalid keys make the entire snapshot transiently
 invalid and are never normalized. A structurally valid registry record is
 routable only when `profile_name` is nonblank and `bloodbank` is a mapping whose
-`enabled` value is the boolean `true`, `gateway_scope` is exactly `fleet`, and
-`target_agent_id` exactly equals the registry `agent_id`. Missing, malformed,
-false, or mismatched route policy is a terminal default-deny result.
+`gateway_scope` is exactly `fleet` and whose `target_agent_id` exactly equals
+the registry `agent_id`. Activation defaults to ALLOW: an absent
+`bloodbank.enabled` means enabled, the YAML boolean `true` means enabled, and
+only an explicit `false` quarantines the agent. A present `enabled` that is not
+a YAML boolean (`"true"`, `null`, `1`) is invalid; the consumer treats the row
+as disabled and logs an ERROR naming `agents.<id>.bloodbank.enabled`. A missing
+`bloodbank` mapping, an explicit `false`, an invalid `enabled`, or a
+mismatched scope/target is a terminal not-routable result.
 
 Eligibility is re-read after durable claim and immediately before dispatch. If
 it becomes invalid after either started event may have escaped, the consumer

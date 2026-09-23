@@ -120,7 +120,7 @@ JetStream `BLOODBANK_COMMANDS` (work-queue retention)
 Fleet-shared `hermes-fleet-bloodbank-gateway.service`
   │ 1. cap size and validate command/schema/actor/prompt
   │ 2. resolve target_agent_id through fleet registry
-  │ 3. require explicit Bloodbank eligibility (default deny)
+  │ 3. check the Bloodbank route block (no enabled key = enabled)
   │ 4. journal command digest + state in mode-0600 SQLite
   │ 5. dispatch to the selected Hermes profile
   │ 6. wait for Hermes processing-complete

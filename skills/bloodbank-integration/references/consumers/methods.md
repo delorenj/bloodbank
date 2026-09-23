@@ -142,8 +142,9 @@ curl -fsS 'http://127.0.0.1:8683/events?producer=<producer>&type=<type>&limit=10
 
 `hermes-fleet-bloodbank-gateway.service` owns one JetStream durable pull
 consumer on `bloodbank.cmd.agent.invocation.start`. It validates the complete
-command, routes `data.target_agent_id` through the fleet registry's explicit
-Bloodbank eligibility block, journals execution state, invokes the selected
+command, routes `data.target_agent_id` through the fleet registry's Bloodbank
+route block (no `enabled` key means enabled; only an explicit `false`
+quarantines), journals execution state, invokes the selected
 Hermes profile, and emits started plus terminal lifecycle **events**.
 
 This is a command consumer, not an event subscription template. Do not create

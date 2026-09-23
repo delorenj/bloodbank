@@ -85,7 +85,7 @@ These apply regardless of producer/consumer path or language:
 - **Use Hindsight memory bank `bloodbank` for integration notes** — broker-level decisions, subject-naming surprises, consumer wiring gotchas live there, not in the code.
 - **Test producers with the toaster.** `bloodbank-event-toaster` subscribes to `bloodbank.evt.>` and forwards every envelope to `https://ntfy.delo.sh/bloodbank`. If you don't see your event there, it didn't make it to NATS.
 - **Prove durable arrival in Candystore.** The canonical projection subscribes through Dapr to `bloodbank.evt.>` and exposes loopback query API `GET http://127.0.0.1:8683/events`. A toaster notification proves live fan-out; a Candystore row proves durable projection.
-- **Do not treat a running command gateway as routability.** The fleet gateway is default-deny. Before claiming commands can execute, count registry entries with `bloodbank.enabled: true`, `gateway_scope: fleet`, a matching `target_agent_id`, and a nonblank `profile_name`.
+- **Do not treat a running command gateway as routability.** Activation defaults to allow: a missing `bloodbank.enabled` means enabled, only an explicit `false` quarantines, and a present non-boolean (`"true"`, `null`, `1`) is invalid and treated as disabled. Before claiming commands can execute, count registry entries that have a `bloodbank` mapping with `enabled` absent or `true`, `gateway_scope: fleet`, a matching `target_agent_id`, and a nonblank `profile_name`.
 
 ## Reading Order
 
