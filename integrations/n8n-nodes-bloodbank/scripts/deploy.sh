@@ -110,7 +110,11 @@ if [[ -L "$DEST_DIR" ]]; then
   unlink "$DEST_DIR"
 fi
 mkdir -p "$DEST_DIR"
-rsync -a --delete "$STAGE_DIR/package/" "$DEST_DIR/"
+# --checksum is load-bearing: npm pack stamps every file with the same fixed
+# mtime (1985-10-26), so rsync's default size+mtime quick check silently skips
+# any file whose size did not change — package.json going 0.4.0 -> 0.5.0, or a
+# same-length edit in dist/. That is how a stale build kept reporting current.
+rsync -a --checksum --delete "$STAGE_DIR/package/" "$DEST_DIR/"
 
 echo "[deploy] verifying the installed copy…"
 EXPECTED_VERSION="$(node -p "require('$PKG_DIR/package.json').version")"

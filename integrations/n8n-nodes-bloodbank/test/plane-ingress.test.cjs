@@ -355,6 +355,8 @@ test('v2 splits unclaimed boards onto the Unrouted output and publishes the rest
   assert.equal(unrouted[0].json.board_id, BOARD_UNKNOWN);
   assert.equal(unrouted[0].json.unrouted, true);
   assert.equal(unrouted[0].json.plane_event, 'issue.created');
+  assert.equal(main[0].json.secret_source, 'fresh');
+  assert.equal(unrouted[0].json.secret_source, 'cache');
   assert.deepEqual(published.map((options) => options.data.repo), ['flume', 'bb']);
   assert.equal(main[0].json.route_source, 'pjangler');
   // Three signed deliveries, one vault read.

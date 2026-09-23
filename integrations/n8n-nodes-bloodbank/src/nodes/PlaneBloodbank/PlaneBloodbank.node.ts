@@ -321,10 +321,11 @@ export class PlaneBloodbank implements INodeType {
           secretSource = await verifyWithSecret(reference, rawBody, headers, readSecret);
         }
 
+        const secretJson = secretSource ? { secret_source: secretSource } : {};
         const result = classifyPlaneWebhook(payload, table.routes);
         if (result.status === 'unsupported') {
           published.push({
-            json: { ok: true, routed: false, unsupported: true, reason: result.reason, ...routingJson },
+            json: { ok: true, routed: false, unsupported: true, reason: result.reason, ...secretJson, ...routingJson },
             pairedItem: { item: index },
           });
           continue;
@@ -339,6 +340,7 @@ export class PlaneBloodbank implements INodeType {
             workspace: result.workspace ?? null,
             plane_event: `${result.providerEvent}.${result.action}`,
             webhook_id: typeof payload.webhook_id === 'string' ? payload.webhook_id : null,
+            ...secretJson,
             ...routingJson,
           };
           // v1 answers on its only output, exactly as before; v2 surfaces it.
@@ -408,7 +410,7 @@ export class PlaneBloodbank implements INodeType {
             slug: String(normalized.data.slug),
             workspace: String(normalized.data.workspace),
             route_source: result.route?.source ?? null,
-            ...(secretSource ? { secret_source: secretSource } : {}),
+            ...secretJson,
             ...routingJson,
           },
           pairedItem: { item: index },
