@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install systemd --user units: profile gateway and fused heartbeat timer
-# (board-reconciliation sentinel pass + gated runtime checkpoint, one tick).
+# (board-reconciliation sentinel pass).
 # shellcheck source=_lib.sh
 source "$(dirname "$0")/_lib.sh"
 load_role_env
@@ -8,6 +8,8 @@ load_role_env
 if [[ "$ROLE" == "reporter" ]]; then
   log "[70] reporter systemd — gateway/consumer intentionally not installed"
   log "    use the reporter runtime's explicit install command after credential and policy preflight"
+  yaml_upsert_block_value service_state gateway not-applicable
+  yaml_upsert_block_value service_state heartbeat not-applicable
   mark_done 70-systemd
   exit 0
 fi
@@ -18,6 +20,7 @@ RUNTIME="$ROLE_DIR/runtime"
 FLEET_HOME="${HERMES_FLEET_HOME:-$HOME/.hermes}"
 PROFILE_HOME="$FLEET_HOME/profiles/${PROFILE_NAME:-$AGENT_ID}"
 REPO_ROOT="$(project_repo_path)" || REPO_ROOT="$ROLE_DIR"
+
 SYS_DIR="$HOME/.config/systemd/user"
 GW_UNIT="hermes-${AGENT_ID}-gateway.service"
 HB_SVC="hermes-${AGENT_ID}-heartbeat.service"
@@ -28,13 +31,26 @@ HB_TIMER="hermes-${AGENT_ID}-heartbeat.timer"
 # unit state; cleanup remains fail-closed whenever systemd management is active.
 if [[ "${SKIP_SYSTEMD:-0}" == "1" ]]; then
   if already_done 70-systemd \
-     && [[ -f "$SYS_DIR/$GW_UNIT" && -f "$SYS_DIR/$HB_SVC" && -f "$SYS_DIR/$HB_TIMER" ]]; then
+     && [[ -f "$SYS_DIR/$GW_UNIT" ]]; then
     log "[70] systemd — SKIPPED; existing complete unit set preserved"
   else
     clear_done 70-systemd
     log "[70] systemd — DEFERRED (completion marker cleared)"
   fi
   exit 0
+fi
+
+# Legacy manifests defaulted reconciliation off and had no way to distinguish
+# that default from an operator decision. The new explicit_opt_out sentinel is
+# authoritative: migrate unmarked roles to the operational PM default, while a
+# rendered/operator-recorded opt-out stays opted out on every rerun.
+if [[ "$(yaml_get reconcile.explicit_opt_out)" == "true" ]]; then
+  yaml_upsert_block_value reconcile enabled false bool
+  log "    PM reconciliation explicit opt-out preserved"
+else
+  yaml_upsert_block_value reconcile enabled true bool
+  yaml_upsert_block_value reconcile explicit_opt_out false bool
+  log "    PM reconciliation enabled (operational default)"
 fi
 
 # Render every caller-controlled systemd scalar through the same data-only
@@ -59,8 +75,8 @@ systemd_exec_value() {
     || die "systemd ExecStart value validation failed"
 }
 GW_DESCRIPTION="$(systemd_scalar "Hermes Gateway — $DISPLAY_NAME")"
-HB_DESCRIPTION="$(systemd_scalar "Hermes Heartbeat (reconcile + checkpoint) — $DISPLAY_NAME")"
-TIMER_DESCRIPTION="$(systemd_scalar "Heartbeat (reconcile + checkpoint) for $AGENT_ID")"
+HB_DESCRIPTION="$(systemd_scalar "Hermes Heartbeat (reconcile) — $DISPLAY_NAME")"
+TIMER_DESCRIPTION="$(systemd_scalar "Heartbeat (reconcile) for $AGENT_ID")"
 ENV_HERMES_HOME="$(systemd_environment HERMES_HOME "$PROFILE_HOME")"
 ENV_HERMES_BIN="$(systemd_environment HERMES_BIN "$HERMES_BIN")"
 ENV_CODEX_HOME="$(systemd_environment CODEX_HOME "$CODEX_HOME")"
@@ -72,19 +88,13 @@ HB_LOG_OUTPUT="$(systemd_scalar "append:$RUNTIME/logs/heartbeat.log")"
 GW_EXEC_START="$(systemd_exec_value "$ROLE_DIR/.scripts/credential-launch.sh")"
 HB_EXEC_START="$GW_EXEC_START"
 
-# Encrypted credentials are optional and take precedence over the existing
-# ignored runtime/.env fallback. Validate every path-derived unit scalar before
-# any directory, unit, marker, or systemd mutation.
+# A model credential may be supplied through systemd's encrypted credential
+# store. Chat-channel values are never materialized here: Hermes resolves their
+# profile-scoped op:// references natively at process startup.
 CREDENTIAL_DIR="${HERMES_SYSTEMD_CREDENTIAL_DIR:-$HOME/.config/hermes-agent/credentials}"
-TELEGRAM_CREDENTIAL="$CREDENTIAL_DIR/${AGENT_ID}-telegram-bot-token.cred"
 MODEL_CREDENTIAL="$CREDENTIAL_DIR/${AGENT_ID}-model-api-key.cred"
 GW_CREDENTIAL_LINES=""
 HB_CREDENTIAL_LINES=""
-if [[ -f "$TELEGRAM_CREDENTIAL" ]]; then
-  command -v systemd-creds >/dev/null 2>&1 \
-    || die "encrypted Telegram credential exists but systemd-creds is unavailable"
-  GW_CREDENTIAL_LINES="LoadCredentialEncrypted=$(systemd_value "telegram_bot_token:$TELEGRAM_CREDENTIAL")"
-fi
 if [[ -f "$MODEL_CREDENTIAL" ]]; then
   [[ -n "$(yaml_get model.key_env)" ]] \
     || die "encrypted model credential exists but model.key_env is blank in role.yaml"
@@ -92,6 +102,42 @@ if [[ -f "$MODEL_CREDENTIAL" ]]; then
     || die "encrypted model credential exists but systemd-creds is unavailable"
   GW_CREDENTIAL_LINES="${GW_CREDENTIAL_LINES}${GW_CREDENTIAL_LINES:+$'\n'}LoadCredentialEncrypted=$(systemd_value "model_api_key:$MODEL_CREDENTIAL")"
   HB_CREDENTIAL_LINES="LoadCredentialEncrypted=$(systemd_value "model_api_key:$MODEL_CREDENTIAL")"
+fi
+
+# A gateway is eligible only when at least one channel identity is verified AND
+# both the named-profile mapping and the referenced 1Password value resolve.
+# Role metadata alone is not sufficient: a stale done marker must never revive
+# a credential-less crash loop.
+gateway_ready=0
+gateway_validation_unavailable=0
+if [[ "$(yaml_get telegram.provisioning_status)" == "verified" ]] \
+   && profile_onepassword_ref_exists "$PROFILE_HOME" TELEGRAM_BOT_TOKEN; then
+  telegram_reference_rc=0
+  profile_onepassword_ref_validate "$PROFILE_HOME" TELEGRAM_BOT_TOKEN \
+    || telegram_reference_rc=$?
+  if [[ $telegram_reference_rc -eq 0 ]]; then
+    gateway_ready=1
+  elif [[ $telegram_reference_rc -eq 75 ]]; then
+    gateway_validation_unavailable=1
+  fi
+fi
+if [[ "$(yaml_get slack.provisioning_status)" == "verified" ]] \
+   && profile_onepassword_ref_exists "$PROFILE_HOME" SLACK_BOT_TOKEN \
+   && profile_onepassword_ref_exists "$PROFILE_HOME" SLACK_APP_TOKEN; then
+  slack_bot_reference_rc=0
+  slack_app_reference_rc=0
+  profile_onepassword_ref_validate "$PROFILE_HOME" SLACK_BOT_TOKEN \
+    || slack_bot_reference_rc=$?
+  profile_onepassword_ref_validate "$PROFILE_HOME" SLACK_APP_TOKEN \
+    || slack_app_reference_rc=$?
+  if [[ $slack_bot_reference_rc -eq 0 && $slack_app_reference_rc -eq 0 ]]; then
+    gateway_ready=1
+  elif [[ $slack_bot_reference_rc -eq 75 || $slack_app_reference_rc -eq 75 ]]; then
+    gateway_validation_unavailable=1
+  fi
+fi
+if [[ $gateway_ready -eq 0 && $gateway_validation_unavailable -eq 1 ]]; then
+  die "channel 1Password validation is temporarily unavailable; preserving existing gateway state for retry"
 fi
 
 # Singleton-runtime contract: units set HERMES_HOME to the agent's NAMED PROFILE
@@ -140,7 +186,9 @@ if [[ $legacy_consumer_present -eq 1 ]]; then
 fi
 
 if already_done 70-systemd; then
-  if [[ -f "$SYS_DIR/$GW_UNIT" && -f "$SYS_DIR/$HB_SVC" && -f "$SYS_DIR/$HB_TIMER" ]]; then
+  # The heartbeat units are deliberately absent (retired); the gateway is the
+  # only unit whose presence still proves a complete install.
+  if [[ -f "$SYS_DIR/$GW_UNIT" ]]; then
     log "[70] systemd already installed — reconciling unit definitions"
   else
     clear_done 70-systemd
@@ -148,22 +196,30 @@ if already_done 70-systemd; then
   fi
 fi
 
-# The heartbeat runner (board-reconciliation sentinel pass + gated checkpoint)
-# and the checkpoint helper both render into the role dir; just ensure they are
-# executable. heartbeat.sh calls checkpoint.sh internally.
+# The heartbeat runner renders into the role dir; just ensure it is executable.
 HEARTBEAT_BIN="$ROLE_DIR/.scripts/heartbeat.sh"
 CREDENTIAL_LAUNCHER="$ROLE_DIR/.scripts/credential-launch.sh"
-chmod +x "$HEARTBEAT_BIN" "$CREDENTIAL_LAUNCHER" "$ROLE_DIR/.scripts/checkpoint.sh" 2>/dev/null || true
+chmod +x "$HEARTBEAT_BIN" "$CREDENTIAL_LAUNCHER" 2>/dev/null || true
 
 [[ -d "$PROFILE_HOME" && ! -L "$PROFILE_HOME" ]] \
-  || die "named profile is not a real directory; run: pj migrate hermes.runtime-singleton '$REPO_ROOT'"
+  || die "named profile is not a real directory; run: flume remediate hermes.runtime-singleton '$REPO_ROOT'"
 
 # Gateway unit
+#
+# StartLimit* belongs in [Unit], not [Service] — systemd only still parses it
+# under [Service] for backwards compatibility. Without it, Restart=on-failure
+# retries forever and a gateway that can never start (bad token, bad config)
+# sits in `activating` indefinitely instead of settling into `failed`, so
+# `systemctl --user --failed` never lists it and neither the sentinel nor a
+# human ever sees the crashloop. That is exactly how the fleet accumulated
+# 10,427 invisible restarts. 5 tries in 5 minutes, then stop and report failed.
 cat > "$SYS_DIR/$GW_UNIT" <<UNIT
 [Unit]
 Description=$GW_DESCRIPTION
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -183,58 +239,78 @@ StandardError=$GW_LOG_OUTPUT
 WantedBy=default.target
 UNIT
 
-# Fused heartbeat: board-reconciliation sentinel pass + gated runtime checkpoint.
-# Frequent ticks (1 min); heartbeat.sh's own cooldown/lock logic rate-limits the
-# full Hermes pass, and the checkpoint is gated to ~hourly inside the runner.
-# The per-agent EnvironmentFiles load ticket-provider creds for the sentinel pass.
-cat > "$SYS_DIR/$HB_SVC" <<UNIT
-[Unit]
-Description=$HB_DESCRIPTION
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-WorkingDirectory=$WORKING_DIRECTORY
-$ENV_HERMES_HOME
-$ENV_HERMES_BIN
-$ENV_CODEX_HOME
-$ENV_TERMINAL_CWD
-EnvironmentFile=-%h/.config/hermes-agent/env
-EnvironmentFile=-%h/.hermes/env
-EnvironmentFile=-%h/.hermes/hermes-agent.env
-EnvironmentFile=-%h/.hermes/${AGENT_ID}.env
-EnvironmentFile=$RUNTIME_ENV_FILE
-$HB_CREDENTIAL_LINES
-ExecStart=$HB_EXEC_START heartbeat
-TimeoutStartSec=45min
-StandardOutput=$HB_LOG_OUTPUT
-StandardError=$HB_LOG_OUTPUT
-UNIT
-cat > "$SYS_DIR/$HB_TIMER" <<UNIT
-[Unit]
-Description=$TIMER_DESCRIPTION
-
-[Timer]
-OnBootSec=1min
-OnUnitInactiveSec=1min
-Unit=$HB_SVC
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-UNIT
+# Heartbeat: RETIRED.
+#
+# Every agent used to get a 1-minute oneshot timer here. It was retired on
+# 2026-09-17 because it did nothing. The board-reconciliation pass behind it is
+# gated on role.yaml's `reconcile.enabled`, which was true in exactly one repo
+# fleet-wide (and that timer was disabled), so every tick fell through to
+# `maybe_checkpoint` — a no-op helper that has since been deleted along with
+# runtime is a nested Git repo, which none are. The result was ~20,000 no-op
+# invocations a day writing one identical log line; 33god-pm's heartbeat.log
+# reached 3.8 MB of it.
+#
+# The three jobs a heartbeat appeared to do are owned elsewhere now:
+#   liveness    -> the gateway unit below (Restart=on-failure)
+#   scheduling  -> Bloodbank; krebs pull-subscribes
+#                  bloodbank.cmd.lifecycle.task.invoke
+#   persistence -> krebs attempts/leases, which park a stalled ticket in
+#                  "Needs Attention" instead of ticking forever
+#
+# Provisioning now REMOVES any heartbeat units it finds, so re-running this
+# script on an older install cleans up rather than resurrecting them.
+if systemd_user_available; then
+  if [[ -f "$SYS_DIR/$HB_TIMER" || -f "$SYS_DIR/$HB_SVC" ]]; then
+    systemctl --user disable --now "$HB_TIMER" >/dev/null 2>&1 || true
+    systemctl --user stop "$HB_SVC" >/dev/null 2>&1 || true
+    rm -f "$SYS_DIR/$HB_TIMER" "$SYS_DIR/$HB_SVC"
+    log "    heartbeat retired: removed $HB_TIMER and $HB_SVC"
+  fi
+  systemctl --user daemon-reload
+fi
+yaml_upsert_block_value service_state heartbeat retired
 
 if systemd_user_available; then
-  systemctl --user daemon-reload
-  # `enable --now` both enables (persist across login) AND starts the unit now, so a
-  # freshly provisioned agent comes up live instead of dormant. Units with missing
-  # creds (e.g. a gateway with no Telegram token yet) fail softly via Restart=on-failure.
-  for u in "$GW_UNIT" "$HB_TIMER"; do
-    systemctl --user enable --now "$u" >/dev/null 2>&1 && log "    enabled + started: $u" || warn "    failed to enable/start: $u"
-  done
+  if [[ $gateway_ready -eq 1 ]]; then
+    if systemctl --user enable --now "$GW_UNIT" >/dev/null 2>&1; then
+      if gw_health="$(systemd_wait_for_stable_health \
+          systemd_service_health_snapshot "$GW_UNIT" running)"; then
+        yaml_upsert_block_value service_state gateway active
+        log "    credentialed gateway enabled + active and stabilized: $GW_UNIT"
+      else
+        systemctl --user disable --now "$GW_UNIT" >/dev/null 2>&1 || true
+        systemctl --user reset-failed "$GW_UNIT" >/dev/null 2>&1 || true
+        yaml_upsert_block_value service_state gateway error
+        clear_done 70-systemd
+        die "credentialed gateway did not stabilize healthy: $gw_health"
+      fi
+    else
+      yaml_upsert_block_value service_state gateway error
+      clear_done 70-systemd
+      die "failed to enable/start credentialed gateway: $GW_UNIT"
+    fi
+  else
+    systemctl --user disable --now "$GW_UNIT" >/dev/null 2>&1 \
+      || die "could not enforce deferred gateway disablement: $GW_UNIT"
+    systemctl --user reset-failed "$GW_UNIT" >/dev/null 2>&1 || true
+    gw_deferred_health="$(systemd_gateway_deferred_snapshot "$GW_UNIT")"
+    if [[ "$gw_deferred_health" == "ok|deferred" ]]; then
+      yaml_upsert_block_value service_state gateway deferred
+      log "    gateway deferred: disabled + inactive until a channel credential is verified"
+    else
+      yaml_upsert_block_value service_state gateway error
+      clear_done 70-systemd
+      die "gateway deferral was not proven disabled + inactive ($gw_deferred_health)"
+    fi
+  fi
 else
   warn "    systemd --user not available; units installed at $SYS_DIR but not enabled"
+  yaml_upsert_block_value service_state heartbeat installed
+  if [[ $gateway_ready -eq 1 ]]; then
+    yaml_upsert_block_value service_state gateway installed
+  else
+    yaml_upsert_block_value service_state gateway deferred
+  fi
 fi
 
 mark_done 70-systemd
