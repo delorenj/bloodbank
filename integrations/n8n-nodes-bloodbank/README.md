@@ -220,6 +220,33 @@ modules) stay on the main output as `unsupported`.
 `repo.board.created` for a board no project claims carries `repo: null`; the
 workspace is always the slug (`workspace_slug`), never its UUID.
 
+### Event ids and Nats-Msg-Id
+
+Every Plane fact's event id is `uuid5` of a dedupe key, so a redelivered
+webhook derives the same id, and Candystore (insert `ON CONFLICT (id) DO
+NOTHING`) and Ticket Grooming / Delegation (command id from the causing event
+id) treat it as the one fact it is.
+
+| Fact | Dedupe key | `Nats-Msg-Id` |
+| --- | --- | --- |
+| ticket created | `plane.ticket.created:<board>:<ticket>` | yes |
+| ticket deleted | `plane.ticket.deleted:<board>:<ticket>:<updated_at>:…` | yes |
+| comment | `plane.ticket.commented:<board>:<ticket>:<comment>:<time>` | yes |
+| board created | `plane.board.created:<board>:<time>` | yes |
+| ticket updated / transitioned | `<type>:<board>:<ticket>:<updated_at>:<state>:<changed fields, sorted>:<old>><new>` | **no** |
+
+Plane stamps every activity row of one save with the same `updated_at` and
+sends one webhook per row, so two labels added in one PATCH, or an assignee and
+a priority changed together, are several deliveries with the same time and
+state. Until 0.7.1 the update key was only `(time, state)`: those deliveries got
+one event id, and the stream's duplicate window and Candystore kept only the
+first. The key now carries the changed fields and the activity's old → new
+value (identifier when Plane gives one). Because that key is still inferred from
+the delivery, updates no longer claim a `Nats-Msg-Id`: JetStream would drop a
+wrongly-matched update outright, while a duplicate update that does reach the
+stream is absorbed downstream by its event id. Facts whose key names the fact
+itself keep it.
+
 ### Reconcile missed tickets
 
 Operation **Reconcile Missed Tickets** (`operation: reconcile`) is the other half
@@ -258,6 +285,18 @@ the **Recovered** output (the workflow pushes *Recovered missed ticket
   still has 10 requests left this minute. A cut-short sweep is `partial: true`
   and the board order rotates every 10 minutes, so the next sweep starts
   elsewhere. A full sweep of 30 boards is ~32 requests and ~10 s.
+- **Capped per sweep (0.7.1).** A sweep publishes at most 20 creations
+  (*Max Recoveries per Sweep*), oldest first so the ticket closest to leaving the
+  window goes first; the rest are reported as `deferred` / `deferred_tickets`
+  and, still missing, are published by the next sweeps. A newly enrolled board
+  (whose earlier webhooks were unrouted) or a long outage therefore reaches
+  grooming and ntfy 20 tickets per 10 minutes, not all at once.
+- **One bad ticket does not sink the sweep (0.7.1).** Each candidate is
+  normalized and published in its own try/catch; a failure is listed on the
+  Report under `failures` (`ticket_key`, `stage`: normalize / route / validate /
+  publish, `reason`), the report says `ok: false`, and the rest are published.
+  Only when every publish attempted fails (the bus is down) does the execution
+  fail.
 - A sweep that can read no board at all (expired key, Plane down) fails the
   execution; one bad board is reported and the rest carry on.
 
@@ -535,7 +574,9 @@ once-a-day unrouted gate, the reconcile schedule and push, the chip's single
 ordered trigger, its Code nodes, its deleted-ticket guards, the claim-during-turn
 check and the stale-chip sweep), the reconcile sweep (window, settle, paging
 bounds, archived/closed/draft skips, rate-limit reserve and rotation, a recovered
-fact identical to the webhook's, `Nats-Msg-Id` on Plane facts, dry run), durable trigger delivery
+fact identical to the webhook's, `Nats-Msg-Id` only on facts with a stable key,
+per-sweep cap, one failed publish reported without sinking the sweep, dry run),
+update keys that tell apart the rows of one Plane save, durable trigger delivery
 (consumer naming and config, create/update/resume, one-at-a-time ack after the
 execution, catch-up window, close semantics) against a fake transport,
 byte-identical re-dispatch and the command `Nats-Msg-Id`,

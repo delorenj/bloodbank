@@ -19,10 +19,12 @@ import {
 import type { NormalizedPlaneEvent, PlaneProjectRoute } from '../../plane';
 import { boardFromManifest, loadProjectBoards } from '../../projects';
 import {
+  candidateTicketKey,
   createdTicketIdsSince,
   planeReader as makePlaneReader,
   planReconcile,
   RECONCILE_DEFAULTS,
+  recoveryBatch,
 } from '../../reconcile';
 import type { PlaneReader } from '../../reconcile';
 import type { ProjectBoard, ProjectBoardsResult, RegistryFetch } from '../../projects';
@@ -196,9 +198,12 @@ function assertRequiredData(normalized: NormalizedPlaneEvent): void {
 
 /** The one way a Plane fact reaches the bus, webhook-born or recovered.
  *
- * The event id is derived from the normalizer's dedupe key and is also sent as
- * `Nats-Msg-Id`, so BLOODBANK_EVENTS drops a second copy of the same fact that
- * arrives inside its duplicate window. The envelope is identical whichever path
+ * The event id is derived from the normalizer's dedupe key. When that key names
+ * the fact itself (`stableId`: a creation, a deletion, a comment) it is also
+ * sent as `Nats-Msg-Id`, so BLOODBANK_EVENTS drops a second copy of the same
+ * fact that arrives inside its duplicate window. An update's key is inferred
+ * from the delivery, and a wrong guess there would silently drop a real update,
+ * so updates carry no `Nats-Msg-Id`. The envelope is identical whichever path
  * published it; only `data.trigger_source` says which.
  */
 async function publishFact(
@@ -223,7 +228,7 @@ async function publishFact(
     producer: 'n8n-plane-webhook',
     service: 'n8n',
     eventId,
-    msgId: eventId,
+    msgId: normalized.stableId ? eventId : undefined,
     observedAt: normalized.observedAt,
     correlationId,
     causationId: eventId,
@@ -270,6 +275,7 @@ interface ReconcileSettings {
   planeBaseUrl?: string;
   rateReserve?: number;
   paceMs?: number;
+  maxRecoveries?: number;
   dryRun?: boolean;
 }
 
@@ -337,13 +343,31 @@ async function reconcileMissedTickets(
     );
   }
 
+  const maxRecoveries = Math.floor(positive(settings.maxRecoveries, RECONCILE_DEFAULTS.maxRecoveries));
+  const { batch, deferred } = recoveryBatch(plan.candidates, maxRecoveries);
+
   const recovered: INodeExecutionData[] = [];
   const failures: Array<Record<string, unknown>> = [];
-  for (const candidate of plan.candidates) {
-    const payload = issueAsWebhookPayload(candidate.issue, candidate.route);
-    const result = classifyPlaneWebhook(payload, table.routes);
+  let attempted = 0;
+  let publishFailed = 0;
+  for (const candidate of batch) {
+    const failure = (stage: string, reason: string) => ({
+      ticket_key: candidateTicketKey(candidate),
+      ticket_id: candidate.issue.id ?? null,
+      board_id: candidate.route.boardId,
+      repo: candidate.route.repo,
+      stage,
+      reason,
+    });
+    let result: ReturnType<typeof classifyPlaneWebhook>;
+    try {
+      result = classifyPlaneWebhook(issueAsWebhookPayload(candidate.issue, candidate.route), table.routes);
+    } catch (error) {
+      failures.push(failure('normalize', (error as Error).message));
+      continue;
+    }
     if (result.status !== 'routed') {
-      failures.push({ ticket_id: candidate.issue.id ?? null, board_id: candidate.route.boardId, reason: result.reason });
+      failures.push(failure('route', result.reason));
       continue;
     }
     const normalized = result.event;
@@ -367,25 +391,54 @@ async function reconcileMissedTickets(
       url: ticketKey ? `${baseUrl}/${String(data.workspace)}/browse/${ticketKey}/` : null,
     };
     if (dryRun) {
-      assertRequiredData(normalized);
+      try {
+        assertRequiredData(normalized);
+      } catch (error) {
+        failures.push(failure('validate', (error as Error).message));
+        continue;
+      }
       recovered.push({ json: { ok: true, ...summary, event_id: deterministicUuid(normalized.dedupeKey) }, pairedItem: { item: 0 } });
       continue;
     }
-    const sent = await publishFact(send, normalized, connection);
-    recovered.push({
-      json: { ok: true, ...summary, event_id: sent.eventId, subject: sent.subject },
-      pairedItem: { item: 0 },
-    });
+    // One bad ticket (a fact its schema refuses, a publish that times out) is
+    // reported and the sweep carries on with the rest.
+    attempted += 1;
+    try {
+      const sent = await publishFact(send, normalized, connection);
+      recovered.push({
+        json: { ok: true, ...summary, event_id: sent.eventId, subject: sent.subject },
+        pairedItem: { item: 0 },
+      });
+    } catch (error) {
+      publishFailed += 1;
+      failures.push(failure('publish', (error as Error).message));
+    }
+  }
+
+  if (attempted > 0 && publishFailed === attempted) {
+    // Not one publish went through: the bus is down or every fact is refused.
+    // That is a failed sweep, not a quiet one; the next sweep retries them all.
+    const first = failures.find((entry) => entry.stage === 'publish');
+    throw new NodeOperationError(
+      this.getNode(),
+      `Plane ingress reconcile published none of ${attempted} missing creation(s): ${String(first?.reason ?? 'unknown error')}`,
+      { description: failures.map((entry) => `${String(entry.ticket_key)}: ${String(entry.reason)}`).join('\n') },
+    );
   }
 
   const report = {
-    ok: true,
+    ok: failures.length === 0,
     operation: 'reconcile',
     dry_run: dryRun,
     window: plan.window,
     ...plan.counts,
     recovered: recovered.length,
     recovered_tickets: recovered.map((item) => item.json.ticket_key ?? item.json.ticket_id),
+    failed: failures.length,
+    max_recoveries: maxRecoveries,
+    deferred: deferred.length,
+    // Still missing, left for the next sweep by the per-sweep cap (oldest first).
+    ...(deferred.length ? { deferred_tickets: deferred.slice(0, 50).map(candidateTicketKey) } : {}),
     partial: plan.partial,
     ...(plan.stopped_reason ? { stopped_reason: plan.stopped_reason } : {}),
     // Only the boards worth a look: skipped, errored, unchecked, truncated, or with tickets in the window.
@@ -508,6 +561,14 @@ export class PlaneBloodbank implements INodeType {
             type: 'number',
             default: RECONCILE_DEFAULTS.paceMs,
             description: 'Gap between Plane requests',
+          },
+          {
+            displayName: 'Max Recoveries per Sweep',
+            name: 'maxRecoveries',
+            type: 'number',
+            default: RECONCILE_DEFAULTS.maxRecoveries,
+            description:
+              'Creation facts one sweep publishes, oldest first. The rest stay missing and are published by the next sweeps, so a newly enrolled board cannot flood grooming and ntfy at once.',
           },
           {
             displayName: 'Dry Run',

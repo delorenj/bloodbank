@@ -49,9 +49,11 @@ export {
   planeEventBindings,
   planeRoutesFromRegistry,
   unboundRegistryProjectPaths,
+  updateDedupeKey,
 } from './plane';
 export type { PlaneClassification, PlaneProjectRoute } from './plane';
 export {
+  candidateTicketKey,
   CREATED_SUBJECT,
   createdFactTicketId,
   createdTicketIdsSince,
@@ -59,6 +61,7 @@ export {
   PlaneRateLimited,
   planReconcile,
   RECONCILE_DEFAULTS,
+  recoveryBatch,
   sweepOrder,
 } from './reconcile';
 export type {

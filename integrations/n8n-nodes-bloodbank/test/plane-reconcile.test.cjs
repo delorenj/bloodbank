@@ -10,7 +10,9 @@ const { stringify: stringifyYaml } = require('yaml');
 const {
   PlaneBloodbank,
   PlaneRateLimited,
+  RECONCILE_DEFAULTS,
   buildEnvelope,
+  candidateTicketKey,
   classifyPlaneWebhook,
   clearProjectBoardCache,
   createdDedupeKey,
@@ -21,6 +23,7 @@ const {
   planeReader,
   planeRoutesFromRegistry,
   publish,
+  recoveryBatch,
   sweepOrder,
   validateEnvelope,
 } = require('../src/index.ts');
@@ -288,6 +291,9 @@ test('updates keep their per-observation key; only creation is keyed on the tick
   const event = classifyPlaneWebhook(delivery, routes()).event;
   assert.notEqual(event.dedupeKey, createdDedupeKey(BOARD_33GOD, 't1'));
   assert.equal(event.data.trigger_source, 'plane-webhook');
+  // Only a key that names the fact itself is safe as a Nats-Msg-Id.
+  assert.equal(event.stableId, false);
+  assert.equal(classifyPlaneWebhook(webhookDelivery(apiIssue('t1', HOUR)), routes()).event.stableId, true);
 });
 
 test('a stored creation fact yields its ticket id; anything unreadable yields nothing', () => {
@@ -409,7 +415,8 @@ async function reconcileHarness(t, { plane, known = new Set(), settings = {}, ve
   const published = [];
   const deps = {
     publish: async (options) => {
-      if (publishError) throw publishError;
+      const error = typeof publishError === 'function' ? publishError(options) : publishError;
+      if (error) throw error;
       published.push(options);
       return { subject: `bloodbank.evt.${options.type.slice('bloodbank.'.length)}`, eventId: options.eventId, correlationid: options.correlationId };
     },
@@ -482,6 +489,72 @@ test('a sweep that can read no board at all fails; a bus outage fails it too', a
   await assert.rejects(() => reconcileHarness(t, { plane: dead }), /read no board: .*401/);
   const plane = fakePlane({ projects: PROJECTS, boards: { [BOARD_33GOD]: [apiIssue('t1', HOUR)] } });
   await assert.rejects(() => reconcileHarness(t, { plane, publishError: new Error('NATS down') }), /NATS down/);
+});
+
+test('one ticket that fails to publish is reported; the sweep publishes the rest', async (t) => {
+  clearProjectBoardCache();
+  const plane = fakePlane({
+    projects: PROJECTS,
+    boards: { [BOARD_33GOD]: [apiIssue('t1', HOUR), apiIssue('t2', 2 * HOUR), apiIssue('t3', 3 * HOUR)] },
+  });
+  const { outputs, published } = await reconcileHarness(t, {
+    plane,
+    publishError: (options) => (options.data.ticket_id === 't2' ? new Error('schema refused ticket t2') : undefined),
+  });
+  const [recovered, [report]] = outputs;
+  assert.deepEqual(published.map((options) => options.data.ticket_id), ['t3', 't1'], 'oldest first, t2 skipped');
+  assert.deepEqual(recovered.map((item) => item.json.ticket_key), ['33GOD-3', '33GOD-1']);
+  assert.equal(report.json.ok, false);
+  assert.equal(report.json.recovered, 2);
+  assert.equal(report.json.failed, 1);
+  assert.deepEqual(report.json.failures, [{
+    ticket_key: '33GOD-2', ticket_id: 't2', board_id: BOARD_33GOD, repo: '33god', stage: 'publish', reason: 'schema refused ticket t2',
+  }]);
+});
+
+test('a sweep publishes at most maxRecoveries creations, oldest first, and reports the rest', async (t) => {
+  clearProjectBoardCache();
+  const many = Array.from({ length: 25 }, (_, i) => apiIssue(`t${i + 1}`, (i + 1) * 10 * 60_000));
+  const plane = () => fakePlane({ projects: PROJECTS, boards: { [BOARD_33GOD]: many }, perPage: 100 });
+  const first = await reconcileHarness(t, { plane: plane() });
+  const [, [report]] = first.outputs;
+  assert.equal(RECONCILE_DEFAULTS.maxRecoveries, 20);
+  assert.equal(first.published.length, 20);
+  // The oldest (t25, 250 min) goes first: it is the one closest to leaving the window.
+  assert.equal(first.published[0].data.ticket_id, 't25');
+  assert.equal(first.published[19].data.ticket_id, 't6');
+  assert.equal(report.json.missing, 25);
+  assert.equal(report.json.recovered, 20);
+  assert.equal(report.json.max_recoveries, 20);
+  assert.equal(report.json.deferred, 5);
+  assert.deepEqual(report.json.deferred_tickets, ['33GOD-5', '33GOD-4', '33GOD-3', '33GOD-2', '33GOD-1']);
+  assert.equal(report.json.ok, true);
+
+  // The next sweep finds the deferred five still missing and publishes them.
+  const known = new Set(first.published.map((options) => options.data.ticket_id));
+  const second = await reconcileHarness(t, { plane: plane(), known });
+  assert.deepEqual(second.published.map((options) => options.data.ticket_id), ['t5', 't4', 't3', 't2', 't1']);
+  assert.equal(second.outputs[1][0].json.deferred, 0);
+  assert.equal(second.outputs[1][0].json.deferred_tickets, undefined);
+
+  const capped = await reconcileHarness(t, { plane: plane(), settings: { maxRecoveries: 3 } });
+  assert.equal(capped.published.length, 3);
+  assert.equal(capped.outputs[1][0].json.deferred, 22);
+});
+
+test('a recovery batch is ordered oldest first; an unreadable time sorts last', () => {
+  const route = routes().get(BOARD_33GOD);
+  const candidates = [
+    { route, issue: apiIssue('a', HOUR) },
+    { route, issue: apiIssue('b', 3 * HOUR) },
+    { route, issue: { id: 'c', created_at: 'not a date' } },
+    { route, issue: apiIssue('d', 2 * HOUR) },
+  ];
+  const { batch, deferred } = recoveryBatch(candidates, 2);
+  assert.deepEqual(batch.map((c) => c.issue.id), ['b', 'd']);
+  assert.deepEqual(deferred.map((c) => c.issue.id), ['a', 'c'], 'an unreadable time sorts last');
+  assert.equal(candidateTicketKey(candidates[0]), '33GOD-1');
+  assert.equal(candidateTicketKey({ route: { ...route, boardKey: undefined }, issue: { id: 'x', sequence_id: 4 } }), 'x');
 });
 
 test('v1 answers recovered tickets and the report on its single output', async (t) => {

@@ -24,6 +24,7 @@ const {
   projectRegistryLocation,
   providerAliases,
   unboundRegistryProjectPaths,
+  updateDedupeKey,
   validateEnvelope,
 } = require('../src/index.ts');
 
@@ -295,6 +296,51 @@ test('forced refreshes are rate-limited per reference', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Update keys: one save, several deliveries
+// ---------------------------------------------------------------------------
+
+// Plane sends one webhook per activity row, and every row of one save carries
+// the ticket's same updated_at. Recorded shape: activity {field, old_value,
+// new_value, old_identifier, new_identifier, actor}.
+function updateDelivery(activity, extra = {}) {
+  return { ...issue('updated', BOARD_33GOD, extra), activity: { actor: { id: 'user-1' }, ...activity } };
+}
+
+test('two updates in one save (same updated_at, same state) are two facts, not one', () => {
+  const routes = planeRoutesFromRegistry(HERMES);
+  const labels = normalizePlaneWebhook(updateDelivery({ field: 'labels', new_value: 'bug', new_identifier: 'label-bug' }), routes, AT);
+  const assignee = normalizePlaneWebhook(updateDelivery({ field: 'assignees', new_value: 'jarad', new_identifier: 'user-1' }), routes, AT);
+  const secondLabel = normalizePlaneWebhook(updateDelivery({ field: 'labels', new_value: 'agent:working', new_identifier: 'label-chip' }), routes, AT);
+  const removed = normalizePlaneWebhook(updateDelivery({ field: 'labels', old_value: 'bug', old_identifier: 'label-bug' }), routes, AT);
+  const keys = [labels, assignee, secondLabel, removed].map((event) => event.dedupeKey);
+  assert.equal(new Set(keys).size, 4, keys.join('\n'));
+  // The changed fields are in the key, sorted.
+  assert.match(labels.dedupeKey, /:Todo:labels:>label-bug$/);
+  assert.equal(
+    updateDedupeKey('plane.ticket.updated', BOARD_33GOD, TICKET_ID, AT, 'Todo', ['priority', 'labels']),
+    `plane.ticket.updated:${BOARD_33GOD}:${TICKET_ID}:${AT}:Todo:labels,priority:`,
+  );
+  // A redelivery of the same delivery is the same fact.
+  const again = normalizePlaneWebhook(updateDelivery({ field: 'labels', new_value: 'bug', new_identifier: 'label-bug' }), routes, AT);
+  assert.equal(again.dedupeKey, labels.dedupeKey);
+  // Values without identifiers still tell rows apart.
+  const low = normalizePlaneWebhook(updateDelivery({ field: 'priority', old_value: 'none', new_value: 'low' }), routes, AT);
+  const high = normalizePlaneWebhook(updateDelivery({ field: 'priority', old_value: 'none', new_value: 'high' }), routes, AT);
+  assert.notEqual(low.dedupeKey, high.dedupeKey);
+});
+
+test('Nats-Msg-Id is claimed only by facts whose key names the fact itself', () => {
+  const routes = planeRoutesFromRegistry(HERMES);
+  const stable = (payload) => normalizePlaneWebhook(payload, routes, AT).stableId;
+  assert.equal(stable(issue('create', BOARD_33GOD)), true);
+  assert.equal(stable(issue('delete', BOARD_33GOD)), true);
+  assert.equal(stable({ event: 'issue_comment', action: 'create', workspace_slug: '33god', data: { id: 'c-1', issue: TICKET_ID, project: BOARD_33GOD, created_at: AT } }), true);
+  assert.equal(stable({ event: 'project', action: 'create', workspace_slug: '33god', data: { id: BOARD_UNKNOWN, identifier: 'NEW', created_at: AT } }), true);
+  assert.equal(stable(updateDelivery({ field: 'labels', new_identifier: 'label-bug' })), false);
+  assert.equal(stable(updateDelivery({ field: 'state', new_identifier: 'state-2' })), false);
+});
+
+// ---------------------------------------------------------------------------
 // The node
 // ---------------------------------------------------------------------------
 
@@ -367,6 +413,20 @@ test('v2 splits unclaimed boards onto the Unrouted output and publishes the rest
   assert.equal(main[0].json.route_source, 'pjangler');
   // Three signed deliveries, one vault read.
   assert.equal(secretReads(), 1);
+  clearSecretCache();
+});
+
+test('the node sends Nats-Msg-Id for a creation and none for an update', async (t) => {
+  clearSecretCache();
+  clearProjectBoardCache();
+  const { published } = await nodeHarness(t, {
+    version: 2,
+    deliveries: [issue('create', BOARD_33GOD), updateDelivery({ field: 'labels', new_identifier: 'label-bug' })],
+  });
+  assert.equal(published.length, 2);
+  assert.equal(published[0].msgId, published[0].eventId);
+  assert.equal(published[1].msgId, undefined);
+  assert.ok(published[1].eventId, 'an update still has its deterministic event id');
   clearSecretCache();
 });
 

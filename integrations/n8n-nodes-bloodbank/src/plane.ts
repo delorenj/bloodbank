@@ -62,6 +62,13 @@ export interface NormalizedPlaneEvent {
   extensions: Record<string, string>;
   orderingKey: string;
   dedupeKey: string;
+  /** The dedupe key names the fact itself, not just one observation of it: a
+   *  ticket or board creation, a deletion, a comment by its id. Only such a key
+   *  is sent as `Nats-Msg-Id`, because JetStream drops a second message with
+   *  the same id outright. An update's key is as distinct as Plane lets it be
+   *  (see `updateDedupeKey`), which is enough for an event id, but it is still
+   *  inferred from the delivery, so updates carry no `Nats-Msg-Id`. */
+  stableId: boolean;
   observedAt: string;
 }
 
@@ -379,6 +386,7 @@ export function classifyPlaneWebhook(
         observedAt,
         orderingKey: `board:${boardId}`,
         dedupeKey: `${providerEventType}:${boardId}:${observedAt}`,
+        stableId: true,
         extensions: { workspace, board_id: boardId, slug, provider_event_type: providerEventType },
         data: {
           repo: route?.repo ?? null,
@@ -463,7 +471,8 @@ export function classifyPlaneWebhook(
         // (and Nats-Msg-Id) and a race between them collapses into one fact.
         dedupeKey: action === 'created'
           ? createdDedupeKey(route.boardId, ticketId)
-          : `${providerEventType}:${route.boardId}:${ticketId}:${observedAt}:${stateValue(currentState) ?? ''}`,
+          : updateDedupeKey(providerEventType, route.boardId, ticketId, observedAt, stateValue(currentState), normalizedFields, activity),
+        stableId: action !== 'updated',
         extensions: { ...extensions, provider_event_type: providerEventType },
         data: action === 'created'
           ? { ...common, trigger_source: triggerSource }
@@ -497,6 +506,7 @@ export function classifyPlaneWebhook(
       observedAt,
       orderingKey: `task:${route.repo}:${ticketId}`,
       dedupeKey: `${providerEventType}:${route.boardId}:${ticketId}:${commentId}:${observedAt}`,
+      stableId: true,
       extensions: { ...extensions, provider_event_type: providerEventType },
       data: {
         ...base,
@@ -511,6 +521,46 @@ export function classifyPlaneWebhook(
       },
     },
   };
+}
+
+function changeSide(identifier: unknown, value: unknown): string {
+  const id = firstText(identifier);
+  if (id) return id;
+  if (value === undefined || value === null) return '';
+  return typeof value === 'string' ? value.trim() : JSON.stringify(value);
+}
+
+/** The dedupe key of one ticket update (or transition, or deletion).
+ *
+ * Plane stamps every activity row of one save with the same `updated_at`, and
+ * sends a webhook per row: adding two labels, or changing the assignee and the
+ * priority in one PATCH, is several deliveries a millisecond apart with the
+ * same time and the same state. A key of (time, state) alone gave them one
+ * event id, and Candystore (insert ON CONFLICT (id) DO NOTHING) and the stream's
+ * Nats-Msg-Id window kept only the first. The changed fields (sorted) and the
+ * activity's old -> new value tell them apart; a redelivery of the same
+ * delivery still derives the same key.
+ */
+export function updateDedupeKey(
+  providerEventType: string,
+  boardId: string,
+  ticketId: string,
+  observedAt: string,
+  state: string | null,
+  fields: string[],
+  activityValue: unknown = {},
+): string {
+  const activity = record(activityValue);
+  const change = `${changeSide(activity.old_identifier, activity.old_value)}>${changeSide(activity.new_identifier, activity.new_value)}`;
+  return [
+    providerEventType,
+    boardId,
+    ticketId,
+    observedAt,
+    state ?? '',
+    [...fields].sort().join(','),
+    change === '>' ? '' : change,
+  ].join(':');
 }
 
 /** The dedupe key of a ticket's creation fact: (board, ticket, created).

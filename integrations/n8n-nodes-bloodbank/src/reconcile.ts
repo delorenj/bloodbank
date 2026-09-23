@@ -42,6 +42,8 @@ export const RECONCILE_DEFAULTS = {
   slotMs: 10 * 60 * 1000,
   /** Upper bound on creation facts read from the stream in one sweep. */
   maxFacts: 20_000,
+  /** Creation facts one sweep publishes; the rest wait for the next sweep. */
+  maxRecoveries: 20,
 };
 
 export interface PlaneIssue {
@@ -461,4 +463,34 @@ export async function planReconcile(options: PlanReconcileOptions): Promise<Reco
     partial: Boolean(stopped),
     ...(stopped ? { stopped_reason: stopped } : {}),
   };
+}
+
+/** The candidates one sweep publishes, oldest first, and the ones it leaves.
+ *
+ * A newly enrolled board, or a long outage, can surface dozens of missing
+ * creations at once, and each one publishes a fact that dispatches a grooming
+ * turn and pages ntfy. The cap spreads them over sweeps: a deferred ticket is
+ * still missing next time, so the next sweep finds it again. Oldest first, so
+ * the ticket closest to leaving the lookback window is not the one left behind.
+ */
+export function recoveryBatch(
+  candidates: ReconcileCandidate[],
+  max = RECONCILE_DEFAULTS.maxRecoveries,
+): { batch: ReconcileCandidate[]; deferred: ReconcileCandidate[] } {
+  const created = (candidate: ReconcileCandidate): number => {
+    const at = Date.parse(String(candidate.issue.created_at ?? ''));
+    return Number.isNaN(at) ? Number.POSITIVE_INFINITY : at;
+  };
+  const ordered = [...candidates].sort((a, b) => created(a) - created(b));
+  const limit = Math.max(0, Math.floor(max));
+  return { batch: ordered.slice(0, limit), deferred: ordered.slice(limit) };
+}
+
+/** A candidate's human key (BOARD-12) when the route knows the board key, else its id. */
+export function candidateTicketKey(candidate: ReconcileCandidate): string {
+  const sequence = candidate.issue.sequence_id;
+  if (candidate.route.boardKey && sequence !== undefined && sequence !== null && String(sequence).trim()) {
+    return `${candidate.route.boardKey}-${sequence}`;
+  }
+  return String(candidate.issue.id ?? '');
 }
