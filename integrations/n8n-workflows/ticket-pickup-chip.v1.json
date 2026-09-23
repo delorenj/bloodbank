@@ -97,11 +97,12 @@
             "id": "TpxVVgOnmjHaE6h7",
             "name": "Plane API (33GOD + AutomaticAI)"
           }
-        }
+        },
+        "onError": "continueRegularOutput"
       },
       {
         "parameters": {
-          "jsCode": "// Resolve the chip label BY NAME on this board. A board without one\n// (CANDY/CANDYS carry a soft-deleted row Plane will not recreate) simply gets\n// no chip: skip quietly, never fail the lane.\nconst LABEL = 'agent:working';\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const target = $('Chip — Target').itemMatching(i).json;\n  const body = items[i].json || {};\n  const labels = Array.isArray(body.results) ? body.results : [];\n  const hit = labels.find((l) => l && typeof l.name === 'string' && l.name.trim().toLowerCase() === LABEL);\n  if (!hit) continue;\n  out.push({ json: { ...target, labelId: hit.id }, pairedItem: { item: i } });\n}\nreturn out;"
+          "jsCode": "// Resolve the chip label BY NAME on this board. A board without one\n// (CANDY/CANDYS carry a soft-deleted row Plane will not recreate) simply gets\n// no chip: skip quietly, never fail the lane.\nconst LABEL = 'agent:working';\n// The Plane HTTP nodes run with On Error = Continue, so a failed request\n// arrives here as { error } instead of failing the execution. 404/410 means\n// the ticket (or its board) was deleted while the agent's turn was running:\n// there is no chip left to set, so the item is skipped and the execution stays\n// green. Any other failure (auth, 5xx) still fails it, with the ticket named.\nconst GONE = [404, 410];\nfunction httpStatus(err) {\n  if (err && typeof err === 'object') {\n    const candidates = [err.httpCode, err.statusCode, err.status, err.response && err.response.status, err.cause && err.cause.status];\n    for (const v of candidates) {\n      const n = Number(v);\n      if (Number.isInteger(n) && n >= 100 && n < 600) return n;\n    }\n  }\n  const text = err && typeof err === 'object' ? `${err.message || ''} ${err.description || ''}` : String(err || '');\n  const m = text.match(/\\b([1-5]\\d\\d)\\b/);\n  return m ? Number(m[1]) : null;\n}\nfunction failure(step, t, err) {\n  const status = httpStatus(err);\n  if (GONE.includes(status)) return null;\n  const detail = err && typeof err === 'object' ? err.message || err.description || JSON.stringify(err) : String(err);\n  return new Error(`${step} failed for ${t.ticketKey || t.ticketId} (board ${t.board}): HTTP ${status ?? '?'} ${String(detail).slice(0, 200)}`);\n}\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const target = $('Chip — Target').itemMatching(i).json;\n  const body = items[i].json || {};\n  if (body.error) {\n    const err = failure('Chip — List Labels', target, body.error);\n    if (err) throw err;\n    continue;\n  }\n  const labels = Array.isArray(body.results) ? body.results : [];\n  const hit = labels.find((l) => l && typeof l.name === 'string' && l.name.trim().toLowerCase() === LABEL);\n  if (!hit) continue;\n  out.push({ json: { ...target, labelId: hit.id }, pairedItem: { item: i } });\n}\nreturn out;\n"
         },
         "id": "d0f5133d-74f3-5f78-92de-4d44d2e23919",
         "name": "Chip — Resolve Label",
@@ -141,11 +142,12 @@
             "id": "TpxVVgOnmjHaE6h7",
             "name": "Plane API (33GOD + AutomaticAI)"
           }
-        }
+        },
+        "onError": "continueRegularOutput"
       },
       {
         "parameters": {
-          "jsCode": "// Read-modify-write of the ticket's label set. No-op writes are dropped: the\n// chip is already on (add) or already gone (remove).\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const t = $('Chip — Resolve Label').itemMatching(i).json;\n  const issue = items[i].json || {};\n  const current = (issue.labels || [])\n    .map((l) => (l && typeof l === 'object' ? l.id : l))\n    .filter(Boolean);\n  const has = current.includes(t.labelId);\n  if (t.action === 'add' ? has : !has) continue;\n  const labels = t.action === 'add' ? [...current, t.labelId] : current.filter((id) => id !== t.labelId);\n  out.push({ json: { ...t, labels }, pairedItem: { item: i } });\n}\nreturn out;"
+          "jsCode": "// Read-modify-write of the ticket's label set. No-op writes are dropped: the\n// chip is already on (add) or already gone (remove). A ticket that was deleted\n// mid-turn (404/410, or a soft-deleted row) is skipped, not written.\n// The Plane HTTP nodes run with On Error = Continue, so a failed request\n// arrives here as { error } instead of failing the execution. 404/410 means\n// the ticket (or its board) was deleted while the agent's turn was running:\n// there is no chip left to set, so the item is skipped and the execution stays\n// green. Any other failure (auth, 5xx) still fails it, with the ticket named.\nconst GONE = [404, 410];\nfunction httpStatus(err) {\n  if (err && typeof err === 'object') {\n    const candidates = [err.httpCode, err.statusCode, err.status, err.response && err.response.status, err.cause && err.cause.status];\n    for (const v of candidates) {\n      const n = Number(v);\n      if (Number.isInteger(n) && n >= 100 && n < 600) return n;\n    }\n  }\n  const text = err && typeof err === 'object' ? `${err.message || ''} ${err.description || ''}` : String(err || '');\n  const m = text.match(/\\b([1-5]\\d\\d)\\b/);\n  return m ? Number(m[1]) : null;\n}\nfunction failure(step, t, err) {\n  const status = httpStatus(err);\n  if (GONE.includes(status)) return null;\n  const detail = err && typeof err === 'object' ? err.message || err.description || JSON.stringify(err) : String(err);\n  return new Error(`${step} failed for ${t.ticketKey || t.ticketId} (board ${t.board}): HTTP ${status ?? '?'} ${String(detail).slice(0, 200)}`);\n}\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const t = $('Chip — Resolve Label').itemMatching(i).json;\n  const issue = items[i].json || {};\n  if (issue.error) {\n    const err = failure('Chip — Read Issue', t, issue.error);\n    if (err) throw err;\n    continue;\n  }\n  if (issue.deleted_at) continue;\n  const current = (issue.labels || [])\n    .map((l) => (l && typeof l === 'object' ? l.id : l))\n    .filter(Boolean);\n  const has = current.includes(t.labelId);\n  if (t.action === 'add' ? has : !has) continue;\n  const labels = t.action === 'add' ? [...current, t.labelId] : current.filter((id) => id !== t.labelId);\n  out.push({ json: { ...t, labels }, pairedItem: { item: i } });\n}\nreturn out;\n"
         },
         "id": "6d8bb350-2c37-5d59-845c-d86f9e0dd73e",
         "name": "Chip — Plan Write",
@@ -189,7 +191,21 @@
             "id": "TpxVVgOnmjHaE6h7",
             "name": "Plane API (33GOD + AutomaticAI)"
           }
-        }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// The ticket can also vanish between the read and the write. Write Labels runs\n// with On Error = Continue so that race lands here: 404/410 is the same no-op\n// as a ticket already gone; anything else fails the execution, ticket named.\n// The Plane HTTP nodes run with On Error = Continue, so a failed request\n// arrives here as { error } instead of failing the execution. 404/410 means\n// the ticket (or its board) was deleted while the agent's turn was running:\n// there is no chip left to set, so the item is skipped and the execution stays\n// green. Any other failure (auth, 5xx) still fails it, with the ticket named.\nconst GONE = [404, 410];\nfunction httpStatus(err) {\n  if (err && typeof err === 'object') {\n    const candidates = [err.httpCode, err.statusCode, err.status, err.response && err.response.status, err.cause && err.cause.status];\n    for (const v of candidates) {\n      const n = Number(v);\n      if (Number.isInteger(n) && n >= 100 && n < 600) return n;\n    }\n  }\n  const text = err && typeof err === 'object' ? `${err.message || ''} ${err.description || ''}` : String(err || '');\n  const m = text.match(/\\b([1-5]\\d\\d)\\b/);\n  return m ? Number(m[1]) : null;\n}\nfunction failure(step, t, err) {\n  const status = httpStatus(err);\n  if (GONE.includes(status)) return null;\n  const detail = err && typeof err === 'object' ? err.message || err.description || JSON.stringify(err) : String(err);\n  return new Error(`${step} failed for ${t.ticketKey || t.ticketId} (board ${t.board}): HTTP ${status ?? '?'} ${String(detail).slice(0, 200)}`);\n}\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const body = items[i].json || {};\n  if (!body.error) continue;\n  const err = failure('Chip — Write Labels', $('Chip — Plan Write').itemMatching(i).json, body.error);\n  if (err) throw err;\n}\nreturn [];\n"
+        },
+        "id": "383e33d1-d973-52c7-bee0-9a65b9ce70ee",
+        "name": "Chip — Check Write",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1680,
+          0
+        ]
       }
     ],
     "connections": {
@@ -264,6 +280,17 @@
           [
             {
               "node": "Chip — Write Labels",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Chip — Write Labels": {
+        "main": [
+          [
+            {
+              "node": "Chip — Check Write",
               "type": "main",
               "index": 0
             }

@@ -249,7 +249,7 @@ test('an unknown board with no fallback is a no_route skip rather than an error'
 // ---------------------------------------------------------------------------
 
 test('a ticket correlation id is byte-identical to the Python publisher it replaces', () => {
-  // Recorded from the live bb-triage-invoke run that groomed JIMB-273.
+  // Recorded from the retired Python publisher's live run that groomed JIMB-273.
   assert.equal(ticketCorrelationId(BOARD, 'JIMB-273'), 'dda43316-59d5-52d8-a66d-4295c9ed97fe');
 });
 

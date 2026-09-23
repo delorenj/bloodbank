@@ -242,17 +242,56 @@ gateway drops the duplicate.
 
 ### The lifecycle lane
 
-Two versioned workflows chain through it:
+Four versioned workflows in `../n8n-workflows/` carry a Plane ticket from
+webhook to working agent. Import all four; each export records `active: true`.
 
-    n8n import:workflow --input=../n8n-workflows/ticket-grooming.v1.json
-    n8n import:workflow --input=../n8n-workflows/ticket-delegation.v1.json
+    for f in plane-bloodbank ticket-grooming ticket-delegation ticket-pickup-chip; do
+      n8n import:workflow --input=../n8n-workflows/$f.v1.json
+    done
 
-`plane.ticket.created` → **Groom Ticket**, which finishes by labelling the ticket
-`lifecycle:triaged`. A person then promotes the ticket to Todo, and
-`plane.ticket.transitioned` → **Delegate Ticket** picks it up. The label is the
-handshake between the two: grooming is automatic, promotion to Todo is the human
-decision, and delegation requires both. Delegate Ticket grooms a ticket itself
-when the label is missing rather than delegating unreviewed work.
+| Workflow (id) | Starts on | Does | Pushes to ntfy `lifecycle` |
+| --- | --- | --- | --- |
+| **Plane → Bloodbank** (`iMw484J1ZCqKME2C`) | Plane webhook | Verifies, normalizes and publishes the `bloodbank.repo.*` fact (see [Plane ingress](#plane-ingress)) | **Unrouted** → *Unrouted Board*: a board no enrolled project claims |
+| **Ticket Grooming** (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | **Groom Ticket** commands the board's agent to enrich the ticket and stamp `lifecycle:triaged` | **Dispatched** → *Triage Started*; **Skipped** → *Triage Skipped*, every skip |
+| **Ticket Delegation** (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` | **Delegate Ticket** (phase guard `Todo,unstarted`) commands the agent to pick the ticket up and delegate it | **Dispatched** → *Delegation Started*; **Skipped** → *Notable Skip?* → *Delegation Skipped* |
+| **Ticket Pickup Chip** (`wWXgCZiiIBWaRRzE`) | `agent.invocation.started`, `.completed`, `.failed` with `data.context.reason` in `ticket-grooming,ticket-delegation` | Adds the board's `agent:working` label while the agent's turn runs and removes it when the turn ends | none |
+
+**The handshake.** Grooming finishes by labelling the ticket
+`lifecycle:triaged`. A person then promotes it to Todo, and that transition is
+what Delegate Ticket picks up. Grooming is automatic, promotion to Todo is the
+human decision, and delegation requires both: Delegate Ticket grooms a ticket
+itself when the label is missing rather than delegating unreviewed work.
+
+**No skip is silent.** Every item a Fleet node does not dispatch leaves on
+**Skipped** with its `code` and `reason` (see [33GOD Agent Fleet](#33god-agent-fleet)),
+and — with Publish Skip Events on in both lanes — is also published as
+**`bloodbank.agent.invocation.skipped`**, so Candystore holds the durable record
+and anything on the bus can react to it. The ntfy push is the page on top of that
+record. Grooming pages every skip. Delegation pages every skip except
+`phase_guard` and `provider_event_guard`: a transition into anything other than
+Todo is routine, so it is published but does not page. An unrouted Plane board is
+different: nothing reaches the bus for it, so the *Unrouted Board* push is its
+only signal, and it names the board to add to a project's `.project.json`.
+
+**A failed push never fails a lane.** Every ntfy node runs with On Error =
+Continue, so the execution stays green and the failure is visible only as an
+`error` on that node's output — check there first when pages stop arriving. The
+pushes authenticate as the ntfy user `n8n` (credential *Ntfy account (n8n
+token)*), which sits on ntfy's `service` tier and so has its own request limit.
+Until 2026-09-22 it had no tier and shared a per-IP limit with the Bloodbank
+event toaster, which answered most lane pushes with 429.
+
+**The chip is stateless.** Everything it needs rides on the gateway's echoed
+`data.context` (`workspace`, `board_id`, `ticket_id`, `ticket_key`, `reason`):
+no static data and no board map. It resolves `agent:working` by name on each
+board and skips boards without one; boards listed in the n8n env var
+`KREBS_FENCED_BOARDS` (a JSON array of board ids) are Krebs's to chip. Its three
+Plane calls (List Labels, Read Issue, Write Labels) run with On Error =
+Continue, and the Code node after each checks the result: 404 or 410 means the
+ticket or board was deleted while the turn was running, so there is nothing to
+chip and the item is dropped with the execution green. Any other failure (an
+expired Plane token, a 5xx) fails the execution with the ticket key in the
+message.
 
 ## Branding
 
@@ -291,6 +330,8 @@ the same fixed mtime, so a size-and-mtime comparison skips same-length edits.
 npm test covers schema generation and the shared option shape, trigger and
 publisher configuration, canonical envelopes, fail-closed invocation routing,
 fleet eligibility / skips / skip events / fences / idempotent command ids,
+the lifecycle lane's wiring as exported (skip and unrouted pushes, the chip's
+Code nodes and its deleted-ticket guards),
 Plane creation/transition/comment normalization against the full schemas,
 schema-declared provider aliases, merged board routing, the secret cache,
 data filters, JetStream replay and generated samples, and the node icon
