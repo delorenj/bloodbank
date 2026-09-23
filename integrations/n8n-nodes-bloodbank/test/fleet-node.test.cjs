@@ -673,3 +673,74 @@ test('eligibility is judged before the fence: a switched-off managed project rep
   const { skipped } = await run(t, { operation: 'groomTicket' }, [{ json: CREATED }], off);
   assert.equal(skipped[0].json.code, 'ineligible');
 });
+
+// ---------------------------------------------------------------------------
+// Deterministic dispatch: a redelivered trigger rebuilds the same bytes
+// ---------------------------------------------------------------------------
+
+const { messageDedupId, stableObservedAt } = require('../src/index.ts');
+
+test('the command time is the causing event time, so a replay is byte-identical', async (t) => {
+  const timed = { ...CREATED, time: '2026-09-23T01:05:00.483317Z' };
+  const first = [];
+  const second = [];
+  await run(t, { operation: 'groomTicket' }, [{ json: timed }], LIVE_REGISTRY, { send: capturedPublisher(first) });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await run(t, { operation: 'groomTicket' }, [{ json: timed }], LIVE_REGISTRY, { send: capturedPublisher(second) });
+  const [a] = first.filter((m) => m.envelope.type === COMMAND);
+  const [b] = second.filter((m) => m.envelope.type === COMMAND);
+  assert.equal(a.envelope.time, '2026-09-23T01:05:00.483317Z');
+  assert.equal(JSON.stringify(a.envelope), JSON.stringify(b.envelope));
+  assert.doesNotThrow(() => validateEnvelope(COMMAND, a.envelope));
+});
+
+test('skip events carry the causing event time too', async (t) => {
+  const timed = { ...CREATED, time: '2026-09-23T01:05:00Z', data: { ...CREATED.data, board_id: 'nobody-owns-this' , repo: 'nobody' } };
+  const messages = [];
+  await run(t, { operation: 'groomTicket' }, [{ json: timed }], LIVE_REGISTRY, { send: capturedPublisher(messages) });
+  const [skip] = messages.filter((m) => m.envelope.type === SKIPPED);
+  assert.equal(skip.envelope.time, '2026-09-23T01:05:00Z');
+});
+
+test('an explicit Observed At mapping wins over the envelope time', async (t) => {
+  const messages = [];
+  await run(
+    t,
+    { operation: 'groomTicket', observedAt: '2026-01-02T03:04:05Z' },
+    [{ json: { ...CREATED, time: '2026-09-23T01:05:00Z' } }],
+    LIVE_REGISTRY,
+    { send: capturedPublisher(messages) },
+  );
+  const [command] = messages.filter((m) => m.envelope.type === COMMAND);
+  assert.equal(command.envelope.time, '2026-01-02T03:04:05Z');
+});
+
+test('observed times are kept verbatim when valid, normalised when not, dropped when unusable', () => {
+  assert.equal(stableObservedAt('2026-09-23T01:05:00.483317Z'), '2026-09-23T01:05:00.483317Z');
+  assert.equal(stableObservedAt('2026-09-23T01:05:00+02:00'), '2026-09-23T01:05:00+02:00');
+  assert.equal(stableObservedAt('Wed, 23 Sep 2026 01:05:00 GMT'), '2026-09-23T01:05:00.000Z');
+  assert.equal(stableObservedAt('not a time'), undefined);
+  assert.equal(stableObservedAt(''), undefined);
+  assert.equal(stableObservedAt(undefined), undefined);
+});
+
+test('commands carry Nats-Msg-Id = command_id so JetStream drops a republished duplicate', async () => {
+  const published = [];
+  const connectNats = async () => ({
+    publish(subject, data, opts) { published.push({ subject, opts }); },
+    flush: async () => {},
+    drain: async () => {},
+  });
+  const commandId = deterministicUuid('dedup-test');
+  await publish({
+    type: COMMAND,
+    kind: 'command',
+    commandId,
+    data: { target_agent_id: 'james-brennan-pm', prompt: 'hi' },
+  }, connectNats);
+  await publish({ type: 'bloodbank.repo.task.created', kind: 'event', data: { repo: 'x' } }, connectNats);
+  assert.equal(published[0].opts.headers.get('Nats-Msg-Id'), commandId);
+  assert.equal(published[1].opts, undefined, 'events carry no dedup header');
+  assert.equal(messageDedupId({ kind: 'command', command_id: ' abc ' }), 'abc');
+  assert.equal(messageDedupId({ kind: 'event', command_id: 'abc' }), undefined);
+});

@@ -79,6 +79,48 @@ normalizer can emit a `provider_event_type` no schema declares.
 Choose Events to bind one or more event schemas or provider aliases. Event
 delivery is always asynchronous.
 
+**Delivery** (`delivery`, events only) decides what an *active* workflow does
+about events published while it is not listening — during an n8n restart, a
+deploy, or the gap every save opens (n8n re-registers all of a workflow's
+triggers on any save, an API `PUT` that only changes pinData included).
+
+| Value | Behaviour |
+| --- | --- |
+| `durable` (default) | A JetStream durable pull consumer on `BLOODBANK_EVENTS`, one per (workflow, node), named `n8n-<workflow id>-<node id>`. Filter subjects are the bound subjects. Created with `deliver_policy: new`, so a first activation starts at the newest event rather than replaying the stream's 7 days. Deactivating or restarting keeps the durable, so the next activation resumes exactly where the last one stopped. `inactive_threshold` is 7 days: the durable of a workflow that never comes back deletes itself. |
+| `ephemeral` | A core NATS subscription (the pre-0.6.0 behaviour). Hears only what is published while it is open. |
+
+`BLOODBANK_EVENTS` uses `limits` retention, so a durable changes nothing about
+what the stream keeps; it only remembers this trigger's position. With a durable:
+
+- Messages are pulled **one at a time** and **Acknowledge** (`acknowledge`)
+  decides when each is acked. `afterExecution` (default) acks when the
+  execution it started has finished — success or error — so a trigger's
+  executions run in stream order. `onEmit` acks as soon as the execution starts
+  and lets executions overlap; use it for long-running workflows.
+- A message a trigger is not bound to (another alias of the same subject, a
+  failed data filter) is acked without an execution. A malformed one is
+  terminated and recorded as a failed execution.
+- While an execution runs, the message is kept alive with `working()` (ack wait
+  30 s); after 5 minutes the trigger acks anyway and moves on.
+- **Catch-Up Window (Hours)** (`catchUpHours`, default 24) skips — acks without an
+  execution — anything older than the window when it is delivered, so re-enabling
+  a workflow after a long break does not replay days of history. `0` = no limit.
+- Manual test runs never touch the durable: Replay and Sample read without a
+  consumer, and Wait for Live uses a throwaway subscription.
+
+Inspect the durables with `nats consumer ls BLOODBANK_EVENTS` (or
+`curl -s 'localhost:8222/jsz?consumers=true'`); delete one with
+`nats consumer rm BLOODBANK_EVENTS n8n-<workflow>-<node>` to make the next
+activation start fresh from the tip.
+
+**What a durable cannot cover.** The Plane webhook is received by n8n itself
+(*Plane → Bloodbank*). While n8n is down, Plane's delivery gets a 502 from
+Traefik and Plane does not retry an HTTP error (it retries only connection
+failures), so a ticket event that happens during an n8n outage never reaches the
+bus at all. Durable triggers protect everything that *is* on the bus — agent turn
+events, facts published by other services, and every fact published while a
+workflow is being re-saved.
+
 **Only When Data Matches** (`dataMatch`) drops a message before it becomes an
 execution unless every condition holds. A condition is a dot path into the
 whole envelope and a comma list of accepted values; an empty list means
@@ -106,6 +148,10 @@ single-consumer dispatch among equivalent n8n workflows.
 - Asynchronous command processing starts the workflow and publishes no reply.
 - Synchronous command processing waits for the n8n run to finish and publishes
   a correlated Bloodbank reply on the matching bloodbank.rpy subject.
+
+Command triggers keep their core NATS queue-group subscription: commands already
+live in the work-queue stream `BLOODBANK_COMMANDS`, and the request/reply path
+needs the transport reply subject.
 
 The trigger uses the maintained official NATS Node transport and reconnects
 automatically. Defaults use the localhost service hostname and can be overridden
@@ -237,8 +283,18 @@ incoming envelope; without one it is `uuid5(url_ns, "plane:<board>:<ticket id>")
 that caused it. Idempotency is separate: the command id is
 `uuid5(url_ns, "agent.invocation.start:<operation>:<agent>:<causing event id>")`,
 so a redelivered trigger event (and a Plane retry, whose event id is itself
-deterministic) republishes the same `command_id` and `idempotency_key`, and the
-gateway drops the duplicate.
+deterministic) republishes the same `command_id` and `idempotency_key`. The
+command's `time` is the causing event's `time` (**Observed At**, default
+`={{ $json.time }}`), which makes the whole rebuilt envelope byte-identical.
+That matters because the hermes gateway journals a command under its
+`command_id` *and a sha256 of the entire envelope*: an identical replay is
+recognised as the command it already has (still running: nak and retry later;
+finished: re-publish the journaled started/terminal events and ack, no second
+turn), while the same `command_id` with a different digest — which a wall-clock
+`time` used to produce — is terminally rejected as a collision. Commands are also
+published with `Nats-Msg-Id: <command_id>`, so `BLOODBANK_COMMANDS` drops a
+republished duplicate inside its 2-minute duplicate window before the gateway
+even sees it.
 
 ### The lifecycle lane
 
@@ -251,10 +307,10 @@ webhook to working agent. Import all four; each export records `active: true`.
 
 | Workflow (id) | Starts on | Does | Pushes to ntfy `lifecycle` |
 | --- | --- | --- | --- |
-| **Plane → Bloodbank** (`iMw484J1ZCqKME2C`) | Plane webhook | Verifies, normalizes and publishes the `bloodbank.repo.*` fact (see [Plane ingress](#plane-ingress)) | **Unrouted** → *Unrouted Board*: a board no enrolled project claims |
+| **Plane → Bloodbank** (`iMw484J1ZCqKME2C`) | Plane webhook | Verifies, normalizes and publishes the `bloodbank.repo.*` fact (see [Plane ingress](#plane-ingress)) | **Unrouted** → *Unrouted — Once a Day* → *Unrouted Board*: a board no enrolled project claims, at most once per board per 24 h |
 | **Ticket Grooming** (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | **Groom Ticket** commands the board's agent to enrich the ticket and stamp `lifecycle:triaged` | **Dispatched** → *Triage Started*; **Skipped** → *Triage Skipped*, every skip |
 | **Ticket Delegation** (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` | **Delegate Ticket** (phase guard `Todo,unstarted`) commands the agent to pick the ticket up and delegate it | **Dispatched** → *Delegation Started*; **Skipped** → *Notable Skip?* → *Delegation Skipped* |
-| **Ticket Pickup Chip** (`wWXgCZiiIBWaRRzE`) | `agent.invocation.started`, `.completed`, `.failed` with `data.context.reason` in `ticket-grooming,ticket-delegation` | Adds the board's `agent:working` label while the agent's turn runs and removes it when the turn ends | none |
+| **Ticket Pickup Chip** (`wWXgCZiiIBWaRRzE`) | One trigger, *Invocation Lifecycle*, on `agent.invocation.started`, `.completed`, `.failed` with `data.context.reason` in `ticket-grooming,ticket-delegation`; plus *Stale Chip Sweep* hourly | Adds the board's `agent:working` label while the agent's turn runs and removes it when the turn ends; the sweep removes any chip left on a ticket whose last turn ended | none |
 
 **The handshake.** Grooming finishes by labelling the ticket
 `lifecycle:triaged`. A person then promotes it to Todo, and that transition is
@@ -271,7 +327,11 @@ record. Grooming pages every skip. Delegation pages every skip except
 `phase_guard` and `provider_event_guard`: a transition into anything other than
 Todo is routine, so it is published but does not page. An unrouted Plane board is
 different: nothing reaches the bus for it, so the *Unrouted Board* push is its
-only signal, and it names the board to add to a project's `.project.json`.
+only signal, and it names the board to add to a project's `.project.json`. It
+pages once per board per 24 hours: *Unrouted — Once a Day* keeps the last page
+time per board in workflow static data and marks later deliveries
+`notify: false`, which end on *Unrouted — Muted* (the webhook answers with the
+last node's item, so the muted path must still end on one).
 
 **A failed push never fails a lane.** Every ntfy node runs with On Error =
 Continue, so the execution stays green and the failure is visible only as an
@@ -292,6 +352,19 @@ ticket or board was deleted while the turn was running, so there is nothing to
 chip and the item is dropped with the execution green. Any other failure (an
 expired Plane token, a 5xx) fails the execution with the ticket key in the
 message.
+
+**The chip is ordered and swept.** Started and ended arrive on ONE trigger, so
+they share one durable and one queue: a turn's `started` execution always
+finishes before its `completed` one starts, even when both land in the same
+catch-up burst after a restart (two triggers would be two durables with no
+order between them, and the add could land after the remove). *Stale Chip
+Sweep* runs hourly: it asks Candystore for the gateway's invocation events of
+the last 48 h, and for every ticket whose latest one is a `completed`/`failed`
+at least 10 minutes old it sends that event down the chip line as a remove. The
+line only writes when `agent:working` is actually still on the ticket. It is the
+net under a failed chip write (a Plane 5xx), an outage longer than the catch-up
+window, or an expired durable. Candystore is read at `$CANDYSTORE_URL`
+(default `http://127.0.0.1:8683`; the public host sits behind Google OIDC).
 
 ## Branding
 
@@ -330,8 +403,12 @@ the same fixed mtime, so a size-and-mtime comparison skips same-length edits.
 npm test covers schema generation and the shared option shape, trigger and
 publisher configuration, canonical envelopes, fail-closed invocation routing,
 fleet eligibility / skips / skip events / fences / idempotent command ids,
-the lifecycle lane's wiring as exported (skip and unrouted pushes, the chip's
-Code nodes and its deleted-ticket guards),
+the lifecycle lane's wiring as exported (skip and unrouted pushes, the
+once-a-day unrouted gate, the chip's single ordered trigger, its Code nodes, its
+deleted-ticket guards and the stale-chip sweep), durable trigger delivery
+(consumer naming and config, create/update/resume, one-at-a-time ack after the
+execution, catch-up window, close semantics) against a fake transport,
+byte-identical re-dispatch and the command `Nats-Msg-Id`,
 Plane creation/transition/comment normalization against the full schemas,
 schema-declared provider aliases, merged board routing, the secret cache,
 data filters, JetStream replay and generated samples, and the node icon

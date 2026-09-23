@@ -194,9 +194,12 @@ export function ticketCorrelationId(boardId: string, ticketRef: string): string 
  * A redelivered trigger event (same event id — the Plane ingress derives event
  * ids deterministically from the webhook, so a Plane retry qualifies) yields the
  * same command id and therefore the same `idempotency_key`
- * (`agent.invocation.start:target:<agent>:command:<command_id>`), which is what
- * the gateway deduplicates on. Returns undefined when there is no causing event
- * id, so the publisher mints a fresh one.
+ * (`agent.invocation.start:target:<agent>:command:<command_id>`). The gateway
+ * journals on command_id plus a digest of the whole envelope, so the Fleet node
+ * also stamps the causing event's time (`observedAt`): together they make a
+ * replayed dispatch byte-identical, and the gateway treats it as the command it
+ * already has rather than a colliding one. Returns undefined when there is no
+ * causing event id, so the publisher mints a fresh one.
  */
 export function fleetCommandId(
   causationId: string | undefined,

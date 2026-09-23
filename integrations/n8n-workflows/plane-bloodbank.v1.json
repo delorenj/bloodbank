@@ -65,8 +65,8 @@
         "type": "n8n-nodes-ntfy-client.ntfySend",
         "typeVersion": 1,
         "position": [
-          256,
-          128
+          696,
+          88
         ],
         "credentials": {
           "ntfyApi": {
@@ -75,6 +75,64 @@
           }
         },
         "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// At most one 'Unrouted Board' page per board per 24h. An unrouted board\n// sends every ticket event it has, and before this gate each one paged.\n// The first delivery from a board in a 24h window is marked notify=true and\n// pages; the rest are notify=false and end on 'Unrouted — Muted', so the\n// webhook (Respond: Last Node) still has an item to answer 200 with.\n// Workflow static data is enough here: this workflow is the only writer and\n// the volume is a handful of boards a day. n8n saves it after each production\n// execution; manual test runs do not persist it.\nconst DAY_MS = 24 * 60 * 60 * 1000;\nconst store = $getWorkflowStaticData('global');\nconst paged = store.unroutedBoardPagedAt && typeof store.unroutedBoardPagedAt === 'object'\n  ? store.unroutedBoardPagedAt\n  : {};\nconst now = Date.now();\nfor (const [board, at] of Object.entries(paged)) {\n  if (!(now - Number(at) < DAY_MS)) delete paged[board];\n}\nconst out = $input.all().map((item, index) => {\n  const board = String(item.json.board_id || item.json.project_id || 'unknown');\n  const last = Number(paged[board]);\n  const notify = !(now - last < DAY_MS);\n  if (notify) paged[board] = now;\n  return {\n    json: {\n      ...item.json,\n      notify,\n      muted_until: notify ? null : new Date(last + DAY_MS).toISOString(),\n    },\n    pairedItem: { item: index },\n  };\n});\nstore.unroutedBoardPagedAt = paged;\nreturn out;\n"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          256,
+          128
+        ],
+        "id": "43c7d339-3504-545a-a405-593e30cade76",
+        "name": "Unrouted — Once a Day"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "6083cf36-04ab-5a93-b999-717962f8d912",
+                "leftValue": "={{ $json.notify }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          476,
+          128
+        ],
+        "id": "8c85bccb-f154-5528-b82c-39d3301879f2",
+        "name": "Unrouted — First Today?"
+      },
+      {
+        "parameters": {},
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          696,
+          288
+        ],
+        "id": "12f36e8f-3949-5f3a-a405-3704f49134eb",
+        "name": "Unrouted — Muted"
       }
     ],
     "connections": {
@@ -94,7 +152,36 @@
           [],
           [
             {
+              "node": "Unrouted — Once a Day",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Unrouted — Once a Day": {
+        "main": [
+          [
+            {
+              "node": "Unrouted — First Today?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Unrouted — First Today?": {
+        "main": [
+          [
+            {
               "node": "Unrouted Board",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Unrouted — Muted",
               "type": "main",
               "index": 0
             }

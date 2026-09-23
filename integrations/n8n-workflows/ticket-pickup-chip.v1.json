@@ -2,37 +2,14 @@
   {
     "id": "wWXgCZiiIBWaRRzE",
     "name": "Ticket Pickup Chip",
-    "description": null,
+    "description": "agent:working chip for ticket turns. One durable Bloodbank trigger on agent.invocation.started/completed/failed (in order, ack after each execution) adds and removes the label; an hourly sweep over Candystore removes any chip whose ticket's last turn ended.",
     "active": true,
     "isArchived": false,
     "nodes": [
       {
         "parameters": {
           "events": [
-            "bloodbank.agent.invocation.started"
-          ],
-          "dataMatch": {
-            "conditions": [
-              {
-                "path": "data.context.reason",
-                "values": "ticket-grooming,ticket-delegation"
-              }
-            ]
-          },
-          "connection": {}
-        },
-        "id": "1a4f5ee5-dd90-5b25-80bb-dc48568f35f0",
-        "name": "Invocation Started",
-        "type": "n8n-nodes-bloodbank.bloodbankTrigger",
-        "typeVersion": 1,
-        "position": [
-          0,
-          -112
-        ]
-      },
-      {
-        "parameters": {
-          "events": [
+            "bloodbank.agent.invocation.started",
             "bloodbank.agent.invocation.completed",
             "bloodbank.agent.invocation.failed"
           ],
@@ -46,13 +23,13 @@
           },
           "connection": {}
         },
-        "id": "9ae6ffaf-0560-5009-bbd7-9efd42f5433a",
-        "name": "Invocation Ended",
+        "id": "1a4f5ee5-dd90-5b25-80bb-dc48568f35f0",
+        "name": "Invocation Lifecycle",
         "type": "n8n-nodes-bloodbank.bloodbankTrigger",
         "typeVersion": 1,
         "position": [
           0,
-          112
+          -112
         ]
       },
       {
@@ -206,31 +183,79 @@
           1680,
           0
         ]
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "hours",
+                "hoursInterval": 1
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          248
+        ],
+        "id": "962a8550-6614-5ce8-9cd1-a358fe5e934d",
+        "name": "Stale Chip Sweep"
+      },
+      {
+        "parameters": {
+          "url": "={{ ($env.CANDYSTORE_URL || 'http://127.0.0.1:8683').replace(/\\/$/, '') }}/events",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "type",
+                "value": "bloodbank.agent.invocation.started,bloodbank.agent.invocation.completed,bloodbank.agent.invocation.failed"
+              },
+              {
+                "name": "service",
+                "value": "bloodbank-hermes-gateway"
+              },
+              {
+                "name": "from",
+                "value": "-48h"
+              },
+              {
+                "name": "limit",
+                "value": "500"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 20000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          220,
+          248
+        ],
+        "id": "d4b9c781-b6fc-5a89-9161-4b1042195471",
+        "name": "Sweep — Ended Turns"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Stale-chip safety net. The Invocation Lifecycle trigger is a durable\n// JetStream consumer that handles started/completed/failed one at a time in\n// stream order, so the live lane should never leave a chip behind. This hourly\n// sweep covers what that lane cannot: a chip write that failed (Plane 5xx), an\n// n8n outage longer than the trigger's catch-up window, or an expired durable.\n//\n// Input: the hermes gateway's invocation events of the last 48h from\n// Candystore. For every ticket whose LATEST gateway invocation event is a\n// completed/failed one at least SETTLE_MS old, emit that event into\n// Chip — Target as a 'remove'. The chip lane then reads the ticket and only\n// writes when agent:working is actually still there, so a clean ticket costs\n// two GETs and no write. A ticket whose latest event is a start (a turn is\n// running, or its end has not reached Candystore yet) is left alone.\nconst SETTLE_MS = 10 * 60 * 1000;\nconst REASONS = ['ticket-grooming', 'ticket-delegation'];\nconst first = $input.all()[0];\nconst body = (first && first.json) || {};\nconst rows = Array.isArray(body.events) ? body.events : [];\nconst latest = new Map();\nfor (const row of rows) {\n  const data = (row && row.data) || {};\n  const ctx = data.context || {};\n  if (!REASONS.includes(ctx.reason)) continue;\n  if (!ctx.ticket_id || !ctx.board_id || !ctx.workspace) continue;\n  const at = Date.parse(row.time);\n  if (Number.isNaN(at)) continue;\n  const key = `${ctx.board_id}:${ctx.ticket_id}`;\n  const previous = latest.get(key);\n  // Ties go to the start: when in doubt, leave the chip on.\n  if (!previous || at > previous.at || (at === previous.at && /\\.started$/.test(String(row.type)))) {\n    latest.set(key, { at, row });\n  }\n}\nconst now = Date.now();\nconst out = [];\nfor (const { at, row } of latest.values()) {\n  if (!/\\.(completed|failed)$/.test(String(row.type))) continue;\n  if (now - at < SETTLE_MS) continue;\n  out.push({\n    json: {\n      specversion: '1.0',\n      id: row.id,\n      type: row.type,\n      time: row.time,\n      kind: 'event',\n      correlationid: row.correlationid ?? null,\n      data: { target_agent_id: (row.data || {}).target_agent_id ?? null, context: row.data.context },\n      sweep: true,\n    },\n    pairedItem: { item: 0 },\n  });\n}\nreturn out;\n"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          440,
+          248
+        ],
+        "id": "37f3ccd4-695b-5620-96d4-e13df57b4e4f",
+        "name": "Sweep — Ended Tickets"
       }
     ],
     "connections": {
-      "Invocation Started": {
-        "main": [
-          [
-            {
-              "node": "Chip — Target",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Invocation Ended": {
-        "main": [
-          [
-            {
-              "node": "Chip — Target",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "Chip — Target": {
         "main": [
           [
@@ -296,6 +321,50 @@
             }
           ]
         ]
+      },
+      "Invocation Lifecycle": {
+        "main": [
+          [
+            {
+              "node": "Chip — Target",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Stale Chip Sweep": {
+        "main": [
+          [
+            {
+              "node": "Sweep — Ended Turns",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Sweep — Ended Turns": {
+        "main": [
+          [
+            {
+              "node": "Sweep — Ended Tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Sweep — Ended Tickets": {
+        "main": [
+          [
+            {
+              "node": "Chip — Target",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "settings": {
@@ -303,7 +372,7 @@
       "saveManualExecutions": true
     },
     "pinData": {
-      "Invocation Started": [
+      "Invocation Lifecycle": [
         {
           "json": {
             "actor": {

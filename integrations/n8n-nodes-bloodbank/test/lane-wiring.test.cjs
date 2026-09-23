@@ -40,11 +40,42 @@ test('the lane is exactly four workflows, all active', () => {
   for (const name of names) assert.equal(workflow(name).active, true, name);
 });
 
-test('Plane → Bloodbank sends unrouted boards to ntfy', () => {
+test('Plane → Bloodbank pages an unrouted board at most once a day', () => {
   const wf = workflow('plane-bloodbank');
   assert.equal(node(wf, 'Normalize and Publish').typeVersion, 2); // v2 has the Unrouted output
-  assert.deepEqual(out(wf, 'Normalize and Publish', 1), ['Unrouted Board']);
+  assert.deepEqual(out(wf, 'Normalize and Publish', 1), ['Unrouted — Once a Day']);
+  assert.deepEqual(out(wf, 'Unrouted — Once a Day', 0), ['Unrouted — First Today?']);
+  assert.deepEqual(out(wf, 'Unrouted — First Today?', 0), ['Unrouted Board']);
+  // A muted delivery must still end on a node with an item: the webhook
+  // answers with the last node's output, and an empty one is an HTTP 500.
+  assert.deepEqual(out(wf, 'Unrouted — First Today?', 1), ['Unrouted — Muted']);
+  assert.equal(node(wf, 'Plane Webhook').parameters.responseMode, 'lastNode');
+  assert.equal(node(wf, 'Unrouted — First Today?').parameters.conditions.conditions[0].leftValue, '={{ $json.notify }}');
   assertLifecyclePush(wf, 'Unrouted Board');
+});
+
+test('the once-a-day gate keys on the board and forgets after 24h', () => {
+  const gate = node(workflow('plane-bloodbank'), 'Unrouted — Once a Day').parameters.jsCode;
+  const store = {};
+  const realNow = Date.now;
+  let now = Date.parse('2026-09-23T00:00:00Z');
+  Date.now = () => now;
+  try {
+    const runGate = (items) =>
+      new Function('$input', '$getWorkflowStaticData', gate)({ all: () => items }, () => store);
+    const delivery = (board) => ({ json: { board_id: board, plane_event: 'issue.created', reason: 'unrouted' } });
+    const first = runGate([delivery('B1'), delivery('B1'), delivery('B2')]);
+    assert.deepEqual(first.map((i) => i.json.notify), [true, false, true]);
+    assert.equal(first[1].json.muted_until, '2026-09-24T00:00:00.000Z');
+    assert.equal(first[0].json.board_id, 'B1'); // the page still has everything it prints
+    now += 23 * 3600 * 1000;
+    assert.deepEqual(runGate([delivery('B1')]).map((i) => i.json.notify), [false]);
+    now += 2 * 3600 * 1000;
+    assert.deepEqual(runGate([delivery('B1')]).map((i) => i.json.notify), [true]);
+    assert.deepEqual(Object.keys(store.unroutedBoardPagedAt).sort(), ['B1'], 'expired boards are pruned');
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test('Ticket Grooming pushes Dispatched and every Skipped item', () => {
@@ -105,11 +136,76 @@ test('chip is a straight line with every Plane call guarded', () => {
   const line = ['Chip — Target', 'Chip — List Labels', 'Chip — Resolve Label', 'Chip — Read Issue',
     'Chip — Plan Write', 'Chip — Write Labels', 'Chip — Check Write'];
   for (let i = 0; i < line.length - 1; i++) assert.deepEqual(out(chip, line[i], 0), [line[i + 1]], line[i]);
-  assert.deepEqual(out(chip, 'Invocation Started', 0), ['Chip — Target']);
-  assert.deepEqual(out(chip, 'Invocation Ended', 0), ['Chip — Target']);
-  for (const http of chip.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequest')) {
+  assert.deepEqual(out(chip, 'Invocation Lifecycle', 0), ['Chip — Target']);
+  const planeCalls = chip.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequest' && n.parameters.url.includes('plane.delo.sh'));
+  assert.equal(planeCalls.length, 3);
+  for (const http of planeCalls) {
     assert.equal(http.onError, 'continueRegularOutput', http.name);
   }
+});
+
+test('one durable trigger carries the whole turn, so started is handled before its end', () => {
+  const triggers = chip.nodes.filter((n) => n.type === 'n8n-nodes-bloodbank.bloodbankTrigger');
+  assert.equal(triggers.length, 1, 'two triggers would be two durables with no order between them');
+  const [lifecycle] = triggers;
+  assert.equal(lifecycle.name, 'Invocation Lifecycle');
+  assert.deepEqual(lifecycle.parameters.events, [
+    'bloodbank.agent.invocation.started',
+    'bloodbank.agent.invocation.completed',
+    'bloodbank.agent.invocation.failed',
+  ]);
+  // Durable delivery acknowledged after each execution is the default; the
+  // export must not opt out of either.
+  assert.ok(!('delivery' in lifecycle.parameters) || lifecycle.parameters.delivery === 'durable');
+  assert.ok(!('acknowledge' in lifecycle.parameters) || lifecycle.parameters.acknowledge === 'afterExecution');
+  assert.deepEqual(lifecycle.parameters.dataMatch.conditions, [
+    { path: 'data.context.reason', values: 'ticket-grooming,ticket-delegation' },
+  ]);
+});
+
+test('an hourly sweep over Candystore feeds ended turns into the chip line', () => {
+  assert.equal(node(chip, 'Stale Chip Sweep').type, 'n8n-nodes-base.scheduleTrigger');
+  assert.deepEqual(node(chip, 'Stale Chip Sweep').parameters.rule.interval, [{ field: 'hours', hoursInterval: 1 }]);
+  assert.deepEqual(out(chip, 'Stale Chip Sweep', 0), ['Sweep — Ended Turns']);
+  assert.deepEqual(out(chip, 'Sweep — Ended Turns', 0), ['Sweep — Ended Tickets']);
+  assert.deepEqual(out(chip, 'Sweep — Ended Tickets', 0), ['Chip — Target']);
+  const query = Object.fromEntries(
+    node(chip, 'Sweep — Ended Turns').parameters.queryParameters.parameters.map((p) => [p.name, p.value]),
+  );
+  assert.equal(query.service, 'bloodbank-hermes-gateway');
+  assert.deepEqual(query.type.split(','), [
+    'bloodbank.agent.invocation.started',
+    'bloodbank.agent.invocation.completed',
+    'bloodbank.agent.invocation.failed',
+  ]);
+});
+
+const sweepRow = (type, minutesAgo, ticket, extra = {}) => ({
+  id: `${type}-${ticket}-${minutesAgo}`,
+  type,
+  time: new Date(Date.now() - minutesAgo * 60000).toISOString(),
+  correlationid: `cid-${ticket}`,
+  data: { target_agent_id: '33god-pm', context: { ...context, ticket_id: ticket, ...extra } },
+});
+
+test('the sweep removes only chips whose ticket\'s last turn ended and settled', () => {
+  const rows = [
+    sweepRow('bloodbank.agent.invocation.completed', 30, 'done'),
+    sweepRow('bloodbank.agent.invocation.started', 40, 'done'),
+    sweepRow('bloodbank.agent.invocation.started', 5, 'running'),
+    sweepRow('bloodbank.agent.invocation.completed', 50, 'running'),
+    sweepRow('bloodbank.agent.invocation.failed', 3, 'just-failed'),
+    sweepRow('bloodbank.agent.invocation.failed', 90, 'failed'),
+    sweepRow('bloodbank.agent.invocation.completed', 60, 'not-a-ticket-turn', { reason: 'cron' }),
+    sweepRow('bloodbank.agent.invocation.completed', 60, 'no-board', { board_id: undefined }),
+  ];
+  const swept = run('Sweep — Ended Tickets', [{ json: { events: rows } }]);
+  assert.deepEqual(swept.map((i) => i.json.data.context.ticket_id).sort(), ['done', 'failed']);
+  // What it emits is what Chip — Target already understands: a remove.
+  const targets = run('Chip — Target', swept);
+  assert.deepEqual(targets.map((i) => i.json.action), ['remove', 'remove']);
+  assert.equal(run('Sweep — Ended Tickets', [{ json: { events: [] } }]).length, 0);
+  assert.equal(run('Sweep — Ended Tickets', [{ json: {} }]).length, 0);
 });
 
 test('chip target maps started to add and completed/failed to remove', () => {

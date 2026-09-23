@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-bloodbank",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Schema-backed n8n publisher, consumer trigger, Plane webhook ingress and agent-fleet dispatch for the 33GOD Bloodbank NATS bus",
   "keywords": [
     "n8n-community-node-package",
@@ -46,6 +46,8 @@
     "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
+    "@nats-io/jetstream": "3.4.0",
+    "@nats-io/nats-core": "3.4.0",
     "@nats-io/transport-node": "3.4.0",
     "ajv": "8.17.1",
     "ajv-formats": "3.0.1",

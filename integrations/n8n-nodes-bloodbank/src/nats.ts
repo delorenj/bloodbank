@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
+import { headers as natsHeaders } from '@nats-io/nats-core';
 import {
   connect,
 } from '@nats-io/transport-node';
@@ -260,12 +261,34 @@ function replyEnvelope(
   };
 }
 
+/** JetStream's de-duplication id for a message, when it has a stable one.
+ *
+ * A command's command_id is a pure function of what caused it (see
+ * `fleetCommandId`), so stamping it as `Nats-Msg-Id` lets BLOODBANK_COMMANDS
+ * drop a republished duplicate inside its duplicate window before any consumer
+ * sees it. Events and replies carry no header: their ids are not guaranteed
+ * stable, and a header on them would buy nothing.
+ */
+export function messageDedupId(envelope: Record<string, unknown>): string | undefined {
+  if (envelope.kind !== 'command') return undefined;
+  const id = envelope.command_id;
+  return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+}
+
 async function publishOnConnection(
   connection: NatsConnection,
   subject: string,
   envelope: Record<string, unknown>,
 ): Promise<void> {
-  connection.publish(subject, Buffer.from(JSON.stringify(envelope), 'utf8'));
+  const payload = Buffer.from(JSON.stringify(envelope), 'utf8');
+  const dedupId = messageDedupId(envelope);
+  if (dedupId) {
+    const headers = natsHeaders();
+    headers.set('Nats-Msg-Id', dedupId);
+    connection.publish(subject, payload, { headers });
+  } else {
+    connection.publish(subject, payload);
+  }
   await connection.flush();
 }
 

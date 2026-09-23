@@ -14,6 +14,7 @@ export type { EventSchema, EventDataField, ProviderAlias } from './nodes/Bloodba
 export {
   buildEnvelope,
   deterministicUuid,
+  messageDedupId,
   publish,
   publishReply,
   subjectFor,
@@ -35,7 +36,7 @@ export {
   ticketFactsFromEnvelope,
 } from './fleet';
 export type { FleetRoute, TicketFacts } from './fleet';
-export { executionMode } from './nodes/Fleet/Fleet.node';
+export { executionMode, stableObservedAt } from './nodes/Fleet/Fleet.node';
 export {
   canonicalTypeForProviderEvent,
   classifyPlaneWebhook,
@@ -68,6 +69,24 @@ export {
 } from './options';
 export { bindingMatches, bindingSubject, canonicalTypeFor, sampleEnvelope } from './bindings';
 export { findLatestMatching } from './jetstream';
+export {
+  consumeDurable,
+  DURABLE_DEFAULTS,
+  durableConsumerName,
+  durableCreateConfig,
+  durableDrift,
+  durableMutableConfig,
+  durableTransport,
+  ensureDurableConsumer,
+  isConsumerNotFound,
+} from './durable';
+export type { DurableBackend, DurableMessage, EnsureResult } from './durable';
 export type { DirectGetter, StoredMessage } from './jetstream';
 export { matchesDataConditions, parseDataConditions, valueAtPath } from './match';
-export { manualTestEnvelope, triggerAccepts } from './nodes/BloodbankTrigger/BloodbankTrigger.node';
+export {
+  awaitExecution,
+  decideTriggerMessage,
+  EXECUTION_WAIT_CAP_MS,
+  manualTestEnvelope,
+  triggerAccepts,
+} from './nodes/BloodbankTrigger/BloodbankTrigger.node';

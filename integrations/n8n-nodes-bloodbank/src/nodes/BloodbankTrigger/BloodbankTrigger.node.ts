@@ -9,6 +9,8 @@ import type {
 import { NodeOperationError } from 'n8n-workflow';
 
 import { bindingMatches, bindingSubject, canonicalTypeFor, sampleEnvelope } from '../../bindings';
+import { consumeDurable, durableConsumerName, durableTransport } from '../../durable';
+import type { DurableVerdict } from '../../durable';
 import {
   COMMANDS_STREAM,
   EVENTS_STREAM,
@@ -83,6 +85,78 @@ export function triggerAccepts(
     : envelope.type === bindings[0];
   return bound && matchesDataConditions(envelope, conditions);
 }
+
+/** What one delivered message means to this trigger. */
+export type TriggerDecision =
+  | { verdict: 'emit'; envelope: Record<string, unknown> }
+  | { verdict: 'filtered' }
+  | { verdict: 'rejected'; reason: string };
+
+/** Decode, bind and filter one delivered message, before anything is emitted.
+ *
+ * Shared by the core-NATS and the durable paths so both accept and refuse
+ * exactly the same messages. `filtered` is a well-formed message this trigger
+ * is not bound to (another alias, another data value); `rejected` is a
+ * malformed one, which becomes a failed execution.
+ */
+export function decideTriggerMessage(
+  kind: Kind,
+  bindings: string[],
+  conditions: DataCondition[],
+  data: Uint8Array,
+): TriggerDecision {
+  try {
+    const decoded = JSON.parse(Buffer.from(data).toString('utf8'));
+    const envelope = record(decoded);
+    if (!envelope) throw new Error('envelope must be a JSON object');
+    if (envelope.kind !== kind) {
+      throw new Error(`subject delivered kind=${String(envelope.kind)} to ${kind} trigger`);
+    }
+    // Bindings and the data filter both decide BEFORE emit: a message
+    // that fails either never becomes an execution.
+    if (!triggerAccepts(kind, bindings, conditions, envelope)) return { verdict: 'filtered' };
+    if (kind === 'command' && envelope.delivery !== 'single_consumer') {
+      throw new Error('command delivery must be single_consumer');
+    }
+    if (
+      kind === 'command' &&
+      (typeof envelope.command_id !== 'string' || !envelope.command_id.trim())
+    ) {
+      throw new Error('command_id must be a non-empty string');
+    }
+    if (
+      kind === 'command' &&
+      (typeof envelope.idempotency_key !== 'string' || !envelope.idempotency_key.trim())
+    ) {
+      throw new Error('idempotency_key must be a non-empty string');
+    }
+    return { verdict: 'emit', envelope };
+  } catch (error) {
+    return { verdict: 'rejected', reason: (error as Error).message };
+  }
+}
+
+/** Wait for an emitted execution to finish, bounded; never throws. */
+export async function awaitExecution(done: Promise<unknown>, maxWaitMs: number): Promise<'finished' | 'failed' | 'timeout'> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      done.then(
+        () => 'finished' as const,
+        () => 'failed' as const,
+      ),
+      new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), maxWaitMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** Longest an execution may hold its trigger's queue before the next message goes. */
+export const EXECUTION_WAIT_CAP_MS = 5 * 60 * 1000;
 
 export interface ReplayResult {
   envelope: Record<string, unknown>;
@@ -246,6 +320,62 @@ export class BloodbankTrigger implements INodeType {
         ],
       },
       {
+        displayName: 'Delivery',
+        name: 'delivery',
+        type: 'options',
+        noDataExpression: true,
+        options: [
+          {
+            name: 'Durable',
+            value: 'durable',
+            description:
+              'A JetStream durable consumer per workflow and node. Events published while n8n restarts or the workflow is re-saved are delivered when it is back, in order.',
+          },
+          {
+            name: 'Ephemeral',
+            value: 'ephemeral',
+            description:
+              'A plain NATS subscription. Only hears what is published while the workflow is active; anything sent during a restart or re-save is lost.',
+          },
+        ],
+        default: 'durable',
+        displayOptions: { show: { messageKind: ['event'] } },
+        description:
+          'How an active workflow receives events. The durable is named n8n-<workflow id>-<node id> on BLOODBANK_EVENTS, starts at the newest event on first activation, survives deactivation, and is deleted by the server after 7 days unused.',
+      },
+      {
+        displayName: 'Acknowledge',
+        name: 'acknowledge',
+        type: 'options',
+        noDataExpression: true,
+        options: [
+          {
+            name: 'After Execution Finishes',
+            value: 'afterExecution',
+            description:
+              'One execution at a time, in stream order; the event is acknowledged when its execution ends (success or error). A crash mid-execution redelivers it.',
+          },
+          {
+            name: 'On Emit',
+            value: 'onEmit',
+            description:
+              'Acknowledge as soon as the execution starts; executions may overlap and finish out of order. For long-running workflows.',
+          },
+        ],
+        default: 'afterExecution',
+        displayOptions: { show: { messageKind: ['event'], delivery: ['durable'] } },
+      },
+      {
+        displayName: 'Catch-Up Window (Hours)',
+        name: 'catchUpHours',
+        type: 'number',
+        typeOptions: { minValue: 0 },
+        default: 24,
+        displayOptions: { show: { messageKind: ['event'], delivery: ['durable'] } },
+        description:
+          'Events older than this when they are delivered are acknowledged and skipped instead of starting an execution, so re-activating a workflow after a long break does not replay days of history. 0 = no limit (the stream keeps 7 days).',
+      },
+      {
         displayName: 'Test Event Source',
         name: 'testEventSource',
         type: 'options',
@@ -353,6 +483,91 @@ export class BloodbankTrigger implements INodeType {
       throw new NodeOperationError(this.getNode(), 'Queue Group must not be empty');
     }
 
+    const reject = (subject: string, reason: string): void => {
+      this.saveFailedExecution(
+        new NodeOperationError(
+          this.getNode(),
+          `Rejected malformed Bloodbank message on ${subject}: ${reason}`,
+        ),
+      );
+    };
+
+    // Durable delivery: an active event trigger that has not opted out. Manual
+    // "Wait for Live" tests always use a throwaway subscription, so a test
+    // never competes with (or acknowledges for) the active workflow's durable.
+    const delivery = kind === 'event' && this.getMode() !== 'manual'
+      ? String(this.getNodeParameter('delivery', 'durable'))
+      : 'ephemeral';
+    if (delivery === 'durable') {
+      const workflow = this.getWorkflow();
+      const node = this.getNode();
+      let durable: string;
+      try {
+        durable = durableConsumerName(workflow.id, node.id);
+      } catch (error) {
+        throw new NodeOperationError(node, (error as Error).message);
+      }
+      const acknowledge = String(this.getNodeParameter('acknowledge', 'afterExecution'));
+      const catchUpHours = Number(this.getNodeParameter('catchUpHours', 24));
+      const logger = this.logger;
+      const backend = await durableTransport.backend({
+        ...natsOptions,
+        stream: EVENTS_STREAM,
+        name: durable,
+        subjects,
+        description: `n8n "${workflow.name ?? workflow.id}" (${workflow.id}) node "${node.name}"`,
+        onEnsured: (result) => {
+          if (result.action !== 'unchanged') {
+            logger.info(`Bloodbank durable ${durable} ${result.action}`, {
+              durable,
+              drift: result.drift,
+              workflowId: workflow.id,
+            });
+          }
+        },
+      });
+      let stale = 0;
+      const subscription = await consumeDurable(backend, {
+        catchUpWindowMs: Number.isFinite(catchUpHours) && catchUpHours > 0 ? catchUpHours * 3600_000 : 0,
+        onStale: (message, ageMs) => {
+          stale += 1;
+          logger.warn(
+            `Bloodbank durable ${durable} skipped ${message.subject} #${message.seq}: ${Math.round(ageMs / 60000)} min old, outside the catch-up window (${stale} so far)`,
+          );
+        },
+        onWarning: (message, error) =>
+          logger.warn(`Bloodbank durable ${durable}: ${message}${error ? `: ${error.message}` : ''}`),
+        onFatal: (error) => this.emitError(error),
+        onMessage: async (message): Promise<DurableVerdict> => {
+          const decision = decideTriggerMessage(kind, bindings, conditions, message.data);
+          if (decision.verdict === 'filtered') return 'ack';
+          if (decision.verdict === 'rejected') {
+            reject(message.subject, decision.reason);
+            return 'term';
+          }
+          const item = { json: decision.envelope as IDataObject };
+          if (acknowledge === 'onEmit') {
+            this.emit([[item]]);
+            return 'ack';
+          }
+          const donePromise = this.helpers.createDeferredPromise<IRun>();
+          this.emit([[item]], undefined, donePromise);
+          const outcome = await awaitExecution(donePromise.promise, EXECUTION_WAIT_CAP_MS);
+          if (outcome === 'timeout') {
+            logger.warn(
+              `Bloodbank durable ${durable}: execution for ${message.subject} #${message.seq} still running after ${EXECUTION_WAIT_CAP_MS / 1000}s; acknowledged and moving on`,
+            );
+          }
+          // A failed execution is still acknowledged: n8n recorded it, and a
+          // redelivery would fail the same way.
+          return 'ack';
+        },
+      });
+      return {
+        closeFunction: () => subscription.close(),
+      };
+    }
+
     const subscription = await subscribe({
       subjects,
       queue,
@@ -360,42 +575,13 @@ export class BloodbankTrigger implements INodeType {
       name: `n8n-bloodbank-${kind}-trigger`,
       onError: (error) => this.emitError(error),
       onMessage: async (message) => {
-        let envelope: Record<string, unknown>;
-        try {
-          const decoded = JSON.parse(Buffer.from(message.data).toString('utf8'));
-          const candidate = record(decoded);
-          if (!candidate) throw new Error('envelope must be a JSON object');
-          envelope = candidate;
-          if (envelope.kind !== kind) {
-            throw new Error(`subject delivered kind=${String(envelope.kind)} to ${kind} trigger`);
-          }
-          // Bindings and the data filter both decide BEFORE emit: a message
-          // that fails either never becomes an execution.
-          if (!triggerAccepts(kind, bindings, conditions, envelope)) return;
-          if (kind === 'command' && envelope.delivery !== 'single_consumer') {
-            throw new Error('command delivery must be single_consumer');
-          }
-          if (
-            kind === 'command' &&
-            (typeof envelope.command_id !== 'string' || !envelope.command_id.trim())
-          ) {
-            throw new Error('command_id must be a non-empty string');
-          }
-          if (
-            kind === 'command' &&
-            (typeof envelope.idempotency_key !== 'string' || !envelope.idempotency_key.trim())
-          ) {
-            throw new Error('idempotency_key must be a non-empty string');
-          }
-        } catch (error) {
-          this.saveFailedExecution(
-            new NodeOperationError(
-              this.getNode(),
-              `Rejected malformed Bloodbank message on ${message.subject}: ${(error as Error).message}`,
-            ),
-          );
+        const decision = decideTriggerMessage(kind, bindings, conditions, message.data);
+        if (decision.verdict === 'filtered') return;
+        if (decision.verdict === 'rejected') {
+          reject(message.subject, decision.reason);
           return;
         }
+        const envelope = decision.envelope;
 
         const item = { json: envelope as IDataObject };
         if (kind === 'event' || processing === 'async') {

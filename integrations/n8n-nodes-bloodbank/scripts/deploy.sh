@@ -121,7 +121,7 @@ EXPECTED_VERSION="$(node -p "require('$PKG_DIR/package.json').version")"
 node - "$DEST_DIR" "$EXPECTED_VERSION" <<'NODE'
 const destination = process.argv[2];
 const expectedVersion = process.argv[3];
-for (const dependency of ['@nats-io/transport-node', 'yaml', 'ajv']) {
+for (const dependency of ['@nats-io/transport-node', '@nats-io/jetstream', '@nats-io/nats-core', 'yaml', 'ajv']) {
   require.resolve(dependency, { paths: [destination] });
 }
 const pkg = require(destination + '/package.json');

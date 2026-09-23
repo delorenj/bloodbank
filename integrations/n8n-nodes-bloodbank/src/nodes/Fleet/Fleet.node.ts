@@ -103,6 +103,28 @@ export async function executionMode(projectPath: string): Promise<string> {
   }
 }
 
+const RFC3339 =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
+/** The causing event's time, as the command's `time`, so a replay is byte-identical.
+ *
+ * The gateway journals a command under its command_id AND a sha256 of the
+ * whole envelope. With a wall-clock `time`, a redelivered trigger event made
+ * the same command_id with a different digest, which the gateway terminally
+ * rejects as a collision. Stamping the causing event's own time makes the
+ * rebuilt envelope identical, so the gateway recognises it as the command it
+ * already has (in flight: nak and retry later; finished: replay the journaled
+ * outcome) instead. A valid RFC 3339 value is kept verbatim; anything else that
+ * still parses is normalised; unusable input falls back to now.
+ */
+export function stableObservedAt(value: unknown): string | undefined {
+  const raw = optionalText(value);
+  if (!raw) return undefined;
+  if (RFC3339.test(raw) && !Number.isNaN(Date.parse(raw))) return raw;
+  const parsed = Date.parse(raw);
+  return Number.isNaN(parsed) ? undefined : new Date(parsed).toISOString();
+}
+
 const mapping = (
   displayName: string,
   name: string,
@@ -254,6 +276,12 @@ export class Fleet implements INodeType {
         '={{ $json.id }}',
         'Event that caused this dispatch. Also makes the command id — and so its idempotency key — deterministic.',
       ),
+      mapping(
+        'Observed At',
+        'observedAt',
+        '={{ $json.time }}',
+        'Time of the event that caused this dispatch, stamped as the command time so a redelivered trigger rebuilds a byte-identical command the gateway de-duplicates. Blank: now.',
+      ),
       {
         displayName: 'Publish Skip Events',
         name: 'publishSkips',
@@ -345,6 +373,7 @@ export class Fleet implements INodeType {
           optionalText(envelope.correlationid) ||
           ticketCorrelationId(facts.boardId, facts.ticketId || facts.ticketKey);
         const causationId = mapped('causationId') || optionalText(envelope.id);
+        const observedAt = stableObservedAt(mapped('observedAt') || optionalText(envelope.time));
         const reasonForInvocation = invocationReason(operation);
 
         const ticketJson = {
@@ -399,6 +428,7 @@ export class Fleet implements INodeType {
                   : undefined,
                 correlationId,
                 causationId,
+                observedAt,
                 orderingKey: facts.ticketId
                   ? `task:${facts.repo || facts.boardId || 'unknown'}:${facts.ticketId}`
                   : undefined,
@@ -511,8 +541,10 @@ export class Fleet implements INodeType {
         // The ticket is the conversation: correlation comes from the causing
         // envelope, else from the ticket itself. Idempotency is separate: the
         // command id is derived from the causing event id, so a redelivered
-        // trigger event republishes the same command_id and idempotency_key and
-        // the gateway drops the duplicate.
+        // trigger event republishes the same command_id and idempotency_key,
+        // and `observedAt` (the causing event's time) makes the whole envelope
+        // byte-identical, which is what the gateway's journal keys on (command_id
+        // plus an envelope digest): the duplicate is recognised, not rejected.
         const commandId = fleetCommandId(causationId, operation, route.agentId);
         const result = await send({
           type: INVOCATION_COMMAND_TYPE,
@@ -537,6 +569,7 @@ export class Fleet implements INodeType {
           eventId: commandId,
           correlationId,
           causationId,
+          observedAt,
           source: FLEET_SOURCE,
           host: conn.natsHost || undefined,
           port: conn.natsPort ? Number(conn.natsPort) : undefined,
