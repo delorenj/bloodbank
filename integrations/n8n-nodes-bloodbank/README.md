@@ -434,14 +434,24 @@ and before 0.7.0 the turn's remove at the end took the claim marker off with it.
 Now every remove, live or swept, first reads the ticket's activity (*Chip — Read
 Activity*: newest 100 rows; *Chip — Read Issue* expands the state) back to the
 last time `agent:working` went on — the chip's own add at turn start, or a
-claim's — and leaves the label if, since then, the ticket moved into a
-`started`-group state or gained an assignee. The gateway's terminal events carry
-no turn start time, so the label's own add is the turn start as Plane recorded
-it. With no record of the add in that page, the current state decides: a ticket
-in a `started` state keeps its chip. Grooming turns neither move a ticket into
-`started` nor assign it, so their chip still comes off at the end. One
-consequence: a delegation turn that parks a blocked ticket in a `started`-group
-state such as *Needs Attention* also keeps its chip.
+claim's — and leaves the label if, since then, the ticket moved into *In
+Progress* or gained an assignee. The gateway's terminal events carry no turn
+start time, so the label's own add is the turn start as Plane recorded it. With
+no record of the add in that page, the current state decides: a ticket In
+Progress keeps its chip. Grooming turns neither move a ticket into In Progress
+nor assign it, so their chip still comes off at the end.
+
+Only *In Progress* counts as a claim state, matched by name, case-insensitively:
+it is what `px claim` targets (`resolveState('In Progress', 'started')`), what
+every `role.yaml` maps its started lane to, and the move the delegation prompt
+calls the claim. Plane's `started` group also holds each board's blocked lane
+(*Needs Attention* or *Awaiting Decision*) and its review lanes. The delegation
+prompt parks a ticket it cannot delegate in the blocked lane; that ticket is
+waiting on a person, so its chip comes off at the turn end, and the sweep, which
+runs the same check, is not kept off it either. (0.7.0 counted every
+`started`-group state, so a parked ticket kept `agent:working` for good.) A board
+with no *In Progress* state (TIKT's pipeline lanes) gets no state evidence;
+`px claim` there still assigns the caller, and that counts.
 
 *Proven live on 2026-09-23 (0.7.0):* 33GOD-70's grooming turn started at
 06:44:30Z (chip on at :31); `px claim 33GOD-70` ran at 06:49:34 while the turn

@@ -370,6 +370,49 @@ test('a claim made during the turn also keeps the sweep off it later', () => {
   assert.deepEqual(plan(sweepRemove, ticket(backlog), history(chipOn))[0].json.labels, ['a']);
 });
 
+// Only In Progress is a claim. Every routed board's blocked lane (Needs
+// Attention, Awaiting Decision) and its review lanes are in Plane's `started`
+// group too, and the delegation prompt tells the PM to park a ticket it cannot
+// delegate in the blocked lane. That is a ticket waiting on a person, not one an
+// agent has: its chip must come off at the turn end, and the sweep must not be
+// kept off it either, or nothing ever clears it.
+const needsAttention = { id: 'state-needs-attention', name: 'Needs Attention', color: '#EF4444', group: 'started' };
+const awaitingDecision = { id: 'state-awaiting-decision', name: 'Awaiting Decision', color: '#EF4444', group: 'started' };
+const e2e = { id: 'state-e2e', name: 'E2E Testing & QA', color: '#8B5CF6', group: 'started' };
+const moveTo = (state, ms) => row('state', ms, { old_value: 'Todo', new_value: state.name, old_identifier: 'state-todo', new_identifier: state.id });
+
+test('a delegation turn that parks a blocked ticket loses its chip, live and on the sweep', () => {
+  const sweepRemove = { ...liveRemove, sweep: true };
+  for (const parked of [needsAttention, awaitingDecision]) {
+    const parkedTurn = history(chipOn, moveTo(parked, 90000), row('comment', 91000));
+    assert.deepEqual(plan(liveRemove, ticket(parked), parkedTurn)[0].json.labels, ['a'], `${parked.name}, live`);
+    // updated_at is before the turn ended: nothing touched it since.
+    assert.deepEqual(plan(sweepRemove, ticket(parked), parkedTurn)[0].json.labels, ['a'], `${parked.name}, sweep`);
+    // With no record of the chip going on, a parked ticket is not a claimed one either.
+    assert.deepEqual(plan(liveRemove, ticket(parked), { results: [] })[0].json.labels, ['a'], `${parked.name}, no record`);
+  }
+  // A move into a review lane is a worker finishing, not claiming.
+  assert.deepEqual(plan(liveRemove, ticket(e2e), history(chipOn, moveTo(e2e, 90000)))[0].json.labels, ['a']);
+  // Claimed, then parked: the ticket is waiting on a person now, the claim is over.
+  const claimedThenParked = history(chipOn, toInProgress(60000), moveTo(needsAttention, 120000));
+  assert.deepEqual(plan(liveRemove, ticket(needsAttention), claimedThenParked)[0].json.labels, ['a']);
+});
+
+test('a move to In Progress still keeps the chip, whatever the state is called in case', () => {
+  const sweepRemove = { ...liveRemove, sweep: true };
+  // Parked earlier, claimed during this turn: the claim stands.
+  const unparked = history(moveTo(needsAttention, -3600 * 1000), chipOn, row('state', 90000, {
+    old_value: 'Needs Attention', new_value: 'In Progress', old_identifier: needsAttention.id, new_identifier: inProgress.id,
+  }));
+  assert.equal(plan(liveRemove, ticket(inProgress), unparked).length, 0);
+  assert.equal(plan(sweepRemove, ticket(inProgress), unparked).length, 0);
+  // pilot resolves the state name case-insensitively; so does the chip.
+  const lower = { ...inProgress, name: 'in progress ' };
+  assert.equal(plan(liveRemove, ticket(lower), history(chipOn, toInProgress(90000))).length, 0);
+  // An assignee added is still a claim in a blocked lane (px claim --state, or a person taking it).
+  assert.equal(plan(liveRemove, ticket(needsAttention), history(chipOn, moveTo(needsAttention, 60000), assigned(90000))).length, 0);
+});
+
 test('an add never waits on the activity read', () => {
   const add = { action: 'add', labelId, ticketKey: 'JIMB-1', board };
   assert.deepEqual(plan(add, { labels: ['a'] }, { error: { httpCode: '502' } })[0].json.labels, ['a', labelId]);
