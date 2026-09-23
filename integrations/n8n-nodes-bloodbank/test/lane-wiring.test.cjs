@@ -240,11 +240,14 @@ test('the sweep leaves a chip alone on a ticket changed after the turn ended', (
   // Delegation turn ends at T, the worker it spawned runs `px claim` at T+20min:
   // the claim marker stays.
   assert.equal(run('Chip — Plan Write', issue(at(20 * 60000)), { upstream: sweepTarget() }).length, 0);
-  // Anything later than the slack counts, however small the change.
-  assert.equal(run('Chip — Plan Write', issue(at(31000)), { upstream: sweepTarget() }).length, 0);
+  // A claim seconds after the turn survives too: the live lane took its chip
+  // off ~0.5s after the end, so a label present later was put back by someone.
+  assert.equal(run('Chip — Plan Write', issue(at(10000)), { upstream: sweepTarget() }).length, 0);
+  assert.equal(run('Chip — Plan Write', issue(at(5001)), { upstream: sweepTarget() }).length, 0);
   // Untouched since the turn: the stuck chip comes off. Plane reports
   // updated_at in the server's local offset; that is the same instant.
   assert.deepEqual(run('Chip — Plan Write', issue(at(-5 * 60000)), { upstream: sweepTarget() })[0].json.labels, ['a']);
+  assert.deepEqual(run('Chip — Plan Write', issue(at(5000)), { upstream: sweepTarget() })[0].json.labels, ['a']);
   assert.deepEqual(run('Chip — Plan Write', issue('2026-09-23T00:46:07.100000-04:00'), { upstream: sweepTarget() })[0].json.labels, ['a']);
   // Unknown times prove nothing: the chip stays.
   assert.equal(run('Chip — Plan Write', issue(undefined), { upstream: sweepTarget() }).length, 0);
