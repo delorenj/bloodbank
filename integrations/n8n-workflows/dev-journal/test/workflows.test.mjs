@@ -90,20 +90,87 @@ test('ingress stores one immutable generation before returning its Bloodbank rec
 });
 
 test('extractor receives full report and covers Needs you plus collector caveats', async () => {
-  const env = store(['reports']);
+  const env = store(['reports', 'findings']);
   const date = '2026-09-23';
   const content = { markdown: 'FULL JOURNAL BODY',
     report: { sections: [{ id: 'summary', body: '## Needs you\n- Broken broker\n- Missing report\n## What happened' }] },
     collector_facts: [{ id: 'delivery', status: 'partial', summary: 'Two missing', caveats: ['Gap on Tuesday'] }] };
   env.data.get('dev_journal_reports').push({ report_key: `${date}:gen`, report_date: date,
     run_id: 'run', status: 'pending', backfill: false, payload: JSON.stringify(content), attempts: 0 });
+  env.data.get('dev_journal_findings').push({ fingerprint: 'infra:report-delivery:old-wording',
+    project_id: 'infra', area: 'report delivery', failure_mode: 'missing published reports',
+    summary: 'Report archive has missing days', status: 'open', last_seen: '2026-09-22' });
   const out = await execute('select-report', env, [{}]);
   assert.deepEqual(out[0].json.source_candidates.map((source) => source.id), [
     'needs-you:1', 'needs-you:2', 'collector:delivery:status', 'collector:delivery:caveat:1',
   ]);
   assert.ok(out[0].json.llm_request.messages[1].content.includes('FULL JOURNAL BODY'));
+  assert.equal(JSON.parse(out[0].json.llm_request.messages[1].content).known_findings[0].fingerprint,
+    'infra:report-delivery:old-wording');
+  assert.match(out[0].json.llm_request.messages[0].content, /existing_fingerprint/);
   assert.equal(out[0].json.llm_request.model, 'openai/gpt-4.1-mini');
   assert.equal(env.data.get('dev_journal_reports')[0].status, 'processing');
+});
+
+test('semantic recurrence uses one existing issue across report wording and project aliases', async () => {
+  const env = store(['reports', 'findings', 'occurrences', 'rollups']);
+  const anchor = 'infra:report-delivery:missing-valid-published-report-for-one-due-day';
+  env.data.get('dev_journal_findings').push({ fingerprint: anchor, project_id: 'infra',
+    area: 'report delivery', failure_mode: 'Missing valid published report for one due day',
+    summary: 'Report delivery is degraded because a due day has no valid published report',
+    status: 'open', ticket_id: 'issue-5', ticket_key: 'INFR-5', active: true,
+    first_seen: '2026-09-23', last_seen: '2026-09-23' });
+  for (const [date, project, area, failure, summary, reference] of [
+    ['2026-08-18', 'infra', 'report-delivery', 'Missing and invalid daily reports with false success claims',
+      'Report delivery degraded with five days missing and one invalid', anchor],
+    ['2026-08-19', 'delonet-daily-report', 'report delivery', 'Archive has no valid published report',
+      'Nightly report delivery has missing and invalid days', ''],
+  ]) {
+    const reportKey = `${date}:gen`;
+    env.data.get('dev_journal_reports').push({ report_key: reportKey, report_date: date,
+      source_event_id: `evt-${date}`, run_id: `run-${date}`, generation_id: 'gen',
+      status: 'processing', backfill: true, payload: JSON.stringify({ markdown: '# Journal',
+        report: { report_date: date }, collector_facts: [] }), errors: '[]',
+      received_at: `${date}T06:00:00Z` });
+    const llm = { choices: [{ message: { content: JSON.stringify({ findings: [{
+      project_id: project, area, failure_mode: failure, summary, status: 'open',
+      severity: 'high', evidence: [summary], source_ids: ['needs-you:1'],
+      ...(reference ? { existing_fingerprint: reference } : {}),
+    }], non_issues: [] }) } }] };
+    const result = await execute('process-report', env, [llm], { selected: {
+      report_key: reportKey, source_candidates: [{ id: 'needs-you:1', text: summary }],
+    } });
+    assert.equal(result[0].json.status, 'complete');
+  }
+  const occurrences = env.data.get('dev_journal_occurrences');
+  assert.equal(occurrences.length, 2);
+  assert.deepEqual(new Set(occurrences.map((row) => row.fingerprint)), new Set([anchor]));
+  assert.ok(occurrences.every((row) => row.ticket_key === 'INFR-5'));
+  assert.equal(env.data.get('dev_journal_findings').length, 1);
+  const RealDate = Date;
+  const FixedDate = class extends RealDate {
+    constructor(...args) { super(...(args.length ? args : ['2026-09-08T12:00:00Z'])); }
+  };
+  const fn = new AsyncFunction('helpers', '$input', 'ctx', 'Date', code('rollup'));
+  await fn(env.helpers, { all: () => [{ json: {} }], first: () => ({ json: {} }) }, {}, FixedDate);
+  const monthly = env.data.get('dev_journal_rollups').find((row) => row.period_key === 'monthly:2026-08');
+  assert.match(monthly.content, /infra:report-delivery:missing-or-invalid-report: 2 day\(s\)/);
+});
+
+test('recurrence references require a known, related fingerprint', () => {
+  const helpers = new Function(`${read('src/common.js')}\nreturn { semanticCategory, validRecurrenceReference };`)();
+  const report = { project_id: 'delonet-daily-report', area: 'report delivery',
+    failure_mode: 'Archive missing a published report', summary: 'Report delivery degraded' };
+  const prior = { project_id: 'infra', area: 'report-delivery',
+    failure_mode: 'Missing valid daily report', summary: 'Report archive has missing days' };
+  assert.equal(helpers.semanticCategory(report), 'infra:report-delivery:missing-or-invalid-report');
+  assert.equal(helpers.validRecurrenceReference(report, prior), true);
+  assert.equal(helpers.validRecurrenceReference(report, { project_id: 'infra', area: 'cron-jobs',
+    failure_mode: 'duplicate registration', summary: 'Cron job registered twice' }), false);
+  assert.equal(helpers.validRecurrenceReference(report, null), false);
+  assert.equal(helpers.semanticCategory({ project_id: 'infra', area: 'hermes fleet health',
+    failure_mode: 'Nine gateway units unknown to systemd or inactive',
+    summary: 'Hermes gateways are not running' }), 'infra:hermes-gateway:units-not-running');
 });
 
 test('closed monthly rollup uses weekly day slices and includes missing archive days', async () => {

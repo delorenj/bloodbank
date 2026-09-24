@@ -7,9 +7,11 @@ function monthNext(value) { const d = day(`${value.slice(0, 7)}-01`); d.setUTCMo
 function summaries(slices) {
   const areaCounts = new Map(), problemDays = new Map();
   for (const slice of slices) for (const problem of slice.incidents || []) {
-    areaCounts.set(problem.area, (areaCounts.get(problem.area) || 0) + 1);
-    if (!problemDays.has(problem.fingerprint)) problemDays.set(problem.fingerprint, new Set());
-    problemDays.get(problem.fingerprint).add(slice.date);
+    const area = canonicalArea(problem.area);
+    const id = problem.semantic_id || semanticCategory(problem) || problem.fingerprint;
+    areaCounts.set(area, (areaCounts.get(area) || 0) + 1);
+    if (!problemDays.has(id)) problemDays.set(id, new Set());
+    problemDays.get(id).add(slice.date);
   }
   const areas = [...areaCounts].sort((a, b) => b[1] - a[1]);
   const recurring = [...problemDays].filter(([, days]) => days.size > 1)
@@ -67,6 +69,8 @@ const incidentsByDay = new Map();
 for (const row of occurrences) {
   const list = incidentsByDay.get(row.report_date) || [];
   list.push({ fingerprint: row.fingerprint, area: row.area, status: row.status,
+    project_id: row.project_id, failure_mode: row.failure_mode,
+    semantic_id: semanticCategory(row) || row.fingerprint,
     severity: row.severity, summary: row.summary, ticket_key: row.ticket_key || '' });
   incidentsByDay.set(row.report_date, list);
 }

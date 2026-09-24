@@ -45,6 +45,7 @@ for (const raw of extracted.findings) {
     summary: String(raw.summary || raw.failure_mode || 'Dev Journal issue').trim().slice(0, 240),
     evidence,
     source_ids: ids,
+    existing_fingerprint: String(raw.existing_fingerprint || '').trim().slice(0, 220),
     existing_ticket_key: String(raw.existing_ticket_key || '').trim().slice(0, 40),
     resolution_evidence: String(raw.resolution_evidence || '').trim().slice(0, 400),
   });
@@ -60,14 +61,9 @@ if (!errors.length) for (const candidate of sourceCandidates) {
     failure_mode: `unclassified-${candidate.id}`, status: 'open', severity: 'medium',
     summary: `Triage Dev Journal finding: ${candidate.text.slice(0, 130)}`,
     evidence: [candidate.text.slice(0, 1000)], source_ids: [candidate.id],
-    existing_ticket_key: '', resolution_evidence: '' });
+    existing_fingerprint: '', existing_ticket_key: '', resolution_evidence: '' });
 }
 
-function slug(value) { return String(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
-function fingerprint(f) {
-  const key = [f.project_id, f.area, f.failure_mode].map(slug).join(':');
-  return key.length <= 220 ? key : `${key.slice(0, 195)}:${digest(key)}`;
-}
 async function plane(method, url, body) {
   const opts = { method, url, json: true, headers: { 'User-Agent': 'Mozilla/5.0' } };
   if (body !== undefined) { opts.body = body; opts.headers['Content-Type'] = 'application/json'; }
@@ -135,9 +131,29 @@ async function commentOnce(board, issue, occurrenceId, html) {
 }
 const known = await rows('findings');
 const knownByFingerprint = new Map(known.map((row) => [row.fingerprint, row]));
+const categoryAnchors = new Map();
+for (const prior of known) {
+  const category = semanticCategory(prior);
+  if (!category) continue;
+  const current = categoryAnchors.get(category);
+  const score = (row) => Number(Boolean(row.active && row.ticket_id)) * 2 +
+    Number(Boolean(row.ticket_id));
+  if (!current || score(prior) > score(current) ||
+      (score(prior) === score(current) &&
+        String(prior.first_seen || prior.last_seen).localeCompare(String(current.first_seen || current.last_seen)) < 0)) {
+    categoryAnchors.set(category, prior);
+  }
+}
 const groups = new Map();
 for (const finding of normalized) {
-  const id = fingerprint(finding);
+  const category = semanticCategory(finding);
+  let id = category ? categoryAnchors.get(category)?.fingerprint || category : semanticFingerprint(finding);
+  if (finding.existing_fingerprint) {
+    const reference = knownByFingerprint.get(finding.existing_fingerprint);
+    if (!validRecurrenceReference(finding, reference)) {
+      errors.push(`Unverified recurrence reference ${finding.existing_fingerprint} for ${finding.summary}`);
+    } else if (!category) id = reference.fingerprint;
+  }
   const previous = groups.get(id);
   if (previous) {
     previous.evidence = [...new Set([...previous.evidence, ...finding.evidence])].slice(0, 20);
