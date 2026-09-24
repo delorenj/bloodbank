@@ -3,6 +3,12 @@ const unfinished = reports.filter((row) => row.backfill === true && row.status !
 if (unfinished.length) throw new Error(`${unfinished.length} backfilled daily reports are not fully processed`);
 const unresolved = (await rows('findings')).filter((row) => row.status === 'open' && !row.ticket_id);
 if (!unresolved.length) return [{ json: { created: 0, attached: 0 } }];
+const occurrencesByFingerprint = new Map();
+for (const occurrence of await rows('occurrences')) {
+  const group = occurrencesByFingerprint.get(occurrence.fingerprint) || [];
+  group.push(occurrence);
+  occurrencesByFingerprint.set(occurrence.fingerprint, group);
+}
 const registry = unwrap(await helpers.httpRequest({ method: 'GET',
   url: 'http://127.0.0.1:8764/v1/registry', json: true }));
 const projects = registry.projects || {};
@@ -75,8 +81,9 @@ for (const finding of unresolved) {
     fingerprint: finding.fingerprint, board_id: boardId, ticket_id: issue.id,
     ticket_key: ticketKey, active: true,
   });
-  if (finding.last_occurrence_id) await upsert('occurrences', 'occurrence_id', finding.last_occurrence_id, {
-    occurrence_id: finding.last_occurrence_id, ticket_key: ticketKey,
-  });
+  for (const occurrence of occurrencesByFingerprint.get(finding.fingerprint) || []) {
+    if (occurrence.ticket_key !== ticketKey) await upsert('occurrences', 'occurrence_id',
+      occurrence.occurrence_id, { occurrence_id: occurrence.occurrence_id, ticket_key: ticketKey });
+  }
 }
 return [{ json: { created, attached, unresolved: unresolved.length } }];

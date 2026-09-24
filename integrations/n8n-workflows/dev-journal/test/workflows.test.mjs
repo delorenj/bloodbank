@@ -157,6 +157,40 @@ test('semantic recurrence uses one existing issue across report wording and proj
   assert.match(monthly.content, /infra:report-delivery:missing-or-invalid-report: 2 day\(s\)/);
 });
 
+test('backfill finalizer links every historical occurrence to its one Plane ticket', async () => {
+  const env = store(['reports', 'findings', 'occurrences']);
+  const fingerprint = 'infra:report-delivery:missing-or-invalid-report';
+  env.data.get('dev_journal_reports').push({ backfill: true, status: 'complete' });
+  env.data.get('dev_journal_findings').push({ fingerprint, project_id: 'infra',
+    area: 'report-delivery', failure_mode: 'missing-or-invalid-report',
+    summary: 'Daily reports are missing', severity: 'high', status: 'open',
+    first_seen: '2026-08-18', last_seen: '2026-08-19', last_occurrence_id: 'occ-2' });
+  env.data.get('dev_journal_occurrences').push(
+    { occurrence_id: 'occ-1', fingerprint, evidence: '["A missing report"]', ticket_key: '' },
+    { occurrence_id: 'occ-2', fingerprint, evidence: '["An invalid report"]', ticket_key: '' },
+    { occurrence_id: 'unrelated', fingerprint: 'other', ticket_key: '' },
+  );
+  let ticketCreates = 0;
+  env.helpers.httpRequestWithAuthentication = async (_type, request) => {
+    if (request.url.endsWith('/states/')) return { results: [
+      { id: 'backlog', name: 'Backlog', group: 'backlog' },
+    ] };
+    if (request.url.endsWith('/issues/') && request.method === 'GET') return { results: [] };
+    if (request.url.endsWith('/issues/') && request.method === 'POST') {
+      ticketCreates++;
+      return { id: 'issue-7', sequence_id: 7 };
+    }
+    throw new Error(`Unexpected Plane ${request.method} ${request.url}`);
+  };
+  const result = await execute('backfill-finalize', env, [{}]);
+  assert.equal(result[0].json.created, 1);
+  assert.equal(ticketCreates, 1);
+  assert.deepEqual(env.data.get('dev_journal_occurrences').map((row) => row.ticket_key),
+    ['INFR-7', 'INFR-7', '']);
+  assert.equal((await execute('backfill-finalize', env, [{}]))[0].json.created, 0);
+  assert.equal(ticketCreates, 1);
+});
+
 test('recurrence references require a known, related fingerprint', () => {
   const helpers = new Function(`${read('src/common.js')}\nreturn { semanticCategory, validRecurrenceReference };`)();
   const report = { project_id: 'delonet-daily-report', area: 'report delivery',
