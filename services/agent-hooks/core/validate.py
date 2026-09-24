@@ -76,7 +76,7 @@ ALLOWED_ENTITIES = frozenset({
     "file", "transcription",
     "mission", "checkpoint", "gate", "roadmap", "status",
     "sync", "account", "transaction", "subscription", "zombie_charge", "paycheck", "projection",
-    "clock", "report",
+    "clock", "report", "journal", "incident",
     "work", "receipt", "approval", "escalation", "capacity", "lease",
     "activity",
 })
@@ -87,7 +87,7 @@ EVENT_ACTIONS = frozenset({
     "opened", "closed", "spawned", "exited", "checked_out",
     "requested", "invoked", "recorded", "triaged",
     "updated", "reached", "resolved",
-    "detected", "flagged", "routed", "breached", "clocked_in", "clocked_out",
+    "detected", "flagged", "routed", "breached", "observed", "clocked_in", "clocked_out",
     "delegated", "raised", "released", "expired",
     "skipped",
 })

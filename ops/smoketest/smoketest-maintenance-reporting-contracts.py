@@ -194,6 +194,72 @@ def envelope(ce_type: str, payload: dict | None = None) -> dict:
 class MaintenanceReportingContractTests(unittest.TestCase):
     failure_types = (ContractViolation, EnvelopeInvalid)
 
+    def test_portable_journal_content_and_receipt_contracts(self) -> None:
+        report = envelope("bloodbank.reporting.report.completed")
+        report["data"]["content"] = {
+            "generation_id": "a" * 32,
+            "content_sha256": "b" * 64,
+            "markdown": "# Daily report\n",
+            "report": {"run_id": "daily-2026-07-15", "report_date": "2026-07-15", "sections": []},
+            "collector_facts": [{
+                "id": "repo-maintenance", "status": "complete", "summary": "No failures.",
+                "metrics": {"failures": 0}, "caveats": [],
+            }],
+        }
+        validate_envelope(report)
+        invalid = copy.deepcopy(report)
+        invalid["data"]["content"]["content_sha256"] = "bad"
+        with self.assertRaises(self.failure_types):
+            validate_envelope(invalid)
+
+        receipt = copy.deepcopy(report)
+        receipt_type = "bloodbank.reporting.journal.received"
+        receipt.update({
+            "type": receipt_type, "subject": "bloodbank.evt.reporting.journal.received",
+            "dataschema": f"apicurio://holyfields/{receipt_type}/versions/1",
+            "schemaref": f"{receipt_type}.v1",
+        })
+        receipt["data"] = {
+            "source_event_id": report["id"], "report_date": "2026-07-15",
+            "run_id": "daily-2026-07-15", "generation_id": "a" * 32,
+            "content_sha256": "b" * 64, "received_at": "2026-07-15T11:01:00Z",
+        }
+        validate_envelope(receipt)
+        invalid = copy.deepcopy(receipt)
+        invalid["data"].pop("source_event_id")
+        with self.assertRaises(self.failure_types):
+            validate_envelope(invalid)
+
+    def test_incident_occurrence_contract(self) -> None:
+        incident = envelope("bloodbank.reporting.report.completed")
+        incident_type = "bloodbank.reporting.incident.observed"
+        incident.update({
+            "type": incident_type, "subject": "bloodbank.evt.reporting.incident.observed",
+            "dataschema": f"apicurio://holyfields/{incident_type}/versions/1",
+            "schemaref": f"{incident_type}.v1",
+            "ordering_key": "incident:infra:report-delivery",
+        })
+        incident["data"] = {
+            "occurrence_id": "2026-07-15:infra:report-delivery",
+            "fingerprint": "infra:report-delivery",
+            "report_date": "2026-07-15",
+            "project_id": "infra",
+            "area": "report-delivery",
+            "failure_mode": "missed delivery",
+            "status": "open",
+            "severity": "medium",
+            "summary": "Two scheduled reports were not delivered.",
+            "evidence": ["The delivery collector reported two missing days."],
+            "source_event_id": incident["id"],
+            "observed_at": "2026-07-15T11:02:00Z",
+            "ticket_key": "INFR-42",
+        }
+        validate_envelope(incident)
+        invalid = copy.deepcopy(incident)
+        invalid["data"]["status"] = "maybe"
+        with self.assertRaises(self.failure_types):
+            validate_envelope(invalid)
+
     def test_each_complete_envelope_is_valid(self) -> None:
         for ce_type in PAYLOADS:
             with self.subTest(ce_type=ce_type):

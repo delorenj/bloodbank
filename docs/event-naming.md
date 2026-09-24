@@ -134,6 +134,8 @@ event routes:
 | `bloodbank.reporting.report.started`   | `bloodbank.evt.reporting.report.started`     |
 | `bloodbank.reporting.report.completed` | `bloodbank.evt.reporting.report.completed`   |
 | `bloodbank.reporting.report.failed`    | `bloodbank.evt.reporting.report.failed`      |
+| `bloodbank.reporting.journal.received`  | `bloodbank.evt.reporting.journal.received`   |
+| `bloodbank.reporting.incident.observed` | `bloodbank.evt.reporting.incident.observed`  |
 
 These lifecycle events use strict, privacy-preserving telemetry. Maintenance
 failures identify a structured phase and code. Setup and preflight failures
@@ -335,6 +337,8 @@ Segment 4 of `type` MUST be one of:
 | `projection`       | `finance`                | The liquid cashflow projection (breaches, troughs).         |
 | `clock`            | `attendance`             | A time-clock integration session or state transition.       |
 | `report`           | `reporting`              | One company report run, archive, and delivery lifecycle.     |
+| `journal`          | `reporting`              | Durable receipt for a developer journal entering its workflow. |
+| `incident`         | `reporting`              | One dated occurrence of a tracked problem area.             |
 | `work`             | `portfolio`              | A Director-delegated unit; child boards remain lifecycle authority. |
 | `receipt`          | `portfolio`              | Retry-safe terminal receipt for one delegated work attempt.  |
 | `approval`         | `portfolio`              | Human or policy decision boundary for delegated work.        |
@@ -356,7 +360,7 @@ emit an entity not paired with it here.
 `generated`, `appended`, `received`, `sent`, `granted`, `denied`, `opened`,
 `closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`,
 `recorded`, `triaged`, `updated`, `reached`, `resolved`, `detected`,
-`flagged`, `routed`, `breached`, `clocked_in`, `clocked_out`.
+`flagged`, `routed`, `breached`, `observed`, `clocked_in`, `clocked_out`.
 `delegated`, `raised`, `released`, `expired`, `skipped`.
 
 ### 8.2 Command actions (imperative present)

@@ -200,6 +200,47 @@
               ]
             }
           ]
+        },
+        "content": {
+          "type": "object",
+          "description": "Optional immutable archive snapshot for remote journal consumers. Older completion events omit it.",
+          "additionalProperties": false,
+          "properties": {
+            "generation_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+            "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "markdown": {"type": "string", "minLength": 1, "maxLength": 262144},
+            "report": {
+              "type": "object",
+              "properties": {
+                "run_id": {"type": "string", "minLength": 1},
+                "report_date": {"type": "string", "format": "date"},
+                "sections": {"type": "array"}
+              },
+              "required": ["run_id", "report_date", "sections"]
+            },
+            "collector_facts": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+                  "status": {"type": "string", "minLength": 1, "maxLength": 32},
+                  "summary": {"type": "string", "maxLength": 4000},
+                  "reason": {"type": "string", "maxLength": 2000},
+                  "metrics": {
+                    "type": "object",
+                    "maxProperties": 100,
+                    "additionalProperties": {"type": ["string", "number", "boolean", "null"]}
+                  },
+                  "caveats": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 1000}}
+                },
+                "required": ["id", "status", "summary", "metrics", "caveats"]
+              }
+            }
+          },
+          "required": ["generation_id", "content_sha256", "markdown", "report", "collector_facts"]
         }
       },
       "required": [
