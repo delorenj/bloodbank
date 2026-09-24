@@ -13,8 +13,7 @@ const uuid = (name) => {
 const node = (name, type, parameters, x, y, extra = {}) => ({
   id: uuid(name), name, type, typeVersion: type === 'n8n-nodes-base.code' ? 2 :
     type === 'n8n-nodes-base.scheduleTrigger' ? 1.2 :
-    type === 'n8n-nodes-base.httpRequest' ? 4.2 :
-    type === 'n8n-nodes-base.dataTable' ? 1.1 : 1,
+    type === 'n8n-nodes-base.httpRequest' ? 4.2 : 1,
   position: [x, y], parameters, ...extra,
 });
 const code = (name, file, x, y, extra = {}) => node(name, 'n8n-nodes-base.code', {
@@ -50,39 +49,6 @@ const workflow = (name, nodes, edges, description) => {
     active: false, pinData: {}, meta: { templateCredsSetupCompleted: true },
     description, tags: [] };
 };
-const tableColumns = {
-  dev_journal_reports: [
-    'report_key', 'source_event_id', 'report_date', 'run_id', 'generation_id', 'content_sha256',
-    'payload', 'backfill', 'status', 'note_id', 'email_id', 'email_hash', 'email_sent_at',
-    'processing_lease_until', 'next_attempt_at', 'attempts', 'errors', 'processed_at', 'received_at',
-  ],
-  dev_journal_findings: [
-    'fingerprint', 'project_id', 'board_id', 'ticket_id', 'ticket_key', 'active', 'first_seen',
-    'last_seen', 'last_occurrence_id', 'summary', 'area', 'failure_mode', 'severity', 'status',
-  ],
-  dev_journal_occurrences: [
-    'occurrence_id', 'fingerprint', 'report_date', 'project_id', 'area', 'failure_mode',
-    'status', 'severity', 'summary', 'evidence', 'source_event_id', 'ticket_key',
-    'observed_at', 'event_sent',
-  ],
-  dev_journal_rollups: [
-    'period_key', 'kind', 'start_date', 'end_date', 'source_signature', 'content',
-    'day_slices', 'note_id', 'updated_at',
-  ],
-};
-const tableTypes = { backfill: 'boolean', active: 'boolean', event_sent: 'boolean', attempts: 'number' };
-const setupNodes = [manual('Set up journal tables')];
-let px = 240;
-for (const [name, fields] of Object.entries(tableColumns)) {
-  setupNodes.push(node(`Create ${name}`, 'n8n-nodes-base.dataTable', {
-    resource: 'table', operation: 'create', tableName: name,
-    columns: { column: fields.map((field) => ({ name: field, type: tableTypes[field] || 'string' })) },
-    options: { createIfNotExists: true },
-  }, px, 0));
-  px += 240;
-}
-const setupEdges = setupNodes.slice(1).map((n, i) => [setupNodes[i].name, n.name]);
-
 const ingressNodes = [
   trigger('Report completed', 0, 0),
   journal('Persist verified snapshot', 'ingest', 240, 0),
@@ -174,8 +140,6 @@ const backfillFinalizerNodes = [
 ];
 
 const bundles = {
-  'setup.workflow.json': workflow('Dev Journal — Set Up Data Tables', setupNodes, setupEdges,
-    'Run once as the n8n owner before activating journal workflows.'),
   'ingress.workflow.json': workflow('Dev Journal — Bloodbank Ingress', ingressNodes,
     [['Report completed', 'Persist verified snapshot'], ['Persist verified snapshot', 'Journal received receipt']],
     'Durable receipt after the portable report snapshot is stored.'),

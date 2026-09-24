@@ -10,35 +10,21 @@ const code = (name) => `${read('src/common.js')}\n${read(`src/${name}.js`)}`;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 function store(names) {
   const data = new Map(names.map((name) => [`dev_journal_${name}`, []]));
-  const ids = new Map([...data.keys()].map((name) => [name, `${name}_id`]));
   const calls = { http: [] };
   const helpers = {
-    async getDataTableAggregateProxy() {
-      return { async getManyAndCount({ filter }) {
-        const name = filter.name;
-        return { data: ids.has(name) ? [{ name, id: ids.get(name) }] : [], count: ids.has(name) ? 1 : 0 };
-      } };
+    async journalRows(kind) {
+      return data.get(`dev_journal_${kind}`) || [];
     },
-    async getDataTableProxy(id) {
-      const name = [...ids].find(([, value]) => value === id)?.[0];
-      if (!name) throw new Error(`Unknown table ${id}`);
-      const rows = data.get(name);
-      const select = (filter) => rows.filter((row) => (filter.filters || []).every((condition) =>
-        condition.condition === 'eq' ? row[condition.columnName] === condition.value :
-          condition.condition === 'neq' && row[condition.columnName] !== condition.value));
-      return {
-        async getManyRowsAndCount({ skip, take, filter }) {
-          const found = select(filter);
-          return { data: found.slice(skip, skip + take), count: found.length };
-        },
-        async upsertRow({ data: value, filter }) {
-          const found = select(filter);
-          if (found.length > 1) throw new Error('duplicate row');
-          if (found.length) Object.assign(found[0], value);
-          else rows.push({ ...value });
-          return [found[0] || rows.at(-1)];
-        },
-      };
+    async journalOne(kind, key, value) {
+      return data.get(`dev_journal_${kind}`)?.find((row) => row[key] === value) || null;
+    },
+    async journalUpsert(kind, key, value, update) {
+      const rows = data.get(`dev_journal_${kind}`);
+      if (!rows) throw new Error(`Unknown table ${kind}`);
+      let row = rows.find((item) => item[key] === value);
+      if (row) Object.assign(row, update);
+      else { row = { ...update }; rows.push(row); }
+      return row;
     },
     async httpRequest(options) {
       calls.http.push(options);
@@ -58,7 +44,7 @@ async function execute(name, env, input, ctx = {}) {
 
 test('generated workflows have valid graph, deterministic IDs, and compilable Code nodes', () => {
   const files = readdirSync(root).filter((name) => name.endsWith('.workflow.json'));
-  assert.equal(files.length, 8);
+  assert.equal(files.length, 7);
   const ids = new Set();
   for (const file of files) {
     const wf = JSON.parse(read(file));

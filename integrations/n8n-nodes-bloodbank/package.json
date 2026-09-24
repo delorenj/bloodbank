@@ -20,7 +20,7 @@
   "bugs": "https://github.com/delorenj/bloodbank/issues",
   "author": "Jarad DeLorenzo <jaradd@gmail.com>",
   "engines": {
-    "node": ">=20"
+    "node": ">=24.6.0"
   },
   "main": "dist/index.js",
   "n8n": {

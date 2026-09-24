@@ -1,6 +1,7 @@
 import type { IDataObject, IExecuteFunctions, INodeExecutionData, INodeType, INodeTypeDescription } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 import { journalPrograms } from './programs.generated';
+import { journalStore } from './JournalStore';
 
 type JournalOperation =
   | 'ingest' | 'selectReport' | 'processReport' | 'prepareEmail' | 'deadlineMail' | 'recordEmail'
@@ -89,11 +90,6 @@ export class DevJournal implements INodeType {
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
     const operation = this.getNodeParameter('operation', 0) as JournalOperation;
-    const aggregate = this.helpers.getDataTableAggregateProxy;
-    const proxy = this.helpers.getDataTableProxy;
-    if (!aggregate || !proxy) {
-      throw new NodeOperationError(this.getNode(), 'n8n Data Tables are unavailable in this executor');
-    }
     const context: Record<string, unknown> = {};
     try {
       if (operation === 'processReport') {
@@ -103,9 +99,12 @@ export class DevJournal implements INodeType {
       } else if (operation === 'recordIncident') {
         context.incidents = array(this.getNodeParameter('incidents', 0), 'incidents').map((json) => ({ json }));
       }
+      const storage = journalStore();
       const helpers = {
-        getDataTableAggregateProxy: () => aggregate.call(this.helpers),
-        getDataTableProxy: (id: string) => proxy.call(this.helpers, id),
+        journalRows: (kind: string) => storage.rows(kind),
+        journalOne: (kind: string, key: string, value: string) => storage.one(kind, key, value),
+        journalUpsert: (kind: string, key: string, value: string, data: Record<string, unknown>) =>
+          storage.upsert(kind, key, value, data),
         httpRequest: (options: unknown) => this.helpers.httpRequest(options as never),
         httpRequestWithAuthentication: (credential: string, options: unknown) =>
           this.helpers.httpRequestWithAuthentication.call(this, credential, options as never),
