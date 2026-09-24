@@ -144,17 +144,26 @@ class ClaudeAdapter(ClientAdapter):
             tool_name = str(payload.get("tool_name", "unknown"))
             tool_input = payload.get("tool_input") or {}
             turn_number = session.turn_number + 1
-            return {
+            outcome = _tool_outcome(payload)
+            data = {
                 "invocation_id": session.session_id,
                 "tool_call_id": payload.get("tool_use_id") or payload.get("tool_call_id") or _tool_call_id(session, tool_name, turn_number),
                 "tool_name": tool_name,
                 "arguments": tool_input,
-                "outcome": _tool_outcome(payload),
+                "outcome": outcome,
                 "working_directory": cwd,
                 "git_branch": git_branch(cwd),
                 "git_status": git_status_word(cwd),
                 "turn_number": turn_number,
             }
+            # Carry the failure text on failures only. `result` is already in
+            # tool.completed.json as an open shape, so this needs no schema
+            # change; see _tool_error_text for why it is worth the bytes.
+            if outcome == "error":
+                error_text = _tool_error_text(payload)
+                if error_text:
+                    data["result"] = error_text
+            return data
 
         if ce_type == "bloodbank.agent.invocation.completed":
             return {
@@ -216,3 +225,54 @@ def _tool_outcome(payload: dict) -> str:
         if isinstance(resp, dict) and (resp.get("error") or resp.get("is_error")):
             return "error"
     return "success"
+
+
+# Max characters of failure text carried on a tool.completed event.
+# Deliberately small: this rides on every failed tool call fleet-wide, and the
+# point is the first line of the traceback / stderr, not the whole log.
+_ERROR_TEXT_MAX = 600
+
+
+def _tool_error_text(payload: dict) -> str | None:
+    """The WHY behind outcome='error', truncated.
+
+    Added 2026-09-24. A memory audit found that of 9,765 error-bearing
+    tool.completed events, ZERO carried any error text -- `result` is populated
+    on 1.95% of the corpus overall and on none of the failures. The consequence
+    is that any narrative built from these events can say WHERE something broke
+    and never WHY, which throws away negative knowledge ("X did not work,
+    because Y") -- the most durable and least recoverable thing a work log holds.
+
+    Errors only, and capped: a full tool result on every call is what made this
+    field too expensive to carry in the first place.
+    """
+    if not isinstance(payload, dict):
+        return None
+
+    candidates = (
+        payload.get("error"),
+        payload.get("tool_response"),
+        payload.get("tool_result"),
+    )
+    for cand in candidates:
+        text: str | None = None
+        if isinstance(cand, str):
+            text = cand
+        elif isinstance(cand, dict):
+            for key in ("error", "stderr", "message", "content", "output", "stdout"):
+                val = cand.get(key)
+                if isinstance(val, str) and val.strip():
+                    text = val
+                    break
+        elif isinstance(cand, list):
+            parts = [
+                blk.get("text")
+                for blk in cand
+                if isinstance(blk, dict) and isinstance(blk.get("text"), str)
+            ]
+            if parts:
+                text = "\n".join(parts)
+        if text and text.strip():
+            text = text.strip()
+            return text if len(text) <= _ERROR_TEXT_MAX else text[:_ERROR_TEXT_MAX] + "…[truncated]"
+    return None
