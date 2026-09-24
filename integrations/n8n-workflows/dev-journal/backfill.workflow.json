@@ -1,0 +1,181 @@
+{
+  "id": "1e056bdc-c2e8-4629-a28e-75115d188928",
+  "name": "Dev Journal — Verified Archive Backfill",
+  "nodes": [
+    {
+      "id": "4fae2dcd-4478-4e6d-a4af-2a3c6a1fd32a",
+      "name": "Start verified archive backfill",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a095a5da-6e82-4715-aeea-fe3523c0efa8",
+      "name": "List verified report dates",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "command": "python3 - <<'PY'\nimport json, pathlib, subprocess\nconfig = pathlib.Path('/home/delorenj/.config/delonet-daily-report/report.json')\ncfg = json.loads(config.read_text())\nreportctl = '/home/delorenj/.hermes/skills/delonet-daily-report/scripts/reportctl'\nfor pointer in sorted(pathlib.Path(cfg['archive_dir']).glob('[0-9][0-9][0-9][0-9]/*/*/current.json')):\n    date = pointer.parent.name\n    result = subprocess.run([reportctl, '--config', str(config), 'verify', '--date', date], text=True, capture_output=True)\n    if result.returncode == 0 and json.loads(result.stdout).get('ok'):\n        print(date)\nPY"
+      }
+    },
+    {
+      "id": "1e99ee6d-4d4c-4922-a566-d5c242c61f86",
+      "name": "Validate archive dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Shared by the custom Dev Journal n8n node operations at build time.\n// The node uses n8n's in-process Data Table proxies; no API token or table ID is embedded.\nconst TABLE_PREFIX = 'dev_journal_';\nasync function table(kind) {\n  const name = `${TABLE_PREFIX}${kind}`;\n  const aggregate = await helpers.getDataTableAggregateProxy();\n  const result = await aggregate.getManyAndCount({ filter: { name }, take: 2 });\n  const rows = (result.data || []).filter((row) => row.name === name);\n  if (rows.length !== 1) throw new Error(`Data Table ${name} is missing or ambiguous; run setup`);\n  return helpers.getDataTableProxy(rows[0].id);\n}\nasync function rows(kind, filter = { type: 'and', filters: [] }) {\n  const proxy = await table(kind);\n  const out = [];\n  for (let skip = 0; skip < 100000; skip += 1000) {\n    const page = await proxy.getManyRowsAndCount({ skip, take: 1000, filter });\n    out.push(...(page.data || []));\n    if (out.length >= page.count || (page.data || []).length === 0) return out;\n  }\n  throw new Error(`Data Table ${kind} pagination exceeded 100000 rows`);\n}\nfunction eq(columnName, value) {\n  return { type: 'and', filters: [{ columnName, condition: 'eq', value }] };\n}\nasync function one(kind, key, value) {\n  const hits = await rows(kind, eq(key, value));\n  if (hits.length > 1) throw new Error(`Duplicate ${kind} rows for ${key}=${value}`);\n  return hits[0] || null;\n}\nasync function upsert(kind, key, value, data) {\n  const proxy = await table(kind);\n  const out = await proxy.upsertRow({ data, filter: eq(key, value), dryRun: false });\n  if (!out.length) throw new Error(`Upsert ${kind} ${value} returned no row`);\n  return out[0];\n}\nfunction nyDate(date = new Date()) {\n  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York',\n    year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);\n}\nfunction isoNow() { return new Date().toISOString(); }\nfunction escapeHtml(value) {\n  return String(value).replace(/[&<>\"']/g, (c) => ({\n    '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;',\n  })[c]);\n}\nfunction digest(value) {\n  // Source signatures are change detectors, not cryptographic trust anchors.\n  let h = 2166136261;\n  for (const c of String(value)) { h ^= c.codePointAt(0); h = Math.imul(h, 16777619); }\n  return (h >>> 0).toString(16).padStart(8, '0');\n}\nfunction unwrap(response) {\n  if (typeof response === 'string') return JSON.parse(response);\n  return response;\n}\n\nconst run = $input.first().json || {};\nif (run.exitCode !== 0) throw new Error(`Archive date enumeration failed: ${String(run.stderr || run.error).slice(0, 300)}`);\nconst dates = String(run.stdout || '').split(/\\r?\\n/).filter(Boolean);\nconst unique = new Set();\nfor (const date of dates) {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || unique.has(date)) throw new Error(`Invalid or duplicate archive date ${date}`);\n  unique.add(date);\n}\nreturn dates.map((date) => ({ json: { date } }));\n"
+      }
+    },
+    {
+      "id": "775a4929-6a5c-4ad8-afbe-54d4f01cc565",
+      "name": "Export one verified snapshot per item",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ '/home/delorenj/.hermes/skills/delonet-daily-report/scripts/reportctl --config /home/delorenj/.config/delonet-daily-report/report.json export-snapshot --date ' + $json.date }}"
+      }
+    },
+    {
+      "id": "deac9ca8-5ca7-4111-a51e-76f53882a448",
+      "name": "Parse snapshots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Shared by the custom Dev Journal n8n node operations at build time.\n// The node uses n8n's in-process Data Table proxies; no API token or table ID is embedded.\nconst TABLE_PREFIX = 'dev_journal_';\nasync function table(kind) {\n  const name = `${TABLE_PREFIX}${kind}`;\n  const aggregate = await helpers.getDataTableAggregateProxy();\n  const result = await aggregate.getManyAndCount({ filter: { name }, take: 2 });\n  const rows = (result.data || []).filter((row) => row.name === name);\n  if (rows.length !== 1) throw new Error(`Data Table ${name} is missing or ambiguous; run setup`);\n  return helpers.getDataTableProxy(rows[0].id);\n}\nasync function rows(kind, filter = { type: 'and', filters: [] }) {\n  const proxy = await table(kind);\n  const out = [];\n  for (let skip = 0; skip < 100000; skip += 1000) {\n    const page = await proxy.getManyRowsAndCount({ skip, take: 1000, filter });\n    out.push(...(page.data || []));\n    if (out.length >= page.count || (page.data || []).length === 0) return out;\n  }\n  throw new Error(`Data Table ${kind} pagination exceeded 100000 rows`);\n}\nfunction eq(columnName, value) {\n  return { type: 'and', filters: [{ columnName, condition: 'eq', value }] };\n}\nasync function one(kind, key, value) {\n  const hits = await rows(kind, eq(key, value));\n  if (hits.length > 1) throw new Error(`Duplicate ${kind} rows for ${key}=${value}`);\n  return hits[0] || null;\n}\nasync function upsert(kind, key, value, data) {\n  const proxy = await table(kind);\n  const out = await proxy.upsertRow({ data, filter: eq(key, value), dryRun: false });\n  if (!out.length) throw new Error(`Upsert ${kind} ${value} returned no row`);\n  return out[0];\n}\nfunction nyDate(date = new Date()) {\n  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York',\n    year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);\n}\nfunction isoNow() { return new Date().toISOString(); }\nfunction escapeHtml(value) {\n  return String(value).replace(/[&<>\"']/g, (c) => ({\n    '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;',\n  })[c]);\n}\nfunction digest(value) {\n  // Source signatures are change detectors, not cryptographic trust anchors.\n  let h = 2166136261;\n  for (const c of String(value)) { h ^= c.codePointAt(0); h = Math.imul(h, 16777619); }\n  return (h >>> 0).toString(16).padStart(8, '0');\n}\nfunction unwrap(response) {\n  if (typeof response === 'string') return JSON.parse(response);\n  return response;\n}\n\nconst seen = new Set();\nreturn $input.all().map((item) => {\n  const run = item.json || {};\n  if (run.exitCode !== 0) throw new Error(`Snapshot export failed: ${String(run.stderr || run.error).slice(0, 500)}`);\n  const snapshot = JSON.parse(run.stdout);\n  const key = `${snapshot.report_date}:${snapshot.generation_id}`;\n  if (seen.has(key)) throw new Error(`Duplicate archive snapshot ${key}`);\n  seen.add(key);\n  return { json: { ...snapshot, backfill: true } };\n});\n"
+      }
+    },
+    {
+      "id": "cf154299-c35a-4a3e-a027-fdecb666c9e8",
+      "name": "Persist verified snapshots",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "operation": "ingest"
+      }
+    },
+    {
+      "id": "b2885217-4aee-4cd3-a1dc-e20bbd3c9f0b",
+      "name": "Backfill received receipts",
+      "type": "n8n-nodes-bloodbank.bloodbank",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        0
+      ],
+      "parameters": {
+        "mode": "event",
+        "event": "bloodbank.reporting.journal.received",
+        "data": "={{ $json.receipt }}",
+        "service": "n8n-dev-journal",
+        "connection": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start verified archive backfill": {
+      "main": [
+        [
+          {
+            "node": "List verified report dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List verified report dates": {
+      "main": [
+        [
+          {
+            "node": "Validate archive dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate archive dates": {
+      "main": [
+        [
+          {
+            "node": "Export one verified snapshot per item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Export one verified snapshot per item": {
+      "main": [
+        [
+          {
+            "node": "Parse snapshots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse snapshots": {
+      "main": [
+        [
+          {
+            "node": "Persist verified snapshots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist verified snapshots": {
+      "main": [
+        [
+          {
+            "node": "Backfill received receipts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "description": "Run manually once; imports verified current generations without historical email or a second report.completed event.",
+  "tags": []
+}

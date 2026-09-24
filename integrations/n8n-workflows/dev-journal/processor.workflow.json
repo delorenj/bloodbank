@@ -1,0 +1,256 @@
+{
+  "id": "130a105d-c52e-4437-a53f-7d82c918cfd9",
+  "name": "Dev Journal — Process Reports",
+  "nodes": [
+    {
+      "id": "fc6b7184-d4bc-4c8e-aeb2-ab6ba739e353",
+      "name": "Find reports to process",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "99c37ae3-899e-4aea-aefa-d825d500cd77",
+      "name": "Process next report manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        120
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "abfc627f-fe2c-40d1-a280-8d9ca7e8f86e",
+      "name": "Claim one report and prepare extraction",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "operation": "selectReport"
+      }
+    },
+    {
+      "id": "0a9b6fd3-8030-4576-a017-1b699c35977e",
+      "name": "Extract and classify findings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.llm_request) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "XkM3vQmnNllLTJ8p",
+          "name": "OpenRouter API Key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "314ddd62-c732-4220-a56d-e56a49800ef6",
+      "name": "Track issues and publish Infra note",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "operation": "processReport",
+        "selected": "={{ $('Claim one report and prepare extraction').first().json }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TpxVVgOnmjHaE6h7",
+          "name": "Plane API (33GOD + AutomaticAI)"
+        }
+      }
+    },
+    {
+      "id": "84614a09-bd03-423d-aef0-729b09f9e8a4",
+      "name": "Only live mail not yet sent",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "operation": "prepareEmail"
+      }
+    },
+    {
+      "id": "aef1ee8d-bb0a-4bc6-acf1-edb14853a90a",
+      "name": "Send daily journal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.mail_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.email) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ZYgVKEU9w9je0Jt4",
+          "name": "Resend HTTP"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "46abeb1e-d381-42b5-a575-34d6f8861461",
+      "name": "Store Resend receipt",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        0
+      ],
+      "parameters": {
+        "operation": "recordEmail",
+        "mail": "={{ $('Only live mail not yet sent').first().json }}"
+      }
+    }
+  ],
+  "connections": {
+    "Find reports to process": {
+      "main": [
+        [
+          {
+            "node": "Claim one report and prepare extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process next report manually": {
+      "main": [
+        [
+          {
+            "node": "Claim one report and prepare extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim one report and prepare extraction": {
+      "main": [
+        [
+          {
+            "node": "Extract and classify findings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract and classify findings": {
+      "main": [
+        [
+          {
+            "node": "Track issues and publish Infra note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Track issues and publish Infra note": {
+      "main": [
+        [
+          {
+            "node": "Only live mail not yet sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only live mail not yet sent": {
+      "main": [
+        [
+          {
+            "node": "Send daily journal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send daily journal": {
+      "main": [
+        [
+          {
+            "node": "Store Resend receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "description": "Extracts every actionable issue, maintains one active Plane ticket per fingerprint, upserts Infra notes, and sends live mail.",
+  "tags": []
+}

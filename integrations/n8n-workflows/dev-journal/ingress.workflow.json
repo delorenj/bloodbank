@@ -1,0 +1,98 @@
+{
+  "id": "1e1599de-4198-4090-a884-e307d035a6c2",
+  "name": "Dev Journal — Bloodbank Ingress",
+  "nodes": [
+    {
+      "id": "75e4d046-f5dd-48f0-ad15-3739ab8756fb",
+      "name": "Report completed",
+      "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "events": [
+          "bloodbank.reporting.report.completed"
+        ],
+        "dataMatch": {
+          "conditions": [
+            {
+              "path": "producer",
+              "values": "delonet-daily-report"
+            }
+          ]
+        },
+        "delivery": "durable",
+        "acknowledge": "afterExecution",
+        "catchUpHours": 0,
+        "connection": {}
+      }
+    },
+    {
+      "id": "897bd2e0-2c21-4595-a639-f9f245870dea",
+      "name": "Persist verified snapshot",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "operation": "ingest"
+      }
+    },
+    {
+      "id": "b7d40aea-61e9-4657-ab90-625c1824c066",
+      "name": "Journal received receipt",
+      "type": "n8n-nodes-bloodbank.bloodbank",
+      "typeVersion": 1,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "mode": "event",
+        "event": "bloodbank.reporting.journal.received",
+        "data": "={{ $json.receipt }}",
+        "service": "n8n-dev-journal",
+        "connection": {}
+      }
+    }
+  ],
+  "connections": {
+    "Report completed": {
+      "main": [
+        [
+          {
+            "node": "Persist verified snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist verified snapshot": {
+      "main": [
+        [
+          {
+            "node": "Journal received receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "description": "Durable receipt after the portable report snapshot is stored.",
+  "tags": []
+}

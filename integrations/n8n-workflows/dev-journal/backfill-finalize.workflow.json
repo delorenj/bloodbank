@@ -1,0 +1,60 @@
+{
+  "id": "676c6c18-c6fe-4ff6-acf1-905c9bf06664",
+  "name": "Dev Journal — Backfill Unresolved Tickets",
+  "nodes": [
+    {
+      "id": "896b303c-75eb-4481-a952-8b0ea6b4ad2d",
+      "name": "Reconcile unresolved backfill findings",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "3c9c4431-d431-42d9-ad56-eba585c7fed3",
+      "name": "Create tickets only for unresolved history",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "operation": "backfillFinalize"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TpxVVgOnmjHaE6h7",
+          "name": "Plane API (33GOD + AutomaticAI)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Reconcile unresolved backfill findings": {
+      "main": [
+        [
+          {
+            "node": "Create tickets only for unresolved history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "description": "Run after every historical report has processed; creates Plane tickets only for fingerprints whose latest status remains open.",
+  "tags": []
+}

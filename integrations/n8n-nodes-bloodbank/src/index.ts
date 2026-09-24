@@ -1,4 +1,5 @@
 export { Bloodbank } from './nodes/Bloodbank/Bloodbank.node';
+export { DevJournal } from './nodes/DevJournal/DevJournal.node';
 export { BloodbankTrigger } from './nodes/BloodbankTrigger/BloodbankTrigger.node';
 export { Fleet } from './nodes/Fleet/Fleet.node';
 export {

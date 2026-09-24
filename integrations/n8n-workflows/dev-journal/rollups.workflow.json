@@ -1,0 +1,85 @@
+{
+  "id": "f5dee132-d9fa-425b-ab00-046112f49a0b",
+  "name": "Dev Journal — Calendar Rollups",
+  "nodes": [
+    {
+      "id": "48450ea0-6f00-4a81-a373-2fa635adcfbe",
+      "name": "Refresh closed rollups",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        -100
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 8 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "127faade-c3e4-442e-ac03-cc5512add971",
+      "name": "Backfill rollups",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        100
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "10d64665-05e2-4d7b-adda-a219b83c59b6",
+      "name": "Upsert weekly and monthly Infra notes",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "operation": "rollup"
+      }
+    }
+  ],
+  "connections": {
+    "Refresh closed rollups": {
+      "main": [
+        [
+          {
+            "node": "Upsert weekly and monthly Infra notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backfill rollups": {
+      "main": [
+        [
+          {
+            "node": "Upsert weekly and monthly Infra notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "description": "Calendar weeks and months in America/New_York; monthly notes use per-day slices from completed weekly rollups.",
+  "tags": []
+}

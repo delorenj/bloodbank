@@ -1,0 +1,116 @@
+{
+  "id": "ca9dcb49-ba16-402b-a49d-aa3748a53019",
+  "name": "Dev Journal — Incident Outbox",
+  "nodes": [
+    {
+      "id": "478f3efb-de23-494f-a3b0-0f62356fa4cb",
+      "name": "Retry incident outbox",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3f3b5ef3-169c-4691-a34d-c4cf50064143",
+      "name": "Load unsent incidents",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "operation": "incidentOutbox"
+      }
+    },
+    {
+      "id": "6b7c2f06-154d-485b-afca-a29e5a7a8963",
+      "name": "Publish observed incident",
+      "type": "n8n-nodes-bloodbank.bloodbank",
+      "typeVersion": 1,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "mode": "event",
+        "event": "bloodbank.reporting.incident.observed",
+        "data": "={{ $json.event }}",
+        "service": "n8n-dev-journal",
+        "connection": {}
+      }
+    },
+    {
+      "id": "83905a7b-439f-4f84-a7e9-8292f9cf4184",
+      "name": "Record incident publication",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "operation": "recordIncident",
+        "incidents": "={{ $('Load unsent incidents').all().map(item => item.json) }}"
+      }
+    }
+  ],
+  "connections": {
+    "Retry incident outbox": {
+      "main": [
+        [
+          {
+            "node": "Load unsent incidents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load unsent incidents": {
+      "main": [
+        [
+          {
+            "node": "Publish observed incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish observed incident": {
+      "main": [
+        [
+          {
+            "node": "Record incident publication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "description": "Retries schema-validated incident facts independently of Plane, notebook, and mail.",
+  "tags": []
+}

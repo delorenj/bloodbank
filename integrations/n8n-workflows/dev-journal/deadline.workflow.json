@@ -1,0 +1,138 @@
+{
+  "id": "b560415e-7b5a-46cf-a8fe-9c5d6e5fe1e2",
+  "name": "Dev Journal — 07:00 Partial Mail",
+  "nodes": [
+    {
+      "id": "bdd1ffc7-592e-4d32-aacd-10ec4c3210a9",
+      "name": "Daily 07:00 deadline",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d1b8ef31-635b-43e4-a253-449923650d5c",
+      "name": "Prepare honest partial if pending",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "operation": "deadlineMail"
+      }
+    },
+    {
+      "id": "7450f817-ec96-4602-a383-8f3cef890860",
+      "name": "Send pending daily journal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.mail_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.email) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ZYgVKEU9w9je0Jt4",
+          "name": "Resend HTTP"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "57919949-7b3d-4ce4-abea-06d217593da4",
+      "name": "Store deadline receipt",
+      "type": "n8n-nodes-bloodbank.devJournal",
+      "typeVersion": 1,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "operation": "recordEmail",
+        "mail": "={{ $('Prepare honest partial if pending').first().json }}"
+      }
+    }
+  ],
+  "connections": {
+    "Daily 07:00 deadline": {
+      "main": [
+        [
+          {
+            "node": "Prepare honest partial if pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare honest partial if pending": {
+      "main": [
+        [
+          {
+            "node": "Send pending daily journal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send pending daily journal": {
+      "main": [
+        [
+          {
+            "node": "Store deadline receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "description": "Sends an explicit pending report if the scheduled issue processor has not completed by 07:00 New York time.",
+  "tags": []
+}
