@@ -9,7 +9,7 @@
       "typeVersion": 1.2,
       "position": [
         0,
-        0
+        -100
       ],
       "parameters": {
         "rule": {
@@ -21,6 +21,17 @@
           ]
         }
       }
+    },
+    {
+      "id": "e9e10839-6faf-42c2-ab33-bb3498569341",
+      "name": "Replay incident outbox manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        100
+      ],
+      "parameters": {}
     },
     {
       "id": "3f3b5ef3-169c-4691-a34d-c4cf50064143",
@@ -69,6 +80,17 @@
   ],
   "connections": {
     "Retry incident outbox": {
+      "main": [
+        [
+          {
+            "node": "Load unsent incidents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replay incident outbox manually": {
       "main": [
         [
           {

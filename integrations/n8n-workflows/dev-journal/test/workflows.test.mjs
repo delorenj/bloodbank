@@ -56,6 +56,8 @@ test('generated workflows have valid graph, deterministic IDs, and compilable Co
     assert.equal(names.size, wf.nodes.length);
     for (const [from, edges] of Object.entries(wf.connections)) {
       assert.ok(names.has(from));
+      const targets = edges.main.flat().map((target) => target.node);
+      assert.equal(new Set(targets).size, targets.length, `${file}: duplicate edge from ${from}`);
       for (const target of edges.main.flat()) assert.ok(names.has(target.node));
     }
     for (const node of wf.nodes.filter((node) => node.type === 'n8n-nodes-base.code')) {
@@ -64,6 +66,8 @@ test('generated workflows have valid graph, deterministic IDs, and compilable Co
     assert.ok(!read(file).includes('DEV_JOURNAL_BACKFILL_AUTH_CREDENTIAL_ID'));
     assert.ok(!read(file).includes('openrouter.ai/api/v1/chat/completions'));
   }
+  const incidents = JSON.parse(read('incidents.workflow.json'));
+  assert.ok(incidents.nodes.some((node) => node.type === 'n8n-nodes-base.manualTrigger'));
 });
 
 test('ingress stores one immutable generation before returning its Bloodbank receipt', async () => {

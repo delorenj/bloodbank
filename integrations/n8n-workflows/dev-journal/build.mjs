@@ -120,7 +120,8 @@ const deadlineNodes = [
   }),
 ];
 const incidentNodes = [
-  schedule('Retry incident outbox', '*/5 * * * *'),
+  schedule('Retry incident outbox', '*/5 * * * *', 0, -100),
+  manual('Replay incident outbox manually', 0, 100),
   journal('Load unsent incidents', 'incidentOutbox', 240, 0),
   bloodbank('Publish observed incident', 'bloodbank.reporting.incident.observed',
     '={{ $json.event }}', 480, 0),
@@ -166,6 +167,7 @@ const bundles = {
     'Sends an explicit pending report if the scheduled issue processor has not completed by 07:00 New York time.'),
   'incidents.workflow.json': workflow('Dev Journal — Incident Outbox', incidentNodes,
     [['Retry incident outbox', 'Load unsent incidents'],
+      ['Replay incident outbox manually', 'Load unsent incidents'],
       ['Load unsent incidents', 'Publish observed incident'],
       ['Publish observed incident', 'Record incident publication']],
     'Retries schema-validated incident facts independently of Plane, notebook, and mail.'),
