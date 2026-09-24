@@ -7,6 +7,7 @@ function monthNext(value) { const d = day(`${value.slice(0, 7)}-01`); d.setUTCMo
 function summaries(slices) {
   const areaCounts = new Map(), problemDays = new Map();
   for (const slice of slices) for (const problem of slice.incidents || []) {
+    if (problem.status === 'triage') continue;
     const area = canonicalArea(problem.area);
     const id = problem.semantic_id || semanticCategory(problem) || problem.fingerprint;
     areaCounts.set(area, (areaCounts.get(area) || 0) + 1);
@@ -17,7 +18,9 @@ function summaries(slices) {
   const recurring = [...problemDays].filter(([, days]) => days.size > 1)
     .sort((a, b) => b[1].size - a[1].size);
   return [
-    `Reports: ${slices.filter((s) => s.present).length}/${slices.length}. Incident occurrences: ${slices.reduce((n, s) => n + s.incidents.length, 0)}.`,
+    `Reports: ${slices.filter((s) => s.present).length}/${slices.length}. ` +
+      `Incident occurrences: ${slices.reduce((n, s) => n + s.incidents.filter((i) => i.status !== 'triage').length, 0)}. ` +
+      `Triage observations: ${slices.reduce((n, s) => n + s.incidents.filter((i) => i.status === 'triage').length, 0)}.`,
     '## Problem areas',
     ...(areas.length ? areas.map(([area, count]) => `- ${area}: ${count} occurrence(s)`) : ['- No recorded incidents.']),
     '## Recurring problems',
@@ -33,8 +36,12 @@ function render(kind, start, end, slices) {
     lines.push(`### ${slice.date}`);
     if (!slice.present) { lines.push('No verified published daily report.'); continue; }
     lines.push(slice.summary || 'No summary section.');
-    if (slice.incidents.length) lines.push('Issues:', ...slice.incidents.map((issue) =>
+    const issues = slice.incidents.filter((issue) => issue.status !== 'triage');
+    const triage = slice.incidents.filter((issue) => issue.status === 'triage');
+    if (issues.length) lines.push('Issues:', ...issues.map((issue) =>
       `- ${issue.status.toUpperCase()} ${issue.summary}${issue.ticket_key ? ` (${issue.ticket_key})` : ''}`));
+    if (triage.length) lines.push('Unclassified observations:', ...triage.map((issue) =>
+      `- ${issue.summary}`));
   }
   return { title, content: `${lines.join('\n\n')}\n` };
 }

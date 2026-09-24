@@ -1,4 +1,5 @@
-const pending = (await rows('occurrences')).filter((row) => row.event_sent !== true)
+const pending = (await rows('occurrences')).filter((row) =>
+  ['open', 'resolved'].includes(row.status) && row.event_sent !== true)
   .sort((a, b) => a.report_date.localeCompare(b.report_date)).slice(0, 100);
 return pending.map((row) => ({ json: { occurrence_id: row.occurrence_id,
   event: { occurrence_id: row.occurrence_id, fingerprint: row.fingerprint,

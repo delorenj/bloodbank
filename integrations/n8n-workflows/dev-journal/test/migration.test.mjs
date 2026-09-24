@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -19,7 +19,7 @@ function fixture(t) {
       failure_mode TEXT, summary TEXT, active INTEGER, ticket_id TEXT, ticket_key TEXT,
       first_seen TEXT, last_seen TEXT, last_occurrence_id TEXT, status TEXT);
     CREATE TABLE occurrences (occurrence_id TEXT PRIMARY KEY, fingerprint TEXT,
-      report_date TEXT, observed_at TEXT, ticket_key TEXT, event_sent INTEGER);
+      report_date TEXT, observed_at TEXT, ticket_key TEXT, event_sent INTEGER, status TEXT);
     INSERT INTO reports VALUES (1, 'complete');
     INSERT INTO findings VALUES
       ('infra:report-delivery:old-wording', 'infra', 'report delivery',
@@ -29,14 +29,15 @@ function fixture(t) {
        'Missing and invalid daily reports', 'Archived reports are missing or invalid',
        0, '', '', '2026-08-18', '2026-08-18', '2026-08-18:old', 'open');
     INSERT INTO occurrences VALUES
-      ('2026-09-23:old', 'infra:report-delivery:old-wording', '2026-09-23', '2026-09-23T12:00:00Z', 'INFR-5', 1),
-      ('2026-08-18:old', 'delonet-daily-report:daily-report:missing', '2026-08-18', '2026-08-18T12:00:00Z', '', 0);
+      ('2026-09-23:old', 'infra:report-delivery:old-wording', '2026-09-23', '2026-09-23T12:00:00Z', 'INFR-5', 1, 'open'),
+      ('2026-08-18:old', 'delonet-daily-report:daily-report:missing', '2026-08-18', '2026-08-18T12:00:00Z', '', 0, 'open');
   `);
   return { db, path };
 }
 
-function run(path, apply = false) {
-  return spawnSync(process.execPath, [script, '--db', path, ...(apply ? ['--apply'] : [])], {
+function run(path, apply = false, mapping = '') {
+  return spawnSync(process.execPath, [script, '--db', path,
+    ...(mapping ? ['--mapping', mapping] : []), ...(apply ? ['--apply'] : [])], {
     encoding: 'utf8',
   });
 }
@@ -64,6 +65,43 @@ test('dry-run plans aliases; apply preserves occurrence identity and publication
   assert.equal(alias.canonical_fingerprint, 'infra:report-delivery:old-wording');
   assert.equal(alias.semantic_id, 'infra:report-delivery:missing-or-invalid-report');
   assert.equal(JSON.parse(run(path, true).stdout).groups, 0);
+  db.close();
+});
+
+test('reviewed map merges one root cause and demotes fallback rows without changing event receipts', (t) => {
+  const { db, path } = fixture(t);
+  db.exec(`
+    INSERT INTO findings VALUES
+      ('trello:schema:a', 'trello', 'PR maintenance', 'invalid schema', 'Provider returned invalid schema',
+       0, '', '', '2026-08-18', '2026-08-18', 'schema:a', 'open'),
+      ('trello:schema:b', 'trello', 'pr-crusher', 'no schema-valid result', 'Provider returned no valid result',
+       0, '', '', '2026-08-19', '2026-08-19', 'schema:b', 'open'),
+      ('infra:caveat', 'infra', 'dev-activity', 'unclassified',
+       'Triage Dev Journal finding: git scope is all-refs',
+       0, '', '', '2026-08-19', '2026-08-19', 'caveat', 'open');
+    INSERT INTO occurrences VALUES
+      ('schema:a', 'trello:schema:a', '2026-08-18', '2026-08-18T12:00:00Z', '', 1, 'open'),
+      ('schema:b', 'trello:schema:b', '2026-08-19', '2026-08-19T12:00:00Z', '', 1, 'open'),
+      ('caveat', 'infra:caveat', '2026-08-19', '2026-08-19T12:00:00Z', '', 1, 'open');
+  `);
+  const mapping = join(path, '..', 'mapping.json');
+  writeFileSync(mapping, JSON.stringify({ schema_version: 1, groups: [{
+    semantic_id: 'provider schema failure', anchor: 'trello:schema:a', aliases: ['trello:schema:b'],
+  }], triage_fingerprints: ['infra:caveat'] }));
+  const preview = JSON.parse(run(path, false, mapping).stdout);
+  assert.equal(preview.groups, 2); // Reviewed group plus original report-delivery group.
+  assert.equal(preview.triage_findings, 1);
+  assert.equal(db.prepare("SELECT status FROM findings WHERE fingerprint = 'infra:caveat'").get().status, 'open');
+  const applied = run(path, true, mapping);
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM findings WHERE fingerprint LIKE 'trello:schema:%'").get().count, 1);
+  assert.equal(db.prepare("SELECT status FROM findings WHERE fingerprint = 'infra:caveat'").get().status, 'triage');
+  assert.equal(db.prepare("SELECT status FROM occurrences WHERE occurrence_id = 'caveat'").get().status, 'triage');
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM occurrences WHERE event_sent = 1").get().count, 4);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM occurrences WHERE fingerprint = 'trello:schema:a'").get().count, 2);
+  const replay = JSON.parse(run(path, true, mapping).stdout);
+  assert.equal(replay.groups, 0);
+  assert.equal(replay.triage_findings, 0);
   db.close();
 });
 

@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "review": "NewAPI openai/gpt-4.1-mini proposal manually checked against all 86 findings on 2026-09-24. Rejected broad groups that conflated causes. Each remaining group tracks one root failure; compound or ambiguous findings remain separate. JIMB cron false-success remains a separate ticket from generic infra scheduler health. AdGuard/relay 502 remains separate without shared root evidence.",
+  "source_finding_count": 86,
+  "groups": [
+    {
+      "semantic_id": "pr-crusher schema-invalid provider result",
+      "anchor": "delorenj-mcp-server-trello:pr-maintenance:nightly-pr-maintenance-tick-failed-schema-validation-no-pr-triaged",
+      "aliases": [
+        "delorenj-mcp-server-trello:pr-crusher:one-tick-run-failed-provider-did-not-produce-a-schema-valid-result-zero-prs-triaged-or-merged",
+        "delorenj-mcp-server-trello:pr-crusher:pr-crusher-s-only-tick-failed-due-to-provider-not-producing-a-schema-valid-result",
+        "delorenj-mcp-server-trello:pr-crusher-tick:pr-crusher-tick-failed-due-to-provider-not-producing-a-schema-valid-tick-result",
+        "delorenj-mcp-server-trello:pr-maintenance:pr-crusher-tick-41-failed-due-to-provider-not-producing-schema-valid-result-bloodbank-publisher-disabled",
+        "delorenj-mcp-server-trello:pr-maintenance:pr-crusher-tick-failed-due-to-provider-producing-no-schema-valid-result",
+        "delorenj-mcp-server-trello:pr-maintenance:pr-crusher-tick-failed-with-no-schema-valid-result-no-prs-triaged-or-merged",
+        "infra:pr-maintenance:pr-maintenance-tick-failed-schema-validation",
+        "pr-crusher:pr-maintenance:tick-failed-due-to-invalid-schema-result-no-prs-triaged-bloodbank-publisher-disabled"
+      ],
+      "reason": "pr-crusher schema-invalid provider result"
+    },
+    {
+      "semantic_id": "pr-crusher credential broker token rejection",
+      "anchor": "delorenj-mcp-server-trello:pr-maintenance:pr-crusher-tick-failed-due-to-credential-broker-rejecting-tokens",
+      "aliases": [
+        "delorenj-mcp-server-trello:pr-crusher:tick-failed-at-setup-due-to-credential-broker-rejecting-tokens",
+        "delorenj-mcp-server-trello:pr-maintenance:credential-broker-rejected-prc-github-read-token-and-prc-github-write-token-causing-tick-failure",
+        "delorenj-mcp-server-trello:pr-maintenance:pr-crusher-locked-out-due-to-credential-broker-rejection",
+        "delorenj-mcp-server-trello:pr-maintenance:tick-failure-due-to-credential-broker-rejecting-github-tokens-preventing-pr-triage-and-merge-gate-attempts"
+      ],
+      "reason": "pr-crusher credential broker token rejection"
+    },
+    {
+      "semantic_id": "mcp-server-trello PR human approval gate",
+      "anchor": "delorenj-mcp-server-trello:pr-maintenance:pr-crusher-cannot-approve-prs-blocked-on-review-required-with-zero-reviews-under-analysis-only-contract-causing-prs-to-stall",
+      "aliases": [
+        "delorenj-mcp-server-trello:pull-requests:two-mergeable-prs-stalled-due-to-lack-of-human-approval",
+        "mcp-server-trello:pull-request-maintenance:pr-111-needs-an-approving-review-pr-crusher-tick-failed-and-no-merges-attempted-pr-115-green-but-has-unresolved-copilot-suggestion",
+        "mcp-server-trello:pull-requests:critical-bugfix-pr-unmerged-causing-resource-leaks"
+      ],
+      "reason": "mcp-server-trello PR human approval gate"
+    },
+    {
+      "semantic_id": "cron jobs missing required skills falsely report success",
+      "anchor": "infra:fleet-health:cron-jobs-report-last-status-ok-but-observable-facts-contradict-this",
+      "aliases": [
+        "infra:cron-jobs:cron-jobs-report-last-status-ok-but-are-missing-declared-skills",
+        "infra:cron-jobs:cron-jobs-report-last-status-ok-but-lack-required-skills-and-do-not-run",
+        "infra:cron-jobs:cron-jobs-report-last-status-ok-but-lack-required-skills-and-observable-facts-contradict-success-claims",
+        "infra:cron-jobs:cron-jobs-report-last-status-ok-but-reference-missing-skills-or-have-error-status",
+        "infra:cron-jobs:cron-jobs-report-success-but-lack-required-skills-and-produce-no-work"
+      ],
+      "reason": "cron jobs missing required skills falsely report success"
+    },
+    {
+      "semantic_id": "developer activity event pagination budget",
+      "anchor": "infra:developer-activity:event-pagination-stopped-at-50-page-budget-causing-partial-event-coverage",
+      "aliases": [
+        "infra:dev-activity:event-pagination-capped-at-50-000-events-causing-partial-developer-activity-coverage-and-heatmap-endpoint-timeout",
+        "infra:developer-activity-reporting:event-pagination-hit-50-page-50-000-event-budget-day-not-fully-covered-heatmap-endpoint-timed-out"
+      ],
+      "reason": "developer activity event pagination budget"
+    },
+    {
+      "semantic_id": "get.delo.sh restart loop after HTTP 502",
+      "anchor": "infra:container-stability:container-flapping-with-repeated-http-502-errors",
+      "aliases": [
+        "infra:get-delo-sh-service:container-restart-loop-with-http-502-errors",
+        "infra:get-delo-sh-service:repeated-http-502-errors-causing-container-restarts"
+      ],
+      "reason": "get.delo.sh restart loop after HTTP 502"
+    },
+    {
+      "semantic_id": "Tiller missing service account key",
+      "anchor": "infra:tiller-service:missing-service-account-key-and-required-api-access",
+      "aliases": [
+        "infra:integration:tiller-integration-repeatedly-fails-due-to-missing-service-account-key-file-and-required-gcp-setup",
+        "infra:job-execution:tiller-job-failed-due-to-missing-service-account-key-file",
+        "infra:service-accounts:missing-service-account-key-causing-failures",
+        "infra:tiller-service:tiller-service-failed-due-to-missing-service-account-key"
+      ],
+      "reason": "Tiller missing service account key"
+    },
+    {
+      "semantic_id": "multi-service HTTP 502 restarts",
+      "anchor": "infra:delo-sh-services:multiple-delo-sh-services-returned-http-502-errors-and-were-restarted-in-one-operational-sweep",
+      "aliases": [
+        "infra:operational-events:multiple-http-502-errors-causing-container-restarts-across-various-services"
+      ],
+      "reason": "multi-service HTTP 502 restarts"
+    },
+    {
+      "semantic_id": "JIMB board-clearing cron missing momo skill",
+      "anchor": "james-brennan-pm:cron-jobs:jimb-board-clearing-heartbeat-cron-job-errors-every-10-minutes-due-to-missing-momo-skill",
+      "aliases": [
+        "james-brennan-pm:cron-job:jimb-board-clearing-heartbeat-errors-due-to-missing-skill"
+      ],
+      "reason": "JIMB board-clearing cron missing momo skill"
+    },
+    {
+      "semantic_id": "Tonnybox missing adapter-resolvable In Review lane",
+      "anchor": "tonnybox:adapter-review-lane-resolution:provider-neutral-adapter-cannot-resolve-one-unique-plane-in-review-state-causing-all-decisions-to-be-blocked-and-no-dispatchable-work",
+      "aliases": [
+        "tonnybox:decision-automation:decision-treadmill-due-to-missing-adapter-resolvable-in-review-state-on-the-board-causing-repeated-blocked-passes",
+        "tonnybox:ticket-provider-adapter:agent-loop-due-to-missing-distinct-in-review-lane-in-adapter-schema"
+      ],
+      "reason": "Tonnybox missing adapter-resolvable In Review lane"
+    },
+    {
+      "semantic_id": "Board Cranker runs without skills and yields no work",
+      "anchor": "bloodbank-board-cranker-43:board-cranker-loop:running-without-required-skills-tools-conflicting-last-status-ok-claims",
+      "aliases": [
+        "bloodbank-board-cranker-43:cron-jobs:board-cranker-cron-loop-runs-every-5-minutes-with-seven-missing-skills-claims-ok-but-is-contradicted-looping-on-nothing-causing-zero-implementation-commits"
+      ],
+      "reason": "Board Cranker runs without skills and yields no work"
+    },
+    {
+      "semantic_id": "JIMB cron jobs missing skills falsely report success",
+      "anchor": "james-brennan-pm:cron-jobs:four-cron-jobs-claim-ok-status-while-referencing-missing-skills-contradicting-their-success-claims",
+      "aliases": [
+        "james-brennan-pm:cron-jobs:hourly-two-lane-pass-job-runs-with-four-missing-skills-and-reports-last-status-ok-contradicted-by-pipeline"
+      ],
+      "reason": "Same JIMB hourly cron false-success problem; separate from infra-wide scheduler finding."
+    }
+  ],
+  "triage_fingerprints": [
+    "infra:dev-activity:unclassified-collector-dev-activity-caveat-1",
+    "infra:dev-activity:unclassified-collector-dev-activity-caveat-2",
+    "infra:dev-activity:unclassified-collector-dev-activity-caveat-3",
+    "infra:dev-activity:unclassified-collector-dev-activity-caveat-4",
+    "infra:dev-activity:unclassified-collector-dev-activity-caveat-5",
+    "infra:dev-activity:unclassified-collector-dev-activity-caveat-6",
+    "infra:dev-activity:unclassified-collector-dev-activity-caveat-7",
+    "infra:dev-activity:unclassified-collector-dev-activity-caveat-8",
+    "infra:fleet-health:unclassified-collector-fleet-health-caveat-1",
+    "infra:fleet-health:unclassified-collector-fleet-health-caveat-2",
+    "infra:pr-maintenance:unclassified-collector-pr-maintenance-caveat-1",
+    "infra:pr-maintenance:unclassified-collector-pr-maintenance-caveat-2"
+  ]
+}

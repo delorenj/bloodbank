@@ -53,12 +53,12 @@ for (const raw of extracted.findings) {
 for (const raw of extracted.non_issues) {
   if (allSourceIds.has(raw?.source_id) && String(raw.reason || '').trim()) covered.add(raw.source_id);
 }
-// A valid model response may still overlook a source. An omitted candidate is
-// explicitly triaged instead of disappearing from the final journal.
+// A valid model response may still overlook a source. Preserve the observation
+// for later classification without turning an unclassified caveat into a ticket.
 if (!errors.length) for (const candidate of sourceCandidates) {
   if (covered.has(candidate.id)) continue;
   normalized.push({ project_id: 'infra', area: candidate.id.split(':')[1] || 'journal',
-    failure_mode: `unclassified-${candidate.id}`, status: 'open', severity: 'medium',
+    failure_mode: `unclassified-${candidate.id}`, status: 'triage', severity: 'medium',
     summary: `Triage Dev Journal finding: ${candidate.text.slice(0, 130)}`,
     evidence: [candidate.text.slice(0, 1000)], source_ids: [candidate.id],
     existing_fingerprint: '', existing_ticket_key: '', resolution_evidence: '' });
@@ -173,7 +173,9 @@ for (const finding of groups.values()) {
   let issueError = '';
   const marker = `[dev-journal:${finding.fingerprint}]`;
   try {
-    if (!reportRow.backfill) {
+    if (finding.status === 'triage') {
+      // No Plane request is justified until an extractor confirms an issue.
+    } else if (!reportRow.backfill) {
       const issue = await matchTicket(board, marker, finding.existing_ticket_key);
       const ticketUrl = `https://plane.delo.sh/api/v1/workspaces/33god/projects/${board.board_id}/issues/`;
       if (finding.status === 'open') {
@@ -225,7 +227,8 @@ for (const finding of groups.values()) {
       ticket_key: ticketKey, observed_at: observedAt, event_sent: false,
     });
   }
-  if (!previous || date >= previous.last_seen) {
+  if ((!previous || date >= previous.last_seen) &&
+      !(finding.status === 'triage' && previous && previous.status !== 'triage')) {
     await upsert('findings', 'fingerprint', finding.fingerprint, {
       fingerprint: finding.fingerprint, project_id: finding.project_id, board_id: board.board_id,
       ticket_id: ticketId, ticket_key: ticketKey, active, first_seen: previous?.first_seen || date,
@@ -238,12 +241,14 @@ for (const finding of groups.values()) {
 
 const links = handled.map((finding) => {
   const suffix = finding.error ? ` — pending: ${finding.error}` :
+    finding.status === 'triage' ? ' — needs classification' :
     finding.ticket_key ? ` — https://plane.delo.sh/33god/browse/${finding.ticket_key}/` :
     finding.status === 'resolved' ? ' — recorded as resolved' : ' — ticket pending';
   return `- ${finding.status.toUpperCase()} ${finding.summary}${suffix}`;
 });
 const appendix = ['## Dev Journal pipeline',
-  `Report date: ${date}. Incident occurrences: ${handled.length}.`,
+  `Report date: ${date}. Confirmed incident occurrences: ${handled.filter((f) => f.status !== 'triage').length}. ` +
+    `Triage observations: ${handled.filter((f) => f.status === 'triage').length}.`,
   ...links,
   errors.length ? '### Pending or failed steps' : '### Processing status',
   ...(errors.length ? errors.map((e) => `- ${e}`) : ['- All issue and notebook steps completed.'])].join('\n');

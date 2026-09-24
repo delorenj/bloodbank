@@ -214,6 +214,10 @@ test('closed monthly rollup uses weekly day slices and includes missing archive 
     env.data.get('dev_journal_reports').push({ report_key: `${date}:gen`, report_date: date,
       received_at: `${date}T06:00:00Z`, content_sha256: date, payload: JSON.stringify({ report }) });
   }
+  env.data.get('dev_journal_occurrences').push({ occurrence_id: 'triage:1',
+    fingerprint: 'infra:dev-activity:unclassified', report_date: '2026-08-31',
+    project_id: 'infra', area: 'dev-activity', failure_mode: 'unclassified',
+    summary: 'Triage Dev Journal finding: git scope is all-refs', status: 'triage' });
   const RealDate = Date;
   const FixedDate = class extends RealDate {
     constructor(...args) { super(...(args.length ? args : ['2026-09-08T12:00:00Z'])); }
@@ -227,6 +231,9 @@ test('closed monthly rollup uses weekly day slices and includes missing archive 
   assert.equal(days.length, 31);
   assert.ok(days.every((slice) => slice.date.startsWith('2026-08')));
   assert.equal(days.find((slice) => slice.date === '2026-08-29').present, false);
+  assert.match(month.content, /Triage observations: 1/);
+  assert.match(month.content, /Unclassified observations:/);
+  assert.doesNotMatch(month.content, /infra:dev-activity:unclassified: 1 day/);
 });
 
 test('unmatched source routes to Infra and a replay does not create a second ticket or comment', async () => {
@@ -278,6 +285,27 @@ test('unmatched source routes to Infra and a replay does not create a second tic
   assert.equal(issues.length, 1);
   assert.equal(comments.length, 1);
   assert.equal(env.data.get('dev_journal_occurrences').length, 1);
+});
+
+test('uncovered collector caveat stays in triage without Plane ticket or incident event', async () => {
+  const env = store(['reports', 'findings', 'occurrences']);
+  const date = '2026-09-23';
+  env.data.get('dev_journal_reports').push({ report_key: `${date}:gen`, report_date: date,
+    source_event_id: 'evt-1', status: 'processing', backfill: false,
+    payload: JSON.stringify({ markdown: '# Journal', report: {}, collector_facts: [] }), errors: '[]' });
+  env.helpers.httpRequestWithAuthentication = async () => {
+    throw new Error('Plane must not be called for unclassified observations');
+  };
+  const llm = { choices: [{ message: { content: JSON.stringify({ findings: [], non_issues: [] }) } }] };
+  const result = await execute('process-report', env, [llm], { selected: {
+    report_key: `${date}:gen`, source_candidates: [{ id: 'collector:dev-activity:caveat:1',
+      text: 'git scope is all-refs' }],
+  } });
+  assert.equal(result[0].json.status, 'complete');
+  assert.match(result[0].json.final_markdown, /Triage observations: 1/);
+  assert.equal(env.data.get('dev_journal_findings')[0].status, 'triage');
+  assert.equal(env.data.get('dev_journal_occurrences')[0].status, 'triage');
+  assert.deepEqual(await execute('incident-outbox', env, [{}]), []);
 });
 
 test('07:00 deadline targets yesterday and sends one missing-report alert', async () => {
