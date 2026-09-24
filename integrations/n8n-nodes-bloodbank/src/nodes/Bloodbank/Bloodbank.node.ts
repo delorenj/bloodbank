@@ -178,7 +178,9 @@ export class Bloodbank implements INodeType {
             name: 'commandId',
             type: 'string',
             default: '',
-            required: true,
+            // n8n validates nested collection options even when the parent is hidden.
+            // Command mode enforces this field in execute() below.
+            required: false,
             description: 'Retry-stable UUID for this command; reused as the root correlation ID',
           },
           {

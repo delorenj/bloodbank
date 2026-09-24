@@ -274,6 +274,13 @@ test('command mode requires retry-stable command identity before publishing', as
   assert.equal(publishCalls, 0);
 });
 
+test('event mode can activate without the hidden command identity field', () => {
+  const node = new Bloodbank();
+  const identity = node.description.properties.find((property) => property.name === 'identity');
+  const commandId = identity.options.find((option) => option.name === 'commandId');
+  assert.equal(commandId.required, false);
+});
+
 test('event mode preserves the existing envelope, subject, and output shape', async () => {
   const messages = [];
   const node = new Bloodbank();
