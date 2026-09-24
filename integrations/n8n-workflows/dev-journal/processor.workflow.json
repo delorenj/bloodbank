@@ -57,7 +57,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "url": "https://api.automaticai.io/v1/chat/completions",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -70,8 +70,8 @@
       },
       "credentials": {
         "httpHeaderAuth": {
-          "id": "XkM3vQmnNllLTJ8p",
-          "name": "OpenRouter API Key"
+          "id": "DjNewApiN8n2026",
+          "name": "Dev Journal NewAPI n8n"
         }
       },
       "onError": "continueRegularOutput"

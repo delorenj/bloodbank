@@ -12,7 +12,7 @@ try {
   if (response.error) throw new Error(JSON.stringify(response.error));
   let message = response.choices?.[0]?.message?.content;
   if (Array.isArray(message)) message = message.map((v) => v.text || '').join('');
-  if (typeof message !== 'string') throw new Error('OpenRouter returned no assistant message');
+  if (typeof message !== 'string') throw new Error('Extractor returned no assistant message');
   message = message.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   extracted = JSON.parse(message);
   if (!Array.isArray(extracted.findings) || !Array.isArray(extracted.non_issues)) {

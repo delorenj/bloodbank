@@ -34,7 +34,7 @@ const system = `You extract operational issues from a nightly Dev Journal. Retur
 const user = JSON.stringify({ report_date: row.report_date, source_candidates: sourceCandidates,
   collector_facts: content.collector_facts, full_report_markdown: content.markdown });
 const llmRequest = {
-  model: '@preset/opencode-budget-under-3m-output',
+  model: 'openai/gpt-4.1-mini',
   messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
   response_format: { type: 'json_object' }, temperature: 0, max_tokens: 10000,
 };

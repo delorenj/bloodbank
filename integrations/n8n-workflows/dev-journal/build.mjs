@@ -34,7 +34,7 @@ const trigger = (name, x, y) => node(name, 'n8n-nodes-bloodbank.bloodbankTrigger
   delivery: 'durable', acknowledge: 'afterExecution', catchUpHours: 0, connection: {},
 }, x, y);
 const planeCredential = { httpHeaderAuth: { id: 'TpxVVgOnmjHaE6h7', name: 'Plane API (33GOD + AutomaticAI)' } };
-const openRouterCredential = { httpHeaderAuth: { id: 'XkM3vQmnNllLTJ8p', name: 'OpenRouter API Key' } };
+const newApiCredential = { httpHeaderAuth: { id: 'DjNewApiN8n2026', name: 'Dev Journal NewAPI n8n' } };
 const resendCredential = { httpHeaderAuth: { id: 'ZYgVKEU9w9je0Jt4', name: 'Resend HTTP' } };
 const link = (connections, from, to) => {
   const entry = connections[from] ?? { main: [[]] };
@@ -81,13 +81,13 @@ const backfillNodes = [
     '={{ $json.receipt }}', 1440, 0),
 ];
 
-const openRouter = node('Extract and classify findings', 'n8n-nodes-base.httpRequest', {
-  method: 'POST', url: 'https://openrouter.ai/api/v1/chat/completions',
+const extractor = node('Extract and classify findings', 'n8n-nodes-base.httpRequest', {
+  method: 'POST', url: 'https://api.automaticai.io/v1/chat/completions',
   authentication: 'genericCredentialType', genericAuthType: 'httpHeaderAuth',
   sendBody: true, contentType: 'json', specifyBody: 'json',
   jsonBody: '={{ JSON.stringify($json.llm_request) }}',
   options: { timeout: 180000 },
-}, 480, 0, { credentials: openRouterCredential, onError: 'continueRegularOutput' });
+}, 480, 0, { credentials: newApiCredential, onError: 'continueRegularOutput' });
 const resend = (name, x, y) => node(name, 'n8n-nodes-base.httpRequest', {
   method: 'POST', url: 'https://api.resend.com/emails',
   authentication: 'genericCredentialType', genericAuthType: 'httpHeaderAuth',
@@ -101,7 +101,7 @@ const processorNodes = [
   schedule('Find reports to process', '*/5 * * * *'),
   manual('Process next report manually', 0, 120),
   journal('Claim one report and prepare extraction', 'selectReport', 240, 0),
-  openRouter,
+  extractor,
   journal('Track issues and publish Infra note', 'processReport', 720, 0, {
     selected: "={{ $('Claim one report and prepare extraction').first().json }}",
   }, { credentials: planeCredential }),

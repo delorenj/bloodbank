@@ -62,6 +62,7 @@ test('generated workflows have valid graph, deterministic IDs, and compilable Co
       assert.doesNotThrow(() => new AsyncFunction('helpers', '$input', 'ctx', node.parameters.jsCode));
     }
     assert.ok(!read(file).includes('DEV_JOURNAL_BACKFILL_AUTH_CREDENTIAL_ID'));
+    assert.ok(!read(file).includes('openrouter.ai/api/v1/chat/completions'));
   }
 });
 
@@ -97,6 +98,7 @@ test('extractor receives full report and covers Needs you plus collector caveats
     'needs-you:1', 'needs-you:2', 'collector:delivery:status', 'collector:delivery:caveat:1',
   ]);
   assert.ok(out[0].json.llm_request.messages[1].content.includes('FULL JOURNAL BODY'));
+  assert.equal(out[0].json.llm_request.model, 'openai/gpt-4.1-mini');
   assert.equal(env.data.get('dev_journal_reports')[0].status, 'processing');
 });
 
