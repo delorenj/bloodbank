@@ -403,6 +403,24 @@ class TestEnvCapture(unittest.TestCase):
         }
         self.assertEqual(self._captured(dict(want)), want)
 
+    def test_recall_and_briefing_knobs_reach_the_handler(self):
+        """The README documents these as shell-settable; the allowlist must agree."""
+        want = {
+            "HINDSIGHT_GLOBAL_BANKS": "infra",
+            "HINDSIGHT_RECALL_GENERAL": "1",
+            "HINDSIGHT_ANCESTRY": "1",
+            "HINDSIGHT_FANOUT": "1",
+            "HINDSIGHT_RECALL_TIMEOUT": "6",
+            "HINDSIGHT_RECALL_MAX_BANKS": "3",
+            "HINDSIGHT_RECALL_PREFER_OBSERVATIONS": "0",
+            "HINDSIGHT_RECALL_QUERY_MAX_CHARS": "800",
+            "HINDSIGHT_BRIEFING": "0",
+            "HINDSIGHT_BRIEFING_TIMEOUT": "0.3",
+            "HINDSIGHT_BRIEFING_MAX_CHARS": "3000",
+        }
+        # TOKEN-shaped, so the secret gate drops it by design.
+        self.assertEqual(self._captured({**want, "HINDSIGHT_RECALL_QUERY_MAX_TOKENS": "300"}), want)
+
     def test_unlisted_vars_are_dropped(self):
         got = self._captured({"PATH": "/usr/bin", "HOME": "/home/x",
                               "RANDOM_THING": "v", "ZELLIJ_PANE_ID": "1"})

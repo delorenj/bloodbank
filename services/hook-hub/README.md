@@ -242,6 +242,9 @@ works like this:
    1,000-char cap, which is the live path because `/usr/bin/python3` has no
    tiktoken. It keeps the head (60%) and the tail (40%), since the ask is usually
    at one end. A `400 Query too long` is retried once at half the length.
+   Measured on 2026-09-26 against the server's own tokenizer: 190 real prompts
+   that hit the 1,000-char cap came out at 191-350 cl100k tokens (median 247),
+   and none reached 400.
 3. **Banks.** The synchronous path reads **only the primary bank**, plus the
    agent's personal bank when the registry declares a `write_bank`. The primary
    bank gets `mid`/2048 and anything extra gets `low`/1024. Extra banks are
@@ -283,13 +286,21 @@ injected under a `# Hindsight briefing` header, capped at
 `HINDSIGHT_BRIEFING_MAX_CHARS` (6,000). The whole fetch has a 0.5s budget
 (`HINDSIGHT_BRIEFING_TIMEOUT`), and `HINDSIGHT_BRIEFING=0` turns it off.
 
+Every `HINDSIGHT_*` knob above can be set in the agent's shell, because
+`bb-hook` forwards each one by exact name, or in the hub's service environment.
+The one exception is `HINDSIGHT_RECALL_QUERY_MAX_TOKENS`. Its name contains
+`TOKEN`, so `bb-hook`'s secret-shaped gate drops it on purpose. Set that one in
+the service environment.
+
 Handlers are spawned fresh for every hook, so edits to `hindsight.py` and
 `concerns.py` apply on the next prompt with no restart. Registry edits apply on
 mtime. Only `hub.py` changes need `systemctl --user restart hook-hub.service`.
 
 The legacy shell hook `~/.agents/hooks/hindsight/hindsight-recall.sh` is not
-maintained. It exits as soon as the ownership manifest names the hub as owner,
-and no native CLI config calls it. Its last journal write was 2026-09-13.
+maintained and did not get these changes. It exits as soon as the ownership
+manifest names the hub as owner, which it does for all eight CLIs, and no native
+CLI config calls it. `~/.claude/hooks` is a symlink to `~/.agents/hooks`, so
+there is no second copy. Its last journal write was 2026-09-13.
 
 ## Deadlines and failure behavior
 
@@ -298,7 +309,10 @@ budget. Prompt hooks that recall Hindsight use a 15-second client deadline withi
 a 16-second native timeout, with up to 14 seconds of shared synchronous work.
 The registry kills the recall handler at 11 seconds, but it stops itself at
 `HINDSIGHT_RECALL_TIMEOUT` (8s) and kills its own CLI children first. Each other
-handler has its own registry timeout.
+handler has its own registry timeout. Sync handlers run one after another, so a
+Claude prompt's worst case is skill-reminder (1s), then recall (about 8.5s with
+interpreter start), then codegraph-prompt (2s), then hub-selftest (0.5s). That
+totals about 12s inside the 14.5s budget.
 
 The client fails open on unavailable sockets, malformed replies, or elapsed
 deadlines. A deliberate, valid native denial is preserved. Hung handler process
