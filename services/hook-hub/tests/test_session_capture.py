@@ -184,6 +184,23 @@ class AskAndEditTests(CaptureTestCase):
         self.edit(tool_name="exec", tool_input={"input": js})
         self.assertEqual(self.state()["pending_files"], ["x/y.md", "z.txt"])
 
+    def test_codex_apply_patch_hook_payload_yields_its_path(self):
+        # The real Codex 0.157 PostToolUse shape: one event per nested tool, the
+        # patch under `command` (the old path looked only for `patch`).
+        self.edit(tool_name="apply_patch", tool_input={
+            "command": "*** Begin Patch\n*** Update File: notes/decision.md\n@@\n+Jitter is full jitter.\n*** End Patch"})
+        self.assertEqual(self.state()["pending_files"], ["notes/decision.md"])
+
+    def test_a_heredoc_write_yields_its_path(self):
+        self.edit(tool_name="Bash", tool_input={"command": "mkdir -p notes\ncat > notes/decision.md <<'EOF'\nx\nEOF"})
+        self.edit(tool_name="Bash", tool_input={"command": "cat <<EOF >> docs/log.md\ny\nEOF"})
+        self.edit(tool_name="Bash", tool_input={"command": "tee -a CHANGELOG.md <<EOF\nz\nEOF"})
+        self.assertEqual(self.state()["pending_files"], ["notes/decision.md", "docs/log.md", "CHANGELOG.md"])
+
+    def test_scratch_and_device_writes_are_not_work(self):
+        outcome = self.edit(tool_name="Bash", tool_input={"command": "cat > /tmp/x.json <<EOF\n{}\nEOF; echo hi > /dev/null"})
+        self.assertEqual(outcome["_hook_hub"]["reason"], "no_file_edit")
+
     def test_a_raw_apply_patch_string_yields_its_paths(self):
         patch = "*** Begin Patch\n*** Delete File: old.py\n*** Update File: src/new.py\n*** Move to: src/newer.py\n*** End Patch"
         self.edit(tool_name="apply_patch", tool_input=patch)

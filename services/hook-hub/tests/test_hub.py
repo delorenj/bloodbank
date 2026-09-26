@@ -421,6 +421,12 @@ class TestEnvCapture(unittest.TestCase):
         # TOKEN-shaped, so the secret gate drops it by design.
         self.assertEqual(self._captured({**want, "HINDSIGHT_RECALL_QUERY_MAX_TOKENS": "300"}), want)
 
+    def test_session_capture_switches_reach_the_handler(self):
+        want = {"HINDSIGHT_CAPTURE": "0", "HINDSIGHT_CAPTURE_FLUSH_CHARS": "500",
+                "HINDSIGHT_CAPTURE_MIN_OUTCOME": "40", "HINDSIGHT_SESSION_STRATEGY": "conversation"}
+        # The sweeper's knobs are service-level: a caller cannot set them.
+        self.assertEqual(self._captured({**want, "HINDSIGHT_CAPTURE_DIR": "/x", "HINDSIGHT_CAPTURE_IDLE_S": "1"}), want)
+
     def test_unlisted_vars_are_dropped(self):
         got = self._captured({"PATH": "/usr/bin", "HOME": "/home/x",
                               "RANDOM_THING": "v", "ZELLIJ_PANE_ID": "1"})

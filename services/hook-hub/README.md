@@ -326,7 +326,7 @@ paths only.
 | Hook role | Handler | Buffers |
 | --- | --- | --- |
 | `prompt_submit` | `hindsight-turn` | The user's ask, cleaned by `hindsight.clean_query` (the recall path's harness-XML and slash-command hygiene) and clipped to 1,200 chars (head and tail). A harness-only prompt, such as a `<task-notification>`, buffers nothing. |
-| `post_tool` | `hindsight-retain` | Paths of edited files, relative to the repo. They come from the input of edit tools (`Edit`, `Write`, `MultiEdit`, Kimi `Edit`/`Write`, Copilot `edit`/`create`, …) and from any `*** Add/Update/Delete File:` / `*** Move to:` header anywhere in the tool input, including inside a JS string literal. File content is never recorded. |
+| `post_tool` | `hindsight-retain` | Paths of edited files, relative to the repo. They come from the input of edit tools (`Edit`, `Write`, `MultiEdit`, Kimi `Edit`/`Write`, Copilot `edit`/`create`, …), from any `*** Add/Update/Delete File:` / `*** Move to:` header anywhere in the tool input (Codex sends the patch under `command`; it can also sit inside a JS string literal), and from shell heredoc writes (`cat > f <<EOF`, `cat <<EOF >> f`, `tee [-a] f <<EOF`), excluding `/tmp` and `/dev`. File content is never recorded. |
 | turn end (`turn_completed`, or native `Stop` for Antigravity) | `hindsight-turn` | The final assistant message closes the turn as ask + outcome + files. Long fenced code blocks become `[code block elided: N lines]`, and the outcome is clipped to 2,400 chars. A turn is dropped if its outcome is under 80 chars and it edited nothing. Interrupts are dropped, and so is a repeated Stop for the same turn. |
 
 The buffer is a JSON state file per session, kept in
@@ -340,7 +340,7 @@ workspace, not from the hook's cwd.
 | CLI | Turn end | Final message from | Ask from | Live-verified |
 | --- | --- | --- | --- | --- |
 | Claude | `Stop` | `last_assistant_message` (hook schema 2.1.283); transcript tail as fallback | `UserPromptSubmit` | yes |
-| Codex | `Stop` | `last_assistant_message` (0.157 schema); rollout tail as fallback | `UserPromptSubmit` | yes |
+| Codex | `Stop` | `last_assistant_message` (0.157 schema); rollout tail as fallback | `UserPromptSubmit` | yes (edit paths from `apply_patch` and heredocs) |
 | Kimi | `Stop` | the session's `~/.kimi-code/sessions/*/session_<id>/agents/main/wire.jsonl` (its Stop has no message or path) | `UserPromptSubmit` | fixture only |
 | Antigravity | `Stop` (role `session_end`, needs `fullyIdle`) | `transcriptPath` (`PLANNER_RESPONSE`) | the transcript's `<USER_REQUEST>` (it has no prompt hook) | fixture only |
 | Copilot | `agentStop` | `transcriptPath` (`events.jsonl`) | `userPromptSubmitted` | fixture only |
@@ -377,8 +377,9 @@ It goes over HTTP rather than through the CLI because the CLI cannot set
 - at session end (`hindsight-session-end`, forced; it also marks the session
   closed);
 - from the sweeper, when a session has been idle for `HINDSIGHT_CAPTURE_IDLE_S`
-  (30 min). This covers a session that died without a SessionEnd. If it
-  resumes later, its next flush appends to the same document.
+  (2h). This covers a session that died without a SessionEnd, and the
+  long-lived zellij panes that rarely send one. If the session resumes later,
+  its next flush appends to the same document.
 
 The system header goes only into a session's first batch. The `context` field
 carries the repo and CLI on every chunk.
@@ -453,6 +454,39 @@ ln -sf ~/code/33GOD/bloodbank/services/hook-hub/systemd/hindsight-capture-sweep.
 systemctl --user daemon-reload && systemctl --user enable --now hindsight-capture-sweep.timer
 ```
 
+### Verification (2026-09-26, server 0.10.1)
+
+- **Synthetic session, scratch bank.** Five turns, driven through the exact
+  handler commands the hub spawns, with a 1,500-char flush threshold. Turns
+  1-3 were flushed by size, and turns 4 and 5 by two session ends. The stored
+  document held 11 messages (one system header and five user/assistant pairs),
+  with no code body and no harness XML. Extraction produced one world fact
+  per decision: the queue root cause and fix, retries with jitter, the burst
+  canary, the rollback plan, and alert ownership. It also produced five
+  untagged (shared-scope) observations. All three operations were confirmed
+  by the sweeper, and the state file was deleted.
+  This document stayed under one 3,000-char chunk, so each append replaced
+  that chunk and the server fell back to a full re-ingest. That is expected:
+  prefix stability starts once a batch fills its chunk, which the 9,000-char
+  production threshold guarantees for mid-session flushes. A resumed tiny
+  session costs one small re-extraction.
+- **Real Codex (`codex exec` 0.157, live hooks and hub).** In the first
+  session, Codex wrote a file through a shell heredoc. That exposed the need
+  for heredoc detection (added). The second session used `apply_patch`. Its
+  PostToolUse payload is `tool_name: "apply_patch"` with the patch under
+  `command`, and the path was captured. Both sessions were flushed at
+  SessionEnd (`codex exec` sends one) and confirmed. The two sessions' facts
+  consolidated into one observation.
+- **Real Claude (`claude -p` 2.1.283 in this repo, live hooks and hub).** The
+  briefing, the ask, the `last_assistant_message` outcome (clipped to 2,391
+  chars) and the SessionEnd flush all went into bank `bloodbank` as
+  `session-claude-a2a342c1-…`, and the operation completed. It produced 10
+  world/experience facts, each one a design decision or coverage statement.
+  The document carries `observation_scopes: shared` and tags
+  `agent:claude, host:big-chungus`.
+- The scratch banks (`zz-capture-probe-*`, `zz-capture-e2e-*`,
+  `zz-capture-codex-e2e`) were deleted, bringing the bank count back to 202.
+
 ### Journal and receipts
 
 The session journal gets these metadata events: `turn_captured` (turn, source,
@@ -472,7 +506,7 @@ status, and the error when there was one), `session_flush_confirmed`,
 | --- | --- | --- |
 | `HINDSIGHT_CAPTURE` | `1` | `0` turns capture off |
 | `HINDSIGHT_CAPTURE_FLUSH_CHARS` | `9000` | Buffered size that triggers a mid-session flush |
-| `HINDSIGHT_CAPTURE_IDLE_S` | `1800` | Idle time after which the sweeper flushes a session |
+| `HINDSIGHT_CAPTURE_IDLE_S` | `7200` | Idle time after which the sweeper flushes a session |
 | `HINDSIGHT_CAPTURE_ASK_CHARS` / `_OUTCOME_CHARS` | `1200` / `2400` | Per-turn caps (each JSON turn stays under the 3,000-char chunk) |
 | `HINDSIGHT_CAPTURE_MIN_OUTCOME` | `80` | Shorter outcomes with no edits are trivial |
 | `HINDSIGHT_CAPTURE_MAX_ATTEMPTS` | `8` | Delivery attempts before dead-lettering |
@@ -480,8 +514,14 @@ status, and the error when there was one), `session_flush_confirmed`,
 | `HINDSIGHT_CAPTURE_DIR` | `$XDG_STATE_HOME/33god/hook-hub/capture` | Buffers and dead letters |
 | `HINDSIGHT_SESSION_STRATEGY` | `conversation` | Named retain strategy; empty omits it |
 
-As with recall, a repo can opt out with `"hindsight-turn"` in the
-`hooks.disabled` list of `.agents/local.json`.
+`HINDSIGHT_CAPTURE`, `_FLUSH_CHARS`, `_MIN_OUTCOME` and
+`HINDSIGHT_SESSION_STRATEGY` can be set in the agent's shell, because
+`bb-hook` forwards those exact names. `HINDSIGHT_CAPTURE=0` keeps a scripted
+or throwaway session (`claude -p` jobs, probes) out of the repo's memory. The
+rest are read by the sweeper too, which runs without a caller, so set them in
+the hub's service environment and the sweep unit. As with recall, a repo can
+opt out with `"hindsight-turn"` in the `hooks.disabled` list of
+`.agents/local.json`.
 
 ## Deadlines and failure behavior
 

@@ -87,6 +87,14 @@ ENV_ALLOWLIST = (
     "HINDSIGHT_BRIEFING",
     "HINDSIGHT_BRIEFING_TIMEOUT",
     "HINDSIGHT_BRIEFING_MAX_CHARS",
+    # Session write-back switches a caller may set. HINDSIGHT_CAPTURE=0 keeps a
+    # scripted or throwaway session out of the repo's memory. The sweeper runs
+    # without any caller, so its own knobs (idle, attempts, dir) belong in the
+    # hub's service environment, not here.
+    "HINDSIGHT_CAPTURE",
+    "HINDSIGHT_CAPTURE_FLUSH_CHARS",
+    "HINDSIGHT_CAPTURE_MIN_OUTCOME",
+    "HINDSIGHT_SESSION_STRATEGY",
     # control -- merge-forward recursion guards
     "GOD_MERGE_FORWARD_REBALANCE",
     "GOD_MERGE_FORWARD_REBALANCE_ENABLE",

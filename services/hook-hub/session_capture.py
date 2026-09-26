@@ -87,6 +87,14 @@ PATH_KEYS = ("file_path", "path", "absolute_path", "target_file", "TargetFile", 
 # apply_patch file headers, raw or inside a JS/JSON string literal (Codex now
 # wraps edits as `exec` code calling tools.apply_patch("*** Begin Patch\n...")).
 PATCH_FILE = re.compile(r"\*\*\* (?:Add File|Update File|Delete File|Move to): ([^\n\r\"'`]+?)\s*(?=\\[nr]|[\n\r\"'`]|$)")
+# A file authored through a shell heredoc (Codex often writes new files this
+# way): `cat > f <<EOF`, `cat >> f <<EOF`, `cat <<'EOF' > f`, `tee [-a] f <<EOF`.
+_TARGET = r"([^\s;&|<>'\"`$()]+)"
+HEREDOC_WRITE = (
+    re.compile(r"(?:^|[\s;&|(])(?:cat\s*>{1,2}|tee\s+(?:-a\s+)?)\s*" + _TARGET + r"\s*<<"),
+    re.compile(r"(?:^|[\s;&|(])cat\s*<<-?\s*['\"]?\w+['\"]?\s*>{1,2}\s*" + _TARGET),
+)
+NOT_A_WORK_FILE = re.compile(r"^(?:/dev/|/proc/|/tmp/|/var/tmp/)")
 
 
 def _now() -> float:
@@ -104,7 +112,7 @@ def _int(name: str, default: int, low: int, high: int) -> int:
 def limits() -> dict[str, int]:
     return {
         "flush_chars": _int("HINDSIGHT_CAPTURE_FLUSH_CHARS", 9000, 200, 100000),
-        "idle_s": _int("HINDSIGHT_CAPTURE_IDLE_S", 1800, 30, 7 * 86400),
+        "idle_s": _int("HINDSIGHT_CAPTURE_IDLE_S", 7200, 30, 7 * 86400),
         "ask_chars": _int("HINDSIGHT_CAPTURE_ASK_CHARS", 1200, 100, 4000),
         "outcome_chars": _int("HINDSIGHT_CAPTURE_OUTCOME_CHARS", 2400, 200, 8000),
         "min_outcome": _int("HINDSIGHT_CAPTURE_MIN_OUTCOME", 80, 0, 2000),
@@ -341,7 +349,10 @@ def edit_paths(payload: dict) -> list[str]:
     for text in _strings(args, [200]):
         if "*** " in text and "File:" in text or "*** Move to:" in text:
             found.extend(match.strip() for match in PATCH_FILE.findall(text))
-    return list(dict.fromkeys(item for item in found if item))
+        if "<<" in text:
+            for pattern in HEREDOC_WRITE:
+                found.extend(pattern.findall(text))
+    return list(dict.fromkeys(item for item in found if item and not NOT_A_WORK_FILE.match(item)))
 
 
 # ------------------------------------------------------------ final messages
@@ -573,7 +584,8 @@ def record_turn(payload: dict, cli: str, native: str) -> dict:
     outcome_reason = "turn_buffered"
     if flush_due:
         summary = flush(path, trigger="size")
-        outcome_reason = "turn_buffered_flush_" + summary.get("result", "none")
+        if summary.get("result") not in {None, "none"}:
+            outcome_reason = "turn_buffered_flush_" + summary["result"]
     sweep(exclude=path)
     return result("succeeded", outcome_reason)
 
