@@ -418,5 +418,21 @@ class BriefingTests(unittest.TestCase):
         self.assertLess(len(json.loads(output["stdout"])["hookSpecificOutput"]["additionalContext"]), 3600)
 
 
+class CliOutputTests(unittest.TestCase):
+    """Pinned against the 0.10.1 CLI's real stderr (2026-09-26)."""
+
+    NOT_FOUND = "✗ Not found (404): Bank 'zz' not found\n\nAPI URL:\n  https://api.hs.delo.sh\n"
+    TOO_LONG = ("✗ Request rejected (400)\n\nAPI URL:\n  https://api.hs.delo.sh\n\nServer response:\n"
+                "  Query too long: 1051 tokens exceeds maximum of 500. Please shorten your query.\n")
+
+    def test_a_never_created_bank_is_not_found_and_says_why(self):
+        self.assertEqual(hindsight.classify(1, "", self.NOT_FOUND), ("not_found", []))
+        self.assertEqual(hindsight._detail("", self.NOT_FOUND), "Not found (404): Bank 'zz' not found")
+
+    def test_a_rejected_query_reports_the_server_body(self):
+        self.assertEqual(hindsight.classify(1, "", self.TOO_LONG)[0], "http_400")
+        self.assertTrue(hindsight._detail("", self.TOO_LONG).startswith("Query too long: 1051 tokens"))
+
+
 if __name__ == "__main__":
     unittest.main()

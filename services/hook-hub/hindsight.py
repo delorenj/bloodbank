@@ -638,6 +638,12 @@ def _detail(out: str, err: str) -> str:
     for index, line in enumerate(lines):
         if line.lower().startswith("server response") and index + 1 < len(lines):
             return lines[index + 1][:200]
+    # No body block (e.g. the 0.10.1 CLI's 404 for a never-created bank):
+    # its "✗ Not found (404): Bank 'x' not found" headline is the reason,
+    # while the last line is only the API URL.
+    for line in lines:
+        if re.search(r"\(\d{3}\)", line):
+            return line.lstrip("✗ ")[:200]
     return (lines[-1] if lines else "")[:200]
 
 
