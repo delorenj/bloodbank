@@ -1,0 +1,17 @@
+# One sweep of the session write-back buffers (session_capture.py): flush
+# sessions idle past HINDSIGHT_CAPTURE_IDLE_S (they died without a
+# SessionEnd), confirm submitted batches, retry failed ones on their backoff,
+# and forget sessions that are fully delivered.
+#
+# Type=oneshot driven by a timer, not a daemon, same as asm-sweep: a crash is
+# repaired by the next tick. Every captured turn also sweeps opportunistically;
+# this timer covers the hours when no agent is running at all.
+[Unit]
+Description=33GOD hook-hub - sweep Hindsight session write-back buffers
+Documentation=file:%h/code/33GOD/bloodbank/services/hook-hub/README.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=/
+ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/hook-hub/session_capture.py sweep
+NoNewPrivileges=yes

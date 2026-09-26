@@ -91,42 +91,8 @@ class MemoryReceiptTests(unittest.TestCase):
     def payload(self):
         return {"session_id": "test-session", "tool_input": {"patch": "*** Begin Patch\n*** Update File: README.md\n+" + "substantial edit " * 8 + "\n*** End Patch"}}
 
-    def test_candidate_is_not_a_fake_retain_and_session_retry_deduplicates(self):
-        payload = self.payload()
-        candidate = hindsight.candidate(payload, "codex")
-        self.assertEqual(candidate["_hook_hub"]["reason"], "edit_candidate_recorded")
-        self.assertFalse(self.calls.exists())
-        self.assertEqual(hindsight.records(payload, "codex")[-1]["event"], "retain_candidate")
-        first = hindsight.end(payload, "codex")
-        second = hindsight.end(payload, "codex")
-        self.assertEqual(first["_hook_hub"]["reason"], "session_summary_retained")
-        self.assertEqual(second["_hook_hub"]["reason"], "session_summary_already_retained")
-        self.assertEqual(len(self.calls.read_text().splitlines()), 1)
-        record = hindsight.records(payload, "codex")[-1]
-        self.assertTrue(record["retained"])
-        self.assertEqual(record["response_keys"], ["document_id", "success"])
-
-    def test_failed_retain_can_retry_same_document_id(self):
-        payload = self.payload()
-        hindsight.candidate(payload, "codex")
-        with mock.patch.dict(os.environ, {"FAKE_RETAIN_FAIL": "1"}):
-            first = hindsight.end(payload, "codex")
-        second = hindsight.end(payload, "codex")
-        self.assertEqual(first["_hook_hub"]["status"], "failed")
-        self.assertEqual(second["_hook_hub"]["status"], "succeeded")
-        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
-        self.assertEqual(calls[0][calls[0].index("--doc-id") + 1], calls[1][calls[1].index("--doc-id") + 1])
-
-    def test_sessions_are_isolated_by_cli(self):
-        payload = self.payload()
-        hindsight.candidate(payload, "codex")
-        self.assertEqual(hindsight.end(payload, "claude")["_hook_hub"]["reason"], "no_retention_candidates")
-        self.assertFalse(self.calls.exists())
-
-    def test_failed_tool_does_not_record_an_edit_candidate(self):
-        payload = {**self.payload(), "tool_response": {"success": False}}
-        self.assertEqual(hindsight.candidate(payload, "codex")["_hook_hub"]["reason"], "tool_failed")
-        self.assertFalse(hindsight.journal_path(payload, "codex").exists())
+    # The edit-candidate / SessionEnd snippet retain these tests used to pin was
+    # replaced on 2026-09-26 by per-turn capture; see test_session_capture.py.
 
     def test_recall_returns_native_context_from_json_response(self):
         output = hindsight.recall({"session_id": "recall", "prompt": "Please explain the current project hook architecture"}, "codex", "UserPromptSubmit")

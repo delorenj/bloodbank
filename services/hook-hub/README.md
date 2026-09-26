@@ -57,7 +57,7 @@ explicit skips for absent project context or optional tools.
 
 | Concern | Applicable CLIs and runtime requirements |
 | --- | --- |
-| Hindsight, skill reminder, skill lint | Portable where the native adapter provides the matching lifecycle role and required prompt, session, or file-edit payload. Retention is session-close work; candidate writes are not retain receipts. |
+| Hindsight, skill reminder, skill lint | Portable where the native adapter provides the matching lifecycle role and required prompt, session, or file-edit payload. Session write-back needs a turn-end signal with the final message or a readable transcript: Claude, Codex, Kimi, Antigravity, Copilot, Gemini (see Hindsight session write-back). |
 | CodeGraph prompt context | Claude, Codex, Copilot, Kimi, Gemini, OpenCode, Hermes; the working repository must have an index. |
 | Code Review Graph status/update | Claude, Codex, OpenCode; the repository must have a Code Review Graph index. The before-commit decision is OpenCode-specific. |
 | Project Notebook | Claude only: its canonical PJangler engine accepts Claude identities and SessionStart/SessionEnd. Other CLIs must not be relabeled as Claude. Non-repository work is skipped; the project must also be registered and configured in PJangler. |
@@ -303,6 +303,185 @@ maintained and did not get these changes. It exits as soon as the ownership
 manifest names the hub as owner, which it does for all eight CLIs, and no native
 CLI config calls it. `~/.claude/hooks` is a symlink to `~/.agents/hooks`, so
 there is no second copy. Its last journal write was 2026-09-13.
+
+## Hindsight session write-back
+
+Since 2026-09-26 (audit plan item 2a), every substantive turn leaves its
+**decisions and outcomes** in the repo's bank. The code is in
+`session_capture.py`.
+
+**What it replaced.** SessionEnd used to retain `Session completed. Files
+edited:` plus the first 400 characters of every edit, with context
+`session-summary`. That text was code, not outcomes. The `Session outcome` line
+never appeared, because Claude's SessionEnd payload carries only `reason`. 191
+of 278 session ends retained nothing, because nothing had been edited. Codex
+never wrote at all: its edits arrive as `exec` code that calls
+`tools.apply_patch("*** Begin Patch\n...")`, and the old path looked for a
+`patch` key. Failed retains were dropped, and every write went through the CLI
+with a 45s timeout. That path is gone. `hindsight-retain` now records file
+paths only.
+
+### Per turn (buffering, no network)
+
+| Hook role | Handler | Buffers |
+| --- | --- | --- |
+| `prompt_submit` | `hindsight-turn` | The user's ask, cleaned by `hindsight.clean_query` (the recall path's harness-XML and slash-command hygiene) and clipped to 1,200 chars (head and tail). A harness-only prompt, such as a `<task-notification>`, buffers nothing. |
+| `post_tool` | `hindsight-retain` | Paths of edited files, relative to the repo. They come from the input of edit tools (`Edit`, `Write`, `MultiEdit`, Kimi `Edit`/`Write`, Copilot `edit`/`create`, …) and from any `*** Add/Update/Delete File:` / `*** Move to:` header anywhere in the tool input, including inside a JS string literal. File content is never recorded. |
+| turn end (`turn_completed`, or native `Stop` for Antigravity) | `hindsight-turn` | The final assistant message closes the turn as ask + outcome + files. Long fenced code blocks become `[code block elided: N lines]`, and the outcome is clipped to 2,400 chars. A turn is dropped if its outcome is under 80 chars and it edited nothing. Interrupts are dropped, and so is a repeated Stop for the same turn. |
+
+The buffer is a JSON state file per session, kept in
+`$XDG_STATE_HOME/33god/hook-hub/capture/<cli>-<session>.json` (mode 0600,
+written atomically under a sidecar `flock`). A session's first event fixes its
+bank, repo and document id. For Antigravity the bank comes from the payload's
+workspace, not from the hook's cwd.
+
+### CLI coverage
+
+| CLI | Turn end | Final message from | Ask from | Live-verified |
+| --- | --- | --- | --- | --- |
+| Claude | `Stop` | `last_assistant_message` (hook schema 2.1.283); transcript tail as fallback | `UserPromptSubmit` | yes |
+| Codex | `Stop` | `last_assistant_message` (0.157 schema); rollout tail as fallback | `UserPromptSubmit` | yes |
+| Kimi | `Stop` | the session's `~/.kimi-code/sessions/*/session_<id>/agents/main/wire.jsonl` (its Stop has no message or path) | `UserPromptSubmit` | fixture only |
+| Antigravity | `Stop` (role `session_end`, needs `fullyIdle`) | `transcriptPath` (`PLANNER_RESPONSE`) | the transcript's `<USER_REQUEST>` (it has no prompt hook) | fixture only |
+| Copilot | `agentStop` | `transcriptPath` (`events.jsonl`) | `userPromptSubmitted` | fixture only |
+| Gemini CLI | `AfterAgent` | `prompt_response` | `BeforeAgent` | no (the `gemini` alias runs `agy`) |
+| Hermes | not covered | `on_session_end` carries only `session_id`/`completed`/`interrupted`; its Hindsight plugin already retains every turn to the agent bank | | |
+| OpenCode | not covered | `session.idle` carries neither a message nor a transcript path; the plugin would have to forward the last assistant text part | | |
+
+Subagent stops are not captured. A subagent's tool calls carry the parent's
+session id, so their edits land in the parent's next turn, and the parent's
+final message is the outcome.
+
+### Flush (HTTP, append-mode, one document per session)
+
+A flush sends the buffered turns to
+`POST /v1/default/banks/{bank}/memories` with `async: true` and one item:
+
+```json
+{"content": "[{\"role\":\"system\",\"content\":\"Session in DeLoContainers (claude) on big-chungus, started …\"},
+              {\"role\":\"user\",\"content\":\"<ask>\"},
+              {\"role\":\"assistant\",\"content\":\"<outcome>\\n\\nFiles edited: a.py, b/c.md\"}, …]",
+ "document_id": "session-<cli>-<session_id>", "update_mode": "append",
+ "observation_scopes": "shared", "strategy": "conversation",
+ "context": "Agent session in <repo> (<cli>): each user message is a request, …",
+ "tags": ["agent:<cli>", "host:<host>"],
+ "metadata": {"source": "hook-hub/session-capture", "cli": "…", "session_id": "…", "repo": "…", "host": "…"},
+ "timestamp": "<first turn of the batch>"}
+```
+
+It goes over HTTP rather than through the CLI because the CLI cannot set
+`update_mode`, `observation_scopes` or `strategy`. It flushes:
+
+- when the buffer passes `HINDSIGHT_CAPTURE_FLUSH_CHARS` (9,000, about three
+  3,000-char extraction chunks), so a long session writes as it goes;
+- at session end (`hindsight-session-end`, forced; it also marks the session
+  closed);
+- from the sweeper, when a session has been idle for `HINDSIGHT_CAPTURE_IDLE_S`
+  (30 min). This covers a session that died without a SessionEnd. If it
+  resumes later, its next flush appends to the same document.
+
+The system header goes only into a session's first batch. The `context` field
+carries the repo and CLI on every chunk.
+
+**Why a JSON conversation array, not text.** This was measured on 0.10.1 on
+2026-09-26 with a scratch bank and three appends to one document. With append
+mode, the server prepends the stored text as a separate item and diffs chunks
+by index and hash:
+
+| Appended as | 2nd append | 3rd append |
+| --- | --- | --- |
+| plain text | 1 unchanged, 1 new | `0 unchanged, 2 changed`, then `Delta retain: no unchanged chunks … falling back to full retain`, which re-ingested everything and invalidated 7 observations |
+| JSON array | 1 unchanged, 1 changed, 1 new | 2 unchanged, 1 changed, 1 new |
+
+The stored text is the joined string, so the plain-text form re-chunks
+differently on every later append. JSON arrays are merged into one array and
+chunked at turn boundaries, which is prefix-stable. Each flush therefore
+re-extracts only the stored document's last chunk plus the new turns. The
+0.9.1 source has the same append path (`merge_json_array_parts`, per-item
+`_chunk_contents_for_delta`), and 0.9.1 also accepts `update_mode`,
+`observation_scopes: "shared"` and `operation_id`.
+
+**Why `observation_scopes: "shared"`.** A consolidation scope is a fact's full
+tag set. `agent:claude` and `agent:codex` facts about the same repo would
+otherwise build separate observations. `shared` resolves to one untagged scope
+per bank, and each repo has its own bank, so this is one scope per repo. In
+0.10.x consolidation batches are keyed by that resolved scope. In 0.9.1 they
+were still keyed by raw tags (#3954). The provenance tags stay on the facts,
+because they no longer fork anything. In the probe, observations came back with
+`tags: []` and the facts kept `agent:claude, host:…`.
+
+`strategy: "conversation"` matches the per-content-type strategy names of the
+`hindsight-coding-agents` reference design. An unknown strategy logs a warning
+and uses the bank's default config, so this is inert until a bank template
+defines it. `HINDSIGHT_SESSION_STRATEGY=` (empty) omits it.
+
+### Delivery, retry and the sweeper
+
+Each batch goes through these states: `sending`, then `submitted`, then
+confirmed (`completed`), after which it is forgotten.
+
+- **Idempotent.** `operation_id` is a UUIDv5 of (bank, document, turn range,
+  attempt). If an acknowledgement is lost (a timeout, so the outcome is
+  `unknown`), the next pass asks the server for that operation before sending
+  anything. `not_found` means the batch never arrived, and it is re-sent under
+  the same id. Anything else is adopted as the batch's status. No network call
+  runs under the session lock.
+- **Confirmed, not assumed.** With `async: true`, an HTTP 200 only means the
+  batch was queued. Extraction can still fail later, for example on the LLM
+  key's daily cap, and a failed extraction stores nothing. After 30s a
+  `submitted` batch is checked through `GET …/operations/{id}`. `completed`
+  forgets it. `failed` or `cancelled` re-sends it under a new attempt id.
+- **Backoff and cap.** A batch that definitely did not land (HTTP error,
+  operation failed) waits 1m, 5m, 15m, 1h, 3h, 6h, 12h and 12h between tries,
+  about 34h in total, which outlasts a spent daily cap. New turns join a batch
+  that is still waiting, so order is kept and a failing server gets one
+  request. After `HINDSIGHT_CAPTURE_MAX_ATTEMPTS` (8), or 3 days, the exact
+  request is written to `capture/dead-letter/<doc>-<first>-<last>.json`
+  instead of being dropped. Replay one with
+  `curl -X POST "$url" -H 'Content-Type: application/json' -d "$(jq .request <file>)"`.
+- **Sweeper.** Every captured turn and session end sweeps the other sessions'
+  buffers (up to 8, within 3s). The `hindsight-capture-sweep.timer` user unit
+  runs `session_capture.py sweep` every 10 minutes for the hours when no agent
+  is running. A closed session with nothing left is deleted. So is one idle for
+  a day with nothing pending. `python3 session_capture.py status` lists live
+  buffers.
+
+Install the timer with the other user units:
+
+```sh
+ln -sf ~/code/33GOD/bloodbank/services/hook-hub/systemd/hindsight-capture-sweep.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now hindsight-capture-sweep.timer
+```
+
+### Journal and receipts
+
+The session journal gets these metadata events: `turn_captured` (turn, source,
+sizes, file count, buffered chars), `turn_skipped` (reason),
+`session_flush` (bank, document, operation, turn range, attempt, trigger,
+status, and the error when there was one), `session_flush_confirmed`,
+`session_flush_failed`, `session_flush_unverifiable` and
+`session_flush_abandoned` (with the dead-letter path). Receipt reasons include
+`ask_buffered`, `edit_paths_recorded`, `turn_buffered`,
+`turn_buffered_flush_submitted`, `turn_trivial`, `session_flush_submitted`,
+`session_flush_deferred_for_retry` (a failed receipt, visible in Holocene) and
+`nothing_to_flush`.
+
+### Knobs
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HINDSIGHT_CAPTURE` | `1` | `0` turns capture off |
+| `HINDSIGHT_CAPTURE_FLUSH_CHARS` | `9000` | Buffered size that triggers a mid-session flush |
+| `HINDSIGHT_CAPTURE_IDLE_S` | `1800` | Idle time after which the sweeper flushes a session |
+| `HINDSIGHT_CAPTURE_ASK_CHARS` / `_OUTCOME_CHARS` | `1200` / `2400` | Per-turn caps (each JSON turn stays under the 3,000-char chunk) |
+| `HINDSIGHT_CAPTURE_MIN_OUTCOME` | `80` | Shorter outcomes with no edits are trivial |
+| `HINDSIGHT_CAPTURE_MAX_ATTEMPTS` | `8` | Delivery attempts before dead-lettering |
+| `HINDSIGHT_CAPTURE_MAX_AGE_S` | `259200` | Oldest a batch may get before dead-lettering |
+| `HINDSIGHT_CAPTURE_DIR` | `$XDG_STATE_HOME/33god/hook-hub/capture` | Buffers and dead letters |
+| `HINDSIGHT_SESSION_STRATEGY` | `conversation` | Named retain strategy; empty omits it |
+
+As with recall, a repo can opt out with `"hindsight-turn"` in the
+`hooks.disabled` list of `.agents/local.json`.
 
 ## Deadlines and failure behavior
 

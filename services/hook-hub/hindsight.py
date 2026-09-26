@@ -1,12 +1,11 @@
-"""Supervised Hindsight concerns: recall, briefing, edit candidates, retention receipts.
+"""Supervised Hindsight concerns: recall, briefing, and routing for session write-back.
 
-Candidate writes are deliberately distinct from a successful memory retain.
-Session close uses a deterministic document id, so a retry replaces the same
-document if the process dies after the API accepted it but before our receipt.
+Session write-back (per-turn capture, append-mode flushes, retries) is in
+session_capture.py; this module keeps the shared bank resolution, query
+hygiene and journal it builds on.
 """
 from __future__ import annotations
 
-import concurrent.futures
 import fcntl
 import hashlib
 import json
@@ -14,7 +13,6 @@ import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import threading
 import time
@@ -26,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from concerns import context_output, file_edits, invoke, repository, result
+from concerns import context_output, invoke, repository, result
 
 # Deadlines are measured from here: the handler is a fresh process per hook, so
 # import time is within milliseconds of process start. See `anchor()`.
@@ -67,27 +65,6 @@ def journal(payload: dict, cli: str, event: dict) -> None:
         os.write(descriptor, (json.dumps(record, ensure_ascii=False) + "\n").encode())
     finally:
         os.close(descriptor)
-
-
-def records(payload: dict, cli: str) -> list[dict]:
-    paths = [journal_path(payload, cli)]
-    # Preserve candidates produced before this session's native cutover.
-    old = paths[0].parent / f"{safe(str(payload.get('session_id', '')))}.jsonl"
-    if old != paths[0]:
-        paths.append(old)
-    found: list[dict] = []
-    for path in paths:
-        try:
-            for line in path.read_text().splitlines():
-                try:
-                    item = json.loads(line)
-                    if isinstance(item, dict):
-                        found.append(item)
-                except ValueError:
-                    continue
-        except OSError:
-            continue
-    return found
 
 
 def main_checkout() -> Path | None:
@@ -848,104 +825,9 @@ def briefing(payload: dict, cli: str, native: str) -> dict:
     return result("succeeded", "briefing_injected", context_output(rendered, cli, native))
 
 
-def candidate(payload: dict, cli: str) -> dict:
-    if not payload.get("session_id"):
-        return result("skipped", "native_session_id_missing")
-    tool_response = payload.get("tool_response", payload.get("tool_result", payload.get("result", {})))
-    failed_response = isinstance(tool_response, dict) and (
-        tool_response.get("error") or tool_response.get("is_error") or tool_response.get("success") is False
-    )
-    if payload.get("error") or payload.get("is_error") or failed_response or str(payload.get("hook_event_name", "")).lower().endswith("failure"):
-        return result("skipped", "tool_failed")
-    edits = [(path, content) for path, content in file_edits(payload) if len(content) >= 50]
-    if not edits:
-        return result("skipped", "no_substantial_file_edit")
-    primary = bank()
-    # Each native invocation becomes one candidate row; several file paths in
-    # apply_patch are retained together without losing the full edit identity.
-    journal(payload, cli, {"event": "retain_candidate", "bank": primary,
-                          "files": [path for path, _ in edits],
-                          "edits": [{"file": path, "snippet": " ".join(content.split())[:400]} for path, content in edits],
-                          "source": "auto_posttooluse"})
-    return result("succeeded", "edit_candidate_recorded")
-
-
-def end(payload: dict, cli: str) -> dict:
-    if not payload.get("session_id"):
-        return result("skipped", "native_session_id_missing")
-    command = binary()
-    if not command:
-        return result("skipped", "hindsight_binary_missing")
-    path = journal_path(payload, cli)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.with_suffix(".retain.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        history = records(payload, cli)
-        edits: list[str] = []
-        for item in history:
-            if item.get("event") == "retain_candidate":
-                edits.extend(f"- {edit.get('file')}: {edit.get('snippet', '')}" for edit in item.get("edits", []))
-            elif item.get("event") == "retain" and item.get("source") == "auto_posttooluse":
-                edits.append(f"- {item.get('file')}: {item.get('snippet', '')}")
-        summary = "Session completed. Files edited:\n" + "\n".join(dict.fromkeys(edits)) if edits else ""
-        assistant = payload.get("last_assistant_message", "")
-        if isinstance(assistant, str) and len(assistant.strip()) >= 50:
-            summary += "\nSession outcome:\n" + assistant[-8000:]
-        summary = summary.strip()[:20000]
-        if not summary:
-            return result("skipped", "no_retention_candidates")
-        fingerprint = hashlib.sha256(summary.encode()).hexdigest()
-        primary = bank()
-        targets = retain_targets(cli, primary)
-        # Per BANK, not per fingerprint. The same summary is retained once into
-        # each target, and having landed in one says nothing about the other --
-        # a single shared check would let a partial failure look complete.
-        settled = {item.get("bank") for item in history
-                   if item.get("event") == "retain_receipt" and item.get("retained")
-                   and item.get("fingerprint") == fingerprint}
-        pending = [target for target in targets if target not in settled]
-        if not pending:
-            return result("skipped", "session_summary_already_retained")
-        doc_id = "hook-session-" + hashlib.sha256(f"{cli}:{payload['session_id']}".encode()).hexdigest()[:32]
-        tags = f"user:{safe(os.environ.get('HINDSIGHT_USER', os.environ.get('USER', 'unknown')))},agent:{safe(cli)},host:{safe(socket.gethostname().split('.')[0])}"
-
-        def store(target: str) -> tuple[str, bool, str, dict]:
-            try:
-                process = subprocess.run([command, "memory", "retain", target, summary, "--context", "session-summary",
-                                          "--doc-id", doc_id, "--output", "json", "--document-tags", tags],
-                                         capture_output=True, text=True, timeout=45, env=cli_environment(cli))
-                response = json.loads(process.stdout) if process.returncode == 0 else {}
-            except subprocess.TimeoutExpired:
-                return target, False, "retain_deadline_exceeded", {}
-            except (OSError, ValueError):
-                return target, False, "retain_response_invalid", {}
-            accepted = (process.returncode == 0 and isinstance(response, dict) and bool(response)
-                        and not response.get("error") and response.get("success") is not False)
-            return target, accepted, "" if accepted else "retain_command_failed", response
-
-        # Concurrent for the same reason recall is: two sequential retains put a
-        # 90s ceiling on a session-end hook, and the banks are independent.
-        if len(pending) == 1:
-            outcomes = [store(pending[0])]
-        else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(pending)) as pool:
-                outcomes = list(pool.map(store, pending))
-
-        for target, accepted, reason, response in outcomes:
-            journal(payload, cli, {"event": "retain_receipt", "bank": target, "retained": accepted,
-                                  "fingerprint": fingerprint, "document_id": doc_id,
-                                  **({"reason": reason} if reason else {}),
-                                  "response_keys": sorted(response) if isinstance(response, dict) else []})
-        stored = [target for target, accepted, _, _ in outcomes if accepted]
-        failures = [(target, reason) for target, accepted, reason, _ in outcomes if not accepted]
-        if not stored:
-            return result("failed", failures[0][1] or "retain_command_failed", exit_code=1)
-        # A partial write is a SUCCESS with a named gap, not a failure: the
-        # session ended and what landed is real. Reporting it as failed would
-        # invite a retry that re-retains the bank that already accepted.
-        return result("succeeded",
-                      "session_summary_retained" if not failures else "session_summary_retained_partially",
-                      exit_code=0)
+# Session write-back (the ask, the final answer and the edited paths of every
+# turn, appended to one document per session) lives in session_capture.py. It
+# replaced the SessionEnd "Files edited:" + code-excerpt summary on 2026-09-26.
 
 
 def dispatch(concern: str, payload: dict, cli: str, native: str) -> dict:
@@ -955,10 +837,9 @@ def dispatch(concern: str, payload: dict, cli: str, native: str) -> dict:
         return recall(payload, cli, native)
     if concern == "hindsight-briefing":
         return briefing(payload, cli, native)
-    if concern == "hindsight-retain":
-        return candidate(payload, cli)
-    if concern == "hindsight-session-end":
-        return end(payload, cli)
+    if concern in {"hindsight-turn", "hindsight-retain", "hindsight-session-end"}:
+        import session_capture
+        return session_capture.dispatch(concern, payload, cli, native)
     if concern == "hindsight-journal":
         if not payload.get("session_id") or not journal_path(payload, cli).exists():
             return result("skipped", "session_has_no_memory_journal")

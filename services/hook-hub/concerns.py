@@ -61,7 +61,9 @@ def normalized(payload: dict) -> dict:
     if payload.get("workspacePaths") and isinstance(payload["workspacePaths"], list):
         data["cwd"] = payload["workspacePaths"][0]
     data["transcript_path"] = value(payload, "transcript_path", "transcriptPath", default="")
-    data["last_assistant_message"] = value(payload, "last_assistant_message", "assistant_response", "response", default="")
+    # Gemini CLI's AfterAgent names the final answer `prompt_response`.
+    data["last_assistant_message"] = value(payload, "last_assistant_message", "assistant_response", "response",
+                                           "prompt_response", default="")
     data["hook_event_name"] = os.environ.get("BB_HOOK_NATIVE", str(payload.get("hook_event_name", "")))
     return data
 

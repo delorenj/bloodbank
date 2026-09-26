@@ -50,21 +50,49 @@ order = 5
 enabled = true
 
 [[handler]]
+# Session write-back, per turn (session_capture.py). prompt_submit buffers the
+# user's ask (recall's harness-XML hygiene); the turn end pairs it with the
+# agent's final message and buffers the turn. Antigravity has no turn-end role
+# (its Stop is bound to session_end), hence on_native. Past
+# HINDSIGHT_CAPTURE_FLUSH_CHARS the buffer is appended to the session's one
+# Hindsight document over HTTP (async); then the sweeper runs for idle and
+# undelivered sessions. hermes (no final message in on_session_end; its plugin
+# retains per turn) and opencode (session.idle carries nothing) are not listed.
+id = "hindsight-turn"
+mode = "async"
+on = ["prompt_submit", "turn_completed"]
+on_native = ["Stop"]
+clis = ["claude", "codex", "kimi", "antigravity", "copilot", "gemini"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-turn"]
+timeout_ms = 15000
+order = 25
+enabled = true
+
+[[handler]]
+# Records the PATHS of edited files for the current turn (never their content).
+# The id is historical: this row used to buffer 400-char code excerpts that
+# SessionEnd retained as "Files edited:" documents. Antigravity is not listed:
+# its PostToolUse carries no tool name or input.
 id = "hindsight-retain"
 mode = "async"
 on = ["post_tool"]
+clis = ["claude", "codex", "kimi", "copilot", "gemini"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-retain"]
 timeout_ms = 3000
 order = 20
 enabled = true # cutover-managed
 
 [[handler]]
+# Flushes whatever the session buffered (force) and marks it closed; the
+# sweeper confirms delivery and retries failures afterwards. Antigravity's
+# Stop is per turn, so it flushes by size/idle instead.
 id = "hindsight-session-end"
 mode = "async"
 on = ["session_end"]
-after = ["hindsight-retain"]
+after = ["hindsight-retain", "hindsight-turn"]
+clis = ["claude", "codex", "kimi", "copilot", "gemini"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-session-end"]
-timeout_ms = 50000
+timeout_ms = 20000
 order = 30
 enabled = true # cutover-managed
 

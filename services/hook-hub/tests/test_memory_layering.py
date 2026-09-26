@@ -7,7 +7,6 @@ byte-for-byte, which proves the field survives an edit, not that anyone reads it
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 import tempfile
@@ -177,79 +176,6 @@ class RetainRoutingTests(unittest.TestCase):
         with registry(REGISTRY.replace("write_bank: delonet-company", "write_bank: flume")), \
              mock.patch.dict(os.environ, {"HERMES_HOME": "/p/delonet-company-reporter"}):
             self.assertEqual(hindsight.retain_targets("hermes", "flume"), ["flume"])
-
-
-class EndToEndRetainTests(unittest.TestCase):
-    """`end()` really issues one retain per bank."""
-
-    def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
-        self.calls = self.root / "calls.jsonl"
-        fake = self.root / "hindsight"
-        fake.write_text(
-            "#!/usr/bin/env python3\n"
-            "import json,os,sys\n"
-            "from pathlib import Path\n"
-            "with Path(os.environ['CALL_LOG']).open('a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
-            # argv[0] is the script; argv[1:] is what hook-hub passed, so the
-            # bank -- `memory retain <BANK> ...` -- lands at argv[3].
-            "bank = sys.argv[3] if len(sys.argv) > 3 else ''\n"
-            "if bank and bank == os.environ.get('FAIL_BANK',''): raise SystemExit(1)\n"
-            "print(json.dumps({'success':True,'document_id':'accepted'}))\n")
-        fake.chmod(0o700)
-        self.environment = mock.patch.dict(os.environ, {
-            "HINDSIGHT_BIN": str(fake), "HINDSIGHT_BANK": "flume",
-            "HS_JOURNAL_DIR": str(self.root / "journal"), "CALL_LOG": str(self.calls),
-            "HERMES_HOME": "/p/delonet-company-reporter", "BB_HOOK_INVOCATION_ID": "t"}, clear=False)
-        self.environment.start()
-        self.bank = mock.patch.object(hindsight, "bank", return_value="flume")
-        self.bank.start()
-
-    def tearDown(self):
-        self.bank.stop(); self.environment.stop(); self.temporary.cleanup()
-
-    def payload(self):
-        return {"session_id": "route", "last_assistant_message":
-                "I built the org chart renderer and marked inferred edges so they stay distinguishable."}
-
-    def banks_written(self):
-        return [json.loads(line)[2] for line in self.calls.read_text().splitlines()
-                if json.loads(line)[:2] == ["memory", "retain"]]
-
-    def test_one_session_is_retained_into_both_banks(self):
-        with registry(REGISTRY):
-            outcome = hindsight.end(self.payload(), "hermes")
-        self.assertEqual(outcome["_hook_hub"]["reason"], "session_summary_retained")
-        self.assertEqual(sorted(self.banks_written()), ["delonet-company", "flume"])
-
-    def test_both_copies_share_one_document_id(self):
-        with registry(REGISTRY):
-            hindsight.end(self.payload(), "hermes")
-        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
-        doc_ids = {call[call.index("--doc-id") + 1] for call in calls if "--doc-id" in call}
-        self.assertEqual(len(doc_ids), 1, "a retry must replace the same document in each bank")
-
-    def test_a_partial_write_succeeds_with_a_named_gap_and_retries_only_the_gap(self):
-        # Reporting a partial write as failed would invite a retry that
-        # re-retains the bank which already accepted.
-        with registry(REGISTRY), mock.patch.dict(os.environ, {"FAIL_BANK": "flume"}):
-            first = hindsight.end(self.payload(), "hermes")
-        self.assertEqual(first["_hook_hub"]["reason"], "session_summary_retained_partially")
-        self.assertEqual(first["_hook_hub"]["status"], "succeeded")
-        self.calls.write_text("")
-        with registry(REGISTRY):
-            second = hindsight.end(self.payload(), "hermes")
-        self.assertEqual(self.banks_written(), ["flume"], "only the bank that failed is retried")
-        self.assertEqual(second["_hook_hub"]["reason"], "session_summary_retained")
-
-    def test_a_fully_retained_session_is_not_written_again(self):
-        with registry(REGISTRY):
-            hindsight.end(self.payload(), "hermes")
-            self.calls.write_text("")
-            again = hindsight.end(self.payload(), "hermes")
-        self.assertEqual(again["_hook_hub"]["reason"], "session_summary_already_retained")
-        self.assertEqual(self.calls.read_text(), "")
 
 
 if __name__ == "__main__":

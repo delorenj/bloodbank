@@ -1,0 +1,13 @@
+# 10-minute cadence. Idle flush is governed by HINDSIGHT_CAPTURE_IDLE_S (30 min)
+# and retries by their own backoff (1m .. 12h), not by this interval.
+[Unit]
+Description=33GOD hook-hub - Hindsight session write-back sweeper tick
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
+Unit=hindsight-capture-sweep.service
+
+[Install]
+WantedBy=timers.target
