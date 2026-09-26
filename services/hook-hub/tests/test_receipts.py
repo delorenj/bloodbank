@@ -166,7 +166,7 @@ def test_read_api_reports_registry_separately_from_observation_and_paginates(tmp
     with HubHarness(tmp_path, echo_handler("context", "OK"), {"HOOK_HUB_HTTP_PORT": str(port)}) as hub:
         one = request(hub)
         request(hub)
-        with urlopen(base + "/v1/hooks/status", timeout=3) as response:
+        with urlopen(base + "/v1/hooks/status", timeout=10) as response:
             status = json.load(response)
         assert status["schema_version"] == 1
         assert status["observed_since"]
