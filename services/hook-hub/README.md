@@ -362,7 +362,7 @@ A flush sends the buffered turns to
               {\"role\":\"user\",\"content\":\"<ask>\"},
               {\"role\":\"assistant\",\"content\":\"<outcome>\\n\\nFiles edited: a.py, b/c.md\"}, …]",
  "document_id": "session-<cli>-<session_id>", "update_mode": "append",
- "observation_scopes": "shared", "strategy": "conversation",
+ "observation_scopes": "shared", "strategy": "conversation" (only if the bank defines it),
  "context": "Agent session in <repo> (<cli>): each user message is a request, …",
  "tags": ["agent:<cli>", "host:<host>"],
  "metadata": {"source": "hook-hub/session-capture", "cli": "…", "session_id": "…", "repo": "…", "host": "…"},
@@ -412,9 +412,13 @@ because they no longer fork anything. In the probe, observations came back with
 `tags: []` and the facts kept `agent:claude, host:…`.
 
 `strategy: "conversation"` matches the per-content-type strategy names of the
-`hindsight-coding-agents` reference design. An unknown strategy logs a warning
-and uses the bank's default config, so this is inert until a bank template
-defines it. `HINDSIGHT_SESSION_STRATEGY=` (empty) omits it.
+`hindsight-coding-agents` reference design. It is sent only when the bank's
+`GET …/config` lists that strategy in `retain_strategies`, one small GET per
+flush. Naming a strategy the bank lacks is harmless, but the server logs a
+WARNING for every such retain, and almost no bank defines one yet. The first
+flushes logged six of them before this check existed. Once a bank template
+adds a `conversation` strategy, sessions start using it with no change here.
+`HINDSIGHT_SESSION_STRATEGY=` (empty) never sends one.
 
 ### Delivery, retry and the sweeper
 
@@ -512,7 +516,7 @@ status, and the error when there was one), `session_flush_confirmed`,
 | `HINDSIGHT_CAPTURE_MAX_ATTEMPTS` | `8` | Delivery attempts before dead-lettering |
 | `HINDSIGHT_CAPTURE_MAX_AGE_S` | `259200` | Oldest a batch may get before dead-lettering |
 | `HINDSIGHT_CAPTURE_DIR` | `$XDG_STATE_HOME/33god/hook-hub/capture` | Buffers and dead letters |
-| `HINDSIGHT_SESSION_STRATEGY` | `conversation` | Named retain strategy; empty omits it |
+| `HINDSIGHT_SESSION_STRATEGY` | `conversation` | Named retain strategy, sent when the bank defines it; empty never sends one |
 
 `HINDSIGHT_CAPTURE`, `_FLUSH_CHARS`, `_MIN_OUTCOME` and
 `HINDSIGHT_SESSION_STRATEGY` can be set in the agent's shell, because

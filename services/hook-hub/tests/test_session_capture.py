@@ -33,6 +33,7 @@ class FakeHindsight:
         self.requests: list[tuple[str, str, dict | None]] = []
         self.post_codes: list[int] = []     # consumed per POST; empty = 200
         self.op_status: dict[str, str] = {}  # operation id -> status; default completed
+        self.strategies: dict | None = None  # the bank's retain_strategies
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -58,6 +59,9 @@ class FakeHindsight:
 
             def do_GET(self):
                 owner.requests.append(("GET", self.path, None))
+                if self.path.endswith("/config"):
+                    self._reply(200, {"bank_id": "b", "config": {"retain_strategies": owner.strategies}})
+                    return
                 op = self.path.rsplit("/", 1)[-1]
                 status = owner.op_status.get(op, "completed")
                 if status == "not_found":
@@ -75,7 +79,7 @@ class FakeHindsight:
         return [body for method, _, body in self.requests if method == "POST"]
 
     def gets(self) -> list[str]:
-        return [path for method, path, _ in self.requests if method == "GET"]
+        return [path for method, path, _ in self.requests if method == "GET" and not path.endswith("/config")]
 
     def close(self):
         self.server.shutdown()
@@ -289,7 +293,7 @@ class FlushTests(CaptureTestCase):
         self.assertEqual(item["document_id"], "session-claude-s1")
         self.assertEqual(item["update_mode"], "append")
         self.assertEqual(item["observation_scopes"], "shared")
-        self.assertEqual(item["strategy"], "conversation")
+        self.assertNotIn("strategy", item, "this bank defines no strategy: naming one only logs a warning")
         self.assertEqual(item["tags"], ["agent:claude", f"host:{sc._host()}"])
         self.assertEqual(item["metadata"]["session_id"], "s1")
         self.assertIn("test-repo", item["context"])
@@ -298,7 +302,18 @@ class FlushTests(CaptureTestCase):
         self.assertTrue(messages[0]["content"].startswith("Session in test-repo (claude)"))
         self.assertIn("Files edited: scripts/backup.sh", messages[2]["content"])
         self.assertNotIn("SECRET_CODE_BODY", item["content"], "paths only, never code")
-        self.assertEqual(self.api.requests[0][1], "/v1/default/banks/test-bank/memories")
+        self.assertEqual([path for method, path, _ in self.api.requests if method == "POST"],
+                         ["/v1/default/banks/test-bank/memories"])
+
+    def test_the_strategy_is_sent_once_the_bank_defines_it(self):
+        self.api.strategies = {"conversation": {"retain_extraction_mode": "concise"}}
+        self.turn(1)
+        self.end()
+        self.assertEqual(self.api.posts()[0]["items"][0]["strategy"], "conversation")
+        with mock.patch.dict(os.environ, {"HINDSIGHT_SESSION_STRATEGY": ""}):
+            self.turn(2)
+            self.end()
+        self.assertNotIn("strategy", self.api.posts()[1]["items"][0])
 
     def test_later_flushes_append_to_the_same_document_without_a_second_header(self):
         with mock.patch.dict(os.environ, {"HINDSIGHT_CAPTURE_FLUSH_CHARS": "200"}):

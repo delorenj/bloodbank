@@ -636,6 +636,24 @@ def strategy() -> str:
     return os.environ.get("HINDSIGHT_SESSION_STRATEGY", "conversation").strip()
 
 
+def bank_strategy(base: str, key: str, bank: str) -> str:
+    """The configured strategy name, if this bank defines it; else "".
+
+    The server logs a WARNING for every retain naming a strategy the bank does
+    not have, and almost no bank defines one yet. So the name is only sent
+    once a bank template adds it, with no change here.
+    """
+    wanted = strategy()
+    if not wanted:
+        return ""
+    code, response = _http("GET", _bank_url(base, bank) + "/config", key, timeout=3.0)
+    if code != 200 or not isinstance(response, dict):
+        return ""
+    config = response.get("config") if isinstance(response.get("config"), dict) else response
+    defined = config.get("retain_strategies") or {}
+    return wanted if isinstance(defined, dict) and wanted in defined else ""
+
+
 def request_body(state: dict, batch: dict) -> dict:
     """The exact retain request for one batch. Deterministic per batch and attempt."""
     item: dict[str, Any] = {
@@ -653,8 +671,8 @@ def request_body(state: dict, batch: dict) -> dict:
         "metadata": {"source": "hook-hub/session-capture", "cli": state["cli"],
                      "session_id": state["session_id"], "repo": state["repo"], "host": state["host"]},
     }
-    if strategy():
-        item["strategy"] = strategy()
+    if batch.get("strategy"):
+        item["strategy"] = batch["strategy"]
     return {"items": [item], "async": True, "operation_id": operation_id(state, batch)}
 
 
@@ -800,7 +818,10 @@ def flush(path: Path, *, trigger: str, force: bool = False, blocking: bool = Tru
         work = [(action, json.loads(json.dumps(batch))) for action, batch in work]
 
     outcomes = []
+    chosen = bank_strategy(base, key, snapshot["bank"]) if any(a == "send" for a, _ in work) else ""
     for action, batch in work:  # oldest first, so appends keep their order
+        if action == "send":
+            batch["strategy"] = chosen
         call = send if action == "send" else check
         outcomes.append((action, batch, *call(base, key, snapshot, batch)))
 
@@ -816,6 +837,7 @@ def flush(path: Path, *, trigger: str, force: bool = False, blocking: bool = Tru
                 continue
             op, turns = operation_id(state, batch), [batch["turns"][0]["n"], batch["turns"][-1]["n"]]
             if action == "send":
+                batch["strategy"] = sent.get("strategy", "")
                 if status == "submitted":
                     batch.update(status="submitted", submitted_at=now, checked_at=0)
                 elif status == "unknown":
