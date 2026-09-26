@@ -224,7 +224,7 @@ def new_state(payload: dict, cli: str) -> dict:
     try:
         if moved:
             os.chdir(cwd)
-        bank, repo = hs.bank(), _repo_label(cwd)
+        bank, repo = hs.bank(cwd if moved else None, "session_capture"), _repo_label(cwd)
         root = str(hs.main_checkout() or hs.repository() or "")
     finally:
         if moved and previous:

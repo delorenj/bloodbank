@@ -39,9 +39,16 @@ class ConcernTests(unittest.TestCase):
         self.assertEqual(concerns.context_output("context", "kimi", "UserPromptSubmit"), "context")
 
     def test_memory_bank_outside_a_repository_is_general(self):
-        with mock.patch.object(hindsight, "repository", return_value=None), mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(hindsight.subprocess, "run") as command:
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(hindsight, "repository", return_value=None), \
+                mock.patch.dict(os.environ, {"HS_JOURNAL_DIR": td}, clear=True), \
+                mock.patch.object(hindsight, "_declared_above", return_value=""), \
+                mock.patch.object(hindsight, "bank_exists", return_value=False), \
+                mock.patch.object(hindsight.subprocess, "run") as command:
             command.return_value.returncode = 1
             self.assertEqual(hindsight.bank(), "general")
+            # The last resort is journaled, never silent.
+            self.assertTrue((Path(td) / "bank-fallback.jsonl").is_file())
 
     def test_orca_without_pane_is_an_explicit_skip(self):
         with mock.patch.dict(os.environ, {}, clear=True):

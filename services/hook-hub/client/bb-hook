@@ -302,7 +302,7 @@ def main(argv: list[str]) -> int:
         "v": 1,
         "cli": cli,
         "native": native,
-        "cwd": os.environ.get("PWD") or _getcwd(),
+        "cwd": working_directory(payload),
         "pid": os.getpid(),
         "parent_pid": int(os.environ.get("BB_HOOK_CALLER_PID", str(os.getppid()))),
         "budget_s": max(left() - 0.25, 0.0),
@@ -367,6 +367,52 @@ def _getcwd() -> str:
         return os.getcwd()
     except OSError:      # cwd deleted under us
         return ""
+
+
+# Where the agent is working, as the agent says. The hub spawns every handler
+# there, so this decides which repository -- and which Hindsight bank -- a hook
+# acts on. Antigravity runs its hooks from ~/.gemini/config and names the
+# workspace only in `workspacePaths`; $PWD there is the config dir, and every
+# session was filed under the `general` bank until 2026-09-26.
+PAYLOAD_CWD_KEYS = ("cwd", "workingDirectory", "working_directory", "workspace_dir")
+
+
+def _directory(value: object) -> str:
+    if isinstance(value, str) and value.startswith("/") and len(value) < 4096:
+        try:
+            if os.path.isdir(value):
+                return value
+        except (OSError, ValueError):
+            pass
+    return ""
+
+
+def working_directory(payload: object) -> str:
+    """The payload's own working directory, else the process's.
+
+    The payload wins when it names a directory that exists. Otherwise $PWD is
+    used only while it still names the process cwd (it keeps the logical,
+    symlinked spelling), since an inherited $PWD can be stale.
+    """
+    if isinstance(payload, dict):
+        for key in PAYLOAD_CWD_KEYS:
+            found = _directory(payload.get(key))
+            if found:
+                return found
+        paths = payload.get("workspacePaths")
+        if isinstance(paths, list) and paths:
+            found = _directory(paths[0])
+            if found:
+                return found
+    actual = _getcwd()
+    logical = os.environ.get("PWD", "")
+    if logical and actual:
+        try:
+            if os.path.samefile(logical, actual):
+                return logical
+        except (OSError, ValueError):
+            pass
+    return actual or logical
 
 
 if __name__ == "__main__":

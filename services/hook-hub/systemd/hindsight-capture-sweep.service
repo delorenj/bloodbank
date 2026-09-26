@@ -3,6 +3,13 @@
 # SessionEnd), confirm submitted batches, retry failed ones on their backoff,
 # and forget sessions that are fully delivered.
 #
+# Then one sweep of the jot write-ahead log (jot_flush.py): every jotfile idle
+# for 2h is flushed. A jot is keyed by the directory it was written in, which
+# is often not the session's cwd (a subdirectory, a worktree), so no session
+# end ever reaches it; that is how 46 jots were stranded until 2026-09-26.
+# A failure exits non-zero (this unit shows failed), alerts ntfy topic infra
+# once per reason per hour, and backs the file off 10m .. 6h.
+#
 # Type=oneshot driven by a timer, not a daemon, same as asm-sweep: a crash is
 # repaired by the next tick. Every captured turn also sweeps opportunistically;
 # this timer covers the hours when no agent is running at all.
@@ -14,4 +21,5 @@ Documentation=file:%h/code/33GOD/bloodbank/services/hook-hub/README.md
 Type=oneshot
 WorkingDirectory=/
 ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/hook-hub/session_capture.py sweep
+ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/hook-hub/jot_flush.py sweep
 NoNewPrivileges=yes

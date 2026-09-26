@@ -234,7 +234,11 @@ works like this:
    and `<pasted_content>` are the user's own words, so their tags go and their
    text stays. A leading slash-command token goes too (`/review-pr 123 …` →
    `123 …`); a leading path does not. If fewer than 24 characters remain, recall
-   is skipped and a `recall_skipped` journal event records why.
+   is skipped and a `recall_skipped` journal event records why. A query with no
+   word character at all (a pasted rule of dashes or arrows, emoji only) is
+   skipped as `query_has_no_word_characters`: the server tokenizes with
+   `re.sub(r"[^\w\s]", " ", q.lower()).split()` and answers 422 when that is
+   empty.
 2. **Length cap.** The server rejects queries over 500 cl100k tokens. Do not raise
    that limit: the reranker caps input at 512 tokens, so a long query only buys
    the most expensive rerank. The hub keeps the query under 400 tokens with
@@ -249,8 +253,15 @@ works like this:
    and none reached 400.
 3. **Banks.** The synchronous path reads **only the primary bank**, plus the
    agent's personal bank when the registry declares a `write_bank`. The primary
-   bank gets `mid`/2048 and anything extra gets `low`/1024. Extra banks are
-   opt-in:
+   (and personal) bank gets `mid` with `HINDSIGHT_RECALL_MAX_TOKENS` (default
+   1,400) and anything extra gets `low` with `HINDSIGHT_RECALL_EXTRA_MAX_TOKENS`
+   (default 800). Until 2026-09-26 those were 2048/1024, and a prompt carried
+   ~9.3k chars of memory at p50 (12.6k at p90). On three real prompts the new
+   budgets injected 7,298 → 5,753, 10,071 → 7,017 and 12,232 → 8,633 chars
+   (DeLoContainers + infra), and every result kept was in the old set's top
+   ranks; what fell off was the tail (`Session ended at …`, `Edited <file>`
+   edit-log facts, sprint trivia). Both names contain `TOKEN`, so set them in the
+   hub's service environment. Extra banks are opt-in:
 
    | Opt-in | Adds |
    | --- | --- |
@@ -268,9 +279,11 @@ works like this:
    returns facts (checked on `plane`). Set
    `HINDSIGHT_RECALL_PREFER_OBSERVATIONS=0` to turn it off.
 5. **A real deadline.** Each bank runs as its own CLI process. When
-   `HINDSIGHT_RECALL_TIMEOUT` (default 8s, measured from handler start) runs out,
-   the hub kills every process still going and returns what finished. That
-   leaves 3s of margin under the registry's 11s `timeout_ms`.
+   `HINDSIGHT_RECALL_TIMEOUT` (default 4s since 2026-09-26, was 8s; measured
+   from handler start) runs out, the hub kills every process still going and
+   returns what finished. Recalls take 0.1-0.7s with the GPU reranker; 4s still
+   covers a stopped TEI (+3.5s before the CPU rerank). The registry's 11s
+   `timeout_ms` stays as the backstop for the 10s ceiling.
 6. **Journal.** Each `recall` event in
    `~/.agents/journal/sessions/<cli>-<session>.jsonl` carries `query_len_raw`,
    `query_len_clean`, `query_len_sent`, `deadline_s`, `elapsed_ms` and a
@@ -290,9 +303,94 @@ injected under a `# Hindsight briefing` header, capped at
 
 Every `HINDSIGHT_*` knob above can be set in the agent's shell, because
 `bb-hook` forwards each one by exact name, or in the hub's service environment.
-The one exception is `HINDSIGHT_RECALL_QUERY_MAX_TOKENS`. Its name contains
-`TOKEN`, so `bb-hook`'s secret-shaped gate drops it on purpose. Set that one in
-the service environment.
+The exceptions are `HINDSIGHT_RECALL_QUERY_MAX_TOKENS`,
+`HINDSIGHT_RECALL_MAX_TOKENS` and `HINDSIGHT_RECALL_EXTRA_MAX_TOKENS`. Their
+names contain `TOKEN`, so `bb-hook`'s secret-shaped gate drops them on purpose.
+Set those in the service environment.
+
+### Which bank
+
+Every handler runs in the directory `bb-hook` reports, and since 2026-09-26 that
+is the **payload's** working directory when it names one that exists (`cwd`,
+`workingDirectory`, `working_directory`, `workspace_dir`, then
+`workspacePaths[0]`). `$PWD` is used only when the payload has none, and only
+while it still names the process cwd. Before, `$PWD` always won: Antigravity
+runs its hooks from `~/.gemini/config` and names its workspace only in
+`workspacePaths`, so every Antigravity session was filed under `general` (~95%
+of `general`'s recent documents were `agent:antigravity` work on real repos).
+Recall and briefing also pass the payload cwd to the resolver explicitly.
+
+`hindsight.resolve_bank(cwd)` returns `(bank, source)`; first match wins:
+
+| source | rule |
+| --- | --- |
+| `override` | `.hindsight/bank` in the repository's main checkout |
+| `env` | `$HINDSIGHT_BANK` |
+| `remote` | the origin remote's repository name |
+| `checkout` | the main checkout's directory name |
+| `declared_dir` | outside a repository: the nearest `.hindsight/bank` above it (stops below `$HOME`) |
+| `existing_dir` | outside a repository: its own name, if that bank already exists (`~/audio` → `audio`). Checked with `GET /banks/{id}/config`, cached 24h (hit) / 1h (miss) in `~/.local/state/33god/hook-hub/bank-exists.json`, never creating a bank |
+| `fallback` | `general`, the last resort. Every fallback appends a line to `~/.agents/journal/bank-fallback.jsonl` (cwd, purpose, cli, native, session, invocation) |
+
+If that journal grows, a CLI is reporting a directory that is not its
+workspace; fix the report, not the bank.
+
+## Jot flush
+
+`jot` (`~/.local/bin/jot`) is the write-ahead log for durable insights: the agent
+appends one line to `~/.agents/journal/jots/<sha1(cwd)[:12]>.md`, whose first
+line records the directory (`<!-- jots for <cwd> -->`). A line may route itself
+with a `[bank:X]` prefix. `jot_flush.py` turns those lines into memories:
+
+1. **Bank per jot.** The line's own `[bank:X]`, else the header directory's bank
+   by the rules above (a removed worktree resolves through its nearest surviving
+   parent, e.g. `pjangler/.claude/worktrees/wf_x` → `pjangler`), else the
+   caller's cwd.
+2. **Normalize.** One OpenRouter call per jotfile question-frames every jot
+   (`MEM|n|context|memory`) or names what it repeats (`SKIP|n|why`). A jot the
+   model forgets is retained as written. Model: `deepseek/deepseek-v4-flash-0731`
+   with `z-ai/glm-5.3-flash` and `deepseek/deepseek-v4.1-flash` as fallbacks,
+   reasoning off, the retain family in DeLoContainers `litellm-config.yaml`.
+   Key: its own per-consumer inference key, OpenRouter name `jot-flush`, $1/day,
+   `op://DeLoSecrets/qm3m5hvuqq4rykd2q2axhrlnpu/credential` (item UUID; read with
+   `op read` at flush time, never stored). 46 jots cost $0.0022 to normalize.
+3. **Retain.** One synchronous `POST /memories` per bank, one document per jot:
+   `jot-<sha1(text)[:16]>`, so a re-flush replaces instead of duplicating.
+   `observation_scopes=shared`, tags `source:jot`, `host:*` and `agent:*` when
+   known, metadata with the original jot and its origin. Synchronous on purpose:
+   an exhausted LLM key surfaces as an HTTP error here.
+4. **Archive** to `jots/flushed/<file>.<ts>` only when every bank accepted its
+   jots. Otherwise the whole file stays; the retry is idempotent.
+
+**Failures are loud.** The DeepSeek-direct normalizer this replaced answered
+"Insufficient Balance", exited 0, and the hub recorded `skipped`; 46 jots in 9
+files sat unflushed from 2026-08-06 to 2026-09-26. Now every failure
+(`key_unavailable`, `normalizer_http_<code>`, `normalizer_empty`,
+`retain_http_<code>`, `deadline_exceeded`, …) is:
+
+- a `failed` hub receipt with reason `jot_<reason>` and exit code 1,
+- a non-zero exit from the CLI and a failed `hindsight-capture-sweep.service`,
+- a line in `~/.agents/journal/jot-flush.jsonl` (successes are logged there too,
+  with doc ids per bank, skips and the normalizer's cost),
+- an ntfy push through `~/.local/bin/ntfy-alert` (topic `infra`), once per
+  reason per hour.
+
+**When it runs.** At session end in the hub (`hindsight-jot-flush`, 170s budget
+inside the row's 185s), and from `hindsight-capture-sweep.service` every 10
+minutes for any jotfile idle 2h (`jot_flush.py sweep`). The sweep matters: a
+jot is keyed by the directory it was written in, which is often a subdirectory
+or worktree no session end ever reports. Failed files back off 10m, 30m, 1h,
+3h, 6h. By hand:
+
+```
+~/.agents/hooks/hindsight/hindsight-jot-flush.sh --jotfile <file> [--bank X] [--dry-run]
+~/.agents/hooks/hindsight/hindsight-jot-flush.sh sweep --all      # every jotfile, now
+```
+
+Knobs: `JOTFLUSH_MODEL`, `JOTFLUSH_KEY_REF`, `JOTFLUSH_IDLE_S` (7200),
+`JOTFLUSH_HUB_BUDGET_S` (170), `JOTFLUSH_LLM_TIMEOUT` (120),
+`JOTFLUSH_RETAIN_TIMEOUT` (150), `JOTFLUSH_ALERT=0`, `JOTFLUSH_STATE_DIR`
+(`~/.local/state/33god/hook-hub/jot-flush`: locks, backoff, alert cooldowns).
 
 Handlers are spawned fresh for every hook, so edits to `hindsight.py` and
 `concerns.py` apply on the next prompt with no restart. Registry edits apply on
@@ -533,11 +631,11 @@ Ordinary client calls have a 3-second total deadline and a 2.5-second synchronou
 budget. Prompt hooks that recall Hindsight use a 15-second client deadline within
 a 16-second native timeout, with up to 14 seconds of shared synchronous work.
 The registry kills the recall handler at 11 seconds, but it stops itself at
-`HINDSIGHT_RECALL_TIMEOUT` (8s) and kills its own CLI children first. Each other
+`HINDSIGHT_RECALL_TIMEOUT` (4s) and kills its own CLI children first. Each other
 handler has its own registry timeout. Sync handlers run one after another, so a
-Claude prompt's worst case is skill-reminder (1s), then recall (about 8.5s with
+Claude prompt's worst case is skill-reminder (1s), then recall (about 4.5s with
 interpreter start), then codegraph-prompt (2s), then hub-selftest (0.5s). That
-totals about 12s inside the 14.5s budget.
+totals about 8s inside the 14.5s budget.
 
 The client fails open on unavailable sockets, malformed replies, or elapsed
 deadlines. A deliberate, valid native denial is preserved. Hung handler process

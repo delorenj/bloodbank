@@ -6,7 +6,6 @@ hygiene and journal it builds on.
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -67,15 +66,26 @@ def journal(payload: dict, cli: str, event: dict) -> None:
         os.close(descriptor)
 
 
-def main_checkout() -> Path | None:
-    """The primary checkout of the current repository.
+def _where(cwd: str | Path | None) -> Path | None:
+    """`cwd` as a directory that exists, else None (meaning: the process cwd)."""
+    if not cwd:
+        return None
+    try:
+        path = Path(cwd)
+        return path if path.is_absolute() and path.is_dir() else None
+    except (OSError, ValueError):
+        return None
+
+
+def main_checkout(cwd: str | Path | None = None) -> Path | None:
+    """The primary checkout of the repository at `cwd` (default: the process cwd).
 
     In a worktree the canonical `.hindsight/` belongs to the main checkout, so
     this resolves `--git-common-dir`. A submodule's common dir lives inside its
     superproject's `.git/modules/`, whose parent is not a working tree; there
     the submodule's own toplevel is the answer.
     """
-    root = repository()
+    root = repository(_where(cwd))
     if not root:
         return None
     try:
@@ -103,27 +113,165 @@ def listed(path: Path) -> list[str]:
     return names
 
 
-def bank() -> str:
-    root = main_checkout()
+FALLBACK_BANK = "general"
+BANK_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+
+def _override(directory: Path) -> str:
+    """The first non-comment line of `<directory>/.hindsight/bank`, or ""."""
+    try:
+        path = directory / ".hindsight/bank"
+        if path.is_file():
+            for line in path.read_text().splitlines():
+                if line.strip() and not line.lstrip().startswith("#"):
+                    return line.strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _declared_above(start: Path) -> str:
+    """The nearest `.hindsight/bank` at or above a NON-repository directory.
+
+    Stops below $HOME (`~/.hindsight` is the CLI's own config dir) and below /.
+    """
+    home = Path.home()
+    here = start
+    for _ in range(12):
+        if here == home or here.parent == here:
+            return ""
+        declared = _override(here)
+        if declared:
+            return declared
+        here = here.parent
+    return ""
+
+
+def _bank_cache_path() -> Path:
+    return Path(os.environ.get("HINDSIGHT_BANK_CACHE",
+                               Path.home() / ".local/state/33god/hook-hub/bank-exists.json"))
+
+
+def bank_exists(name: str, timeout: float = 1.0) -> bool:
+    """Whether bank `name` already exists on the server. Cached (hit 24h, miss 1h).
+
+    GET /banks/{id}/config answers 200 or 404 in ~10ms and never creates the
+    bank. Unreachable server = False, uncached: the caller falls back.
+    """
+    if not BANK_NAME.match(name or ""):
+        return False
+    path = _bank_cache_path()
+    now = time.time()
+    try:
+        cache = json.loads(path.read_text())
+        if not isinstance(cache, dict):
+            cache = {}
+    except (OSError, ValueError):
+        cache = {}
+    hit = cache.get(name)
+    if isinstance(hit, list) and len(hit) == 2:
+        exists, checked = bool(hit[0]), float(hit[1] or 0)
+        if now - checked < (86400 if exists else 3600):
+            return exists
+    base, key = api_endpoint()
+    if not base:
+        return False
+    headers = {"Accept": "application/json", **({"Authorization": f"Bearer {key}"} if key else {})}
+    url = f"{base}/v1/default/banks/{urllib.parse.quote(name, safe='')}/config"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as response:
+            exists = 200 <= response.status < 300
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            return False
+        exists = False
+    except (OSError, ValueError):
+        return False
+    cache[name] = [exists, now]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f".{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(cache))
+        os.replace(temporary, path)
+    except OSError:
+        pass
+    return exists
+
+
+def resolve_bank(cwd: str | Path | None = None) -> tuple[str, str]:
+    """(bank, source) for `cwd` (default: the process cwd). First match wins:
+
+      override      `.hindsight/bank` in the repository's main checkout
+      env           $HINDSIGHT_BANK
+      remote        the origin remote's repository name
+      checkout      the main checkout's directory name
+      declared_dir  outside a repository: the nearest `.hindsight/bank` above it
+      existing_dir  outside a repository: its own name, IF that bank already exists
+                    (`~/audio` -> `audio`; never creates a junk bank for `/tmp/x`)
+      fallback      `general` -- the last resort, journaled by `bank()`
+
+    Antigravity runs its hooks from ~/.gemini/config, which reached `fallback`
+    on every session until 2026-09-26: ~95% of `general`'s recent documents
+    were agent:antigravity work on real repositories.
+    """
+    where = _where(cwd)
+    root = main_checkout(where)
+    if root:
+        declared = _override(root)
+        if declared:
+            return declared, "override"
+    if os.environ.get("HINDSIGHT_BANK"):
+        return os.environ["HINDSIGHT_BANK"], "env"
     if root:
         try:
-            override = root / ".hindsight/bank"
-            if override.is_file():
-                for line in override.read_text().splitlines():
-                    if line.strip() and not line.lstrip().startswith("#"):
-                        return line.strip()
-        except OSError:
+            remote = subprocess.run(["git", "remote", "get-url", "origin"],
+                                    capture_output=True, text=True, timeout=1, cwd=root)
+            name = remote.stdout.strip().removesuffix(".git").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+            if remote.returncode == 0 and name:
+                return name, "remote"
+        except (OSError, subprocess.SubprocessError):
             pass
-    if os.environ.get("HINDSIGHT_BANK"):
-        return os.environ["HINDSIGHT_BANK"]
+        return root.name, "checkout"
     try:
-        remote = subprocess.run(["git", "remote", "get-url", "origin"],
-                                capture_output=True, text=True, timeout=1)
-        if remote.returncode == 0:
-            return remote.stdout.strip().removesuffix(".git").rsplit("/", 1)[-1]
-    except (OSError, subprocess.SubprocessError):
+        here = where or Path.cwd()
+    except OSError:
+        return FALLBACK_BANK, "fallback"
+    declared = _declared_above(here)
+    if declared:
+        return declared, "declared_dir"
+    if here != Path.home() and bank_exists(here.name):
+        return here.name, "existing_dir"
+    return FALLBACK_BANK, "fallback"
+
+
+def journal_fallback(cwd: str | Path | None, purpose: str) -> None:
+    """One line per `general` fallback, so misrouted work is visible, not silent."""
+    try:
+        where = str(_where(cwd) or Path.cwd())
+    except OSError:
+        where = str(cwd or "")
+    record = {"ts": datetime.now(timezone.utc).isoformat(), "cwd": where, "purpose": purpose,
+              "cli": os.environ.get("BB_HOOK_CLI", ""), "native": os.environ.get("BB_HOOK_NATIVE", ""),
+              "session_id": os.environ.get("BB_HOOK_SESSION_ID", ""),
+              "invocation_id": os.environ.get("BB_HOOK_INVOCATION_ID", "")}
+    root = Path(os.environ.get("HS_JOURNAL_DIR", Path.home() / ".agents/journal"))
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(root / "bank-fallback.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(descriptor, (json.dumps(record, ensure_ascii=False) + "\n").encode())
+        finally:
+            os.close(descriptor)
+    except OSError:
         pass
-    return root.name if root else "general"
+
+
+def bank(cwd: str | Path | None = None, purpose: str = "") -> str:
+    """The bank for `cwd` (default: the process cwd). See `resolve_bank`."""
+    name, source = resolve_bank(cwd)
+    if source == "fallback":
+        journal_fallback(cwd, purpose)
+    return name
 
 
 # The invoking agent's identity. Same signal agent-hooks/core/asm.py uses at its
@@ -195,11 +343,11 @@ def bank_at(root: Path) -> str:
     return root.name
 
 
-def bank_is_declared() -> bool:
+def bank_is_declared(cwd: str | Path | None = None) -> bool:
     """True when the primary bank came from an explicit operator declaration."""
     if os.environ.get("HINDSIGHT_BANK"):
         return True
-    root = main_checkout()
+    root = main_checkout(cwd)
     if not root:
         return False
     try:
@@ -208,7 +356,7 @@ def bank_is_declared() -> bool:
         return False
 
 
-def ancestor_banks(limit: int = 3) -> list[str]:
+def ancestor_banks(limit: int = 3, cwd: str | Path | None = None) -> list[str]:
     """Banks of the superprojects above this checkout, nearest first.
 
     A submodule's work is also its parent's work -- an hour spent in
@@ -231,9 +379,9 @@ def ancestor_banks(limit: int = 3) -> list[str]:
     # topology. When the operator has named the bank -- via `.hindsight/bank` or
     # $HINDSIGHT_BANK -- they have already said where this work belongs, and
     # walking up to contradict them is exactly the wrong move.
-    if bank_is_declared():
+    if bank_is_declared(cwd):
         return []
-    start = repository()
+    start = repository(_where(cwd))
     if not start:
         return []
     found: list[str] = []
@@ -252,18 +400,18 @@ def ancestor_banks(limit: int = 3) -> list[str]:
     return [name for name in found if name]
 
 
-def repo_recall_banks() -> list[str]:
+def repo_recall_banks(cwd: str | Path | None = None) -> list[str]:
     """Extra banks this repository opts into, from `<main checkout>/.hindsight/recall-banks`.
 
     One bank per line, `#` comments allowed. It sits beside the
     `.hindsight/bank` override `bank()` honors, so an infra-flavored repo can
     add `infra` without every other repo paying for it.
     """
-    root = main_checkout()
+    root = main_checkout(cwd)
     return listed(root / ".hindsight/recall-banks") if root else []
 
 
-def recall_banks(cli: str, primary: str) -> list[str]:
+def recall_banks(cli: str, primary: str, cwd: str | Path | None = None) -> list[str]:
     """Every bank the synchronous prompt recall reads, in priority order.
 
     By default that is ONLY the personal bank (when the agent registry declares
@@ -285,9 +433,9 @@ def recall_banks(cli: str, primary: str) -> list[str]:
     ordered = [
         *([personal] if personal else []),
         primary,
-        *ancestor_banks(),
+        *ancestor_banks(cwd=cwd),
         *declared,
-        *repo_recall_banks(),
+        *repo_recall_banks(cwd),
         *(["general"] if os.environ.get("HINDSIGHT_RECALL_GENERAL") == "1" else []),
         *os.environ.get("HINDSIGHT_GLOBAL_BANKS", "").split(),
         *linked_banks(primary),
@@ -540,14 +688,32 @@ _LIVE_LOCK = threading.Lock()
 def recall_deadline() -> float:
     """Seconds, from handler start, for the WHOLE recall.
 
-    The registry kills this handler at 11s (`timeout_ms`), so the default of 8s
-    leaves 3s for interpreter start, bank resolution, rendering and the journal.
+    4s by default (8s until 2026-09-26). With reranking on the GPU a recall
+    takes 0.1-0.7s (journal p90 ~0.4s), so 4s still covers a degraded TEI leg
+    (+3.5s when stopped) while a hung server costs the prompt half as much.
+    The registry kills this handler at 11s (`timeout_ms`), which leaves room for
+    interpreter start, bank resolution, rendering and the journal even at the
+    10s ceiling.
     """
     try:
-        value = float(os.environ.get("HINDSIGHT_RECALL_TIMEOUT", "") or 8.0)
+        value = float(os.environ.get("HINDSIGHT_RECALL_TIMEOUT", "") or 4.0)
     except ValueError:
-        value = 8.0
+        value = 4.0
     return max(0.5, min(10.0, value))
+
+
+def recall_max_tokens(deep: bool) -> int:
+    """Server-side token budget per bank for the injected memories.
+
+    Measured on 2026-09-26: at 2048 (primary) / 1024 (others) a prompt carried
+    ~9.3k chars of memory at p50 and 12.6k at p90. The lowest-ranked tail of a
+    2048 budget is mostly near-duplicates of the head, so the primary bank gets
+    1,400 and every opt-in bank 800. Both are service-env knobs: bb-hook's
+    SECRET_SHAPED filter drops any *TOKEN* name a caller forwards.
+    """
+    if deep:
+        return _env_int("HINDSIGHT_RECALL_MAX_TOKENS", 1400, 128, 4096)
+    return _env_int("HINDSIGHT_RECALL_EXTRA_MAX_TOKENS", 800, 128, 4096)
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
@@ -633,7 +799,7 @@ def recall_one(command: str, target: str, query: str, deep: bool,
         # --prefer-observations drops raw facts an observation already covers.
         # Verified on a bank with zero observations: facts still come back.
         return [command, "memory", "recall", target, q, "--output", "json",
-                "--budget", "mid" if deep else "low", "--max-tokens", "2048" if deep else "1024",
+                "--budget", "mid" if deep else "low", "--max-tokens", str(recall_max_tokens(deep)),
                 *(["--prefer-observations"] if prefer else [])]
 
     code, out, err = run_bounded(args(query), env, deadline_at)
@@ -687,13 +853,22 @@ def recall_many(command: str, banks: list[str], query: str, deep: set[str],
             for target in banks]
 
 
+# The server tokenizes a query as re.sub(r"[^\w\s]", " ", q.lower()).split() and
+# answers 422 when that is empty (a pasted rule of dashes, arrows, emoji).
+_WORD = re.compile(r"\w")
+
+
 def recall(payload: dict, cli: str, native: str) -> dict:
     prompt = payload.get("prompt", "") or ""
     query = clean_query(prompt)
     sizes = {"query_len_raw": len(prompt), "query_len_clean": len(query)}
+    reason = ""
     if len(query) < MIN_QUERY_CHARS:
         reason = ("prompt_under_min_length" if len(prompt.strip()) < MIN_QUERY_CHARS
                   else "query_under_min_length_after_cleanup")
+    elif not _WORD.search(query):
+        reason = "query_has_no_word_characters"
+    if reason:
         if payload.get("session_id"):
             journal(payload, cli, {"event": "recall_skipped", "reason": reason, **sizes})
         return result("skipped", reason)
@@ -702,9 +877,10 @@ def recall(payload: dict, cli: str, native: str) -> dict:
     command = binary()
     if not command:
         return result("skipped", "hindsight_binary_missing")
-    primary = bank()
+    cwd = payload.get("cwd") or None
+    primary = bank(cwd, "recall")
     personal, _ = declared_banks(cli)
-    banks = recall_banks(cli, primary)
+    banks = recall_banks(cli, primary, cwd)
     budget = recall_deadline()
     # The agent's own memory is worth as much as the project's, so it gets the
     # same budget. Everything else is context, not identity.
@@ -790,7 +966,7 @@ def briefing(payload: dict, cli: str, native: str) -> dict:
     except ValueError:
         budget = 0.5
     total_cap = _env_int("HINDSIGHT_BRIEFING_MAX_CHARS", 6000, 500, 20000)
-    primary = bank()
+    primary = bank(payload.get("cwd") or None, "briefing")
     fetched: dict[str, tuple[str, str, str]] = {}
     started = time.monotonic()
     deadline_at = started + budget
@@ -846,18 +1022,8 @@ def dispatch(concern: str, payload: dict, cli: str, native: str) -> dict:
         normalized = dict(payload, session_id=session_key(payload, cli))
         return invoke(["~/.agents/hooks/hindsight/hindsight-journal-write.sh"], normalized, timeout=5)
     if concern == "hindsight-jot-flush":
-        root = Path(os.environ.get("HS_JOURNAL_DIR", Path.home() / ".agents/journal"))
-        key = hashlib.sha1(str(payload.get("cwd", os.getcwd())).encode()).hexdigest()[:12]
-        jotfile = root / "jots" / f"{key}.md"
-        jotfile.parent.mkdir(parents=True, exist_ok=True)
-        with jotfile.with_suffix(".flush.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            if not jotfile.is_file() or not jotfile.stat().st_size:
-                return result("skipped", "no_pending_jots")
-            (jotfile.parent / "flushed").mkdir(exist_ok=True)
-            output = invoke(["~/.agents/hooks/hindsight/hindsight-jot-flush.sh", "--jotfile", str(jotfile)], payload,
-                            timeout=180, environment=cli_environment(cli))
-            if output["_hook_hub"]["status"] == "succeeded" and jotfile.exists():
-                return result("skipped", "jots_remain_pending")
-            return output
+        # In-process (jot_flush.py): a failed flush is a `failed` receipt with
+        # the reason, an ntfy alert and a kept jotfile -- never `skipped`.
+        import jot_flush
+        return jot_flush.dispatch(payload, cli)
     return result("failed", "unknown_hindsight_concern", exit_code=1)
