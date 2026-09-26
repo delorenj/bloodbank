@@ -526,15 +526,29 @@ def cap_query(text: str, max_tokens: int | None = None, max_chars: int | None = 
     return (head.rstrip() + ELISION + tail.lstrip()).strip()
 
 
-def halve_query(text: str) -> str:
-    """Half of `text`'s current size, for the one retry after a 400."""
+_TOO_LONG = re.compile(r"query too long:\s*(\d+)\s*tokens?\s+exceeds\s+(?:the\s+)?maximum\s+of\s+(\d+)", re.I)
+
+
+def halve_query(text: str, response: str = "") -> str:
+    """`text` at half its size, or smaller when the 400 says half is not enough.
+
+    The one retry after a 400. The server's rejection carries its own count
+    ("Query too long: N tokens exceeds maximum of M"). Text denser than the
+    char cap assumes -- emoji, braille or block-drawing pastes run ~3 cl100k
+    tokens a char -- is still over M at half length, so the cut follows M/N
+    (with 20% headroom) whenever that is the deeper one.
+    """
+    scale = 0.5
+    match = _TOO_LONG.search(response or "")
+    if match and int(match.group(1)) > 0:
+        scale = min(scale, 0.8 * int(match.group(2)) / int(match.group(1)))
     enc = encoder()
     if enc is not None:
         try:
-            return cap_query(text, max_tokens=max(8, len(enc.encode(text, disallowed_special=())) // 2))
+            return cap_query(text, max_tokens=max(8, int(len(enc.encode(text, disallowed_special=())) * scale)))
         except Exception:
             pass
-    return cap_query(text, max_chars=max(32, len(text) // 2))
+    return cap_query(text, max_chars=max(32, int(len(text) * scale)))
 
 
 # ------------------------------------------------------------ bounded recall
@@ -643,7 +657,7 @@ def recall_one(command: str, target: str, query: str, deep: bool,
     status, texts = classify(code, out, err)
     retried = False
     if status == "http_400" and "query too long" in f"{out}\n{err}".lower():
-        shorter = halve_query(query)
+        shorter = halve_query(query, f"{out}\n{err}")
         if shorter and len(shorter) < len(query):
             retried = True
             code, out, err = run_bounded(args(shorter), env, deadline_at)

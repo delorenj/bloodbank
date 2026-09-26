@@ -241,7 +241,9 @@ works like this:
    tiktoken when the hub's interpreter can import it. Otherwise it uses a
    1,000-char cap, which is the live path because `/usr/bin/python3` has no
    tiktoken. It keeps the head (60%) and the tail (40%), since the ask is usually
-   at one end. A `400 Query too long` is retried once at half the length.
+   at one end. A `400 Query too long` is retried once at half the length, or
+   shorter when the server's reported count says half is still over (emoji,
+   braille and block-drawing pastes run ~3 tokens a char).
    Measured on 2026-09-26 against the server's own tokenizer: 190 real prompts
    that hit the 1,000-char cap came out at 191-350 cl100k tokens (median 247),
    and none reached 400.

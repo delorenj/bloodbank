@@ -192,6 +192,11 @@ if bank == "picky" and len(query) > int(os.environ.get("PICKY_MAX", "200")):
     sys.stderr.write("✗ Request rejected (400)\n\nServer response:\n  API request failed (400 Bad Request): "
                      '{"detail":"Query too long: 600 tokens exceeds maximum of 500. Please shorten your query."}\n')
     raise SystemExit(1)
+if bank == "dense" and 3 * len(query) > 500:
+    sys.stderr.write("✗ Request rejected (400)\n\nServer response:\n  API request failed (400 Bad Request): "
+                     '{"detail":"Query too long: %d tokens exceeds maximum of 500. Please shorten your query."}\n'
+                     % (3 * len(query)))
+    raise SystemExit(1)
 if bank == "broken":
     sys.stderr.write("connection refused\n")
     raise SystemExit(1)
@@ -257,6 +262,22 @@ class BoundedRecallTests(unittest.TestCase):
         queries = [len(call["query"]) for call in self.calls_made()]
         self.assertEqual(len(queries), 2)
         self.assertLessEqual(queries[1], queries[0] // 2 + 1)
+        self.assertEqual(output["_hook_hub"]["status"], "succeeded")
+        row = self.journal()[-1]["per_bank"][0]
+        self.assertEqual((row["status"], row.get("retried")), ("ok", True))
+
+    def test_a_dense_query_is_cut_to_the_servers_own_count(self):
+        # Emoji, braille and block-drawing pastes run ~3 cl100k tokens a char:
+        # half of the 1,000-char cap is still ~1,500 tokens, so halving alone
+        # would be rejected twice and the prompt would get no memory at all.
+        self.banks.return_value = ["dense"]
+        with mock.patch.object(hindsight, "_ENCODER", None):
+            output = hindsight.recall({"session_id": "s", "prompt": "why does the load graph look like this "
+                                       + "⣿⣷⣶⣤⣀ " * 400}, "claude", "UserPromptSubmit")
+        queries = [call["query"] for call in self.calls_made()]
+        self.assertEqual(len(queries), 2)
+        self.assertLessEqual(3 * len(queries[1]), 500)
+        self.assertTrue(queries[1].startswith("why does the load graph"))
         self.assertEqual(output["_hook_hub"]["status"], "succeeded")
         row = self.journal()[-1]["per_bank"][0]
         self.assertEqual((row["status"], row.get("retried")), ("ok", True))
