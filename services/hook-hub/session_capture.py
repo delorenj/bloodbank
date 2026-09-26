@@ -609,6 +609,8 @@ def end_session(payload: dict, cli: str) -> dict:
     status = summary.get("result", "none")
     if status == "failed":
         return result("failed", "session_flush_deferred_for_retry", exit_code=1)
+    if status == "unconfigured":
+        return result("skipped", "hindsight_api_unconfigured")
     if status == "none":
         return result("skipped", "nothing_to_flush")
     return result("succeeded", f"session_flush_{status}")

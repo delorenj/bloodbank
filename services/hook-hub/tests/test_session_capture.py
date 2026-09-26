@@ -343,6 +343,13 @@ class FlushTests(CaptureTestCase):
         self.assertEqual(self.api.posts(), [])
         self.assertIsNone(self.state())
 
+    def test_without_an_api_url_turns_stay_buffered(self):
+        self.turn(1)
+        with mock.patch.object(hindsight, "api_endpoint", return_value=("", "")):
+            self.assertEqual(self.end()["_hook_hub"]["reason"], "hindsight_api_unconfigured")
+        self.assertEqual(len(self.state()["turns"]), 1)
+        self.assertEqual(self.end()["_hook_hub"]["reason"], "session_flush_submitted")
+
     def test_an_idle_session_that_died_is_flushed_by_the_sweeper(self):
         self.turn(1)
         self.clock.now += sc.limits()["idle_s"] + 1
