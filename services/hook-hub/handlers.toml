@@ -37,6 +37,19 @@ order = 10
 enabled = true # cutover-managed
 
 [[handler]]
+# Standing mental models (briefing / pitfalls / rules) of the primary bank,
+# fetched by direct GET (~20-40ms each, in parallel, 0.5s budget). Missing or
+# still-generating models are skipped silently. Order 5 so it runs ahead of the
+# slower session_start rows on CLIs with the default 3s client deadline.
+id = "hindsight-briefing"
+mode = "sync"
+on = ["session_start"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "hindsight-briefing"]
+timeout_ms = 1500
+order = 5
+enabled = true
+
+[[handler]]
 id = "hindsight-retain"
 mode = "async"
 on = ["post_tool"]

@@ -1,4 +1,4 @@
-"""Supervised Hindsight concerns: recall, edit candidates, and retention receipts.
+"""Supervised Hindsight concerns: recall, briefing, edit candidates, retention receipts.
 
 Candidate writes are deliberately distinct from a successful memory retain.
 Session close uses a deterministic document id, so a retry replaces the same
@@ -13,13 +13,30 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
+import threading
+import time
+import tomllib
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from concerns import context_output, file_edits, invoke, repository, result
+
+# Deadlines are measured from here: the handler is a fresh process per hook, so
+# import time is within milliseconds of process start. See `anchor()`.
+STARTED = time.monotonic()
+
+
+def anchor() -> float:
+    """When this hook's budget started: process start, or now in a long-lived importer."""
+    now = time.monotonic()
+    return STARTED if now - STARTED < 2.0 else now
 
 
 def safe(value: str) -> str:
@@ -73,21 +90,52 @@ def records(payload: dict, cli: str) -> list[dict]:
     return found
 
 
-def bank() -> str:
+def main_checkout() -> Path | None:
+    """The primary checkout of the current repository.
+
+    In a worktree the canonical `.hindsight/` belongs to the main checkout, so
+    this resolves `--git-common-dir`. A submodule's common dir lives inside its
+    superproject's `.git/modules/`, whose parent is not a working tree; there
+    the submodule's own toplevel is the answer.
+    """
     root = repository()
+    if not root:
+        return None
+    try:
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, timeout=1, cwd=root)
+        if common.returncode == 0:
+            path = Path(common.stdout.strip())
+            if path.name == ".git":
+                return path.parent
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return root
+
+
+def listed(path: Path) -> list[str]:
+    """Non-comment entries of a one-per-line file (commas and spaces also split)."""
+    try:
+        text = path.read_text()
+    except OSError:
+        return []
+    names: list[str] = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0]
+        names.extend(part for part in re.split(r"[\s,]+", line) if part)
+    return names
+
+
+def bank() -> str:
+    root = main_checkout()
     if root:
-        # In worktrees the canonical override belongs to the primary checkout.
         try:
-            common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-                                    capture_output=True, text=True, timeout=1)
-            if common.returncode == 0:
-                root = Path(common.stdout.strip()).parent
             override = root / ".hindsight/bank"
             if override.is_file():
                 for line in override.read_text().splitlines():
                     if line.strip() and not line.lstrip().startswith("#"):
                         return line.strip()
-        except (OSError, subprocess.SubprocessError):
+        except OSError:
             pass
     if os.environ.get("HINDSIGHT_BANK"):
         return os.environ["HINDSIGHT_BANK"]
@@ -174,7 +222,7 @@ def bank_is_declared() -> bool:
     """True when the primary bank came from an explicit operator declaration."""
     if os.environ.get("HINDSIGHT_BANK"):
         return True
-    root = repository()
+    root = main_checkout()
     if not root:
         return False
     try:
@@ -189,7 +237,10 @@ def ancestor_banks(limit: int = 3) -> list[str]:
     A submodule's work is also its parent's work -- an hour spent in
     33GOD/flume is an hour of 33GOD. Git has always known the parent
     (`--show-superproject-working-tree` returns it) and nothing has ever asked.
-    Bounded and opt-out because it costs one git call per level.
+    Bounded, and OPT-IN (`HINDSIGHT_ANCESTRY=1`) since 2026-09-26: every
+    extra bank on the synchronous prompt path is another contended rerank,
+    and the audit that day found fan-out banks behind 250 of 321 abandoned
+    recalls.
 
     Walks from the root `repository()` resolved, NOT from the process cwd. The
     two diverge whenever the caller is not standing in the repo the recall is
@@ -197,7 +248,7 @@ def ancestor_banks(limit: int = 3) -> list[str]:
     different working directory than the agent's. `bank()` answers for that
     root, so its ancestors must be that root's.
     """
-    if os.environ.get("HINDSIGHT_ANCESTRY", "1") == "0":
+    if os.environ.get("HINDSIGHT_ANCESTRY", "0") != "1":
         return []
     # An explicit bank is a declaration, and ancestry is an inference from git
     # topology. When the operator has named the bank -- via `.hindsight/bank` or
@@ -224,13 +275,33 @@ def ancestor_banks(limit: int = 3) -> list[str]:
     return [name for name in found if name]
 
 
+def repo_recall_banks() -> list[str]:
+    """Extra banks this repository opts into, from `<main checkout>/.hindsight/recall-banks`.
+
+    One bank per line, `#` comments allowed. It sits beside the
+    `.hindsight/bank` override `bank()` honors, so an infra-flavored repo can
+    add `infra` without every other repo paying for it.
+    """
+    root = main_checkout()
+    return listed(root / ".hindsight/recall-banks") if root else []
+
+
 def recall_banks(cli: str, primary: str) -> list[str]:
-    """Every bank this recall should read, in priority order.
+    """Every bank the synchronous prompt recall reads, in priority order.
+
+    By default that is ONLY the personal bank (when the agent registry declares
+    one) and the primary bank. Everything else is an explicit opt-in, because
+    each extra bank is another rerank the prompt waits on:
+
+      * the agent row's `recall_banks` and this repo's `.hindsight/recall-banks`
+      * `HINDSIGHT_RECALL_GENERAL=1` for `general`
+      * `HINDSIGHT_GLOBAL_BANKS` (default empty; was `infra` until 2026-09-26)
+      * `HINDSIGHT_ANCESTRY=1` for superproject banks
+      * `HINDSIGHT_FANOUT=1` for dream-graph neighbours
 
     The personal bank leads and is never dropped by the cap: an agent that
     cannot remember what it has done is the defect this ordering exists to
-    prevent. Project banks follow -- the repo, then its superprojects -- then
-    whatever the row declares, then the global fan-out.
+    prevent.
     """
     cap = max(2, min(12, int(os.environ.get("HINDSIGHT_RECALL_MAX_BANKS", "8") or 8)))
     personal, declared = declared_banks(cli)
@@ -239,8 +310,9 @@ def recall_banks(cli: str, primary: str) -> list[str]:
         primary,
         *ancestor_banks(),
         *declared,
-        "general",
-        *os.environ.get("HINDSIGHT_GLOBAL_BANKS", "infra").split(),
+        *repo_recall_banks(),
+        *(["general"] if os.environ.get("HINDSIGHT_RECALL_GENERAL") == "1" else []),
+        *os.environ.get("HINDSIGHT_GLOBAL_BANKS", "").split(),
         *linked_banks(primary),
     ]
     return list(dict.fromkeys([name for name in ordered if name]))[:cap]
@@ -283,7 +355,8 @@ def cli_environment(cli: str) -> dict[str, str]:
 
 
 def linked_banks(primary: str) -> list[str]:
-    if os.environ.get("HINDSIGHT_FANOUT", "1") == "0":
+    # Opt-in since 2026-09-26, for the same reason as ancestry.
+    if os.environ.get("HINDSIGHT_FANOUT", "0") != "1":
         return []
     path = Path(os.environ.get("HINDSIGHT_DREAM_GRAPH", Path.home() / ".hindsight/dream/bank-graph.json"))
     try:
@@ -304,50 +377,455 @@ def recall_text(response: dict) -> list[str]:
             for item in values if isinstance(item, dict) and (item.get("text") or item.get("content"))]
 
 
+# ------------------------------------------------------------ query hygiene
+#
+# The hub used to send the raw prompt as the recall query. On 2026-09-26, 62%
+# of those queries were harness XML or slash commands, and 111 were rejected
+# outright ("Query too long: N tokens exceeds maximum of 500"). The query is now
+# the user's own words, capped well under the server limit.
+
+MIN_QUERY_CHARS = 24
+
+# Wrappers a harness injects around or instead of what the user typed. The
+# whole block is dropped: none of its content is the user's intent.
+HARNESS_BLOCKS = frozenset({
+    # Claude Code
+    "system-reminder", "task-notification", "teammate-message", "agent-message",
+    "local-command-caveat", "local-command-stdout", "local-command-stderr",
+    "command-name", "command-message", "command-contents",
+    "bash-stdout", "bash-stderr", "user-prompt-submit-hook",
+    "ide_opened_file", "ide_selection", "ide_diagnostics",
+    # Codex
+    "send_user_message_question_reply", "environment_context", "user_instructions",
+    "recommended_plugins", "in-app-browser-context", "skill", "user_shell_command",
+    "hook_prompt", "turn_aborted", "subagent_notification", "codex_internal_context",
+    "realtime_delegation",
+    # Others
+    "environment_details", "system",
+})
+# Wrappers whose CONTENT is the user's own words: drop the tags, keep the text.
+USER_BLOCKS = frozenset({"command-args", "bash-input", "pasted_content"})
+# A prompt that is nothing but a harness frame. Nothing in it is a question.
+HARNESS_PROMPTS = (
+    "This session is being continued from a previous conversation",
+    "[Request interrupted by user",
+)
+HARNESS_LINES = re.compile(r"(?im)^\s*(?:Another Claude session sent a message:"
+                           r"|Read the output file to retrieve the result:.*)\s*$")
+
+
+def _blocks(names: frozenset[str]) -> re.Pattern[str]:
+    alternatives = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+    return re.compile(rf"<({alternatives})(?:\s[^>]*)?>(.*?)</\1\s*>", re.S | re.I)
+
+
+_HARNESS_BLOCK = _blocks(HARNESS_BLOCKS)
+_USER_BLOCK = _blocks(USER_BLOCKS)
+_ORPHAN_TAG = re.compile(
+    r"</?(?:%s)(?:\s[^>]*)?/?>" % "|".join(re.escape(n) for n in sorted(HARNESS_BLOCKS | USER_BLOCKS, key=len, reverse=True)),
+    re.I)
+# Any other kebab- or snake-case wrapper that OPENS A LINE is a harness frame
+# too (`<foo-bar>`, `<foo_bar>`). HTML a user types inline is left alone.
+_GENERIC_BLOCK = re.compile(r"^[ \t]*<([a-z][a-z0-9]*(?:[-_][a-z0-9]+)+)(?:\s[^>]*)?>(.*?)</\1\s*>", re.S | re.M)
+# `/bmad-build-auto 4-1 ...` -> `4-1 ...`. A path such as `/home/x/y` is not a
+# command: the token must end at whitespace, so a second `/` disqualifies it.
+_SLASH_COMMAND = re.compile(r"^/[A-Za-z][\w:.-]*(?=\s|$)")
+
+
+def clean_query(prompt: str) -> str:
+    """The user's own words from a native prompt payload."""
+    if not isinstance(prompt, str):
+        return ""
+    text = prompt
+    for _ in range(4):  # nested wrappers peel one layer per pass
+        stripped = _HARNESS_BLOCK.sub(" ", text)
+        stripped = _GENERIC_BLOCK.sub(lambda m: m.group(0) if m.group(1).lower() in USER_BLOCKS else " ", stripped)
+        if stripped == text:
+            break
+        text = stripped
+    text = _USER_BLOCK.sub(lambda m: f" {m.group(2)} ", text)
+    text = _ORPHAN_TAG.sub(" ", text)
+    text = HARNESS_LINES.sub(" ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = _SLASH_COMMAND.sub("", text).strip()
+    if any(text.startswith(frame) for frame in HARNESS_PROMPTS):
+        return ""
+    return text
+
+
+# ------------------------------------------------------------ query length cap
+#
+# The server counts cl100k_base tokens and rejects anything over 500. Do NOT
+# raise that limit server-side: the reranker caps input at 512 tokens, so long
+# queries only buy the most expensive rerank. Cap client-side instead.
+
+_ENCODER: Any = False  # False = not tried yet; None = unavailable
+
+
+def encoder() -> Any:
+    """cl100k_base when tiktoken is importable here, else None (char cap).
+
+    The hub's /usr/bin/python3 has no tiktoken as of 2026-09-26, so the char
+    cap is the live path there.
+    """
+    global _ENCODER
+    if _ENCODER is False:
+        try:
+            import tiktoken
+            _ENCODER = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            _ENCODER = None
+    return _ENCODER
+
+
+def _env_int(name: str, default: int, low: int, high: int) -> int:
+    try:
+        return max(low, min(high, int(os.environ.get(name, "") or default)))
+    except ValueError:
+        return default
+
+
+def query_caps() -> tuple[int, int]:
+    """(max tokens, max chars). ~2.5 chars/token covers code, paths and JSON."""
+    return (_env_int("HINDSIGHT_RECALL_QUERY_MAX_TOKENS", 400, 16, 480),
+            _env_int("HINDSIGHT_RECALL_QUERY_MAX_CHARS", 1000, 64, 1200))
+
+
+HEAD_SHARE = 0.6  # the ask is usually at the start or the end; keep both
+ELISION = " … "
+
+
+def cap_query(text: str, max_tokens: int | None = None, max_chars: int | None = None) -> str:
+    """`text` kept whole when it fits, else its head and tail joined by an elision."""
+    tokens, chars = query_caps()
+    tokens = max_tokens or tokens
+    chars = max_chars or chars
+    enc = encoder()
+    if enc is not None:
+        try:
+            ids = enc.encode(text, disallowed_special=())
+            if len(ids) <= tokens:
+                return text
+            budget = max(2, tokens - 2)  # the elision costs a token or two
+            head = max(1, int(budget * HEAD_SHARE))
+            tail = max(1, budget - head)
+            return (enc.decode(ids[:head]).rstrip() + ELISION + enc.decode(ids[-tail:]).lstrip()).strip()
+        except Exception:
+            pass
+    if len(text) <= chars:
+        return text
+    budget = max(2, chars - len(ELISION))
+    head_n = max(1, int(budget * HEAD_SHARE))
+    tail_n = max(1, budget - head_n)
+    head, tail = text[:head_n], text[-tail_n:]
+    # Cut at word boundaries when one is near, never mid-word when avoidable.
+    if " " in head[head_n // 2:]:
+        head = head.rsplit(" ", 1)[0]
+    if " " in tail[:tail_n // 2]:
+        tail = tail.split(" ", 1)[1]
+    return (head.rstrip() + ELISION + tail.lstrip()).strip()
+
+
+def halve_query(text: str) -> str:
+    """Half of `text`'s current size, for the one retry after a 400."""
+    enc = encoder()
+    if enc is not None:
+        try:
+            return cap_query(text, max_tokens=max(8, len(enc.encode(text, disallowed_special=())) // 2))
+        except Exception:
+            pass
+    return cap_query(text, max_chars=max(32, len(text) // 2))
+
+
+# ------------------------------------------------------------ bounded recall
+
+RECALL_STATUSES = ("ok", "empty", "timeout", "http_400", "not_found", "error")
+FAILURE_REASONS = {"timeout": "recall_deadline_exceeded", "http_400": "recall_query_rejected",
+                   "error": "recall_command_failed"}
+_LIVE: set[subprocess.Popen] = set()
+_LIVE_LOCK = threading.Lock()
+
+
+def recall_deadline() -> float:
+    """Seconds, from handler start, for the WHOLE recall.
+
+    The registry kills this handler at 11s (`timeout_ms`), so the default of 8s
+    leaves 3s for interpreter start, bank resolution, rendering and the journal.
+    """
+    try:
+        value = float(os.environ.get("HINDSIGHT_RECALL_TIMEOUT", "") or 8.0)
+    except ValueError:
+        value = 8.0
+    return max(0.5, min(10.0, value))
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def run_bounded(args: list[str], env: dict[str, str], deadline_at: float) -> tuple[int | None, str, str]:
+    """(returncode, stdout, stderr), or (None, "", "") once `deadline_at` passes.
+
+    The child is killed AT the deadline, so a stalled server can never hold the
+    prompt past its budget.
+    """
+    remaining = deadline_at - time.monotonic()
+    if remaining <= 0:
+        return None, "", ""
+    try:
+        proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
+    except OSError as exc:
+        return -1, "", f"spawn failed: {type(exc).__name__}"
+    with _LIVE_LOCK:
+        _LIVE.add(proc)
+    try:
+        out, err = proc.communicate(timeout=remaining)
+        return proc.returncode, out or "", err or ""
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            proc.communicate(timeout=0.5)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            pass
+        return None, "", ""
+    finally:
+        with _LIVE_LOCK:
+            _LIVE.discard(proc)
+
+
+def classify(code: int | None, out: str, err: str) -> tuple[str, list[str]]:
+    if code is None:
+        return "timeout", []
+    if code == 0:
+        try:
+            decoded = json.loads(out)
+        except ValueError:
+            return "error", []
+        texts = recall_text(decoded) if isinstance(decoded, dict) else []
+        return ("ok" if texts else "empty"), texts
+    text = f"{out}\n{err}"
+    if re.search(r"\(400\)|\b400 Bad Request", text):
+        return "http_400", []
+    if re.search(r"\(404\)|\b404 Not Found|\bnot found\b", text, re.I):
+        return "not_found", []
+    return "error", []
+
+
+def _detail(out: str, err: str) -> str:
+    lines = [line.strip() for line in f"{err}\n{out}".splitlines() if line.strip()]
+    # The CLI prints "Server response:" then the body; the body is the reason.
+    for index, line in enumerate(lines):
+        if line.lower().startswith("server response") and index + 1 < len(lines):
+            return lines[index + 1][:200]
+    return (lines[-1] if lines else "")[:200]
+
+
+def recall_one(command: str, target: str, query: str, deep: bool,
+               env: dict[str, str], deadline_at: float) -> tuple[dict, list[str]]:
+    started = time.monotonic()
+    prefer = os.environ.get("HINDSIGHT_RECALL_PREFER_OBSERVATIONS", "1") != "0"
+
+    def args(q: str) -> list[str]:
+        # --prefer-observations drops raw facts an observation already covers.
+        # Verified on a bank with zero observations: facts still come back.
+        return [command, "memory", "recall", target, q, "--output", "json",
+                "--budget", "mid" if deep else "low", "--max-tokens", "2048" if deep else "1024",
+                *(["--prefer-observations"] if prefer else [])]
+
+    code, out, err = run_bounded(args(query), env, deadline_at)
+    status, texts = classify(code, out, err)
+    retried = False
+    if status == "http_400" and "query too long" in f"{out}\n{err}".lower():
+        shorter = halve_query(query)
+        if shorter and len(shorter) < len(query):
+            retried = True
+            code, out, err = run_bounded(args(shorter), env, deadline_at)
+            status, texts = classify(code, out, err)
+    outcome: dict[str, Any] = {"bank": target, "status": status, "results": len(texts),
+                               "latency_ms": round((time.monotonic() - started) * 1000)}
+    if retried:
+        outcome["retried"] = True
+    if status in {"http_400", "not_found", "error"}:
+        outcome["detail"] = _detail(out, err)
+    return outcome, texts
+
+
+def recall_many(command: str, banks: list[str], query: str, deep: set[str],
+                env: dict[str, str], deadline_at: float) -> list[tuple[dict, list[str]]]:
+    """Recall every bank in parallel; return whatever finished by the deadline.
+
+    One thread per bank, each killing its own child at the deadline. Nothing
+    here waits on a straggler: a thread still alive after a short grace is
+    recorded as a timeout and its process group is killed.
+    """
+    found: dict[str, tuple[dict, list[str]]] = {}
+    began = time.monotonic()
+
+    def work(target: str) -> None:
+        try:
+            found[target] = recall_one(command, target, query, target in deep, env, deadline_at)
+        except Exception:
+            found[target] = ({"bank": target, "status": "error", "results": 0,
+                              "latency_ms": round((time.monotonic() - began) * 1000),
+                              "detail": "recall worker raised"}, [])
+
+    workers = [threading.Thread(target=work, args=(target,), daemon=True) for target in banks]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(max(0.0, deadline_at + 0.25 - time.monotonic()))
+    with _LIVE_LOCK:
+        stragglers = list(_LIVE)
+    for proc in stragglers:
+        _kill_tree(proc)
+    return [found.get(target) or ({"bank": target, "status": "timeout", "results": 0,
+                                   "latency_ms": round((time.monotonic() - began) * 1000)}, [])
+            for target in banks]
+
+
 def recall(payload: dict, cli: str, native: str) -> dict:
-    prompt = payload.get("prompt", "")
-    if len(prompt.strip()) < 24:
-        return result("skipped", "prompt_under_min_length")
+    prompt = payload.get("prompt", "") or ""
+    query = clean_query(prompt)
+    sizes = {"query_len_raw": len(prompt), "query_len_clean": len(query)}
+    if len(query) < MIN_QUERY_CHARS:
+        reason = ("prompt_under_min_length" if len(prompt.strip()) < MIN_QUERY_CHARS
+                  else "query_under_min_length_after_cleanup")
+        if payload.get("session_id"):
+            journal(payload, cli, {"event": "recall_skipped", "reason": reason, **sizes})
+        return result("skipped", reason)
+    query = cap_query(query)
+    sizes["query_len_sent"] = len(query)
     command = binary()
     if not command:
         return result("skipped", "hindsight_binary_missing")
     primary = bank()
     personal, _ = declared_banks(cli)
     banks = recall_banks(cli, primary)
-    deadline = max(0.2, min(10.0, float(os.environ.get("HINDSIGHT_RECALL_TIMEOUT", "9"))))
+    budget = recall_deadline()
     # The agent's own memory is worth as much as the project's, so it gets the
     # same budget. Everything else is context, not identity.
     deep = {primary, personal} - {""}
-
-    def fetch(target: str) -> tuple[str, list[str], str]:
-        args = [command, "memory", "recall", target, prompt, "--output", "json",
-                "--budget", "mid" if target in deep else "low", "--max-tokens", "2048" if target in deep else "1024"]
-        try:
-            completed = subprocess.run(args, capture_output=True, text=True, timeout=deadline, env=cli_environment(cli))
-            if completed.returncode:
-                return target, [], "recall_command_failed"
-            decoded = json.loads(completed.stdout)
-            return target, recall_text(decoded) if isinstance(decoded, dict) else [], ""
-        except subprocess.TimeoutExpired:
-            return target, [], "recall_deadline_exceeded"
-        except (OSError, ValueError):
-            return target, [], "recall_response_invalid"
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(banks)) as pool:
-        responses = list(pool.map(fetch, banks))
+    started = anchor()
+    responses = recall_many(command, banks, query, deep, cli_environment(cli), started + budget)
     context: list[str] = []
-    failures = [error for _, _, error in responses if error]
-    for target, texts, error in responses:
+    for outcome, texts in responses:
         if texts:
-            context.append(f"<!-- hindsight:recall bank={target} -->\n" + "\n".join(texts)[:10000] + "\n<!-- /hindsight:recall -->")
+            context.append(f"<!-- hindsight:recall bank={outcome['bank']} -->\n" + "\n".join(texts)[:10000] + "\n<!-- /hindsight:recall -->")
     rendered = "\n\n".join(context)[:20000]
+    failures = [outcome["status"] for outcome, _ in responses if outcome["status"] in FAILURE_REASONS]
     if payload.get("session_id"):
         journal(payload, cli, {"event": "recall", "bank": primary, "banks": banks,
-                              "prompt_len": len(prompt), "total_chars": len(rendered),
-                              "returned_anything": bool(rendered), "failed_banks": len(failures)})
+                              "prompt_len": len(prompt), **sizes,
+                              "total_chars": len(rendered), "returned_anything": bool(rendered),
+                              "failed_banks": len(failures), "deadline_s": budget,
+                              "elapsed_ms": round((time.monotonic() - started) * 1000),
+                              "per_bank": [outcome for outcome, _ in responses]})
     if not rendered and failures:
-        return result("failed", failures[0], exit_code=1)
+        return result("failed", FAILURE_REASONS[failures[0]], exit_code=1)
     return result("succeeded", "recall_partial" if failures else "recall_completed", context_output(rendered, cli, native))
+
+
+# ------------------------------------------------------------ session briefing
+#
+# Mental models are curated, pre-synthesized pages; a GET costs ~20-40ms where
+# a recall costs seconds. The bank templates in DeLoContainers
+# stacks/ai/hindsight/templates/ seed these ids on every templated bank.
+
+BRIEFING_MODELS = ("briefing", "pitfalls", "rules")
+
+
+def api_endpoint() -> tuple[str, str]:
+    """(base URL, key) from the environment, else ~/.hindsight/config -- as the CLI does."""
+    url = os.environ.get("HINDSIGHT_API_URL", "").strip()
+    key = os.environ.get("HINDSIGHT_API_KEY", "").strip()
+    if not (url and key):
+        path = Path(os.environ.get("HINDSIGHT_CONFIG", Path.home() / ".hindsight/config"))
+        try:
+            config = tomllib.loads(path.read_text())
+        except (OSError, ValueError):
+            config = {}
+        url = url or str(config.get("api_url") or "").strip()
+        key = key or str(config.get("api_key") or "").strip()
+    return url.rstrip("/"), key
+
+
+def fetch_model(base: str, key: str, target: str, model: str, timeout: float) -> tuple[str, str, str]:
+    """(status, title, content) for one mental model. Never raises."""
+    url = (f"{base}/v1/default/banks/{urllib.parse.quote(target, safe='')}"
+           f"/mental-models/{urllib.parse.quote(model, safe='')}")
+    headers = {"Accept": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as response:
+            data = json.loads(response.read(1 << 20))
+    except urllib.error.HTTPError as exc:
+        return ("not_found" if exc.code == 404 else f"http_{exc.code}"), "", ""
+    except (OSError, ValueError):
+        return "error", "", ""
+    content = str(data.get("content") or "").strip() if isinstance(data, dict) else ""
+    if not content:
+        return "empty", "", ""
+    # A model that has never finished its first refresh says so in its content.
+    if re.match(r"^(?:[^\n:]{0,120}:\s*)?generating content\.*$", content, re.I):
+        return "pending", "", ""
+    return "ok", str(data.get("name") or model).strip(), content
+
+
+def briefing(payload: dict, cli: str, native: str) -> dict:
+    if os.environ.get("HINDSIGHT_BRIEFING", "1") == "0":
+        return result("skipped", "briefing_disabled")
+    # A resumed session already carries the briefing it started with.
+    if str(payload.get("source", "")).lower() == "resume":
+        return result("skipped", "session_resumed")
+    base, key = api_endpoint()
+    if not base:
+        return result("skipped", "hindsight_api_unconfigured")
+    try:
+        budget = max(0.1, min(2.0, float(os.environ.get("HINDSIGHT_BRIEFING_TIMEOUT", "") or 0.5)))
+    except ValueError:
+        budget = 0.5
+    total_cap = _env_int("HINDSIGHT_BRIEFING_MAX_CHARS", 6000, 500, 20000)
+    primary = bank()
+    fetched: dict[str, tuple[str, str, str]] = {}
+    started = time.monotonic()
+    deadline_at = started + budget
+
+    def work(model: str) -> None:
+        fetched[model] = fetch_model(base, key, primary, model, max(0.05, deadline_at - time.monotonic()))
+
+    workers = [threading.Thread(target=work, args=(model,), daemon=True) for model in BRIEFING_MODELS]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(max(0.0, deadline_at - time.monotonic()))
+    statuses = {model: fetched.get(model, ("timeout", "", ""))[0] for model in BRIEFING_MODELS}
+    ready = [(model, *fetched[model][1:]) for model in BRIEFING_MODELS if statuses[model] == "ok"]
+    rendered = ""
+    if ready:
+        share = max(400, total_cap // len(ready))
+        sections = []
+        for model, title, content in ready:
+            body = content if len(content) <= share else content[:share].rsplit("\n", 1)[0] + "\n…(truncated)"
+            sections.append(f"## {title}\n\n{body}")
+        rendered = (f"<!-- hindsight:briefing bank={primary} -->\n"
+                    f"# Hindsight briefing: bank `{primary}`\n"
+                    "Standing mental models for this project. Per-prompt recall adds detail.\n\n"
+                    + "\n\n".join(sections))[:total_cap + 400] + "\n<!-- /hindsight:briefing -->"
+    if payload.get("session_id"):
+        journal(payload, cli, {"event": "briefing", "bank": primary, "models": statuses,
+                              "total_chars": len(rendered),
+                              "elapsed_ms": round((time.monotonic() - started) * 1000)})
+    if not rendered:
+        return result("skipped", "no_briefing_models")
+    return result("succeeded", "briefing_injected", context_output(rendered, cli, native))
 
 
 def candidate(payload: dict, cli: str) -> dict:
@@ -455,6 +933,8 @@ def dispatch(concern: str, payload: dict, cli: str, native: str) -> dict:
         return result("skipped", "hindsight_disabled")
     if concern == "hindsight-recall":
         return recall(payload, cli, native)
+    if concern == "hindsight-briefing":
+        return briefing(payload, cli, native)
     if concern == "hindsight-retain":
         return candidate(payload, cli)
     if concern == "hindsight-session-end":

@@ -78,6 +78,7 @@ class AncestryTests(unittest.TestCase):
         with mock.patch.object(hindsight, "repository", return_value=Path("/code/33GOD/flume")), \
              mock.patch.object(hindsight, "bank_is_declared", return_value=False), \
              mock.patch.object(hindsight, "bank_at", side_effect=lambda root: Path(root).name), \
+             mock.patch.dict(os.environ, {"HINDSIGHT_ANCESTRY": "1"}), \
              mock.patch.object(hindsight.subprocess, "run") as run:
             run.side_effect = [mock.Mock(returncode=0, stdout="/code/33GOD\n"),
                                mock.Mock(returncode=0, stdout="\n")]
@@ -85,13 +86,22 @@ class AncestryTests(unittest.TestCase):
 
     def test_an_explicit_declaration_suppresses_ancestry(self):
         # A named bank is a decision; ancestry is an inference. The decision wins.
-        with mock.patch.dict(os.environ, {"HINDSIGHT_BANK": "test-bank"}), \
+        with mock.patch.dict(os.environ, {"HINDSIGHT_BANK": "test-bank", "HINDSIGHT_ANCESTRY": "1"}), \
              mock.patch.object(hindsight, "repository", return_value=Path("/code/33GOD/flume")):
             self.assertEqual(hindsight.ancestor_banks(), [])
 
-    def test_ancestry_is_opt_out(self):
-        with mock.patch.dict(os.environ, {"HINDSIGHT_ANCESTRY": "0"}):
-            self.assertEqual(hindsight.ancestor_banks(), [])
+    def test_ancestry_is_opt_in(self):
+        # Off by default since 2026-09-26: each extra bank is another rerank the
+        # prompt waits on. Unset and "0" both mean off.
+        for value in (None, "0"):
+            environ = {} if value is None else {"HINDSIGHT_ANCESTRY": value}
+            with mock.patch.dict(os.environ, environ), \
+                 mock.patch.object(hindsight, "repository", return_value=Path("/code/33GOD/flume")), \
+                 mock.patch.object(hindsight.subprocess, "run") as run:
+                if value is None:
+                    os.environ.pop("HINDSIGHT_ANCESTRY", None)
+                self.assertEqual(hindsight.ancestor_banks(), [])
+                run.assert_not_called()
 
     def test_outside_a_repository_there_is_no_ancestry(self):
         with mock.patch.object(hindsight, "repository", return_value=None), \
@@ -100,11 +110,14 @@ class AncestryTests(unittest.TestCase):
 
 
 class OrderingTests(unittest.TestCase):
+    """Every opt-in switched on, so the relative order is visible."""
+
     def layered(self, **environ):
-        base = {"HINDSIGHT_FANOUT": "0", "HINDSIGHT_GLOBAL_BANKS": "infra",
+        base = {"HINDSIGHT_FANOUT": "0", "HINDSIGHT_GLOBAL_BANKS": "infra", "HINDSIGHT_RECALL_GENERAL": "1",
                 "HERMES_HOME": "/p/delonet-company-reporter", **environ}
         with registry(REGISTRY), mock.patch.dict(os.environ, base), \
-             mock.patch.object(hindsight, "ancestor_banks", return_value=["33GOD"]):
+             mock.patch.object(hindsight, "ancestor_banks", return_value=["33GOD"]), \
+             mock.patch.object(hindsight, "repo_recall_banks", return_value=[]):
             return hindsight.recall_banks("hermes", "flume")
 
     def test_personal_leads_then_project_then_ancestors_then_declared(self):
@@ -121,9 +134,11 @@ class OrderingTests(unittest.TestCase):
     def test_a_bank_named_twice_is_read_once(self):
         self.assertEqual(len(self.layered()), len(set(self.layered())))
 
-    def test_an_agentless_cli_is_unchanged_but_for_ancestry(self):
-        with registry(REGISTRY), mock.patch.dict(os.environ, {"HINDSIGHT_FANOUT": "0", "HINDSIGHT_GLOBAL_BANKS": "infra"}), \
-             mock.patch.object(hindsight, "ancestor_banks", return_value=["33GOD"]):
+    def test_an_agentless_cli_gets_the_same_opt_ins_minus_the_registry(self):
+        with registry(REGISTRY), mock.patch.dict(os.environ, {"HINDSIGHT_FANOUT": "0", "HINDSIGHT_GLOBAL_BANKS": "infra",
+                                                              "HINDSIGHT_RECALL_GENERAL": "1"}), \
+             mock.patch.object(hindsight, "ancestor_banks", return_value=["33GOD"]), \
+             mock.patch.object(hindsight, "repo_recall_banks", return_value=[]):
             self.assertEqual(hindsight.recall_banks("claude", "flume"), ["flume", "33GOD", "general", "infra"])
 
 

@@ -106,7 +106,9 @@ python3 services/hook-hub/cutover.py --project /path/to/project --activate
 ```
 
 Activation refuses to proceed while inspected legacy managed commands remain.
-The registry reloads on mtime changes; code changes require a service restart.
+The registry reloads on mtime changes. Daemon (`hub.py`) code changes require a
+service restart; handler code (`concerns.py`, `hindsight.py`) runs as a fresh
+process per hook and does not.
 Native CLIs that cache their hook configuration need a fresh session for newly
 added native hook types. The legacy publisher compatibility path covers existing
 registered publisher commands.
@@ -217,13 +219,86 @@ Candystore persistence acknowledgment. Durable delivery acceptance must separate
 look up the event ID in Candystore. Receipts do not store prompts, transcripts,
 stdout, stderr, or environment values.
 
+## Hindsight recall and briefing
+
+`hindsight-recall` runs on every prompt, so it has to be fast and send the right
+query. Since the 2026-09-26 remediation (DeLoContainers
+`stacks/ai/hindsight/docs/2026-09-26-leverage-audit.md`, plan item 1a/1b) it
+works like this:
+
+1. **Query hygiene.** Harness wrappers are dropped whole: `<system-reminder>`,
+   `<task-notification>`, `<teammate-message>`, `<local-command-*>`,
+   `<command-name>`/`<command-message>`, Codex's `<send_user_message_question_reply>`,
+   `<environment_context>`, `<turn_aborted>` and the like, plus any other kebab- or
+   snake-case `<tag>…</tag>` that opens a line. `<command-args>`, `<bash-input>`
+   and `<pasted_content>` are the user's own words, so their tags go and their
+   text stays. A leading slash-command token goes too (`/review-pr 123 …` →
+   `123 …`); a leading path does not. If fewer than 24 characters remain, recall
+   is skipped and a `recall_skipped` journal event records why.
+2. **Length cap.** The server rejects queries over 500 cl100k tokens. Do not raise
+   that limit: the reranker caps input at 512 tokens, so a long query only buys
+   the most expensive rerank. The hub keeps the query under 400 tokens with
+   tiktoken when the hub's interpreter can import it. Otherwise it uses a
+   1,000-char cap, which is the live path because `/usr/bin/python3` has no
+   tiktoken. It keeps the head (60%) and the tail (40%), since the ask is usually
+   at one end. A `400 Query too long` is retried once at half the length.
+3. **Banks.** The synchronous path reads **only the primary bank**, plus the
+   agent's personal bank when the registry declares a `write_bank`. The primary
+   bank gets `mid`/2048 and anything extra gets `low`/1024. Extra banks are
+   opt-in:
+
+   | Opt-in | Adds |
+   | --- | --- |
+   | `<main checkout>/.hindsight/recall-banks` | One bank per line, `#` comments allowed. It sits next to the `.hindsight/bank` override and is read from the primary checkout, so worktrees share it. Use it to give an infra-flavored repo `infra`. |
+   | agent registry `hindsight.recall_banks` | The banks a Hermes agent row declares |
+   | `HINDSIGHT_RECALL_GENERAL=1` | `general` (always on before 2026-09-26) |
+   | `HINDSIGHT_GLOBAL_BANKS="a b"` | Space-separated banks. The default is now empty (it was `infra`). |
+   | `HINDSIGHT_ANCESTRY=1` | Superproject banks of a submodule (on by default before 2026-09-26) |
+   | `HINDSIGHT_FANOUT=1` | Dream-graph neighbours (on by default before 2026-09-26) |
+
+   `HINDSIGHT_RECALL_MAX_BANKS` (default 8) caps the list and never drops the
+   personal bank.
+4. **`--prefer-observations`.** The hub drops raw facts that an observation it
+   returned already consolidates. On a bank with no observations it still
+   returns facts (checked on `plane`). Set
+   `HINDSIGHT_RECALL_PREFER_OBSERVATIONS=0` to turn it off.
+5. **A real deadline.** Each bank runs as its own CLI process. When
+   `HINDSIGHT_RECALL_TIMEOUT` (default 8s, measured from handler start) runs out,
+   the hub kills every process still going and returns what finished. That
+   leaves 3s of margin under the registry's 11s `timeout_ms`.
+6. **Journal.** Each `recall` event in
+   `~/.agents/journal/sessions/<cli>-<session>.jsonl` carries `query_len_raw`,
+   `query_len_clean`, `query_len_sent`, `deadline_s`, `elapsed_ms` and a
+   `per_bank` list. Each entry has `bank`, `status` (`ok`, `empty`, `timeout`,
+   `http_400`, `not_found`, `error`), `latency_ms` and `results`, plus
+   `retried` and `detail` when they apply.
+
+`hindsight-briefing` runs once at session start (not on `resume`). It GETs the
+primary bank's `briefing`, `pitfalls` and `rules` mental models in parallel from
+`/v1/default/banks/{bank}/mental-models/{id}`. The bank templates seed those ids.
+The URL and key come from `HINDSIGHT_API_URL`/`HINDSIGHT_API_KEY`, falling back to
+`~/.hindsight/config`, as the CLI does. A model that is missing (404), fails, or
+still says `Generating content...` is skipped silently. Whatever is ready is
+injected under a `# Hindsight briefing` header, capped at
+`HINDSIGHT_BRIEFING_MAX_CHARS` (6,000). The whole fetch has a 0.5s budget
+(`HINDSIGHT_BRIEFING_TIMEOUT`), and `HINDSIGHT_BRIEFING=0` turns it off.
+
+Handlers are spawned fresh for every hook, so edits to `hindsight.py` and
+`concerns.py` apply on the next prompt with no restart. Registry edits apply on
+mtime. Only `hub.py` changes need `systemctl --user restart hook-hub.service`.
+
+The legacy shell hook `~/.agents/hooks/hindsight/hindsight-recall.sh` is not
+maintained. It exits as soon as the ownership manifest names the hub as owner,
+and no native CLI config calls it. Its last journal write was 2026-09-13.
+
 ## Deadlines and failure behavior
 
 Ordinary client calls have a 3-second total deadline and a 2.5-second synchronous
 budget. Prompt hooks that recall Hindsight use a 15-second client deadline within
 a 16-second native timeout, with up to 14 seconds of shared synchronous work.
-The recall handler itself is capped at 11 seconds. Each other handler has its own
-registry timeout.
+The registry kills the recall handler at 11 seconds, but it stops itself at
+`HINDSIGHT_RECALL_TIMEOUT` (8s) and kills its own CLI children first. Each other
+handler has its own registry timeout.
 
 The client fails open on unavailable sockets, malformed replies, or elapsed
 deadlines. A deliberate, valid native denial is preserved. Hung handler process

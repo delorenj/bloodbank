@@ -132,7 +132,11 @@ class MemoryReceiptTests(unittest.TestCase):
         output = hindsight.recall({"session_id": "recall", "prompt": "Please explain the current project hook architecture"}, "codex", "UserPromptSubmit")
         self.assertEqual(output["_hook_hub"]["status"], "succeeded")
         self.assertIn("A useful recalled fact", json.loads(output["stdout"])["hookSpecificOutput"]["additionalContext"])
-        self.assertEqual(len(self.calls.read_text().splitlines()), 2)
+        # The synchronous path reads ONLY the primary bank by default (no
+        # `general`, no global fan-out) and prefers consolidated observations.
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        self.assertEqual([call[2] for call in calls], ["test-bank"])
+        self.assertIn("--prefer-observations", calls[0])
 
 
 class CutoverTests(unittest.TestCase):
