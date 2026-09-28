@@ -58,10 +58,13 @@ class ConcernTests(unittest.TestCase):
     def test_notebook_preserves_supported_cli_and_project_scope(self):
         with mock.patch.object(concerns, "repository", return_value=None), mock.patch.object(concerns, "invoke") as invoke:
             for name in ("project-notebook-start", "project-notebook-end"):
-                with mock.patch.dict(os.environ, {"BB_HOOK_CLI": "codex"}):
+                with mock.patch.dict(os.environ, {"BB_HOOK_CLI": "unknown_cli"}):
                     output = concerns.dispatch(name, {})
                     self.assertEqual(output["_hook_hub"]["reason"], "notebook_cli_unsupported")
                 with mock.patch.dict(os.environ, {"BB_HOOK_CLI": "claude"}):
+                    output = concerns.dispatch(name, {})
+                    self.assertEqual(output["_hook_hub"]["reason"], "not_a_git_repository")
+                with mock.patch.dict(os.environ, {"BB_HOOK_CLI": "antigravity"}):
                     output = concerns.dispatch(name, {})
                     self.assertEqual(output["_hook_hub"]["reason"], "not_a_git_repository")
             invoke.assert_not_called()

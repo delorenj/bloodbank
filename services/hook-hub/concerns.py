@@ -255,17 +255,23 @@ def dispatch(concern: str, raw: dict) -> dict:
         action = "--clear" if role == "prompt_submit" else "attention"
         return invoke(["~/.config/zellij/scripts/zellij-notify", action], payload, timeout=1)
     if concern.startswith("project-notebook-"):
-        # The canonical PJ notebook engine currently accepts Claude identities
-        # only. Never misattribute another CLI as Claude to bypass that contract.
-        if cli != "claude":
+        supported_clis = {"claude", "gemini", "antigravity", "codex", "opencode", "kimi", "hermes"}
+        if cli not in supported_clis:
             return result("skipped", "notebook_cli_unsupported")
         if repository(Path(payload["cwd"])) is None:
             return result("skipped", "not_a_git_repository")
         event = "start" if concern.endswith("start") else "end"
         environment = os.environ.copy()
         environment["PJ_HOOK_OWNER"] = "project-notebook.v1"
-        return invoke([f"~/.agents/skills/project-notebook/hooks/session-{event}.sh"], payload,
-                      context=event == "start", timeout=4, environment=environment)
+        environment["PJ_HOOK_FROM_HUB"] = "1"
+        payload_copy = payload.copy()
+        if "client_name" not in payload_copy or not payload_copy["client_name"]:
+            payload_copy["client_name"] = cli
+        out = invoke([f"~/.agents/skills/project-notebook/hooks/session-{event}.sh"], payload_copy,
+                     context=event == "start", timeout=4, environment=environment)
+        if event == "start" and out.get("stdout"):
+            out["stdout"] = context_output(out["stdout"], cli, native)
+        return out
     if concern.startswith("codegraph-"):
         root = repository()
         if not root or not (root / ".codegraph").is_dir():
