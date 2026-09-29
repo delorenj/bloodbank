@@ -58,7 +58,7 @@ SUBJECT_REGEX = re.compile(
 ALLOWED_DOMAINS = frozenset({
     # active
     "conversation", "agent", "llm", "cli", "system", "audio", "repo", "lifecycle",
-    "finance", "attendance", "curator", "reporting", "portfolio", "project",
+    "finance", "billing", "attendance", "curator", "reporting", "portfolio", "project",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "workflow", "memory",
 })
@@ -78,7 +78,7 @@ ALLOWED_ENTITIES = frozenset({
     "sync", "account", "transaction", "subscription", "zombie_charge", "paycheck", "projection",
     "clock", "report", "journal", "incident",
     "work", "receipt", "approval", "escalation", "capacity", "lease",
-    "activity",
+    "activity", "cost",
 })
 
 EVENT_ACTIONS = frozenset({

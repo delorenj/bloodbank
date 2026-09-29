@@ -1,0 +1,36 @@
+name: bloodbank-cost-bridge
+services:
+  cost-bridge:
+    image: bloodbank-cost-bridge:local
+    build:
+      context: ../..
+      dockerfile: services/cost-bridge/Dockerfile
+    restart: unless-stopped
+    environment:
+      NATS_URL: nats://bloodbank-nats:4222
+      COST_CLIENT_ID: ${COST_CLIENT_ID:?}
+      COST_PROJECT_ID: ${COST_PROJECT_ID:?}
+      COST_INGRESS_TOKEN: ${COST_INGRESS_TOKEN:?}
+      COST_PORTAL_INGEST_TOKEN: ${COST_PORTAL_INGEST_TOKEN:?}
+      COST_PORTAL_URL: https://automaticai.io/api/cost-observations
+    volumes: [cost-archive:/data]
+    networks: [bloodbank-network, proxy]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.routers.cost-events.rule: Host(`cost-events.delo.sh`)
+      traefik.http.routers.cost-events.entrypoints: websecure
+      traefik.http.routers.cost-events.tls.certresolver: letsencrypt
+      traefik.http.services.cost-events.loadbalancer.server.port: "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  cost-archive:
+networks:
+  bloodbank-network:
+    external: true
+  proxy:
+    external: true

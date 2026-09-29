@@ -276,6 +276,7 @@ Segment 3 of `type` MUST be one of:
 | `repo`         | Repo-scoped PM facts such as decisions, intake triage, and tasks.  | active   |
 | `lifecycle`    | Finite development mission: status, roadmap, checkpoints, gates, blockers. | active   |
 | `finance`      | Household finance facts from the tiller sync — accounts, transactions, recurring/zombie subscriptions, cashflow projection. | active   |
+| `billing`      | Project cost snapshots and their immutable revisions. | active |
 | `attendance`   | Timekeeping and clock-state transitions across work sessions.       | active   |
 | `curator`      | Purpose-driven curation of a watched directory — classify, enrich, rename, and route incoming files (the `folder-curator` skill). | active   |
 | `reporting`    | Company reporting runs, archives, and delivery outcomes.             | active   |
@@ -297,6 +298,7 @@ Segment 4 of `type` MUST be one of:
 
 | Entity             | Domain pairing (typical) | Notes                                                       |
 | ------------------ | ------------------------ | ----------------------------------------------------------- |
+| `cost`             | `billing`                | Scoped provider bill-period snapshot, replaced by revisions. |
 | `thread`           | `conversation`           | One durable conversation across many turns.                 |
 | `turn`             | `conversation`           | One user-prompt-to-final-response unit inside a thread.     |
 | `message`          | `conversation`           | A single user/assistant message appended to the transcript. |
