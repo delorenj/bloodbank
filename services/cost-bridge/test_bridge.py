@@ -2,6 +2,8 @@ import asyncio
 import copy
 from datetime import UTC, datetime
 import importlib.util
+import inspect
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -107,6 +109,47 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         value['data']['amount_micros'] = None
         with self.assertRaises(Exception):
             b.validate(value)
+
+    async def test_real_projector_refuses_foreign_receipt_and_accepts_redelivery(self):
+        value = event()
+        calls, requests = [], []
+        async def ack_sync(**kw): calls.append('ack')
+        async def nak(**kw): calls.append('nak')
+        message = SimpleNamespace(data=b.canonical(value).encode(), ack_sync=ack_sync, nak=nak)
+        bridge = b.Bridge(self.archive, [self.scope], None)
+        receipts = [{'success': True, 'event_id': str(uuid.uuid4())}, {'success': True, 'event_id': value['id']}]
+        def open_request(request, timeout):
+            requests.append(request)
+            response = io.BytesIO(b.canonical(receipts.pop(0)).encode())
+            response.status = 200
+            self.assertEqual(timeout, 30)
+            return response
+        with patch.object(b.urllib.request, 'build_opener', return_value=SimpleNamespace(open=open_request)):
+            await bridge.consume(message)
+            self.assertEqual(calls, ['nak'])
+            self.assertEqual(self.archive.health()['pending_projection'], 1)
+            self.assertEqual(self.archive.health()['errors'], 1)
+            await bridge.consume(message)
+        self.assertEqual(calls, ['nak', 'ack'])
+        self.assertEqual(self.archive.health()['pending_projection'], 0)
+        self.assertEqual(self.archive.health()['errors'], 0)
+        self.assertEqual([json.loads(request.data)['id'] for request in requests], [value['id'], value['id']])
+        self.assertTrue(all(request.full_url == self.scope['portal_url'] for request in requests))
+
+    async def test_loop_fetches_only_work_that_can_start_before_its_ack_deadline(self):
+        value = event()
+        actions = []
+        async def ack_sync(**kw): actions.append('ack')
+        async def nak(**kw): actions.append('nak')
+        message = SimpleNamespace(data=b.canonical(value).encode(), ack_sync=ack_sync, nak=nak)
+        async def fetch(batch, **kw):
+            actions.append(('fetch', batch))
+            return [message]
+        bridge = b.Bridge(self.archive, [self.scope], None)
+        with patch.object(b, 'project'):
+            await bridge.consume_next(SimpleNamespace(fetch=fetch))
+        self.assertEqual(actions, [('fetch', 1), 'ack'])
+        self.assertIn('await bridge.consume_next(sub)', inspect.getsource(b.run))
 
 
 if __name__=='__main__': unittest.main()

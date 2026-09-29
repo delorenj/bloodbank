@@ -222,6 +222,12 @@ class Bridge:
             print(json.dumps({'projection': 'retry', 'error': type(error).__name__}), flush=True)
             await message.nak(delay=60)
 
+    async def consume_next(self, subscription):
+        # The projection can consume its full 30-second HTTP deadline. Fetching
+        # a sequential batch starts every ACK timer before its work can begin.
+        for message in await subscription.fetch(1, timeout=2):
+            await self.consume(message)
+
 
 def handler(bridge, loop):
     class Handler(BaseHTTPRequestHandler):
@@ -292,9 +298,7 @@ async def run(args):
             except Exception:
                 break
         try:
-            messages = await sub.fetch(16, timeout=2)
-            for message in messages:
-                await bridge.consume(message)
+            await bridge.consume_next(sub)
         except (asyncio.TimeoutError, nats.errors.TimeoutError):
             pass
 
