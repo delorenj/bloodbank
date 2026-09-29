@@ -57,6 +57,8 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         value=event()
         with self.assertRaises(ConnectionError): await bridge.publish(value)
         self.assertEqual(self.archive.health()['pending_publish'],1)
+        self.assertFalse(bridge.health()['ready'])
+        self.assertEqual(self.archive.health()['errors'],1)
         reopened=b.Archive(self.path)
         async def publish(subject, body, **kwargs):
             calls.append((subject,json.loads(body),kwargs))
@@ -66,6 +68,7 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(receipt['event_id'],value['id'])
         self.assertEqual(calls[0][2]['headers']['Nats-Msg-Id'],value['id'])
         self.assertEqual(reopened.health()['pending_publish'],0)
+        self.assertTrue(bridge.health()['ready'])
         # Published originals remain after ACK for explicit replay beyond retention.
         self.assertEqual(reopened.events('one','2026-09'),[value])
 
@@ -83,6 +86,27 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls,['nak','committed','ack'])
         self.assertEqual(self.archive.health()['pending_projection'],0)
         self.assertEqual(self.archive.health()['errors'],0)
+
+    async def test_health_refuses_disconnected_broker_and_overdue_backlog_then_recovers(self):
+        connected = False
+        bridge = b.Bridge(self.archive, [self.scope], None, broker_connected=lambda: connected)
+        self.assertFalse(bridge.health()['ready'])
+        connected = True
+        self.assertTrue(bridge.health()['ready'])
+        value = event()
+        with patch.object(b.time, 'time', return_value=100):
+            self.archive.save(value)
+        with patch.object(b.time, 'time', return_value=300):
+            self.assertFalse(bridge.health()['ready'])
+            self.assertEqual(bridge.health()['oldest_pending_seconds'], 200)
+        self.archive.mark(value['id'], published=1, projected=1, error='')
+        self.assertTrue(bridge.health()['ready'])
+
+    async def test_complete_coverage_with_unknown_money_is_invalid(self):
+        value = event()
+        value['data']['amount_micros'] = None
+        with self.assertRaises(Exception):
+            b.validate(value)
 
 
 if __name__=='__main__': unittest.main()

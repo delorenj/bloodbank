@@ -19,6 +19,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
@@ -54,6 +55,8 @@ def validate(event, scope=None):
         raise ValueError('Invalid freshness')
     if data['coverage'] == 'unavailable' and data['amount_micros'] is not None:
         raise ValueError('Unavailable money must be null')
+    if data['coverage'] == 'complete' and data['amount_micros'] is None:
+        raise ValueError('Complete coverage requires known money')
     source = data['source']
     if 'evidence' in source and digest(source['evidence']) != source['evidence_sha256']:
         raise ValueError('Source evidence mismatch')
@@ -78,6 +81,9 @@ class Archive:
                   BEGIN SELECT RAISE(ABORT,'immutable cost envelope'); END;
                 CREATE TRIGGER IF NOT EXISTS immutable_envelope_delete BEFORE DELETE ON envelopes
                   BEGIN SELECT RAISE(ABORT,'immutable cost envelope'); END;''')
+            columns = {r[1] for r in db.execute('PRAGMA table_info(delivery)')}
+            if 'received_at' not in columns:
+                db.execute('ALTER TABLE delivery ADD COLUMN received_at REAL NOT NULL DEFAULT 0')
 
     @contextmanager
     def connect(self):
@@ -104,7 +110,7 @@ class Archive:
                 db.execute('INSERT INTO envelopes VALUES(?,?,?,?,?,?,?)', (event['id'], data['project_id'], data['period_start'][:7], data['cost_key'], data['revision'], body, digest(body)))
             except sqlite3.IntegrityError as exc:
                 raise ValueError('Conflicting cost revision') from exc
-            db.execute('INSERT INTO delivery(id) VALUES(?)', (event['id'],))
+            db.execute('INSERT INTO delivery(id,received_at) VALUES(?,?)', (event['id'], time.time()))
 
     def mark(self, identifier, *, published=None, projected=None, error=None):
         values = {k: v for k, v in locals().items() if k in {'published', 'projected', 'error'} and v is not None}
@@ -125,7 +131,10 @@ class Archive:
 
     def health(self):
         with self.connect() as db:
-            return dict(zip(('archived', 'pending_publish', 'pending_projection', 'errors'), db.execute("SELECT count(*),coalesce(sum(published=0),0),coalesce(sum(projected=0),0),coalesce(sum(error!=''),0) FROM delivery").fetchone()))
+            state = dict(zip(('archived', 'pending_publish', 'pending_projection', 'errors'), db.execute("SELECT count(*),coalesce(sum(published=0),0),coalesce(sum(projected=0),0),coalesce(sum(error!=''),0) FROM delivery").fetchone()))
+            oldest = db.execute('SELECT min(received_at) FROM delivery WHERE projected=0').fetchone()[0]
+            state['oldest_pending_seconds'] = max(0, int(time.time() - oldest)) if oldest is not None else 0
+            return state
 
 
 def scopes_from_env():
@@ -175,14 +184,25 @@ def project(event, scope):
 
 
 class Bridge:
-    def __init__(self, archive, scopes, js):
+    def __init__(self, archive, scopes, js, broker_connected=lambda: True):
         self.archive, self.scopes, self.js = archive, scopes, js
+        self.broker_connected = broker_connected
+
+    def health(self):
+        state = self.archive.health()
+        state['broker_connected'] = bool(self.broker_connected())
+        state['ready'] = state['broker_connected'] and not state['errors'] and state['oldest_pending_seconds'] <= 120
+        return state
 
     async def publish(self, event):
         self.archive.save(event)
-        receipt = await self.js.publish(SUBJECT, canonical(event).encode(), headers={'Nats-Msg-Id': event['id']}, timeout=10)
-        if receipt.stream != 'BLOODBANK_EVENTS':
-            raise ValueError('Wrong durable stream')
+        try:
+            receipt = await self.js.publish(SUBJECT, canonical(event).encode(), headers={'Nats-Msg-Id': event['id']}, timeout=10)
+            if receipt.stream != 'BLOODBANK_EVENTS':
+                raise ValueError('Wrong durable stream')
+        except Exception as exc:
+            self.archive.mark(event['id'], error='publish:' + type(exc).__name__)
+            raise
         self.archive.mark(event['id'], published=1, error='')
         return {'success': True, 'event_id': event['id'], 'stream': receipt.stream, 'sequence': receipt.seq}
 
@@ -219,8 +239,8 @@ def handler(bridge, loop):
         def do_GET(self):
             if self.path != '/healthz':
                 return self.respond(404, {'error': 'Not found'})
-            state = bridge.archive.health()
-            return self.respond(503 if state['errors'] else 200, state)
+            state = bridge.health()
+            return self.respond(200 if state['ready'] else 503, state)
 
         def do_POST(self):
             if self.path != '/v1/cost-observations':
@@ -253,7 +273,7 @@ async def run(args):
     from nats.js.api import ConsumerConfig, AckPolicy, DeliverPolicy
     archive = Archive(os.environ.get('COST_ARCHIVE_PATH', '/data/cost-envelope-archive.sqlite'))
     nc = await nats.connect(os.environ.get('NATS_URL', 'nats://bloodbank-nats:4222'), name='cost-bridge', max_reconnect_attempts=-1)
-    bridge = Bridge(archive, scopes_from_env(), nc.jetstream())
+    bridge = Bridge(archive, scopes_from_env(), nc.jetstream(), broker_connected=lambda: nc.is_connected)
     if args.command == 'replay':
         count = 0
         for event in archive.events(args.project, args.month):

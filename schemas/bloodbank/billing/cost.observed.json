@@ -222,6 +222,40 @@
         "coverage_reason",
         "description",
         "source"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "coverage": {
+                "const": "complete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "amount_micros": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "coverage": {
+                "const": "unavailable"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "amount_micros": {
+                "type": "null"
+              }
+            }
+          }
+        }
       ]
     }
   },

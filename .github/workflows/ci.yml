@@ -48,7 +48,10 @@ jobs:
           python -m pip install --upgrade pip
           # Minimal deps for the static checks; avoids pulling the full
           # project requirements until we actually need them.
-          pip install pyyaml
+          pip install pyyaml jsonschema==4.25.1
+
+      - name: Cost contract and durable bridge tests
+        run: python -m unittest discover -s services/cost-bridge -p 'test_*.py'
 
       - name: Compile cli
         # Fails if the operator CLI has a syntax error.
