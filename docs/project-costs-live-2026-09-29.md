@@ -44,15 +44,20 @@ The upgraded collector recovered the existing archive before collecting new
 snapshots. Its six-hour schedule reconciles the current month and two recently
 closed months. Observation counts increase as that schedule runs.
 
-| Provider | Latest observed USD at verification | Treatment |
-| --- | ---: | --- |
-| AWS | 127.582711 | Vendor estimate, shared account, unallocated |
-| Deepgram | 229.622780 | Actual key-scoped expense; September includes historical staging |
-| Twilio | 21.165160 | Actual subaccount expense; September includes historical staging |
-| OpenRouter | 6.130374 | Actual monthly key usage; LLM expense excluded from rebilling |
-| Dedicated staging Deepgram, Twilio and OpenRouter | 0.000000 each | Observed actual zeros in isolated staging scopes; excluded from rebilling |
+Monetary snapshots belong to the authenticated operator ledger and the private
+`client-portal/docs/project-costs-live-2026-09-29.md` evidence document, with a
+matching AutomaticAI vault copy. This public repository records delivery and
+classification proof without copying the client's amounts.
 
-These are dated observations, not frozen future totals. All four remain
+| Provider | Treatment |
+| --- | --- |
+| AWS | Vendor estimate, shared account, unallocated |
+| Deepgram | Actual key-scoped expense; September includes historical staging |
+| Twilio | Actual subaccount expense; September includes historical staging |
+| OpenRouter | Actual monthly key usage; LLM expense excluded from rebilling |
+| Dedicated staging Deepgram, Twilio and OpenRouter | Isolated staging observations; excluded from rebilling |
+
+These are dated observations, not frozen future totals. All monetary sources remain
 private and excluded from billable September totals. An actual AWS observation
 supersedes an estimate for the same expense scope; estimates never become
 actuals by relabeling. An unavailable refresh retains the last sourced money as
