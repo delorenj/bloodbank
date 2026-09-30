@@ -30,5 +30,13 @@ op run --env-file .env.op -- docker compose --env-file /dev/null exec cost-bridg
 The replay retains every original ID and revision. D1 deduplication remains
 valid outside NATS's short dedupe window. It refuses conflicting identities;
 a later vendor correction must have a new revision. For additional real
-clients set `COST_SCOPES_JSON` to scoped mapping objects (vault secret); the
-second fixture client stays in local tests and is never provisioned here.
+clients set `COST_SCOPES_JSON` to a vault-held JSON array of mappings containing
+`client_id`, `project_id`, `ingress_token`, `portal_token` and `portal_url`.
+Compose passes this map through unchanged; the singleton fields remain supported
+for the current project. The second fixture client stays in local tests and is
+never provisioned here.
+
+Invalid broker messages receive a durable private quarantine record and terminal
+disposition. Their count remains visible in readiness; malformed payloads cannot
+occupy the consumer indefinitely. Transient portal failures retain the original
+valid envelope and are retried until the matching persistence receipt arrives.

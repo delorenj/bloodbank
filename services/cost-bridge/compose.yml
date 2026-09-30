@@ -8,10 +8,11 @@ services:
     restart: unless-stopped
     environment:
       NATS_URL: nats://bloodbank-nats:4222
-      COST_CLIENT_ID: ${COST_CLIENT_ID:?}
-      COST_PROJECT_ID: ${COST_PROJECT_ID:?}
-      COST_INGRESS_TOKEN: ${COST_INGRESS_TOKEN:?}
-      COST_PORTAL_INGEST_TOKEN: ${COST_PORTAL_INGEST_TOKEN:?}
+      COST_SCOPES_JSON: ${COST_SCOPES_JSON:-}
+      COST_CLIENT_ID: ${COST_CLIENT_ID:-}
+      COST_PROJECT_ID: ${COST_PROJECT_ID:-}
+      COST_INGRESS_TOKEN: ${COST_INGRESS_TOKEN:-}
+      COST_PORTAL_INGEST_TOKEN: ${COST_PORTAL_INGEST_TOKEN:-}
       COST_PORTAL_URL: https://automaticai.io/api/cost-observations
     volumes: [cost-archive:/data]
     networks: [bloodbank-network, proxy]

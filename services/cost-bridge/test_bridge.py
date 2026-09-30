@@ -5,8 +5,11 @@ import importlib.util
 import inspect
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
+import sqlite3
+import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -150,6 +153,78 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
             await bridge.consume_next(SimpleNamespace(fetch=fetch))
         self.assertEqual(actions, [('fetch', 1), 'ack'])
         self.assertIn('await bridge.consume_next(sub)', inspect.getsource(b.run))
+
+    async def test_poison_is_durable_private_terminal_evidence_and_unhealthy_after_restart(self):
+        bad = event()
+        bad['data']['amount_micros'] = 'invalid schema money'
+        conflicting = event()
+        self.archive.save(conflicting)
+        conflicting['data']['description'] = 'conflicting original identity'
+        for body in (b'{broken json', b.canonical(bad).encode(), b.canonical(event('foreign')).encode(), b.canonical(conflicting).encode()):
+            with self.subTest(body=body[:20]):
+                actions = []
+                async def term(): actions.append('term')
+                async def nak(**kw): actions.append('nak')
+                async def ack_sync(**kw): actions.append('ack')
+                message = SimpleNamespace(data=body, term=term, nak=nak, ack_sync=ack_sync,
+                    metadata=SimpleNamespace(stream='BLOODBANK_EVENTS', consumer='costs', sequence=SimpleNamespace(stream=4, consumer=2)))
+                bridge = b.Bridge(self.archive, [self.scope], None)
+                with patch.object(b, 'project') as project:
+                    await bridge.consume(message)
+                    project.assert_not_called()
+                self.assertEqual(actions, ['term'])
+                reopened = b.Archive(self.path)
+                with reopened.connect() as db:
+                    row = db.execute('SELECT body,error,metadata,disposition FROM quarantine WHERE sha256=?', (b.hashlib.sha256(body).hexdigest(),)).fetchone()
+                    self.assertEqual(row[0], body)
+                    self.assertEqual(json.loads(row[2])['stream'], 'BLOODBANK_EVENTS')
+                    self.assertEqual(row[3], 'terminal')
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        db.execute('UPDATE quarantine SET error=?', ('removed',))
+                self.assertFalse(b.Bridge(reopened, [self.scope], None).health()['ready'])
+        self.assertEqual(self.archive.health()['invalid_messages'], 4)
+
+    async def test_quarantine_write_failure_never_terminates_or_acknowledges_message(self):
+        actions = []
+        async def term(): actions.append('term')
+        message = SimpleNamespace(data=b'broken', term=term)
+        with patch.object(self.archive, 'quarantine', side_effect=OSError('storage unavailable')):
+            with self.assertRaises(OSError):
+                await b.Bridge(self.archive, [self.scope], None).consume(message)
+        self.assertEqual(actions, [])
+
+    async def test_mapping_only_compose_configuration_authenticates_and_projects_both_clients(self):
+        second = {**self.scope, 'client_id': 'two', 'project_id': 'two', 'ingress_token': 'second-ingress-' + 'y'*32, 'portal_token': 'second-projector-' + 'y'*32}
+        mapping = [self.scope, second]
+        with patch.dict(os.environ, {'COST_SCOPES_JSON': json.dumps(mapping)}, clear=True):
+            configured = b.scopes_from_env()
+            config = json.loads(subprocess.check_output(['docker', 'compose', '-f', str(Path(__file__).with_name('compose.yml')), 'config', '--format', 'json'], text=True, env={**os.environ, 'PATH': '/usr/local/bin:/usr/bin:/bin', 'NATS_URL': 'nats://fixture:4222'}))
+        self.assertEqual(json.loads(config['services']['cost-bridge']['environment']['COST_SCOPES_JSON']), mapping)
+        bridge = b.Bridge(self.archive, configured, None)
+        receipts = []
+        def request_response(request, timeout):
+            value = json.loads(request.data)
+            scope = next(s for s in mapping if s['project_id'] == value['data']['project_id'])
+            self.assertEqual(request.get_header('Authorization'), 'Bearer ' + scope['portal_token'])
+            receipts.append(value['data']['project_id'])
+            response = io.BytesIO(b.canonical({'success': True, 'event_id': value['id']}).encode())
+            response.status = 200
+            return response
+        for scope in configured:
+            self.assertEqual(b.authenticate('Bearer ' + scope['ingress_token'], configured), scope)
+            value = event(scope['project_id'])
+            b.validate(value, scope)
+            other = next(s for s in configured if s is not scope)
+            with self.assertRaises(PermissionError): b.validate(value, other)
+            ack = []
+            async def ack_sync(**kw): ack.append(True)
+            async def nak(**kw): self.fail('valid two-client projection must commit')
+            message = SimpleNamespace(data=b.canonical(value).encode(), ack_sync=ack_sync, nak=nak)
+            with patch.object(b.urllib.request, 'build_opener', return_value=SimpleNamespace(open=request_response)):
+                await bridge.consume(message)
+            self.assertEqual(ack, [True])
+        self.assertEqual(receipts, ['one', 'two'])
+        self.assertEqual(self.archive.health()['pending_projection'], 0)
 
 
 if __name__=='__main__': unittest.main()

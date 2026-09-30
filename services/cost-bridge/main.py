@@ -77,6 +77,13 @@ class Archive:
                 CREATE TABLE IF NOT EXISTS delivery (
                   id TEXT PRIMARY KEY REFERENCES envelopes(id), published INTEGER NOT NULL DEFAULT 0,
                   projected INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '');
+                CREATE TABLE IF NOT EXISTS quarantine (
+                  sha256 TEXT PRIMARY KEY, body BLOB NOT NULL, error TEXT NOT NULL,
+                  metadata TEXT NOT NULL, received_at REAL NOT NULL, disposition TEXT NOT NULL);
+                CREATE TRIGGER IF NOT EXISTS immutable_quarantine_update BEFORE UPDATE ON quarantine
+                  BEGIN SELECT RAISE(ABORT,'immutable invalid message evidence'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_quarantine_delete BEFORE DELETE ON quarantine
+                  BEGIN SELECT RAISE(ABORT,'immutable invalid message evidence'); END;
                 CREATE TRIGGER IF NOT EXISTS immutable_envelope_update BEFORE UPDATE ON envelopes
                   BEGIN SELECT RAISE(ABORT,'immutable cost envelope'); END;
                 CREATE TRIGGER IF NOT EXISTS immutable_envelope_delete BEFORE DELETE ON envelopes
@@ -134,7 +141,22 @@ class Archive:
             state = dict(zip(('archived', 'pending_publish', 'pending_projection', 'errors'), db.execute("SELECT count(*),coalesce(sum(published=0),0),coalesce(sum(projected=0),0),coalesce(sum(error!=''),0) FROM delivery").fetchone()))
             oldest = db.execute('SELECT min(received_at) FROM delivery WHERE projected=0').fetchone()[0]
             state['oldest_pending_seconds'] = max(0, int(time.time() - oldest)) if oldest is not None else 0
+            state['invalid_messages'] = db.execute('SELECT count(*) FROM quarantine').fetchone()[0]
+            state['errors'] += state['invalid_messages']
             return state
+
+    def quarantine(self, message, error):
+        body = bytes(message.data)
+        metadata = {}
+        try:
+            observed = message.metadata
+            metadata = {'stream': observed.stream, 'consumer': observed.consumer,
+                        'stream_sequence': observed.sequence.stream, 'consumer_sequence': observed.sequence.consumer}
+        except (AttributeError, ValueError):
+            pass
+        with self.connect() as db:
+            db.execute('INSERT OR IGNORE INTO quarantine VALUES(?,?,?,?,?,?)',
+                       (hashlib.sha256(body).hexdigest(), body, type(error).__name__, canonical(metadata), time.time(), 'terminal'))
 
 
 def scopes_from_env():
@@ -149,11 +171,16 @@ def scopes_from_env():
             'portal_token': os.environ['COST_PORTAL_INGEST_TOKEN'],
             'portal_url': os.environ.get('COST_PORTAL_URL', 'https://automaticai.io/api/cost-observations'),
         }]
+    if not isinstance(scopes, list) or not scopes:
+        raise ValueError('Configure a scoped mapping or all single-project fields')
     seen = set()
+    tokens = set()
     for scope in scopes:
-        if scope['project_id'] in seen or min(len(scope['ingress_token']), len(scope['portal_token'])) < 32:
+        if (not scope['client_id'] or not scope['project_id'] or scope['project_id'] in seen
+                or min(len(scope['ingress_token']), len(scope['portal_token'])) < 32 or scope['ingress_token'] in tokens):
             raise ValueError('Duplicate project or invalid scoped credential')
         seen.add(scope['project_id'])
+        tokens.add(scope['ingress_token'])
         url = urlparse(scope['portal_url'])
         if url.scheme != 'https' or url.username or url.password:
             raise ValueError('Projection requires HTTPS without URL credentials')
@@ -207,18 +234,28 @@ class Bridge:
         return {'success': True, 'event_id': event['id'], 'stream': receipt.stream, 'sequence': receipt.seq}
 
     async def consume(self, message):
-        event = None
         try:
+            if len(message.data) > MAX_BODY:
+                raise ValueError('Cost envelope exceeds the ingestion limit')
             event = validate(json.loads(message.data))
-            self.archive.save(event)
             scope = next(s for s in self.scopes if (s['client_id'], s['project_id']) == (event['data']['client_id'], event['data']['project_id']))
+            self.archive.save(event)
+        except (ValueError, KeyError, TypeError, AttributeError, PermissionError, StopIteration) as error:
+            # Invalid/conflicting/unconfigured envelopes cannot become valid by
+            # redelivery. Persist private evidence before terminal disposition.
+            self.archive.quarantine(message, error)
+            await message.term()
+            return
+        except Exception:
+            await message.nak(delay=60)
+            return
+        try:
             await asyncio.to_thread(project, event, scope)
             self.archive.mark(event['id'], published=1, projected=1, error='')
             await message.ack_sync(timeout=10)
         except Exception as error:
             # Keep only error class, never vendor response or credential-bearing URLs.
-            if event:
-                self.archive.mark(event['id'], error=type(error).__name__)
+            self.archive.mark(event['id'], error=type(error).__name__)
             print(json.dumps({'projection': 'retry', 'error': type(error).__name__}), flush=True)
             await message.nak(delay=60)
 
