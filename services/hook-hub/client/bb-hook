@@ -128,6 +128,12 @@ ENV_ALLOWLIST = (
     "ORCA_AGENT_HOOK_ENV",
     "ORCA_AGENT_HOOK_VERSION",
     "ORCA_AGENT_LAUNCH_TOKEN",
+    # control -- bmad-loop session routing. Set by the orchestrator in the
+    # session env; the hub's bmad-loop-relay handler fires only when these are
+    # present. Routing identifiers (paths/task ids), never credentials.
+    "BMAD_LOOP_RUN_DIR",
+    "BMAD_LOOP_TASK_ID",
+    "BMAD_LOOP_EVENTS_DIR",
 )
 
 # Second gate, independent of the first. Anything credential-shaped is dropped

@@ -371,3 +371,22 @@ command = ["python3", "~/.agents/hooks/hub/automaticai.py", "verify"]
 timeout_ms = 2500
 order = 1
 enabled = true
+
+[[handler]]
+# bmad-loop session lifecycle relay. Replaces `bmad-loop init`'s per-project
+# native hook registration: the orchestrator exports BMAD_LOOP_RUN_DIR /
+# BMAD_LOOP_TASK_ID into every session it spawns, so require_env fires this
+# row only inside those sessions, and the relay itself no-ops without them.
+# Each fire writes one event file into the run's events dir — how the engine
+# learns SessionStart/Stop/SessionEnd/PreCompact deterministically instead of
+# waiting out the stall detector. Async: never on the CLI verdict path.
+# PreCompact is latent until a native claude registration exists for it.
+id = "bmad-loop-relay"
+mode = "async"
+on_native = ["SessionStart", "Stop", "SessionEnd", "PreCompact"]
+clis = ["claude"]
+require_env = ["BMAD_LOOP_RUN_DIR", "BMAD_LOOP_TASK_ID"]
+command = ["/bin/sh", "-c", "exec /home/delorenj/.local/bin/bmad-loop relay \"$BB_HOOK_NATIVE\""]
+timeout_ms = 5000
+order = 90
+enabled = true
