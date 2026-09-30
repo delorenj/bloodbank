@@ -223,6 +223,21 @@ def dispatch(concern: str, raw: dict) -> dict:
     if disabled(concern, cli):
         return result("skipped", "project_disabled")
     payload = normalized(raw)
+    if concern == "candystore-context":
+        if os.environ.get("CANDYSTORE_CONTEXT", "1").lower() in {"0", "off", "false"}:
+            return result("skipped", "context_disabled")
+        if cli == "antigravity" and raw.get("invocationNum", 1) not in (1, "1"):
+            return result("skipped", "not_first_invocation")
+        command = [str(Path.home() / ".local/bin/candystore"), "context", "latest",
+                   "--cwd", str(payload["cwd"]), "--timeout", "4"]
+        if payload["session_id"]:
+            command.extend(["--exclude-session", payload["session_id"]])
+        output = invoke(command, payload, context=True, timeout=4.5)
+        if output["_hook_hub"]["status"] != "succeeded":
+            output["stdout"] = ""
+        else:
+            output["stdout"] = context_output(output["stdout"], cli, native)
+        return output
     if concern.startswith("hindsight-"):
         from hindsight import dispatch as memory_dispatch
         return memory_dispatch(concern, payload, cli, native)

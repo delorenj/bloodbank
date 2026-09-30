@@ -56,6 +56,9 @@ TOTAL_BUDGET = float(os.environ.get("BB_HOOK_DEADLINE", "3.0"))
 #   control      per-invocation switches a caller sets to suppress or redirect a
 #                handler. Dropping these silently revokes the caller's opt-out.
 ENV_ALLOWLIST = (
+    # CandyStore project continuity; values are controls, never credentials.
+    "CANDYSTORE_CONTEXT",
+    "CANDYSTORE_URL",
     # attribution
     "ZELLIJ_SESSION_NAME",
     "ZELLIJ_PANE_ID",

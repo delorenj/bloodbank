@@ -50,6 +50,20 @@ order = 5
 enabled = true
 
 [[handler]]
+# One CandyStore command supplies the same cross-CLI project handoff. Native
+# session_start bindings already call bb-hook; Antigravity's first invocation
+# is its available startup boundary. Retrieval failure never blocks a session.
+id = "candystore-context"
+mode = "sync"
+on = ["session_start"]
+on_native = ["PreInvocation"]
+clis = ["claude", "codex", "copilot", "kimi", "gemini", "hermes", "opencode", "antigravity"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "candystore-context"]
+timeout_ms = 5000
+order = 6
+enabled = true
+
+[[handler]]
 # Session write-back, per turn (session_capture.py). prompt_submit buffers the
 # user's ask (recall's harness-XML hygiene); the turn end pairs it with the
 # agent's final message and buffers the turn. Antigravity has no turn-end role
