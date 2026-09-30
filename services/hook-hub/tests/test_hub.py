@@ -280,7 +280,59 @@ timeout_ms = 1000
                 "a broken registry must not disarm working handlers")
 
 
+    def test_bmad_loop_relay_dispatches_across_all_clis(self):
+        """bmad-loop-relay uses unified lifecycle roles + native Stop/PreCompact without CLI restriction."""
+        record = self.tmp / "events.log"
+        reg = f"""
+[[handler]]
+id = "bmad-loop-relay"
+mode = "async"
+on = ["session_start", "turn_completed", "session_end"]
+on_native = ["Stop", "PreCompact"]
+require_env = ["BMAD_LOOP_RUN_DIR", "BMAD_LOOP_TASK_ID"]
+command = [
+  "/bin/sh",
+  "-c",
+  'case "$BB_HOOK_NATIVE" in PreCompact) ev=PreCompact;; Stop) ev=Stop;; *) case "$BB_HOOK_ROLE" in session_start) ev=SessionStart;; turn_completed) ev=Stop;; session_end) ev=SessionEnd;; *) exit 0;; esac;; esac; echo "$BB_HOOK_CLI:$ev" >> {record}'
+]
+timeout_ms = 5000
+"""
+        with HubHarness(self.tmp, reg) as h:
+            loop_env = {"BMAD_LOOP_RUN_DIR": "/tmp/run", "BMAD_LOOP_TASK_ID": "task-1"}
+            # Ignored when env is missing
+            self.assertEqual(h.request("claude", "Stop")["handled"], [])
+            self.assertEqual(h.request("codex", "Stop")["handled"], [])
+
+            # Active for all CLIs when env is present
+            test_cases = [
+                ("claude", "Stop", "claude:Stop"),
+                ("claude", "SessionStart", "claude:SessionStart"),
+                ("claude", "PreCompact", "claude:PreCompact"),
+                ("codex", "Stop", "codex:Stop"),
+                ("gemini", "AfterAgent", "gemini:Stop"),
+                ("copilot", "agentStop", "copilot:Stop"),
+                ("antigravity", "Stop", "antigravity:Stop"),
+                ("kimi", "Stop", "kimi:Stop"),
+                ("opencode", "session.idle", "opencode:Stop"),
+            ]
+            for cli, native, _ in test_cases:
+                r = h.request(cli, native, env=loop_env)
+                self.assertIn("bmad-loop-relay", r["handled"])
+
+            # Verify the mapped events written to record
+            deadline = time.monotonic() + 5
+            expected_lines = [tc[2] for tc in test_cases]
+            while time.monotonic() < deadline:
+                if record.exists() and len(record.read_text().splitlines()) >= len(expected_lines):
+                    break
+                time.sleep(0.05)
+            self.assertTrue(record.exists(), "relay never executed")
+            lines = record.read_text().splitlines()
+            self.assertEqual(sorted(lines), sorted(expected_lines))
+
+
 class TestClientFailOpen(unittest.TestCase):
+
     """The client's contract: it can never wedge or fail an agent."""
 
     def _run(self, args, stdin=b"{}", env_extra=None, timeout=10):

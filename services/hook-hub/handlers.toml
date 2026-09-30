@@ -380,13 +380,19 @@ enabled = true
 # Each fire writes one event file into the run's events dir — how the engine
 # learns SessionStart/Stop/SessionEnd/PreCompact deterministically instead of
 # waiting out the stall detector. Async: never on the CLI verdict path.
-# PreCompact is latent until a native claude registration exists for it.
+# Maps unified lifecycle roles (and native exceptions) to bmad-loop canonical
+# events across all supported CLIs (claude, codex, gemini, copilot, antigravity, etc.).
 id = "bmad-loop-relay"
 mode = "async"
-on_native = ["SessionStart", "Stop", "SessionEnd", "PreCompact"]
-clis = ["claude"]
+on = ["session_start", "turn_completed", "session_end"]
+on_native = ["Stop", "PreCompact"]
 require_env = ["BMAD_LOOP_RUN_DIR", "BMAD_LOOP_TASK_ID"]
-command = ["/bin/sh", "-c", "exec /home/delorenj/.local/bin/bmad-loop relay \"$BB_HOOK_NATIVE\""]
+command = [
+  "/bin/sh",
+  "-c",
+  'case "$BB_HOOK_NATIVE" in PreCompact) ev=PreCompact;; Stop) ev=Stop;; *) case "$BB_HOOK_ROLE" in session_start) ev=SessionStart;; turn_completed) ev=Stop;; session_end) ev=SessionEnd;; *) exit 0;; esac;; esac; exec /home/delorenj/.local/bin/bmad-loop relay "$ev"'
+]
 timeout_ms = 5000
 order = 90
 enabled = true
+
