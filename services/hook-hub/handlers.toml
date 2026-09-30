@@ -337,3 +337,37 @@ command    = ["/usr/bin/env", "true"]
 timeout_ms = 500
 order      = 999
 enabled    = true
+
+[[handler]]
+# Native Codex hooks already dispatch here. Challenge the actual next request,
+# and ask the agent to apply the migration skill on a configured bypass.
+id = "automaticai-routing-start"
+mode = "sync"
+on = ["session_start", "prompt_submit"]
+clis = ["codex"]
+command = ["python3", "~/.agents/hooks/hub/automaticai.py", "start"]
+timeout_ms = 1000
+order = 1
+enabled = true
+
+[[handler]]
+id = "automaticai-routing-receipt"
+mode = "sync"
+on = ["post_tool"]
+clis = ["codex"]
+command = ["python3", "~/.agents/hooks/hub/automaticai.py", "verify"]
+timeout_ms = 2200
+order = 1
+enabled = true
+
+[[handler]]
+# A final answer with no tools still gets a completed-usage check. Async Stop
+# records proof in runtime state; it does not pretend to inject model context.
+id = "automaticai-routing-final"
+mode = "async"
+on = ["turn_completed"]
+clis = ["codex"]
+command = ["python3", "~/.agents/hooks/hub/automaticai.py", "verify"]
+timeout_ms = 2500
+order = 1
+enabled = true

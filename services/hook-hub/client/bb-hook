@@ -106,6 +106,10 @@ ENV_ALLOWLIST = (
     "BLOODBANK_ENABLED",
     "BLOODBANK_HOOK_STRICT",
     "BLOODBANK_DEBUG",
+    # control -- AutomaticAI proof and migration recursion (non-secret flags)
+    "AUTOMATICAI_PROOF_PROBE",
+    "AUTOMATICAI_MIGRATION_WORKER",
+    "CODEX_HOME",
     # control -- session identity
     "CLAUDE_CODE_SESSION_ID",
     "CLAUDE_PROJECT_DIR",
