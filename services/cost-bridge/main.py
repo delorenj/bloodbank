@@ -80,6 +80,9 @@ class Archive:
                 CREATE TABLE IF NOT EXISTS quarantine (
                   sha256 TEXT PRIMARY KEY, body BLOB NOT NULL, error TEXT NOT NULL,
                   metadata TEXT NOT NULL, received_at REAL NOT NULL, disposition TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS quarantine_delivery (
+                  sha256 TEXT PRIMARY KEY REFERENCES quarantine(sha256),
+                  terminated INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '');
                 CREATE TRIGGER IF NOT EXISTS immutable_quarantine_update BEFORE UPDATE ON quarantine
                   BEGIN SELECT RAISE(ABORT,'immutable invalid message evidence'); END;
                 CREATE TRIGGER IF NOT EXISTS immutable_quarantine_delete BEFORE DELETE ON quarantine
@@ -91,6 +94,9 @@ class Archive:
             columns = {r[1] for r in db.execute('PRAGMA table_info(delivery)')}
             if 'received_at' not in columns:
                 db.execute('ALTER TABLE delivery ADD COLUMN received_at REAL NOT NULL DEFAULT 0')
+            # Previously recorded terminal history stays handled. A new pending
+            # disposition already has its own row and survives process restart.
+            db.execute('INSERT OR IGNORE INTO quarantine_delivery(sha256,terminated) SELECT sha256,1 FROM quarantine')
 
     @contextmanager
     def connect(self):
@@ -142,7 +148,8 @@ class Archive:
             oldest = db.execute('SELECT min(received_at) FROM delivery WHERE projected=0').fetchone()[0]
             state['oldest_pending_seconds'] = max(0, int(time.time() - oldest)) if oldest is not None else 0
             state['invalid_messages'] = db.execute('SELECT count(*) FROM quarantine').fetchone()[0]
-            state['errors'] += state['invalid_messages']
+            state['pending_invalid'] = db.execute('SELECT count(*) FROM quarantine_delivery WHERE terminated=0').fetchone()[0]
+            state['errors'] += state['pending_invalid']
             return state
 
     def quarantine(self, message, error):
@@ -155,8 +162,15 @@ class Archive:
         except (AttributeError, ValueError):
             pass
         with self.connect() as db:
+            identifier = hashlib.sha256(body).hexdigest()
             db.execute('INSERT OR IGNORE INTO quarantine VALUES(?,?,?,?,?,?)',
-                       (hashlib.sha256(body).hexdigest(), body, type(error).__name__, canonical(metadata), time.time(), 'terminal'))
+                       (identifier, body, type(error).__name__, canonical(metadata), time.time(), 'terminal'))
+            db.execute('INSERT OR IGNORE INTO quarantine_delivery(sha256) VALUES(?)', (identifier,))
+        return identifier
+
+    def mark_quarantine(self, identifier, *, terminated=0, error=''):
+        with self.connect() as db:
+            db.execute('UPDATE quarantine_delivery SET terminated=?,error=? WHERE sha256=?', (terminated, error, identifier))
 
 
 def scopes_from_env():
@@ -175,12 +189,15 @@ def scopes_from_env():
         raise ValueError('Configure a scoped mapping or all single-project fields')
     seen = set()
     tokens = set()
+    portal_tokens = set()
     for scope in scopes:
         if (not scope['client_id'] or not scope['project_id'] or scope['project_id'] in seen
-                or min(len(scope['ingress_token']), len(scope['portal_token'])) < 32 or scope['ingress_token'] in tokens):
+                or min(len(scope['ingress_token']), len(scope['portal_token'])) < 32 or scope['ingress_token'] in tokens
+                or scope['portal_token'] in portal_tokens):
             raise ValueError('Duplicate project or invalid scoped credential')
         seen.add(scope['project_id'])
         tokens.add(scope['ingress_token'])
+        portal_tokens.add(scope['portal_token'])
         url = urlparse(scope['portal_url'])
         if url.scheme != 'https' or url.username or url.password:
             raise ValueError('Projection requires HTTPS without URL credentials')
@@ -243,8 +260,13 @@ class Bridge:
         except (ValueError, KeyError, TypeError, AttributeError, PermissionError, StopIteration) as error:
             # Invalid/conflicting/unconfigured envelopes cannot become valid by
             # redelivery. Persist private evidence before terminal disposition.
-            self.archive.quarantine(message, error)
-            await message.term()
+            identifier = self.archive.quarantine(message, error)
+            try:
+                await message.term()
+            except Exception as terminal_error:
+                self.archive.mark_quarantine(identifier, error=type(terminal_error).__name__)
+                raise
+            self.archive.mark_quarantine(identifier, terminated=1)
             return
         except Exception:
             await message.nak(delay=60)
@@ -314,9 +336,10 @@ def handler(bridge, loop):
 async def run(args):
     import nats
     from nats.js.api import ConsumerConfig, AckPolicy, DeliverPolicy
+    scopes = scopes_from_env()
     archive = Archive(os.environ.get('COST_ARCHIVE_PATH', '/data/cost-envelope-archive.sqlite'))
     nc = await nats.connect(os.environ.get('NATS_URL', 'nats://bloodbank-nats:4222'), name='cost-bridge', max_reconnect_attempts=-1)
-    bridge = Bridge(archive, scopes_from_env(), nc.jetstream(), broker_connected=lambda: nc.is_connected)
+    bridge = Bridge(archive, scopes, nc.jetstream(), broker_connected=lambda: nc.is_connected)
     if args.command == 'replay':
         count = 0
         for event in archive.events(args.project, args.month):

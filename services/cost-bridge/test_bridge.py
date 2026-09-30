@@ -154,7 +154,7 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actions, [('fetch', 1), 'ack'])
         self.assertIn('await bridge.consume_next(sub)', inspect.getsource(b.run))
 
-    async def test_poison_is_durable_private_terminal_evidence_and_unhealthy_after_restart(self):
+    async def test_handled_poison_remains_private_immutable_history_without_permanent_unreadiness(self):
         bad = event()
         bad['data']['amount_micros'] = 'invalid schema money'
         conflicting = event()
@@ -181,8 +181,22 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(row[3], 'terminal')
                     with self.assertRaises(sqlite3.IntegrityError):
                         db.execute('UPDATE quarantine SET error=?', ('removed',))
-                self.assertFalse(b.Bridge(reopened, [self.scope], None).health()['ready'])
+                self.assertTrue(b.Bridge(reopened, [self.scope], None).health()['ready'])
         self.assertEqual(self.archive.health()['invalid_messages'], 4)
+        bridge = b.Bridge(b.Archive(self.path), [self.scope], None)
+        actions = []
+        async def ack_sync(**kw): actions.append('ack')
+        async def nak(**kw): actions.append('nak')
+        valid = self.archive.events()[0]
+        message = SimpleNamespace(data=b.canonical(valid).encode(), ack_sync=ack_sync, nak=nak)
+        with patch.object(b, 'project', side_effect=ConnectionError):
+            await bridge.consume(message)
+        self.assertFalse(bridge.health()['ready'])
+        with patch.object(b, 'project'):
+            await bridge.consume(message)
+        self.assertTrue(bridge.health()['ready'])
+        self.assertEqual(bridge.health()['invalid_messages'], 4)
+        self.assertEqual(actions, ['nak', 'ack'])
 
     async def test_quarantine_write_failure_never_terminates_or_acknowledges_message(self):
         actions = []
@@ -192,6 +206,21 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(OSError):
                 await b.Bridge(self.archive, [self.scope], None).consume(message)
         self.assertEqual(actions, [])
+
+    async def test_unconfirmed_terminal_disposition_is_actionable_and_recovers_without_rewriting_evidence(self):
+        async def fail(): raise ConnectionError()
+        message = SimpleNamespace(data=b'broken', term=fail)
+        bridge = b.Bridge(self.archive, [self.scope], None)
+        with self.assertRaises(ConnectionError):
+            await bridge.consume(message)
+        self.assertFalse(bridge.health()['ready'])
+        reopened = b.Archive(self.path)
+        self.assertEqual(reopened.health()['pending_invalid'], 1)
+        async def terminate(): pass
+        message.term = terminate
+        await b.Bridge(reopened, [self.scope], None).consume(message)
+        self.assertTrue(b.Bridge(reopened, [self.scope], None).health()['ready'])
+        self.assertEqual(reopened.health()['invalid_messages'], 1)
 
     async def test_mapping_only_compose_configuration_authenticates_and_projects_both_clients(self):
         second = {**self.scope, 'client_id': 'two', 'project_id': 'two', 'ingress_token': 'second-ingress-' + 'y'*32, 'portal_token': 'second-projector-' + 'y'*32}
@@ -225,6 +254,14 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ack, [True])
         self.assertEqual(receipts, ['one', 'two'])
         self.assertEqual(self.archive.health()['pending_projection'], 0)
+
+    async def test_complete_mapping_refuses_duplicate_ingress_and_portal_credentials_before_start(self):
+        second = {**self.scope, 'client_id': 'two', 'project_id': 'two', 'ingress_token': 'second-ingress-' + 'y'*32, 'portal_token': 'second-projector-' + 'y'*32}
+        for key in ('ingress_token', 'portal_token'):
+            invalid = [self.scope, {**second, key: self.scope[key]}]
+            with patch.dict(os.environ, {'COST_SCOPES_JSON': json.dumps(invalid)}, clear=True):
+                with self.assertRaisesRegex(ValueError, 'Duplicate'):
+                    b.scopes_from_env()
 
 
 if __name__=='__main__': unittest.main()
