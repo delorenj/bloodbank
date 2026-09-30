@@ -1,8 +1,23 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 // OpenCode auto-loads .js/.ts files. One native adapter, no behavioral hooks.
+
+// OpenCode (>=1.18) schema-checks injected parts: each needs its own ascending
+// "prt_" id plus the owning sessionID/messageID, or the whole prompt is dropped.
+const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+let lastMs = 0;
+let counter = 0;
+const partID = () => {
+  const ms = Date.now();
+  if (ms !== lastMs) { lastMs = ms; counter = 0; }
+  const time = (BigInt(ms) * 0x1000n + BigInt(++counter)) & 0xffffffffffffn;
+  const rand = [...randomBytes(14)].map((b) => BASE62[b % 62]).join("");
+  return `prt_${time.toString(16).padStart(12, "0")}${rand}`;
+};
+
 export const BloodbankHookHub = async ({ directory }) => {
   const command = process.env.BB_HOOK_COMMAND || join(homedir(), ".agents/hooks/bb-hook");
   const toolInputs = new Map();
@@ -53,7 +68,14 @@ export const BloodbankHookHub = async ({ directory }) => {
         session_id: input.sessionID, turn_id: turn, model: input.model, prompt,
       });
       const text = additionalContext(raw);
-      if (text) output.parts.push({ type: "text", text, synthetic: true });
+      if (text) {
+        output.parts.push({
+          id: partID(),
+          sessionID: output.message?.sessionID || input.sessionID,
+          messageID: output.message?.id || input.messageID,
+          type: "text", text, synthetic: true,
+        });
+      }
     },
     "tool.execute.before": async (input, output) => {
       const payload = {
