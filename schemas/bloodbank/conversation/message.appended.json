@@ -50,6 +50,59 @@
             "null"
           ],
           "description": "Plaintext rendering of the message. May be omitted for privacy."
+        },
+        "final_answer": {
+          "type": "boolean",
+          "description": "Explicit finalized assistant answer; true requires full text and command lineage."
+        },
+        "command_id": {
+          "type": "string",
+          "minLength": 1,
+          "format": "uuid"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profile_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command_event_id": {
+          "type": "string",
+          "minLength": 1,
+          "format": "uuid"
+        },
+        "issuer": {
+          "$ref": "../../_common/cloudevent_base.v1.json#/properties/actor",
+          "description": "Exact issuing command actor, separate from the answering envelope actor."
+        },
+        "command_causationid": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "native_session_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "Observed Hermes native identity, never synthesized from logical identifiers."
+        },
+        "native_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "Observed Hermes native identity, never synthesized from logical identifiers."
         }
       },
       "required": [
@@ -58,7 +111,43 @@
         "message_id",
         "role"
       ],
-      "additionalProperties": true
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "final_answer": {
+                "const": true
+              }
+            },
+            "required": [
+              "final_answer"
+            ]
+          },
+          "then": {
+            "properties": {
+              "role": {
+                "const": "assistant"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            },
+            "required": [
+              "text",
+              "command_id",
+              "idempotency_key",
+              "target_agent_id",
+              "profile_name",
+              "issuer",
+              "command_event_id",
+              "command_causationid"
+            ]
+          }
+        }
+      ]
     }
   },
   "required": [

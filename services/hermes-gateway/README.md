@@ -7,8 +7,8 @@ modify or monkey-patch Hermes core.
 The adapter binds one JetStream durable pull consumer, validates every command
 before dispatch, maps `data.target_agent_id` to an existing Hermes profile,
 and stamps that profile on an internal `MessageEvent`. A command is acknowledged
-only after the Hermes processing-complete hook and terminal lifecycle event
-publishes both finish. Malformed or unroutable poison messages receive a
+only after the Hermes processing-complete hook and every stored final-answer
+and terminal lifecycle fact receives JetStream PubAck. Malformed or unroutable poison messages receive a
 JetStream terminal acknowledgement; transient registry, broker, publication,
 or Hermes failures receive a delayed negative acknowledgement.
 
@@ -27,11 +27,13 @@ This repository change performs none of those rollout actions.
 
 ## Installation
 
-Install this directory into the Python environment used by the dedicated
-Hermes gateway process:
+Install this directory from a retained Bloodbank checkout into the Python
+environment used by the dedicated Hermes gateway process. The checkout supplies
+`services/agent-hooks/core/validate.py` and canonical `schemas/`; `jsonschema` is
+a runtime dependency. Missing validation support fails capture closed:
 
 ```bash
-python -m pip install ./services/hermes-gateway
+python -m pip install -e ./services/hermes-gateway
 ```
 
 The package advertises the `bloodbank-platform` entry point in the
@@ -119,7 +121,8 @@ not tracked YAML.
   profile, and exact lifecycle payloads. `pending` means no started-event
   publication has been attempted; `started` is recorded before publication and
   means one or both started events may have escaped. `completed` means the
-  Hermes outcome and terminal events were committed before publication.
+  Hermes outcome and ordered result facts (optional answer, then terminals)
+  were committed before publication.
   Rejection states distinguish an eventless pre-start decision from a
   post-start closure in progress or durably closed.
 - If eligibility flips after started publication may have begun, rejection
@@ -140,8 +143,8 @@ This is not an exactly-once transport claim. JetStream delivery and lifecycle
 publication remain at-least-once. The local guarantee is at-most-once Hermes
 execution for a command whose `completed` record is durable. A restart while a
 record is `pending` or `started` rechecks current routing eligibility before
-retrying execution because the completion boundary is unknown; a process crash
-after an external side effect but before Hermes' processing-complete callback
+retrying execution because the capture boundary is unknown; a process crash
+after an external side effect but before durable finalizer capture
 can therefore repeat an eligible started command. Do not delete the
 execution-state database unless intentionally discarding this deduplication
 history.
@@ -156,6 +159,7 @@ The plugin publishes only existing canonical events:
 
 - `bloodbank.conversation.turn.started`
 - `bloodbank.agent.invocation.started`
+- `bloodbank.conversation.message.appended` (explicit final assistant answers)
 - `bloodbank.agent.invocation.completed`
 - `bloodbank.agent.invocation.failed`
 - `bloodbank.conversation.turn.completed`
@@ -191,3 +195,68 @@ The `agent.turn.*` events do not carry it.
 cd services/hermes-gateway
 pytest -q
 ```
+
+## Final assistant-answer publication (BB-30)
+
+The pinned Hermes release `0408fec7a153e6c32c064acd2b8053917f1525f1` invokes
+`pre_llm_call` with native session/turn/task and parent-session identity before
+execution, `post_llm_call` once after final output transformation with the full
+`assistant_response`, and `on_session_end` with explicit completed/failed/
+interrupted flags. The plugin registers all three through the public hook seam.
+It wraps the installed message handler with a scoped command ContextVar; Hermes'
+`copy_context()` executor transfer carries that binding into execution threads.
+Only the root native turn/task bound at pre-call can supply its candidate/outcome.
+Hermes may rotate native sessions during compaction; the final fact records
+the session observed with the final body, while logical routing stays unchanged.
+Child callbacks and callbacks outside the command scope cannot replace it.
+Profile/thread locks serialize each logical route; distinct profiles remain
+independent even when their logical chat IDs match.
+
+A successful, uninterrupted native execution plus nonempty full final output
+produces one `conversation.message.appended` with `role=assistant` and
+`final_answer=true`. Native intentional-silence markers are excluded. Ordinary
+`send()`, tokens, tools, history, reasoning and processing/turn completion alone
+never supply an answer. The body is kept exactly, including whitespace/UTF-8;
+there is no 500-character agent-end-hook truncation. Logical thread/turn remain
+the command's declared values (or the existing explicit logical defaults);
+observed native IDs occupy separate fields. The issuer snapshot and incoming
+command causation are retained alongside command/event/idempotency/target/profile
+lineage. The answering envelope actor identifies the resolved target.
+
+At `on_session_end`, the adapter validates the final fact through canonical
+`core.validate.validate_envelope` and the additive message schema. It atomically
+captures the immutable answer-plus-terminal batch in the existing execution
+journal before publication. Its deterministic event/message IDs and exact
+timestamps/body/lineage survive every replay. Identical callback duplicates are
+ignored; conflicting body or outcome fails closed without overwriting the stored
+result. Observer failures are sticky because Hermes itself swallows hook errors.
+The processing-complete waiter surfaces these failures to the command lane.
+
+Native execution outcome is authoritative after capture. Later platform delivery
+failures/cancellation cannot change an already completed Hermes result; retry
+replays it, never runs the command again. Before capture, failed/cancelled native
+execution produces terminals without an answer. A crash after post-call candidate
+observation but before the durable finalizer transaction remains ambiguous and
+can repeat execution/external effects. This is a local post-capture guarantee,
+not global exactly-once delivery.
+
+The stored batch publishes in order: answer (when present), invocation terminal,
+turn terminal. Each awaited JetStream publish requires PubAck and carries
+`Nats-Msg-Id=event.id`; only then is the command ACKed. Answer/terminal/ACK
+failures lead to NAK and exact journal replay on redelivery/restart. Broker
+deduplication has a finite window; downstream durable history must continue
+deduplicating on event ID. No existing lifecycle-only record invents an answer.
+
+Deterministic verification uses temporary journals and fixtures. To additionally
+exercise the installed source payload expressions and executor helper without
+constructing an agent or making inference calls:
+
+```bash
+BB30_HERMES_RELEASE=/path/to/pinned/hermes-release python -m pytest -q
+```
+
+Live Candystore/full-body arrival proof is **NOT AUTHORIZED / NOT EXECUTED** by
+BB-30 implementation. A separately authorized proof must verify the exact full
+body and lineage in durable history; toast and `conversation.turn.completed`
+are not answer evidence. This adds neither arbitrary native session resume nor
+universal conversation continuity.

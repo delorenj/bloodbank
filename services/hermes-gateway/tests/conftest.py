@@ -119,6 +119,10 @@ gateway_base.MessageEvent = MessageEvent
 gateway_base.MessageType = MessageType
 gateway_base.ProcessingOutcome = ProcessingOutcome
 gateway_base.SendResult = SendResult
+gateway_filters = types.ModuleType("gateway.response_filters")
+gateway_filters.is_intentional_silence_response = lambda text: (
+    " ".join(text.strip().upper().split()) in {"[SILENT]", "SILENT", "NO_REPLY", "NO REPLY"}
+)
 
 hermes_cli = types.ModuleType("hermes_cli")
 hermes_cli.__path__ = []
@@ -138,6 +142,7 @@ sys.modules.setdefault("gateway", gateway)
 sys.modules.setdefault("gateway.config", gateway_config)
 sys.modules.setdefault("gateway.platforms", gateway_platforms)
 sys.modules.setdefault("gateway.platforms.base", gateway_base)
+sys.modules.setdefault("gateway.response_filters", gateway_filters)
 sys.modules.setdefault("hermes_cli", hermes_cli)
 sys.modules.setdefault("hermes_cli.profiles", hermes_profiles)
 

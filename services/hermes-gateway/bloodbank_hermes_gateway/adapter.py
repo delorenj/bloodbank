@@ -39,6 +39,7 @@ from .contract import (
     terminal_events,
 )
 from .execution_state import ExecutionRecord, ExecutionStateStore, envelope_digest
+from .plugin import CommandBinding, command_binding, register_hooks
 
 logger = logging.getLogger(__name__)
 ROUTE_REJECTION_REASON = "route_policy_invalid_before_dispatch"
@@ -88,6 +89,7 @@ class PendingInvocation:
     broker_message: Any
     completion: asyncio.Future[None]
     envelope_digest: str
+    binding: CommandBinding | None = None
 
 
 class BloodbankAdapter(BasePlatformAdapter):
@@ -186,6 +188,29 @@ class BloodbankAdapter(BasePlatformAdapter):
     @property
     def name(self) -> str:
         return "Bloodbank"
+
+    def set_message_handler(self, handler: Any) -> None:
+        async def bound_handler(event: MessageEvent) -> Any:
+            record = self._records.get(str(event.message_id or ""))
+            binding = None
+            if record is not None:
+                binding = CommandBinding(
+                    record.invocation, record.envelope_digest, self.execution_state
+                )
+                record.binding = binding
+            token = command_binding.set(binding)
+            try:
+                response = await handler(event)
+                if binding is not None and binding.error is not None:
+                    raise binding.error
+                return response
+            finally:
+                if binding is not None:
+                    with binding.lock:
+                        binding.closed = True
+                command_binding.reset(token)
+
+        super().set_message_handler(bound_handler)
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
         del is_reconnect
@@ -666,15 +691,20 @@ class BloodbankAdapter(BasePlatformAdapter):
             else "failure"
         )
         try:
-            events = terminal_events(record.invocation, outcome=terminal_outcome)
-            await asyncio.to_thread(
-                self.execution_state.mark_completed,
-                command_id=record.invocation.invocation_id,
-                digest=record.envelope_digest,
-                outcome=terminal_outcome,
-                terminal_events=events,
-            )
-            await self._publish_many(events)
+            binding = record.binding
+            if binding is not None and binding.error is not None:
+                raise binding.error
+            captured = binding.result if binding is not None else None
+            if captured is None:
+                events = terminal_events(record.invocation, outcome=terminal_outcome)
+                captured = await asyncio.to_thread(
+                    self.execution_state.mark_completed,
+                    command_id=record.invocation.invocation_id,
+                    digest=record.envelope_digest,
+                    outcome=terminal_outcome,
+                    terminal_events=events,
+                )
+            await self._publish_many(captured.terminal_events)
         except Exception as exc:
             record.completion.set_exception(exc)
             raise
@@ -697,6 +727,7 @@ class BloodbankAdapter(BasePlatformAdapter):
 
 def check_requirements() -> bool:
     try:
+        import jsonschema  # noqa: F401
         import nats  # noqa: F401
         import yaml  # noqa: F401
     except ImportError:
@@ -730,6 +761,7 @@ def is_connected(config: Any) -> bool:
 
 
 def register(ctx: Any) -> None:
+    register_hooks(ctx)
     ctx.register_platform(
         name="bloodbank",
         label="Bloodbank",

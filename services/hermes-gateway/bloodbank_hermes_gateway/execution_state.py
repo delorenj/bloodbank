@@ -56,7 +56,13 @@ class ExecutionRecord:
 
 
 class ExecutionStateStore:
-    """SQLite-backed command state with crash-safe lifecycle transitions."""
+    """SQLite command journal and ordered result outbox.
+
+    terminal_events includes the optional final assistant message followed by
+    lifecycle terminals. The completed transaction captures the entire batch;
+    publishers replay it verbatim rather than reconstructing timestamps/text.
+    Existing lifecycle-only records retain their original meaning and bytes.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path.expanduser()

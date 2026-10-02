@@ -30,6 +30,7 @@ INVOCATION_STARTED = "bloodbank.agent.invocation.started"
 INVOCATION_COMPLETED = "bloodbank.agent.invocation.completed"
 INVOCATION_FAILED = "bloodbank.agent.invocation.failed"
 TURN_COMPLETED = "bloodbank.conversation.turn.completed"
+MESSAGE_APPENDED = "bloodbank.conversation.message.appended"
 
 _UUID_NAMESPACE = uuid.UUID("633de934-f359-50f8-978f-3ef4ebbdac69")
 _RFC3339 = re.compile(
@@ -313,8 +314,8 @@ class Invocation:
             profile=profile,
             target_agent_id=data["target_agent_id"].strip(),
             prompt=data["prompt"].strip(),
-            thread_id=(data.get("thread_id") or f"bloodbank:{correlation_id}").strip(),
-            turn_id=(data.get("turn_id") or command_id).strip(),
+            thread_id=data.get("thread_id") or f"bloodbank:{correlation_id}",
+            turn_id=data.get("turn_id") or command_id,
             invocation_id=command_id,
         )
 
@@ -386,6 +387,56 @@ def _command_context(invocation: Invocation) -> dict[str, Any]:
     """
     context = invocation.envelope.get("data", {}).get("context")
     return {"context": context} if isinstance(context, dict) else {}
+
+
+def validate_fact(envelope: dict[str, Any]) -> None:
+    """Use the canonical validator from the Bloodbank checkout, fail closed."""
+    import sys
+
+    hooks = Path(__file__).resolve().parents[2] / "agent-hooks"
+    if str(hooks) not in sys.path:
+        sys.path.insert(0, str(hooks))
+    from core.validate import validate_envelope
+
+    validate_envelope(envelope)
+
+
+def final_answer_event(
+    invocation: Invocation,
+    *,
+    role: str,
+    final_answer: bool,
+    text: str,
+    native_session_id: str | None,
+    native_turn_id: str | None,
+) -> dict[str, Any]:
+    if role != "assistant" or final_answer is not True:
+        raise ValueError("capture requires an explicit final assistant answer")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("final answer must contain full nonempty text")
+    event = lifecycle_event(
+        invocation,
+        MESSAGE_APPENDED,
+        causation_id=invocation.envelope["id"],
+        data={
+            "thread_id": invocation.thread_id,
+            "turn_id": invocation.turn_id,
+            "message_id": str(
+                uuid.uuid5(_UUID_NAMESPACE, f"{invocation.invocation_id}:final-answer")
+            ),
+            "role": role,
+            "final_answer": final_answer,
+            "text": text,
+            "issuer": invocation.envelope["actor"],
+            "command_event_id": invocation.envelope["id"],
+            "command_causationid": invocation.envelope.get("causationid"),
+            "native_session_id": native_session_id,
+            "native_turn_id": native_turn_id,
+            **_command_context(invocation),
+        },
+    )
+    validate_fact(event)
+    return event
 
 
 def started_events(invocation: Invocation) -> tuple[dict[str, Any], dict[str, Any]]:

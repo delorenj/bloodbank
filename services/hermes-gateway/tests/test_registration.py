@@ -1,16 +1,21 @@
-import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+import tomllib
 from bloodbank_hermes_gateway.adapter import register
 
 
 def test_registers_standalone_platform_factory():
     calls = []
-    ctx = SimpleNamespace(register_platform=lambda **kwargs: calls.append(kwargs))
+    hooks = {}
+    ctx = SimpleNamespace(
+        register_platform=lambda **kwargs: calls.append(kwargs),
+        register_hook=lambda name, callback: hooks.setdefault(name, callback),
+    )
 
     register(ctx)
 
+    assert set(hooks) == {"pre_llm_call", "post_llm_call", "on_session_end"}
     assert len(calls) == 1
     entry = calls[0]
     assert entry["name"] == "bloodbank"
