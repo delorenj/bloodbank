@@ -309,6 +309,8 @@ Segment 4 of `type` MUST be one of:
 | `stderr`           | `cli`                    | A stderr chunk emitted by a CLI process.                    |
 | `request`          | `llm`                    | A request sent to an LLM provider.                          |
 | `response`         | `llm`                    | A response received from an LLM provider.                   |
+| `usage`            | `llm`                    | One settled gateway request's normalized token and timing fact. |
+| `allowance`        | `llm`                    | A provider-reported account/window utilization snapshot.    |
 | `tool`             | `agent`                  | A tool-use action performed by an agent or subagent.        |
 | `hook`             | `agent`, `system`        | Payload-free hook invocation revisions and hook-hub inventory/health observations. |
 | `heartbeat`        | `system`                 | Liveness/health beat.                                       |
@@ -474,6 +476,8 @@ invocation:<invocation_id>
 session:<session_id>             # agent CLI session (was cli_session)
 process:<process_id>
 transcription:<transcription_id>
+usage:<usage_id>
+allowance:<provider>:<account_id>:<window>
 file:<sha256(file_path)|file_id>
 sync:<run_id>                    # finance: one tiller sync run
 account:<account_id>             # finance: per-account transaction/paycheck order
@@ -492,6 +496,10 @@ an `audio.file.received` uses `file:<sha256(file_path)>` so re-detections
 of the same artifact form a stable bucket. A `project.activity.recorded`
 uses `project:<project_slug>` — the slug from the project's `.project.json`
 — never `activity:<slug>`; the bucket names the aggregate, not the entity.
+An `llm.usage.recorded` event uses `usage:<usage_id>`, and an
+`llm.allowance.observed` event uses
+`allowance:<provider>:<account_id>:<window>` so retries and observations for
+one account window form a deterministic sequence.
 
 ### 11.2 `idempotency_key` rules
 
