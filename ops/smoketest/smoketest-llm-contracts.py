@@ -146,6 +146,167 @@ class LLMContractTests(unittest.TestCase):
     def test_allowance_validates(self) -> None:
         validate_envelope(allowance_envelope())
 
+    def test_allowance_legacy_windows_and_limits_validate_without_mutation(self) -> None:
+        for window in ("five_hour", "daily", "weekly", "monthly"):
+            for limit_id in (None, "unified"):
+                with self.subTest(window=window, limit_id=limit_id):
+                    env = allowance_envelope(**{
+                        "data.window": window,
+                        "data.limit_id": limit_id,
+                        "ordering_key": f"allowance:anthropic:claude-personal:{window}",
+                    })
+                    original = copy.deepcopy(env)
+                    validate_envelope(env)
+                    self.assertEqual(env, original)
+                    self.assertEqual(env["data"]["schema_version"], 1)
+                    self.assertEqual(env["schemaref"], f"{ALLOWANCE_TYPE}.v1")
+                    self.assertEqual(
+                        env["dataschema"], f"apicurio://holyfields/{ALLOWANCE_TYPE}/versions/1"
+                    )
+
+    def test_allowance_custom_window_validates(self) -> None:
+        for seconds in (1, 10_800, 9007199254740991):
+            with self.subTest(seconds=seconds):
+                validate_envelope(allowance_envelope(**{
+                    "data.window": "custom",
+                    "data.window_seconds": seconds,
+                    "ordering_key": "allowance:anthropic:claude-personal:custom",
+                }))
+
+    def test_allowance_rejects_invalid_window_seconds(self) -> None:
+        for seconds in (0, -1, 1.5, 9007199254740992, None, True, "10800"):
+            with self.subTest(seconds=seconds):
+                env = allowance_envelope(**{"data.window_seconds": seconds})
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(env)
+
+    def test_allowance_named_window_accepts_optional_duration(self) -> None:
+        validate_envelope(allowance_envelope(**{"data.window_seconds": 18_000}))
+
+    def test_allowance_quota_units_and_partial_amounts_validate(self) -> None:
+        for unit in ("tokens", "requests", "credits", "tool_calls"):
+            for field in ("quota_limit", "quota_used", "quota_remaining"):
+                for amount in (0, 0.5, 9007199254740991):
+                    with self.subTest(unit=unit, field=field, amount=amount):
+                        validate_envelope(allowance_envelope(**{
+                            "data.quota_unit": unit,
+                            f"data.{field}": amount,
+                        }))
+
+    def test_allowance_remaining_only_validates(self) -> None:
+        validate_envelope(allowance_envelope(**{
+            "data.quota_unit": "requests",
+            "data.quota_remaining": 75,
+        }))
+
+    def test_allowance_complete_quota_validates(self) -> None:
+        validate_envelope(allowance_envelope(**{
+            "data.quota_unit": "credits",
+            "data.quota_limit": 100.5,
+            "data.quota_used": 25.25,
+            "data.quota_remaining": 75.25,
+        }))
+
+    def test_allowance_quota_unit_does_not_require_amounts(self) -> None:
+        validate_envelope(allowance_envelope(**{"data.quota_unit": "tokens"}))
+
+    def test_allowance_each_quota_amount_requires_unit(self) -> None:
+        for field in ("quota_limit", "quota_used", "quota_remaining"):
+            with self.subTest(field=field):
+                env = allowance_envelope(**{f"data.{field}": 0})
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(env)
+
+    def test_allowance_rejects_invalid_quota_amounts(self) -> None:
+        for field in ("quota_limit", "quota_used", "quota_remaining"):
+            for amount in (-1, -0.5, 9007199254740992, None, True, "75"):
+                with self.subTest(field=field, amount=amount):
+                    env = allowance_envelope(**{
+                        "data.quota_unit": "requests",
+                        f"data.{field}": amount,
+                    })
+                    with self.assertRaises(EnvelopeInvalid):
+                        validate_envelope(env)
+
+    def test_allowance_rejects_unknown_quota_units(self) -> None:
+        for unit in ("usd", "token", "", None, 1):
+            with self.subTest(unit=unit):
+                env = allowance_envelope(**{"data.quota_unit": unit})
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(env)
+
+    def test_allowance_applies_to_shared_account_and_canonical_routes(self) -> None:
+        for routes in ([], [
+            "automaticai/personal/claude-sonnet-5.5",
+            "automaticai/intelliforia/claude-opus-5.5",
+            "automaticai/personal/gpt-5.5",
+            "automaticai/personal/kimi-k3",
+            "automaticai/personal/glm-5.3",
+            "automaticai/openrouter/~vendor/family/model:free+variant",
+        ]):
+            with self.subTest(routes=routes):
+                validate_envelope(allowance_envelope(**{"data.applies_to": routes}))
+
+    def test_allowance_applies_to_accepts_item_and_length_boundaries(self) -> None:
+        prefix = "automaticai/personal/"
+        longest_route = prefix + "x" * (255 - len(prefix))
+        routes = [f"automaticai/personal/model-{index}" for index in range(99)]
+        routes.append(longest_route)
+        validate_envelope(allowance_envelope(**{"data.applies_to": routes}))
+
+    def test_allowance_rejects_invalid_applies_to(self) -> None:
+        route = "automaticai/personal/gpt-5.5"
+        invalid = [
+            None, route, [None], [1], [""], [route, route],
+            [f"automaticai/personal/model-{index}" for index in range(101)],
+            ["automaticai/personal/" + "x" * 235],
+            ["aai/personal/gpt-5.5"], ["gpt-5.5"], ["automaticai/personal/*"],
+            ["automaticai/personal/"], ["automaticai//gpt-5.5"],
+            ["automaticai/openrouter/vendor//model"],
+            ["automaticai/personal/../model"], ["automaticai/openrouter/vendor/.."],
+            ["automaticai/personal/gpt 5.5"], ["automaticai/personal/gpt,5.5"],
+        ]
+        for routes in invalid:
+            with self.subTest(routes=routes):
+                env = allowance_envelope(**{"data.applies_to": routes})
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(env)
+
+    def test_allowance_limit_specific_ordering_keys_validate(self) -> None:
+        for window in ("five_hour", "daily", "weekly", "monthly", "custom"):
+            for limit_id in ("unified", "TOKENS_LIMIT", "tool-calls.v1", "x" * 128):
+                with self.subTest(window=window, limit_id=limit_id):
+                    validate_envelope(allowance_envelope(**{
+                        "data.window": window,
+                        "data.limit_id": limit_id,
+                        "ordering_key": f"allowance:anthropic:claude-personal:{window}:{limit_id}",
+                    }))
+
+    def test_allowance_ordering_key_accepts_maximum_components(self) -> None:
+        provider, account_id, limit_id = "p" * 64, "a" * 200, "l" * 128
+        validate_envelope(allowance_envelope(**{
+            "data.provider": provider,
+            "data.account_id": account_id,
+            "data.limit_id": limit_id,
+            "ordering_key": f"allowance:{provider}:{account_id}:five_hour:{limit_id}",
+        }))
+
+    def test_allowance_rejects_invalid_ordering_key_suffix(self) -> None:
+        for suffix in ("", "x" * 129, "tool calls", "tool/calls", "limit:extra", "é", "*"):
+            with self.subTest(suffix=suffix):
+                env = allowance_envelope(
+                    ordering_key=f"allowance:anthropic:claude-personal:weekly:{suffix}"
+                )
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(env)
+
+    def test_allowance_rejects_unknown_window_and_unrequested_fields(self) -> None:
+        for field, value in (("window", "hourly"), ("collect_status", "ok")):
+            with self.subTest(field=field):
+                env = allowance_envelope(**{f"data.{field}": value})
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(env)
+
     def test_usage_rejects_prompt_material(self) -> None:
         env = usage_envelope(**{"data.prompt_text": "secret"})
         with self.assertRaises(EnvelopeInvalid):

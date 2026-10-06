@@ -3,7 +3,7 @@
   "$id": "https://33god.dev/schemas/bloodbank/llm/allowance.observed.json",
   "title": "LLM Allowance Observed Event",
   "description": "A provider-reported subscription allowance window observation for one account.",
-  "$comment": "Gauge utilization comes from the provider, not from gateway token arithmetic: the same account can consume outside this gateway and providers do not publish token budgets. observation_id must be stable for the same provider observation; ordering is one bucket per account and window. reset_at is null when the provider does not expose a reset time.",
+  "$comment": "Utilization is the provider-reported percentage or provider_used / provider_limit * 100 from matching provider quota units, never inferred from ledger or gateway token totals. Preserve original provider headers or body values without rewriting previously published facts. observation_id must be stable for the same provider observation; ordering is one bucket per account, window and optional limit. reset_at is null when the provider does not expose a reset time.",
   "type": "object",
   "allOf": [
     {
@@ -32,8 +32,9 @@
     "ordering_key": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 320,
-      "pattern": "^allowance:[a-z][a-z0-9_.-]{0,63}:[A-Za-z0-9][A-Za-z0-9._:-]{0,199}:(five_hour|daily|weekly|monthly)$"
+      "maxLength": 449,
+      "pattern": "^allowance:[a-z][a-z0-9_.-]{0,63}:[A-Za-z0-9][A-Za-z0-9._:-]{0,199}:(five_hour|daily|weekly|monthly|custom)(:[A-Za-z0-9._-]{1,128})?$",
+      "description": "Account/window ordering bucket, optionally suffixed by the provider limit ID using 1-128 safe ASCII letters, digits, dots, underscores or hyphens. Legacy shared-account keys without a suffix remain valid, including limit_id=unified."
     },
     "data": {
       "type": "object",
@@ -79,13 +80,62 @@
             "five_hour",
             "daily",
             "weekly",
-            "monthly"
-          ]
+            "monthly",
+            "custom"
+          ],
+          "description": "Preserve the existing named windows for matching provider durations. Use custom for other provider durations and window_seconds when the exact duration is known."
+        },
+        "window_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "Exact provider-reported window duration in seconds, when available."
+        },
+        "quota_unit": {
+          "type": "string",
+          "enum": [
+            "tokens",
+            "requests",
+            "credits",
+            "tool_calls"
+          ],
+          "description": "Matching provider quota unit for any reported limit, used or remaining amount. This is not ledger-derived gateway usage."
+        },
+        "quota_limit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Provider-reported quota limit in quota_unit; omit when unavailable."
+        },
+        "quota_used": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Provider-reported used quota in quota_unit; omit when unavailable."
+        },
+        "quota_remaining": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Provider-reported remaining quota in quota_unit. May be reported without quota_limit or quota_used."
+        },
+        "applies_to": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "pattern": "^automaticai/(?!\\.{1,2}/)[A-Za-z0-9._:~+-]+(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._:~+-]+)+$"
+          },
+          "description": "Canonical AutomaticAI gateway route IDs covered by this limit, never aliases or wildcard scopes. An empty array means the allowance is shared across the account."
         },
         "utilization_percent": {
           "type": "number",
           "minimum": 0,
-          "maximum": 100
+          "maximum": 100,
+          "description": "Provider-reported utilization or provider_used / provider_limit * 100 in matching quota units. Never infer this percentage from ledger token counts."
         },
         "reset_at": {
           "oneOf": [
@@ -140,6 +190,17 @@
             }
           ]
         }
+      },
+      "dependentRequired": {
+        "quota_limit": [
+          "quota_unit"
+        ],
+        "quota_used": [
+          "quota_unit"
+        ],
+        "quota_remaining": [
+          "quota_unit"
+        ]
       },
       "required": [
         "schema_version",
