@@ -3,8 +3,8 @@
     "PreInvocation": [
       {
         "type": "command",
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli antigravity --native PreInvocation --trailer passive",
-        "timeout": 4
+        "command": "/home/delorenj/.agents/hooks/bb-hook --cli antigravity --native PreInvocation --deadline 15 --trailer passive",
+        "timeout": 16
       }
     ],
     "PostInvocation": [

@@ -330,7 +330,9 @@ def _command(agent: dict, b: dict, *, codex_empty_echo: bool) -> str:
         # Native stdin carries session identity, tool ids and end reasons. The
         # re-trigger reads it directly; no cat process or fabricated {} payload.
         command = f"{runner} {shlex.quote(b['native'])}"
-        if b.get("role") in {"prompt_submit", "session_start"}:
+        if b.get("role") in {"prompt_submit", "session_start"} or (
+            agent.get("dialect") == "antigravity_bundle" and b["native"] == "PreInvocation"
+        ):
             command += " --deadline 15"
         return command
     parts: list[str] = []

@@ -73,6 +73,8 @@ def context_output(text: str, cli: str, native: str) -> str:
         return ""
     if cli in {"claude", "codex", "gemini"}:
         return json.dumps({"hookSpecificOutput": {"hookEventName": native, "additionalContext": text}}, ensure_ascii=False)
+    if cli == "copilot":
+        return json.dumps({"additionalContext": text}, ensure_ascii=False)
     if cli == "antigravity":
         return json.dumps({"injectSteps": [{"ephemeralMessage": text}]}, ensure_ascii=False)
     if cli == "hermes":
@@ -81,7 +83,7 @@ def context_output(text: str, cli: str, native: str) -> str:
         # dropped. Plain text here was silently discarded, never injected.
         return json.dumps({"context": text}, ensure_ascii=False)
     # Kimi treats successful stdout as context; OpenCode's native bridge adds
-    # it to its message parts. Copilot accepts plain context.
+    # it to its message parts.
     return text
 
 
@@ -226,8 +228,27 @@ def dispatch(concern: str, raw: dict) -> dict:
     if concern == "candystore-context":
         if os.environ.get("CANDYSTORE_CONTEXT", "1").lower() in {"0", "off", "false"}:
             return result("skipped", "context_disabled")
+        if cli == "hermes" and (
+            native != "pre_llm_call"
+            or value(raw, "is_first_turn", "extra.is_first_turn", default=False) is not True
+        ):
+            return result("skipped", "not_first_turn")
         if cli == "antigravity" and raw.get("invocationNum", 1) not in (1, "1"):
             return result("skipped", "not_first_invocation")
+        if cli == "kimi":
+            if native != "UserPromptSubmit":
+                return result("skipped", "not_first_prompt")
+            if not payload["session_id"]:
+                return result("skipped", "session_identity_missing")
+            state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+            markers = state / "33god/hook-hub/context-started"
+            markers.mkdir(mode=0o700, parents=True, exist_ok=True)
+            key = hashlib.sha256(f"{cli}:{payload['session_id']}".encode()).hexdigest()
+            try:
+                descriptor = os.open(markers / key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                return result("skipped", "context_already_requested")
+            os.close(descriptor)
         command = [str(Path.home() / ".local/bin/candystore"), "context", "latest",
                    "--cwd", str(payload["cwd"]), "--timeout", "4"]
         if payload["session_id"]:

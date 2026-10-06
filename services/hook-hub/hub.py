@@ -460,6 +460,8 @@ def compose_stdout(chunks: list[str]) -> str:
                 dst[key] = value
             elif isinstance(dst[key], dict) and isinstance(value, dict):
                 merge(dst[key], value)
+            elif key == "injectSteps" and isinstance(dst[key], list) and isinstance(value, list):
+                dst[key].extend(value)
             elif key in {"additionalContext", "systemMessage", "reason", "permissionDecisionReason", "context"}:
                 dst[key] = "\n\n".join(str(v) for v in (dst[key], value) if v)
             elif key == "permissionDecision":

@@ -22,7 +22,7 @@ export const BloodbankHookHub = async ({ directory }) => {
   const command = process.env.BB_HOOK_COMMAND || join(homedir(), ".agents/hooks/bb-hook");
   const toolInputs = new Map();
   const completedCalls = new Set();
-  const sessions = new Set();
+  const sessions = new Map();
   const turns = new Map();
   const emit = (native, payload) => new Promise((resolve) => {
     const slow = native === "chat.message" || native === "session.created";
@@ -46,10 +46,17 @@ export const BloodbankHookHub = async ({ directory }) => {
     child.stdin.on("error", () => {});
     child.stdin.end(JSON.stringify({ cwd: directory, hook_event_name: native, ...payload }));
   });
-  const ensureSession = async (sessionID, source) => {
-    if (!sessionID || sessions.has(sessionID)) return;
-    sessions.add(sessionID);
-    await emit("session.created", { session_id: sessionID, source });
+  const ensureSession = (sessionID, source) => {
+    if (!sessionID) return;
+    let session = sessions.get(sessionID);
+    if (!session) {
+      session = { context: "" };
+      sessions.set(sessionID, session);
+      session.startup = emit("session.created", { session_id: sessionID, source }).then((raw) => {
+        if (sessions.get(sessionID) === session) session.context = additionalContext(raw);
+      });
+    }
+    return session;
   };
   const additionalContext = (raw) => {
     if (!raw.trim()) return "";
@@ -60,14 +67,21 @@ export const BloodbankHookHub = async ({ directory }) => {
   };
   return {
     "chat.message": async (input, output) => {
-      await ensureSession(input.sessionID, "resume");
+      const session = ensureSession(input.sessionID, "resume");
+      const firstMessage = session && !session.consumed;
+      if (firstMessage) session.consumed = true;
+      await session?.startup;
       const turn = input.messageID || output.message?.id;
-      if (turn) turns.set(input.sessionID, turn);
+      if (turn && sessions.get(input.sessionID) === session) turns.set(input.sessionID, turn);
       const prompt = output.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
       const raw = await emit("chat.message", {
         session_id: input.sessionID, turn_id: turn, model: input.model, prompt,
       });
-      const text = additionalContext(raw);
+      const text = [
+        firstMessage && sessions.get(input.sessionID) === session ? session.context : "",
+        additionalContext(raw),
+      ].filter(Boolean).join("\n\n");
+      if (firstMessage) session.context = "";
       if (text) {
         output.parts.push({
           id: partID(),
@@ -101,7 +115,7 @@ export const BloodbankHookHub = async ({ directory }) => {
       const properties = event.properties || {};
       const sessionID = properties.sessionID || properties.info?.id;
       if (event.type === "session.created") {
-        await ensureSession(sessionID, "startup");
+        await ensureSession(sessionID, "startup")?.startup;
       } else if (event.type === "session.deleted") {
         sessions.delete(sessionID);
         turns.delete(sessionID);

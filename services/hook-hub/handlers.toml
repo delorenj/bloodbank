@@ -56,8 +56,18 @@ enabled = true
 id = "candystore-context"
 mode = "sync"
 on = ["session_start"]
-on_native = ["PreInvocation"]
-clis = ["claude", "codex", "copilot", "kimi", "gemini", "hermes", "opencode", "antigravity"]
+on_native = ["PreInvocation", "pre_llm_call"]
+clis = ["claude", "codex", "copilot", "gemini", "hermes", "opencode", "antigravity"]
+command = ["python3", "~/.agents/hooks/hub/concerns.py", "candystore-context"]
+timeout_ms = 5000
+order = 6
+enabled = true
+
+[[handler]]
+id = "candystore-context-kimi"
+mode = "sync"
+on = ["prompt_submit"]
+clis = ["kimi"]
 command = ["python3", "~/.agents/hooks/hub/concerns.py", "candystore-context"]
 timeout_ms = 5000
 order = 6

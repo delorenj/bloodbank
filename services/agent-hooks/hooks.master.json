@@ -561,7 +561,8 @@
           "role": "invocation_start",
           "arg": "PreInvocation",
           "lifecycle": "agent.invocation.started",
-          "payload": "stdin"
+          "payload": "stdin",
+          "timeout": 16
         },
         {
           "native": "PostInvocation",
