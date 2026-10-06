@@ -39,7 +39,7 @@ from .contract import (
     terminal_events,
 )
 from .execution_state import ExecutionRecord, ExecutionStateStore, envelope_digest
-from .plugin import CommandBinding, command_binding, register_hooks
+from .plugin import CommandBinding, command_binding, prepare_capture, register_hooks
 
 logger = logging.getLogger(__name__)
 ROUTE_REJECTION_REASON = "route_policy_invalid_before_dispatch"
@@ -190,6 +190,8 @@ class BloodbankAdapter(BasePlatformAdapter):
         return "Bloodbank"
 
     def set_message_handler(self, handler: Any) -> None:
+        self._capture_handler = handler
+
         async def bound_handler(event: MessageEvent) -> Any:
             record = self._records.get(str(event.message_id or ""))
             binding = None
@@ -527,6 +529,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                     # claimed or restarted pending command must not execute on
                     # a route disabled while lifecycle publication was in flight.
                     await self._assert_dispatch_route(invocation)
+                    prepare_capture(self._capture_handler, event)
                     await super().handle_message(event)
                     await completion
             finally:
@@ -546,6 +549,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                         digest=record.envelope_digest,
                         persisted=persisted,
                         replay_started=not started_publish_complete,
+                        reason=getattr(exc, "reason", ROUTE_REJECTION_REASON),
                     )
                 except Exception as journal_error:
                     logger.error(
@@ -604,6 +608,7 @@ class BloodbankAdapter(BasePlatformAdapter):
         digest: str,
         persisted: ExecutionRecord,
         replay_started: bool,
+        reason: str = ROUTE_REJECTION_REASON,
     ) -> ExecutionRecord:
         """Persist rejection evidence and close any lifecycle that may have opened."""
 
@@ -612,7 +617,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 self.execution_state.reject_pre_start,
                 command_id=invocation.invocation_id,
                 digest=digest,
-                reason=ROUTE_REJECTION_REASON,
+                reason=reason,
             )
 
         if persisted.state == "started":
@@ -620,7 +625,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 self.execution_state.begin_rejection,
                 command_id=invocation.invocation_id,
                 digest=digest,
-                reason=ROUTE_REJECTION_REASON,
+                reason=reason,
             )
         if persisted.state == "rejected_closing":
             if persisted.rejected_at is None:
@@ -628,8 +633,12 @@ class BloodbankAdapter(BasePlatformAdapter):
             events = terminal_events(
                 invocation,
                 outcome="failure",
-                failure_code=ROUTE_REJECTION_REASON,
-                failure_message=ROUTE_REJECTION_MESSAGE,
+                failure_code=persisted.rejection_reason or reason,
+                failure_message=(
+                    ROUTE_REJECTION_MESSAGE
+                    if persisted.rejection_reason == ROUTE_REJECTION_REASON
+                    else "Hermes final-answer capture capability is unavailable"
+                ),
                 occurred_at=persisted.rejected_at,
             )
             persisted = await asyncio.to_thread(

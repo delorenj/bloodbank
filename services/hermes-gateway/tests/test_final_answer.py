@@ -49,7 +49,8 @@ def capture(body=BODY, *, native=None, completed=True, failed=False, interrupted
         ],
     )
     on_session_end(
-        **native, completed=completed, failed=failed, interrupted=interrupted
+        **native, completed=completed, failed=failed, interrupted=interrupted,
+        turn_exit_reason="text_response(finish_reason=stop)",
     )
 
 
@@ -595,6 +596,30 @@ def test_final_schema_is_additive_and_requires_explicit_role_body_lineage(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("replacement", ["", " \n", "NO_REPLY"])
+async def test_recapture_semantics_are_sticky(tmp_path, valid_command, replacement):
+    adapter = make_adapter(tmp_path)
+    original = []
+
+    async def handler(_event):
+        capture()
+        binding = command_binding.get()
+        original.extend(wire(e) for e in binding.result.terminal_events)
+        post_llm_call(**NATIVE, assistant_response=replacement)
+        assert binding.error is not None
+        on_session_end(**NATIVE, completed=False, failed=False, interrupted=False,
+                       turn_exit_reason="empty_response_exhausted")
+        return "receipt"
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    assert message.acked == 0 and message.nacked == 1
+    stored = adapter.execution_state.get(valid_command["command_id"])
+    assert [wire(e) for e in stored.terminal_events] == original
+
+
+@pytest.mark.asyncio
 async def test_native_compaction_session_rotation_preserves_root_execution(
     tmp_path, valid_command
 ):
@@ -609,7 +634,8 @@ async def test_native_compaction_session_rotation_preserves_root_execution(
         post_llm_call(**child, assistant_response="child must not claim parent")
         on_session_end(**child, completed=True, failed=False, interrupted=False)
         post_llm_call(**final_native, assistant_response=BODY)
-        on_session_end(**final_native, completed=True, failed=False, interrupted=False)
+        on_session_end(**final_native, completed=True, failed=False, interrupted=False,
+                       turn_exit_reason="text_response(finish_reason=stop)")
         return "receipt"
 
     adapter.set_message_handler(handler)

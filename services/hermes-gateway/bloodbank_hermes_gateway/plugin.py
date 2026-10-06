@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import re
 import threading
+from contextlib import nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
 from gateway.response_filters import is_intentional_silence_response
 
-from .contract import Invocation, final_answer_event, terminal_events, validate_fact
+from .contract import (
+    Invocation,
+    RouteInvalid,
+    final_answer_event,
+    terminal_events,
+    validate_fact,
+)
 from .execution_state import ExecutionRecord, ExecutionStateStore
 
 
@@ -23,7 +31,9 @@ class CommandBinding:
     candidate_native: tuple[str, str, str] | None = None
     result: ExecutionRecord | None = None
     error: Exception | None = None
-    end_flags: tuple[Any, Any, Any] | None = None
+    end_flags: tuple[Any, ...] | None = None
+    post_seen: bool = False
+    post_evidence: tuple[Any, ...] | None = None
     closed: bool = False
     lock: Any = field(default_factory=threading.RLock)
 
@@ -64,17 +74,18 @@ class CommandBinding:
             return
         if phase == "post":
             text = payload.get("assistant_response")
+            evidence = (text, *native)
+            if self.post_seen and evidence != self.post_evidence:
+                raise RuntimeError("conflicting final assistant capture")
+            self.post_seen = True
+            self.post_evidence = evidence
             if not isinstance(text, str) or not text.strip():
                 return
             if is_intentional_silence_response(text):
                 return
-            if self.candidate is not None and (
-                self.candidate != text or self.candidate_native != native
-            ):
-                raise RuntimeError("conflicting final assistant capture")
             if not isinstance(native[0], str) or not native[0]:
                 raise ValueError("finalizer must expose the observed native session")
-            self.candidate = text
+            self.candidate = re.sub(r"[\ud800-\udfff]", "\ufffd", text)
             self.candidate_native = native
             return
         flags = tuple(
@@ -82,8 +93,10 @@ class CommandBinding:
         )
         if any(type(flag) is not bool for flag in flags):
             raise ValueError("finalizer outcome flags must be explicit booleans")
+        reason = payload.get("turn_exit_reason")
+        evidence = (*flags, reason, *native)
         if self.end_flags is not None:
-            if flags != self.end_flags:
+            if evidence != self.end_flags:
                 raise RuntimeError("conflicting final execution outcome")
             return
         completed, failed, interrupted = flags
@@ -97,7 +110,12 @@ class CommandBinding:
         events: tuple[dict[str, Any], ...] = terminal_events(
             self.invocation, outcome=outcome
         )
-        if outcome == "success" and self.candidate is not None:
+        eligible = reason in {
+            "text_response(finish_reason=stop)",
+            "text_response(finish_reason=end_turn)",
+            "text_response(finish_reason=None)",
+        }
+        if outcome == "success" and eligible and self.candidate is not None:
             assert self.candidate_native is not None
             answer = final_answer_event(
                 self.invocation,
@@ -116,7 +134,7 @@ class CommandBinding:
             outcome=outcome,
             terminal_events=events,
         )
-        self.end_flags = flags
+        self.end_flags = evidence
 
 
 command_binding: ContextVar[CommandBinding | None] = ContextVar(
@@ -135,13 +153,65 @@ def pre_llm_call(**payload: Any) -> None:
 
 
 def post_llm_call(**payload: Any) -> None:
-    # This callback is the discriminator: Hermes fires it once after final
-    # output transformation, never for token/tool/history/reasoning callbacks.
     _observe("post", payload)
 
 
 def on_session_end(**payload: Any) -> None:
     _observe("end", payload)
+
+
+class CaptureUnavailable(RouteInvalid):
+    reason = "final_answer_capture_unavailable_before_dispatch"
+
+
+def prepare_capture(handler: Any, event: Any) -> None:
+    from gateway.run import _load_gateway_config, _profile_runtime_scope
+    from hermes_cli.plugins import discover_plugins, get_plugin_manager
+    from hermes_cli.profiles import get_profile_dir
+    from hermes_constants import get_hermes_home
+
+    owner = getattr(handler, "__self__", None)
+    if owner is None:
+        for cell in getattr(handler, "__closure__", ()) or ():
+            value = cell.cell_contents
+            if callable(getattr(value, "_resolve_session_agent_runtime", None)):
+                owner = value
+                break
+    if owner is None or not callable(
+        getattr(owner, "_resolve_session_agent_runtime", None)
+    ):
+        raise CaptureUnavailable("unsupported Hermes handler capture interface")
+    if owner._get_proxy_url():
+        raise CaptureUnavailable("proxy runtime has no local final-answer observer")
+    expected_home = get_profile_dir(event.source.profile).resolve()
+    multiplex = getattr(owner.config, "multiplex_profiles", False)
+    home = (
+        owner._resolve_profile_home_for_source(event.source).resolve()
+        if multiplex
+        else get_hermes_home().resolve()
+    )
+    if home != expected_home:
+        raise CaptureUnavailable("execution home differs from the resolved profile")
+    scope = _profile_runtime_scope(home) if multiplex else nullcontext()
+    with scope:
+        config = _load_gateway_config()
+        model, runtime = owner._resolve_session_agent_runtime(
+            source=event.source, user_config=config
+        )
+        route = owner._resolve_turn_agent_config(event.text, model, runtime)
+        if route["runtime"].get("api_mode") not in {
+            "chat_completions", "anthropic_messages", "codex_responses"
+        }:
+            raise CaptureUnavailable("runtime bypasses the supported finalizer")
+        discover_plugins()
+        manager = get_plugin_manager()
+        for name, callback in (
+            ("pre_llm_call", pre_llm_call),
+            ("post_llm_call", post_llm_call),
+            ("on_session_end", on_session_end),
+        ):
+            if callback not in manager.iter_hook_callbacks(name):
+                raise CaptureUnavailable("resolved profile lacks the final-answer observer")
 
 
 def register_hooks(ctx: Any) -> None:

@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 KNOWN_PROFILES = {"default", "research", "operations", "bloodbank-pm"}
 
 
@@ -137,6 +136,47 @@ def validate_profile_name(name):
 
 hermes_profiles.validate_profile_name = validate_profile_name
 hermes_profiles.profile_exists = lambda name: name in KNOWN_PROFILES
+hermes_profiles.get_profile_dir = lambda name: Path("/fixture") / name
+
+hermes_constants = types.ModuleType("hermes_constants")
+hermes_constants.get_hermes_home = lambda: Path("/fixture/host")
+
+
+class FixtureRunner:
+    config = types.SimpleNamespace(multiplex_profiles=True)
+
+    def __init__(self, handler):
+        self.handler = handler
+
+    def _get_proxy_url(self):
+        return None
+
+    def _resolve_profile_home_for_source(self, source):
+        return hermes_profiles.get_profile_dir(source.profile)
+
+    def _resolve_session_agent_runtime(self, **_kwargs):
+        return "fixture-model", {"api_mode": "chat_completions"}
+
+    def _resolve_turn_agent_config(self, _text, _model, runtime):
+        return {"runtime": runtime}
+
+    async def handle_message(self, event):
+        with sys.modules["gateway.run"]._profile_runtime_scope(
+            self._resolve_profile_home_for_source(event.source)
+        ):
+            return await self.handler(event)
+
+
+gateway_run = types.ModuleType("gateway.run")
+gateway_run._load_gateway_config = dict
+gateway_run._profile_runtime_scope = lambda _home: __import__("contextlib").nullcontext()
+hermes_plugins = types.ModuleType("hermes_cli.plugins")
+hermes_plugins.discover_plugins = lambda: None
+hermes_plugins.get_plugin_manager = lambda: types.SimpleNamespace(
+    iter_hook_callbacks=lambda name: (getattr(
+        sys.modules["bloodbank_hermes_gateway.plugin"], name
+    ),)
+)
 
 sys.modules.setdefault("gateway", gateway)
 sys.modules.setdefault("gateway.config", gateway_config)
@@ -145,6 +185,25 @@ sys.modules.setdefault("gateway.platforms.base", gateway_base)
 sys.modules.setdefault("gateway.response_filters", gateway_filters)
 sys.modules.setdefault("hermes_cli", hermes_cli)
 sys.modules.setdefault("hermes_cli.profiles", hermes_profiles)
+sys.modules.setdefault("hermes_constants", hermes_constants)
+sys.modules.setdefault("hermes_cli.plugins", hermes_plugins)
+sys.modules.setdefault("gateway.run", gateway_run)
+
+
+@pytest.fixture(autouse=True)
+def handler_runtime_fixture(monkeypatch):
+    from bloodbank_hermes_gateway.adapter import BloodbankAdapter
+
+    original = BloodbankAdapter.set_message_handler
+
+    def install(adapter, handler):
+        if getattr(handler, "__self__", None) is None and not getattr(
+            handler, "native_handler", False
+        ):
+            handler = FixtureRunner(handler).handle_message
+        original(adapter, handler)
+
+    monkeypatch.setattr(BloodbankAdapter, "set_message_handler", install)
 
 
 @pytest.fixture

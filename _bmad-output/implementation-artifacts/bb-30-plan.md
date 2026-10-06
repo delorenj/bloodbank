@@ -37,6 +37,23 @@ Not Statues).
 | 6 | Same profile/thread serial, different profiles isolated; child callbacks excluded; copy_context executor propagation |
 | 7 | Canonical validator accepts positives/rejects malformed finals; generic compatibility; Nats-Msg-Id equals event ID |
 
+## Native repair pass (BB-30-repair-1)
+
+Worker: bb30-manualmomo-repair-1, opencode, AutomaticAI sol-6.1.
+Patched base: 15c72d655095c507128e5982bdae6af95e4e81f3; all seven ACs above retained.
+HOLD until parent fresh spec/quality review and separately authorized live proof.
+
+- F1/F2: qualify end-hook native text-response provenance, not body presence;
+  normalize the candidate identically to pinned native Unicode sanitization.
+- F3/F4: preflight the actual handler's routed runtime and home-scoped manager;
+  unsupported or inaccessible capture capability fails before execution. No
+  Hermes core or profile configuration mutation, no send-based capture.
+- F5: compare repeated post/end evidence before empty/silent filtering; retain
+  the first immutable batch and sticky conflict error.
+- Prove complete pinned finalize_turn, sanitizer, native plugin manager/home
+  dispatch, executor context and codex_app_server function offline using Git
+  objects, isolated DBs and benign fixtures. Then gateway/schema/hooks/Ruff gates.
+
 Pre-capture process loss remains ambiguous and may rerun Hermes/external effects.
 After durable capture the batch is replayable; no global exactly-once claim.
 Live Candystore/full-body proof: NOT AUTHORIZED / NOT EXECUTED. PM owns independent
