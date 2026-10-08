@@ -284,7 +284,7 @@ Segment 3 of `type` MUST be one of:
 | `project`      | Project-scoped facts keyed by the pjangler project slug: periodic activity reports and other whole-project outcomes that span a project's repos and boards. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
-| `workflow`     | Multi-step workflow orchestration.                                 | reserved |
+| `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
 | `memory`       | Persistent agent memory writes/reads.                              | reserved |
 
 `reserved` means the domain is registered but not yet emitted. Producers
