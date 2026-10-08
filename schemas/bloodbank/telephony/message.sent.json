@@ -30,7 +30,7 @@
         },
         "line": {
           "type": "string",
-          "description": "The operator line involved: 'cell' (the personal Verizon line, forwarded), or the E.164 of a Telnyx number.",
+          "description": "The operator line involved: 'cell' (the personal Verizon line, forwarded from the Android phone), 'imessage' (the operator's iMessage account on the Mac, through BlueBubbles), or the E.164 of a Telnyx number.",
           "minLength": 1
         },
         "channel": {
