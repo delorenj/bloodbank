@@ -272,7 +272,7 @@ Segment 3 of `type` MUST be one of:
 | `cli`          | Terminal/process-backed agent runtimes (stdin/stdout/stderr/exit). | active   |
 
 | `system`       | Bloodbank platform health (heartbeats, dapr, nats, replay).        | active   |
-| `audio`        | Audio capture lifecycle — inbox ingestion, transcription jobs.     | active   |
+| `audio`        | Audio capture lifecycle — inbox ingestion, transcription jobs, intake extracted from transcripts. | active   |
 | `repo`         | Repo-scoped PM facts such as decisions, intake triage, and tasks.  | active   |
 | `lifecycle`    | Finite development mission: status, roadmap, checkpoints, gates, blockers. | active   |
 | `finance`      | Household finance facts from the tiller sync — accounts, transactions, recurring/zombie subscriptions, cashflow projection. | active   |
@@ -316,7 +316,7 @@ Segment 4 of `type` MUST be one of:
 | `hook`             | `agent`, `system`        | Payload-free hook invocation revisions and hook-hub inventory/health observations. |
 | `heartbeat`        | `system`                 | Liveness/health beat.                                       |
 | `decision`         | `repo`                   | PM decision recorded for a repo; repo slug lives in data.    |
-| `intake`           | `repo`                   | Incoming repo request triaged; repo slug lives in data.      |
+| `intake`           | `repo`, `portfolio`, `audio` | Incoming request awaiting PM triage. `repo`: triaged by a PM (repo slug in data). `portfolio`: Director intake. `audio`: one ticketable task extracted from a transcript (pjangler project in `data.project_id`); `repo.intake.triaged` closes the loop through the same `data.intake_id`. |
 | `task`             | `repo`                   | Repo work item created; repo slug lives in data.             |
 | `board`            | `repo`                   | Provider-neutral project board; repo slug and provider identity live in data. |
 | `maintenance`      | `repo`                   | Automated repository maintenance run and merge-gate outcome. |
@@ -495,7 +495,9 @@ line:<line>                      # telephony: messages on one line ("cell" or a 
 Pick the narrowest bucket that captures the event's natural ordering.
 A `conversation.message.appended` uses `turn:<turn_id>`. A
 `cli.stdout.appended` uses `process:<process_id>`. An
-`audio.transcription.completed` uses `transcription:<transcription_id>`;
+`audio.transcription.completed` uses `transcription:<transcription_id>`,
+and every `audio.intake.detected` extracted from that transcript shares the
+bucket so the intakes order after the completion that caused them;
 an `audio.file.received` uses `file:<sha256(file_path)>` so re-detections
 of the same artifact form a stable bucket. A `project.activity.recorded`
 uses `project:<project_slug>` — the slug from the project's `.project.json`
