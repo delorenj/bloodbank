@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/telephony/message.completed.json",
+  "title": "Telephony Message Completed Event",
+  "description": "An outbound message reached its final successful state: delivered to the handset (or, where carriers give no receipt, sent and finalized). ordering_key is line:<line>. See bloodbank/docs/event-naming.md (telephony).",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.telephony.message.completed"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "telephony"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.telephony.message.completed.",
+      "properties": {
+        "message_id": {
+          "type": "string",
+          "description": "Same id as the telephony.message.sent event.",
+          "minLength": 1
+        },
+        "line": {
+          "type": "string",
+          "description": "The operator line involved: 'cell' (the personal Verizon line, forwarded), or the E.164 of a Telnyx number.",
+          "minLength": 1
+        },
+        "to": {
+          "type": "string",
+          "description": "Destination (E.164).",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "description": "Final status.",
+          "enum": [
+            "delivered",
+            "sent"
+          ]
+        },
+        "completed_at": {
+          "type": "string",
+          "description": "When the provider finalized it.",
+          "format": "date-time"
+        },
+        "cost": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Provider charge, when known.",
+          "properties": {
+            "amount": {
+              "type": "string",
+              "description": "Decimal amount as the provider reports it."
+            },
+            "currency": {
+              "type": "string",
+              "description": "ISO 4217 code.",
+              "minLength": 3,
+              "maxLength": 3
+            }
+          },
+          "required": [
+            "amount",
+            "currency"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "message_id",
+        "line",
+        "to",
+        "status",
+        "completed_at"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}

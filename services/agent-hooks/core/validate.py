@@ -59,8 +59,9 @@ ALLOWED_DOMAINS = frozenset({
     # active
     "conversation", "agent", "llm", "cli", "system", "audio", "repo", "lifecycle",
     "finance", "billing", "attendance", "curator", "reporting", "portfolio", "project",
+    "workflow", "telephony",
     # reserved (registered but not yet emitted)
-    "approval", "workspace", "workflow", "memory",
+    "approval", "workspace", "memory",
 })
 
 ALLOWED_ENTITIES = frozenset({
@@ -79,6 +80,7 @@ ALLOWED_ENTITIES = frozenset({
     "clock", "report", "journal", "incident",
     "work", "receipt", "approval", "escalation", "capacity", "lease",
     "activity", "cost",
+    "call",
 })
 
 EVENT_ACTIONS = frozenset({

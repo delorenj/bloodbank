@@ -282,6 +282,7 @@ Segment 3 of `type` MUST be one of:
 | `reporting`    | Company reporting runs, archives, and delivery outcomes.             | active   |
 | `portfolio`    | Company-level intake, delegation receipts, approvals, escalations, and capacity facts. | active   |
 | `project`      | Project-scoped facts keyed by the pjangler project slug: periodic activity reports and other whole-project outcomes that span a project's repos and boards. | active   |
+| `telephony`    | Phone calls and text messages on the operator's lines: Telnyx numbers and the forwarded personal cell (SMS, RCS through notifications, later iMessage). Calls, recordings, voicemail transcripts, and send/call commands executed through Telnyx. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
@@ -301,7 +302,7 @@ Segment 4 of `type` MUST be one of:
 | `cost`             | `billing`                | Scoped provider bill-period snapshot, replaced by revisions. |
 | `thread`           | `conversation`           | One durable conversation across many turns.                 |
 | `turn`             | `conversation`           | One user-prompt-to-final-response unit inside a thread.     |
-| `message`          | `conversation`           | A single user/assistant message appended to the transcript. |
+| `message`          | `conversation`, `telephony` | A single user/assistant message appended to the transcript; in `telephony`, one SMS/MMS/RCS/iMessage text. |
 | `invocation`       | `agent`                  | One round of agent runtime calling an LLM.                  |
 | `session`          | `cli`                    | One CLI session (e.g. `claude` or `copilot` process tree).  |
 | `process`          | `cli`                    | An OS process spawned within a CLI session.                 |
@@ -321,7 +322,7 @@ Segment 4 of `type` MUST be one of:
 | `maintenance`      | `repo`                   | Automated repository maintenance run and merge-gate outcome. |
 | `skill`            | `repo`                   | Repo-scoped agent skill mutation from an automated tuning cycle; repo slug and skill name live in data. |
 | `file`             | `audio`, `curator`       | An on-disk artifact observed by a watcher — an audio inbox file, or a file arriving in a curated directory. |
-| `transcription`    | `audio`                  | A speech-to-text job over a single audio file.              |
+| `transcription`    | `audio`, `telephony`     | A speech-to-text job over a single audio file, or over a call recording or voicemail. |
 | `approval_request` | `approval` (reserved)    | Human approval prompt issued.                               |
 | `worktree`         | `workspace` (reserved)   | Git worktree lifecycle.                                     |
 | `branch`           | `workspace` (reserved)   | Git branch state changes.                                   |
@@ -350,6 +351,7 @@ Segment 4 of `type` MUST be one of:
 | `capacity`         | `portfolio`              | Snapshot of global pipeline or derivative delegation slots.  |
 | `lease`            | `portfolio`              | Time-bounded ownership of one global delegation slot.        |
 | `activity`         | `project`                | One audience-specific activity report over a bounded window of a project's repos, boards and agent sessions. |
+| `call`             | `telephony`              | One phone call on an operator line, from setup to hangup; recordings and voicemails are `call.recorded`. |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -486,6 +488,8 @@ subscription:<series_id>         # finance: recurring-series lifecycle incl. zom
 projection:liquid                # finance: single household-wide projection bucket
 clock:<clock_system>:<principal> # attendance: one worker/system time-clock state bucket
 project:<project_slug>           # project: one bucket per pjangler project; both audiences share it
+call:<call_id>                   # telephony: every event of one phone call, recording and transcript included
+line:<line>                      # telephony: messages on one line ("cell" or a Telnyx E.164)
 ```
 
 Pick the narrowest bucket that captures the event's natural ordering.

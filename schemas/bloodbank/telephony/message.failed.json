@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/telephony/message.failed.json",
+  "title": "Telephony Message Failed Event",
+  "description": "An outbound message could not be sent or delivered, e.g. Telnyx 40010 (sending number not 10DLC-registered). ordering_key is line:<line>. See bloodbank/docs/event-naming.md (telephony).",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.telephony.message.failed"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "telephony"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.telephony.message.failed.",
+      "properties": {
+        "message_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Provider id, or null when the provider refused the request outright."
+        },
+        "line": {
+          "type": "string",
+          "description": "The operator line involved: 'cell' (the personal Verizon line, forwarded), or the E.164 of a Telnyx number.",
+          "minLength": 1
+        },
+        "to": {
+          "type": "string",
+          "description": "Destination (E.164).",
+          "minLength": 1
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Provider error code, e.g. 40010."
+        },
+        "error_title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Short provider error title."
+        },
+        "error_detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Provider error detail."
+        },
+        "failed_at": {
+          "type": "string",
+          "description": "When the failure was reported.",
+          "format": "date-time"
+        },
+        "command_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "command_id of the causing telephony.message.send, if any."
+        }
+      },
+      "required": [
+        "line",
+        "to",
+        "failed_at"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}
