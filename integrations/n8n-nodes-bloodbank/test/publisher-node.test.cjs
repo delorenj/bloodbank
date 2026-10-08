@@ -314,3 +314,27 @@ test('event mode preserves the existing envelope, subject, and output shape', as
   ]);
   assert.equal(result[0][0].json.subject, 'bloodbank.evt.repo.task.created');
 });
+
+test('event mode honors an explicit ordering key', async () => {
+  const messages = [];
+  const node = new Bloodbank();
+  await node.execute.call(executionContext({
+    mode: 'event',
+    event: 'bloodbank.telephony.call.ended',
+    data: {
+      call_id: 'v3:call-1',
+      line: '+12155550100',
+      direction: 'inbound',
+      from: '+12155550199',
+      to: '+12155550100',
+      disposition: 'voicemail',
+      ended_at: '2026-10-08T21:00:00Z',
+    },
+    orderingKey: ' call:v3:call-1 ',
+    connection: { natsHost: 'test-nats', natsPort: 4222 },
+  }), capturedPublisher(messages));
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].subject, 'bloodbank.evt.telephony.call.ended');
+  assert.equal(messages[0].envelope.ordering_key, 'call:v3:call-1');
+});

@@ -109,6 +109,15 @@ export class Bloodbank implements INodeType {
           'Event payload object. Required fields per event are shown in the Event dropdown. Provide literal JSON or an expression returning an object.',
       },
       {
+        displayName: 'Ordering Key',
+        name: 'orderingKey',
+        type: 'string',
+        default: '',
+        displayOptions: { show: { mode: ['event'] } },
+        description:
+          'Optional envelope ordering_key, e.g. call:{{ $json.data.call_id }} (docs/event-naming.md §11.1). Empty derives <domain>:<entity id>.',
+      },
+      {
         displayName: 'Command',
         name: 'command',
         type: 'options',
@@ -346,10 +355,12 @@ export class Bloodbank implements INodeType {
           );
         }
 
+        const orderingKey = optionalText(this.getNodeParameter('orderingKey', i, ''));
         const res = await send({
           type,
           kind: 'event',
           data,
+          orderingKey: orderingKey || undefined,
           host: conn.natsHost || undefined,
           port: conn.natsPort ? Number(conn.natsPort) : undefined,
           timeoutMs: conn.timeoutMs ? Number(conn.timeoutMs) : undefined,
