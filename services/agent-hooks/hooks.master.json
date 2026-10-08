@@ -934,7 +934,7 @@
         }
       ],
       "plugin_source": "opencode/hook-hub.js",
-      "note": "Native plugin routes OpenCode events to the hub with actor.cli=opencode. session.idle completes a turn; only session.deleted closes a session. Global plugin is auto-loaded; no direct behavioral handlers."
+      "note": "Native plugin routes OpenCode events to the hub with actor.cli=opencode. Written to the OpenCode v2 contract (export default {id, setup(ctx)}); v1 plugin functions do not run in v2. session.idle completes a turn; only session.deleted closes a session. Global plugin is auto-loaded; no direct behavioral handlers."
     }
   }
 }

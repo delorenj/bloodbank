@@ -271,47 +271,72 @@ def test_cli_discovery_works_with_user_service_path(tmp_path, monkeypatch):
     assert find_cli_binary("gemini") is None
 
 
-def test_opencode_native_bridge_keeps_session_identity_context_and_failed_tool_once(tmp_path):
-    helper = tmp_path / "bb-hook"
-    receipt = tmp_path / "calls.jsonl"
-    helper.write_text("#!/usr/bin/env python3\nimport json,sys,os\np=json.load(sys.stdin)\nwith open(os.environ['BB_TEST_RECEIPTS'],'a') as f:f.write(json.dumps({'args':sys.argv[1:],'payload':p})+'\\n')\nif p['hook_event_name']=='chat.message':print(json.dumps({'hookSpecificOutput':{'additionalContext':'fixture context'}}))\n")
-    helper.chmod(0o755)
-    plugin = Path(__file__).resolve().parents[1] / "opencode/hook-hub.js"
-    script = f"""
-import {{ BloodbankHookHub }} from {json.dumps(plugin.as_uri())};
-const hooks = await BloodbankHookHub({{ directory: {json.dumps(str(tmp_path))} }});
-await hooks.event({{event:{{type:'session.created',properties:{{info:{{id:'session-A'}}}}}}}});
-const output = {{message:{{id:'turn-A'}},parts:[{{type:'text',text:'hello'}}]}};
-await hooks['chat.message']({{sessionID:'session-A',messageID:'turn-A',model:{{modelID:'model',providerID:'provider'}}}},output);
-const input = {{sessionID:'session-A',callID:'call-1',tool:'bash'}};
-await hooks['tool.execute.before'](input,{{args:{{command:'false'}}}});
-await hooks.event({{event:{{type:'message.part.updated',properties:{{part:{{type:'tool',sessionID:'session-A',callID:'call-1',state:{{status:'error',error:'fixture failure'}}}}}}}}}});
-await hooks['tool.execute.after'](input,{{output:'late duplicated callback'}});
-await hooks.event({{event:{{type:'session.idle',properties:{{sessionID:'session-A'}}}}}});
-await hooks.event({{event:{{type:'session.deleted',properties:{{info:{{id:'session-A'}}}}}}}});
-console.log(JSON.stringify(output.parts));
+# OpenCode v2 host stand-in. The shapes mirror @opencode/plugin@2.0.25 (session.hook("prompt"|"context"),
+# tool.hook("execute.before"|"execute.after"), event.subscribe, session.context). It is only a regression
+# harness for the plugin's own ordering and race logic; that the real host fires these hooks is proved by
+# running the installed binary (see docs/hooks-native-acceptance-*.md), not by this file.
+OPENCODE_HOST = r"""
+import plugin from %(plugin)s;
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const directory = %(directory)s;
+const receipt = %(receipt)s;
+const subscribers = new Set();
+const history = new Map();
+const registry = { prompt: [], context: [], 'tool.execute.before': [], 'tool.execute.after': [] };
+const ctx = {
+  location: { directory }, options: {},
+  event: { subscribe({ signal } = {}) {
+    const queue = []; let wake;
+    const sub = { push(e) { queue.push(e); wake?.(); } };
+    subscribers.add(sub);
+    signal?.addEventListener('abort', () => { subscribers.delete(sub); wake?.(); });
+    return (async function* () {
+      while (!signal?.aborted) {
+        if (!queue.length) await new Promise((r) => { wake = r; });
+        wake = undefined;
+        while (queue.length) yield queue.shift();
+      }
+    })();
+  } },
+  session: {
+    hook: async (name, fn) => { registry[name].push(fn); return { dispose() {} }; },
+    context: async ({ sessionID }) => (history.get(sessionID) || []).map((m) => ({ id: m.id, role: 'user', content: [{ type: 'text', text: m.text }] })),
+  },
+  tool: { hook: async (name, fn) => { registry['tool.' + name].push(fn); return { dispose() {} }; } },
+};
+const cleanup = await plugin.setup(ctx);
+const settle = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
+const calls = () => existsSync(receipt) ? readFileSync(receipt, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
+const matching = (native, sessionID) => calls().filter((call) => call.payload.hook_event_name === native && call.payload.session_id === sessionID);
+const publish = async (type, data, where = directory) => { for (const sub of subscribers) sub.push({ id: 'evt', type, data, location: { directory: where } }); await settle(); };
+const created = (sessionID, where) => publish('session.created', { sessionID }, where);
+const deleted = (sessionID) => publish('session.deleted', { sessionID });
+const seed = (sessionID, ...ids) => history.set(sessionID, ids.map((id) => ({ id, text: id })));
+const message = async (sessionID, messageID) => {
+  const event = { sessionID, messageID, prompt: { text: messageID }, delivery: 'steer' };
+  for (const fn of registry.prompt) await fn(event);
+  history.set(sessionID, [...(history.get(sessionID) || []), { id: messageID, text: event.prompt.text }]);
+  const request = { sessionID, model: { providerID: 'provider', id: 'model' }, system: [], options: {}, tools: {},
+    messages: history.get(sessionID).map((m) => ({ id: m.id, role: 'user', content: [{ type: 'text', text: m.text }] })) };
+  for (const fn of registry.context) await fn(request);
+  return request.messages.find((m) => m.id === messageID).content;
+};
+const toolBefore = (sessionID, id, input) => Promise.all(registry['tool.execute.before'].map((fn) => fn({ tool: 'bash', sessionID, agent: 'build', messageID: 'm', id, input })));
+const toolAfter = (sessionID, id, input, rest) => Promise.all(registry['tool.execute.after'].map((fn) => fn({ tool: 'bash', sessionID, agent: 'build', messageID: 'm', id, input, ...rest })));
+const gate = (native, sessionID, key) => join(directory, `${native}-${sessionID}-${key}.blocked`);
+const block = (native, sessionID, key) => writeFileSync(gate(native, sessionID, key), '');
+const release = (native, sessionID, key) => unlinkSync(gate(native, sessionID, key));
+const waitFor = async (native, sessionID) => {
+  const deadline = Date.now() + 3000;
+  while (!matching(native, sessionID).length) {
+    if (Date.now() > deadline) throw new Error('fixture call was not received');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
 """
-    env = {**os.environ, "BB_HOOK_COMMAND": str(helper), "BB_TEST_RECEIPTS": str(receipt)}
-    result = subprocess.run(["node", "--input-type=module", "-e", script], env=env,
-                            capture_output=True, text=True, timeout=10, check=True)
-    parts = json.loads(result.stdout)
-    assert parts[-1]["text"] == "fixture context"
-    calls = [json.loads(line) for line in receipt.read_text().splitlines()]
-    assert [call["payload"]["hook_event_name"] for call in calls] == [
-        "session.created", "chat.message", "tool.execute.before", "tool.execute.after", "session.idle", "session.deleted"]
-    assert all(call["payload"]["session_id"] == "session-A" for call in calls)
-    assert calls[3]["payload"]["is_error"] is True
-    assert calls[3]["payload"]["tool_call_id"] == "call-1"
-    assert calls[1]["args"][-2:] == ["--deadline", "15"]
 
-
-class TestOpenCodeStartupContext(unittest.TestCase):
-    def run_bridge(self, script, startup_format="nested", prompt_context=False):
-        with TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            helper = directory / "bb-hook"
-            receipt = directory / "calls.jsonl"
-            helper.write_text("""#!/usr/bin/env python3
+BB_HOOK_STUB = r"""#!/usr/bin/env python3
 import json
 import os
 import sys
@@ -321,7 +346,7 @@ from pathlib import Path
 payload = json.load(sys.stdin)
 receipt = Path(os.environ["BB_TEST_RECEIPTS"])
 with receipt.open("a") as stream:
-    stream.write(json.dumps({"args": sys.argv[1:], "payload": payload}) + "\\n")
+    stream.write(json.dumps({"args": sys.argv[1:], "payload": payload}) + "\n")
 native = payload["hook_event_name"]
 key = payload.get("turn_id") or payload.get("source") or ""
 gate = receipt.parent / f"{native}-{payload['session_id']}-{key}.blocked"
@@ -330,6 +355,7 @@ while gate.exists():
     if time.monotonic() > deadline:
         raise TimeoutError("fixture gate was not released")
     time.sleep(0.005)
+gate.with_suffix(".done").write_text("")
 if native == "session.created":
     context = "startup context:" + payload["session_id"]
     style = os.environ["BB_TEST_STARTUP_FORMAT"]
@@ -341,55 +367,159 @@ if native == "session.created":
         print("  " + context + "  ")
 elif native == "chat.message" and os.environ["BB_TEST_PROMPT_CONTEXT"] == "1":
     print(json.dumps({"hookSpecificOutput": {"additionalContext": "prompt context:" + payload["turn_id"]}}))
-""")
+"""
+
+
+class TestOpenCodeBridge(unittest.TestCase):
+    def run_bridge(self, script, startup_format="nested", prompt_context=False):
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            helper = directory / "bb-hook"
+            receipt = directory / "calls.jsonl"
+            helper.write_text(BB_HOOK_STUB)
             helper.chmod(0o755)
             plugin = Path(__file__).resolve().parents[1] / "opencode/hook-hub.js"
-            prelude = f"""
-import {{ BloodbankHookHub }} from {json.dumps(plugin.as_uri())};
-import {{ existsSync, readFileSync, unlinkSync, writeFileSync }} from 'node:fs';
-import {{ join }} from 'node:path';
-const directory = {json.dumps(str(directory))};
-const receipt = {json.dumps(str(receipt))};
-const hooks = await BloodbankHookHub({{ directory }});
-const calls = () => existsSync(receipt) ? readFileSync(receipt, 'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse) : [];
-const matching = (native, sessionID) => calls().filter((call) => call.payload.hook_event_name === native && call.payload.session_id === sessionID);
-const created = (sessionID) => hooks.event({{ event: {{ type: 'session.created', properties: {{ info: {{ id: sessionID }} }} }} }});
-const deleted = (sessionID) => hooks.event({{ event: {{ type: 'session.deleted', properties: {{ info: {{ id: sessionID }} }} }} }});
-const message = async (sessionID, messageID) => {{
-  const output = {{ message: {{ id: messageID, sessionID }}, parts: [{{ type: 'text', text: messageID }}] }};
-  await hooks['chat.message']({{ sessionID, messageID }}, output);
-  return output;
-}};
-const gate = (native, sessionID, key) => join(directory, `${{native}}-${{sessionID}}-${{key}}.blocked`);
-const block = (native, sessionID, key) => writeFileSync(gate(native, sessionID, key), '');
-const release = (native, sessionID, key) => unlinkSync(gate(native, sessionID, key));
-const waitFor = async (native, sessionID) => {{
-  const deadline = Date.now() + 3000;
-  while (!matching(native, sessionID).length) {{
-    if (Date.now() > deadline) throw new Error('fixture call was not received');
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }}
-}};
-"""
+            prelude = OPENCODE_HOST % {"plugin": json.dumps(plugin.as_uri()),
+                                       "directory": json.dumps(str(directory)),
+                                       "receipt": json.dumps(str(receipt))}
             env = {**os.environ, "BB_HOOK_COMMAND": str(helper), "BB_TEST_RECEIPTS": str(receipt),
                    "BB_TEST_STARTUP_FORMAT": startup_format, "BB_TEST_PROMPT_CONTEXT": str(int(prompt_context))}
             result = subprocess.run(["node", "--input-type=module", "-e", prelude + script],
-                                    env=env, capture_output=True, text=True, timeout=15, check=True)
-            return json.loads(result.stdout), [json.loads(line) for line in receipt.read_text().splitlines()]
+                                    env=env, capture_output=True, text=True, timeout=20, check=True)
+            calls = [json.loads(line) for line in receipt.read_text().splitlines()] if receipt.exists() else []
+            return json.loads(result.stdout), calls
 
-    def assert_context(self, output, session_id, message_id, text):
-        self.assertEqual(output["parts"][0], {"type": "text", "text": message_id})
+    def assert_context(self, content, message_id, text):
+        self.assertEqual(content[0], {"type": "text", "text": message_id})
         if not text:
-            self.assertEqual(len(output["parts"]), 1)
+            self.assertEqual(len(content), 1)
             return
-        self.assertEqual(len(output["parts"]), 2)
-        part = output["parts"][1]
-        self.assertRegex(part["id"], r"^prt_[0-9a-f]{12}[0-9A-Za-z]{14}$")
-        self.assertEqual(part["sessionID"], session_id)
-        self.assertEqual(part["messageID"], message_id)
-        self.assertEqual(part["type"], "text")
-        self.assertIs(part["synthetic"], True)
-        self.assertEqual(part["text"], text)
+        self.assertEqual(len(content), 2)
+        self.assertEqual(content[1], {"type": "text", "text": f"<system-reminder>\n{text}\n</system-reminder>"})
+
+    def test_turn_keeps_session_identity_context_and_failed_tool_once(self):
+        outputs, calls = self.run_bridge("""
+await created('session-A');
+const content = await message('session-A', 'turn-A');
+await toolBefore('session-A', 'call-1', { command: 'false' });
+await toolAfter('session-A', 'call-1', { command: 'false' }, { status: 'error', error: { type: 'tool', message: 'fixture failure' } });
+await toolAfter('session-A', 'call-1', { command: 'false' }, { status: 'completed', result: { content: [{ type: 'text', text: 'late duplicated callback' }] } });
+await publish('session.execution.succeeded', { sessionID: 'session-A' });
+await publish('session.execution.succeeded', { sessionID: 'session-A' });
+await deleted('session-A');
+console.log(JSON.stringify({ content }));
+""", prompt_context=True)
+        self.assert_context(outputs["content"], "turn-A", "startup context:session-A\n\nprompt context:turn-A")
+        self.assertEqual([call["payload"]["hook_event_name"] for call in calls], [
+            "session.created", "chat.message", "tool.execute.before", "tool.execute.after", "session.idle", "session.deleted"])
+        self.assertTrue(all(call["payload"]["session_id"] == "session-A" for call in calls))
+        self.assertNotIn("model", calls[1]["payload"])
+        self.assertEqual(calls[1]["payload"]["prompt"], "turn-A")
+        self.assertEqual(calls[2]["payload"]["tool_input"], {"command": "false"})
+        self.assertIs(calls[3]["payload"]["is_error"], True)
+        self.assertEqual(calls[3]["payload"]["error"], "fixture failure")
+        self.assertEqual(calls[3]["payload"]["tool_call_id"], "call-1")
+        self.assertEqual(calls[3]["payload"]["turn_id"], "turn-A")
+        self.assertEqual(calls[4]["payload"]["turn_id"], "turn-A")
+        self.assertEqual(calls[1]["args"][-2:], ["--deadline", "15"])
+        self.assertEqual(calls[1]["args"][:4], ["--cli", "opencode", "--native", "chat.message"])
+
+    def test_successful_tool_output_comes_from_the_result_content(self):
+        _, calls = self.run_bridge("""
+await created('session-A');
+await message('session-A', 'turn-A');
+await toolBefore('session-A', 'call-1', { command: 'echo hi' });
+await toolAfter('session-A', 'call-1', { command: 'echo hi' }, { status: 'completed', result: { content: [{ type: 'text', text: 'hi' }, { type: 'text', text: 'there' }] } });
+console.log('{}');
+""")
+        after = next(call for call in calls if call["payload"]["hook_event_name"] == "tool.execute.after")
+        self.assertEqual(after["payload"]["tool_output"], "hi\nthere")
+        self.assertIs(after["payload"]["is_error"], False)
+        self.assertEqual(after["payload"]["tool_input"], {"command": "echo hi"})
+
+    def test_stopped_tool_call_is_closed_once_by_the_failure_event(self):
+        _, calls = self.run_bridge("""
+await created('session-A');
+await message('session-A', 'turn-A');
+await toolBefore('session-A', 'call-1', { command: 'sleep 9' });
+await publish('session.tool.failed', { sessionID: 'session-A', id: 'call-1', error: { type: 'aborted', message: 'stopped' } });
+await toolAfter('session-A', 'call-1', { command: 'sleep 9' }, { status: 'error', error: { type: 'aborted', message: 'stopped' } });
+console.log('{}');
+""")
+        afters = [call["payload"] for call in calls if call["payload"]["hook_event_name"] == "tool.execute.after"]
+        self.assertEqual(len(afters), 1)
+        self.assertIs(afters[0]["is_error"], True)
+        self.assertEqual(afters[0]["error"], "stopped")
+
+    def test_chat_message_reports_the_model_the_session_selected(self):
+        _, calls = self.run_bridge("""
+await created('session-A');
+await publish('session.model.selected', { sessionID: 'session-A', model: { providerID: 'automaticai', id: 'sol-6.1' } });
+await message('session-A', 'turn-A');
+console.log('{}');
+""")
+        chat = next(call for call in calls if call["payload"]["hook_event_name"] == "chat.message")
+        self.assertEqual(chat["payload"]["model"], {"providerID": "automaticai", "modelID": "sol-6.1"})
+
+    def test_first_turn_asks_the_session_for_its_model(self):
+        _, calls = self.run_bridge("""
+ctx.session.get = async ({ sessionID }) => ({ id: sessionID, model: { providerID: 'automaticai', id: 'sol-6.1' } });
+await created('session-A');
+await message('session-A', 'turn-A');
+console.log('{}');
+""")
+        chat = next(call for call in calls if call["payload"]["hook_event_name"] == "chat.message")
+        self.assertEqual(chat["payload"]["model"], {"providerID": "automaticai", "modelID": "sol-6.1"})
+
+    def test_turn_end_maps_each_terminal_execution_event_once(self):
+        _, calls = self.run_bridge("""
+await created('session-A');
+for (const [event, data] of [
+  ['succeeded', {}], ['interrupted', { reason: 'superseded' }], ['interrupted', { reason: 'shutdown' }],
+  ['interrupted', { reason: 'user' }], ['failed', { error: { type: 'provider', message: 'boom' } }],
+]) {
+  await message('session-A', 'turn-' + event + (data.reason || ''));
+  await publish('session.execution.' + event, { sessionID: 'session-A', ...data });
+}
+console.log('{}');
+""")
+        natives = [call["payload"]["hook_event_name"] for call in calls if call["payload"]["hook_event_name"] != "chat.message"]
+        # succeeded, (superseded and shutdown end nothing), user interrupt, then error followed by its idle.
+        self.assertEqual(natives, ["session.created", "session.idle", "session.idle", "session.error", "session.idle"])
+        error = next(call["payload"] for call in calls if call["payload"]["hook_event_name"] == "session.error")
+        self.assertEqual(error["error"], {"type": "provider", "message": "boom"})
+
+    def test_permission_request_is_forwarded_under_its_v1_field_names(self):
+        _, calls = self.run_bridge("""
+await created('session-A');
+await publish('permission.asked', { sessionID: 'session-A', id: 'per_1', action: 'shell', resources: ['rm -rf x'] });
+console.log('{}');
+""")
+        asked = next(call["payload"] for call in calls if call["payload"]["hook_event_name"] == "permission.asked")
+        self.assertEqual((asked["permission"], asked["patterns"], asked["tool_name"]), ("shell", ["rm -rf x"], "shell"))
+        self.assertEqual(asked["session_id"], "session-A")
+
+    def test_sessions_created_in_another_directory_are_not_ours(self):
+        _, calls = self.run_bridge("""
+await created('session-elsewhere', '/somewhere/else');
+await publish('session.execution.succeeded', { sessionID: 'session-elsewhere' });
+await created('session-A');
+console.log('{}');
+""")
+        self.assertEqual([call["payload"]["session_id"] for call in calls], ["session-A"])
+
+    def test_cleanup_lets_the_turn_end_hook_finish_before_the_host_exits(self):
+        outputs, _ = self.run_bridge("""
+await created('session-A');
+await message('session-A', 'turn-A');
+block('session.idle', 'session-A', 'turn-A');
+await publish('session.execution.succeeded', { sessionID: 'session-A' });
+await waitFor('session.idle', 'session-A');
+setTimeout(() => release('session.idle', 'session-A', 'turn-A'), 150);
+await cleanup();
+console.log(JSON.stringify({ finished: existsSync(gate('session.idle', 'session-A', 'turn-A').replace(/\.blocked$/, '.done')) }));
+""")
+        self.assertTrue(outputs["finished"], "cleanup returned before the turn-end hook completed")
 
     def test_event_first_delivers_startup_only_context_once(self):
         for style in ("nested", "flat", "plain", "empty"):
@@ -402,26 +532,52 @@ const later = await message('session-A', 'later');
 console.log(JSON.stringify({ first, later }));
 """, startup_format=style)
                 text = "" if style == "empty" else "startup context:session-A"
-                self.assert_context(outputs["first"], "session-A", "first", text)
-                self.assert_context(outputs["later"], "session-A", "later", "")
+                self.assert_context(outputs["first"], "first", text)
+                self.assertEqual(outputs["later"][0], {"type": "text", "text": "later"})
+                self.assertEqual(len(outputs["later"]), 1)
                 self.assertEqual([call["payload"]["hook_event_name"] for call in calls],
                                  ["session.created", "chat.message", "chat.message"])
                 self.assertEqual(calls[0]["payload"]["source"], "startup")
                 self.assertTrue(all(call["args"][-2:] == ["--deadline", "15"] for call in calls))
                 self.assertEqual([call["payload"]["prompt"] for call in calls[1:]], ["first", "later"])
 
-    def test_message_first_delivers_context_without_restarting_on_late_event(self):
+    def test_context_stays_on_its_own_message_for_every_later_request(self):
+        outputs, _ = self.run_bridge("""
+await created('session-A');
+await message('session-A', 'first');
+await message('session-A', 'later');
+const again = [];
+const request = { sessionID: 'session-A', model: { providerID: 'p', id: 'm' }, system: [], options: {}, tools: {},
+  messages: [{ id: 'first', role: 'user', content: [{ type: 'text', text: 'first' }] },
+             { id: 'later', role: 'user', content: [{ type: 'text', text: 'later' }] },
+             { id: 'assistant-1', role: 'assistant', content: [{ type: 'text', text: 'reply' }] }] };
+for (const fn of registry.context) await fn(request);
+console.log(JSON.stringify(request.messages.map((m) => m.content.length)));
+""")
+        self.assertEqual(outputs, [2, 1, 1])
+
+    def test_message_first_on_a_new_session_still_gets_the_startup_briefing(self):
         outputs, calls = self.run_bridge("""
 const first = await message('session-A', 'first');
 await created('session-A');
 const later = await message('session-A', 'later');
 console.log(JSON.stringify({ first, later }));
 """)
-        self.assert_context(outputs["first"], "session-A", "first", "startup context:session-A")
-        self.assert_context(outputs["later"], "session-A", "later", "")
+        self.assert_context(outputs["first"], "first", "startup context:session-A")
+        self.assertEqual(len(outputs["later"]), 1)
         self.assertEqual([call["payload"]["hook_event_name"] for call in calls],
                          ["session.created", "chat.message", "chat.message"])
+        self.assertEqual(calls[0]["payload"]["source"], "startup")
+
+    def test_message_first_on_an_existing_session_resumes_without_the_briefing_flag(self):
+        outputs, calls = self.run_bridge("""
+seed('session-A', 'earlier');
+const first = await message('session-A', 'first');
+console.log(JSON.stringify({ first }));
+""")
+        self.assertEqual(calls[0]["payload"]["hook_event_name"], "session.created")
         self.assertEqual(calls[0]["payload"]["source"], "resume")
+        self.assert_context(outputs["first"], "first", "startup context:session-A")
 
     def test_independent_sessions_do_not_wait_for_or_consume_each_others_context(self):
         outputs, calls = self.run_bridge("""
@@ -431,6 +587,7 @@ await waitFor('session.created', 'session-A');
 await created('session-B');
 const firstB = await message('session-B', 'first-B');
 const pendingA = message('session-A', 'first-A');
+await settle();
 const chatsBeforeRelease = matching('chat.message', 'session-A').length;
 release('session.created', 'session-A', 'startup');
 const [, firstA] = await Promise.all([startupA, pendingA]);
@@ -440,18 +597,16 @@ console.log(JSON.stringify({ firstA, firstB, laterA, laterB, chatsBeforeRelease 
 """)
         self.assertEqual(outputs["chatsBeforeRelease"], 0)
         for name in ("A", "B"):
-            self.assert_context(outputs[f"first{name}"], f"session-{name}", f"first-{name}",
-                                f"startup context:session-{name}")
-            self.assert_context(outputs[f"later{name}"], f"session-{name}", f"later-{name}", "")
+            self.assert_context(outputs[f"first{name}"], f"first-{name}", f"startup context:session-{name}")
+            self.assertEqual(len(outputs[f"later{name}"]), 1)
             self.assertEqual(sum(call["payload"]["hook_event_name"] == "session.created" and
                                  call["payload"]["session_id"] == f"session-{name}" for call in calls), 1)
-        self.assertNotEqual(outputs["firstA"]["parts"][1]["id"], outputs["firstB"]["parts"][1]["id"])
 
     def test_concurrent_startup_and_messages_share_one_result_for_the_first_message(self):
         for event_first in (True, False):
             with self.subTest(event_first=event_first):
                 outputs, calls = self.run_bridge(f"const eventFirst = {json.dumps(event_first)};" + """
-const source = eventFirst ? 'startup' : 'resume';
+const source = 'startup';
 block('session.created', 'session-A', source);
 const startup = eventFirst ? created('session-A') : undefined;
 const first = message('session-A', 'first');
@@ -464,8 +619,8 @@ const [, , firstOutput, laterOutput] = await Promise.all([startup, duplicate, fi
 console.log(JSON.stringify({ first: firstOutput, later: laterOutput, chatsBeforeRelease }));
 """)
                 self.assertEqual(outputs["chatsBeforeRelease"], 0)
-                self.assert_context(outputs["first"], "session-A", "first", "startup context:session-A")
-                self.assert_context(outputs["later"], "session-A", "later", "")
+                self.assert_context(outputs["first"], "first", "startup context:session-A")
+                self.assertEqual(len(outputs["later"]), 1)
                 self.assertEqual(sum(call["payload"]["hook_event_name"] == "session.created" for call in calls), 1)
 
     def test_later_prompt_finishing_first_cannot_steal_startup_context(self):
@@ -478,8 +633,8 @@ const later = await message('session-A', 'later');
 release('chat.message', 'session-A', 'first');
 console.log(JSON.stringify({ first: await first, later }));
 """)
-        self.assert_context(outputs["first"], "session-A", "first", "startup context:session-A")
-        self.assert_context(outputs["later"], "session-A", "later", "")
+        self.assert_context(outputs["first"], "first", "startup context:session-A")
+        self.assertEqual(len(outputs["later"]), 1)
         self.assertEqual(len(calls), 3)
 
     def test_deletion_discards_ready_and_inflight_startup_context(self):
@@ -492,6 +647,7 @@ await waitFor('session.created', 'session-A');
 if (!pending) await startup;
 const old = pending ? message('session-A', 'old') : undefined;
 await deleted('session-A');
+seed('session-A', 'earlier');
 const first = await message('session-A', 'first');
 if (pending) release('session.created', 'session-A', 'startup');
 await startup;
@@ -499,10 +655,10 @@ const oldOutput = await old;
 const later = await message('session-A', 'later');
 console.log(JSON.stringify({ first, later, old: oldOutput }));
 """)
-                self.assert_context(outputs["first"], "session-A", "first", "startup context:session-A")
-                self.assert_context(outputs["later"], "session-A", "later", "")
+                self.assert_context(outputs["first"], "first", "startup context:session-A")
+                self.assertEqual(len(outputs["later"]), 1)
                 if pending:
-                    self.assert_context(outputs["old"], "session-A", "old", "")
+                    self.assertEqual(len(outputs["old"]), 1)
                 startups = [call for call in calls if call["payload"]["hook_event_name"] == "session.created"]
                 self.assertEqual([call["payload"]["source"] for call in startups], ["startup", "resume"])
 
@@ -513,10 +669,9 @@ const first = await message('session-A', 'first');
 const later = await message('session-A', 'later');
 console.log(JSON.stringify({ first, later }));
 """, prompt_context=True)
-        self.assert_context(outputs["first"], "session-A", "first", "startup context:session-A\n\nprompt context:first")
-        self.assert_context(outputs["later"], "session-A", "later", "prompt context:later")
+        self.assert_context(outputs["first"], "first", "startup context:session-A\n\nprompt context:first")
+        self.assert_context(outputs["later"], "later", "prompt context:later")
         self.assertEqual([call["payload"]["prompt"] for call in calls[1:]], ["first", "later"])
-        self.assertNotEqual(outputs["first"]["parts"][1]["id"], outputs["later"]["parts"][1]["id"])
 
 
 @pytest.mark.skipif(shutil.which("codex") is None, reason="installed Codex loader unavailable")
