@@ -89,6 +89,10 @@ NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")
 SUBJECT = os.environ.get("SUBJECT_FILTER", "bloodbank.evt.>")
 NTFY_URL = os.environ.get("NTFY_URL", "https://ntfy.delo.sh").rstrip("/")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "bloodbank")
+# Deploys and their catch-up installs also go to this low-volume topic, the one the ntfy upstream gate forwards to
+# ntfy.sh, so ntfy-ios (the iPad, an iPhone) is woken for them; the firehose topic never wakes an iOS device.
+# "" turns the copy off. The S26 keeps getting them on NTFY_TOPIC.
+DEPLOY_TOPIC = os.environ.get("NTFY_DEPLOY_TOPIC", "deploys")
 NTFY_PRIORITY = os.environ.get("NTFY_PRIORITY", "5")  # 1=min, 5=max (loud)
 NTFY_TAGS = os.environ.get("NTFY_TAGS", "drop_of_blood,zap")
 NTFY_TOKEN = os.environ.get("NTFY_TOKEN", "")
@@ -110,6 +114,7 @@ MAX_LABEL = 32
 MAX_URL = 600
 MAX_LINKS_READ = 12  # the schema allows 6
 LINK_URL = re.compile(r'(?:https|itms-services)://[^\s"<>]+')
+SIZED_LABEL = re.compile(r"\(\d+(?:\.\d+)? [KMG]B\)")
 DEPLOY_BODY_CHARS = 1000
 SIZE_TIMEOUT = 3.0  # seconds for the HEAD that sizes a deploy's APK
 
@@ -524,6 +529,8 @@ class NtfyRouter:
     # Sizes a deploy's APK for its body; None leaves the size line out.
     sizer: Sizer | None = None
     max_remembered_installs: int = 512
+    # Where a copy of every deployment goes (see DEPLOY_TOPIC); "" for none.
+    deploy_topic: str = DEPLOY_TOPIC
 
     digested: Counter = field(default_factory=Counter)
     overflow: Counter = field(default_factory=Counter)
@@ -613,9 +620,13 @@ class NtfyRouter:
     async def _apk_bytes(self, event_type: str, links: list[dict[str, str]]) -> int | None:
         if self.sizer is None or event_type != DEPLOYMENT_COMPLETED:
             return None
-        url = next((link["url"] for link in links if link["rel"] == "apk" and link["url"].startswith("https://")), None)
-        if url is None:
+        apk = next((link for link in links if link["rel"] == "apk" and link["url"].startswith("https://")), None)
+        if apk is None:
             return None
+        # The hub puts the size in the button ("Install APK (74.7 MB)"): no HEAD, and no second size line.
+        if SIZED_LABEL.search(apk["label"]):
+            return None
+        url = apk["url"]
         try:
             return await self.sizer(url)
         except Exception as exc:  # noqa: BLE001 -- a size line is never worth a lost route
@@ -659,9 +670,28 @@ class NtfyRouter:
             log.info("routed: %s", event_type)
             if message is not None:
                 log.info("buttons: %s", " | ".join(action["label"] for action in message["actions"]))
+            await self._copy_to_deploy_topic(event_type, title, body, headers, message)
             return "routed"
         self.overflow[event_type] += 1
         return "failed"
+
+    async def _copy_to_deploy_topic(
+        self, event_type: str, title: str, body: str, headers: dict[str, str], message: dict[str, Any] | None,
+    ) -> None:
+        """The same deployment notification on the deploy topic, as a JSON publish (the iOS devices subscribe there)."""
+        if not self.deploy_topic or event_type not in (DEPLOYMENT_COMPLETED, DEPLOYMENT_FAILED):
+            return
+        copy = dict(message) if message is not None else {
+            "title": " ".join(str(title).split()),
+            "message": body,
+            "priority": priority_number(headers.get("Priority", self.priority)),
+            "tags": [tag.strip() for tag in headers.get("Tags", self.tags).split(",") if tag.strip()],
+        }
+        if copy.get("topic") == self.deploy_topic:
+            return
+        copy["topic"] = self.deploy_topic
+        if await self._send(event_type, title, body, {}, copy):
+            self.stats["deploy_topic"] += 1
 
     # -- periodic -------------------------------------------------------------
 

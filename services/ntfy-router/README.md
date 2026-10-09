@@ -89,10 +89,13 @@ Deployment events without links (hub v1.0.0) are routed as they always were.
 
 ntfy-ios opens a `view` URL with `UIApplication.shared.open` and no scheme
 filter, so **Install on iPad** (`itms-services://…`) reaches iPadOS unchanged.
-But iOS only wakes for a self-hosted topic when ntfy forwards a poll request
+iOS only wakes for a self-hosted topic when ntfy forwards a poll request
 upstream, and `ntfy-upstream-gate` (33GOD `monitoring/ntfy`) forwards only
-`lifecycle`, `infra` and `audio`, never the `bloodbank` firehose. So ntfy-ios
-shows these notifications only when the app is opened; Android is unaffected.
+low-volume topics, never the `bloodbank` firehose. So every deployment and
+catch-up event is also published to **`deploys`** (`NTFY_DEPLOY_TOPIC`), a
+topic of a few messages a day that the gate forwards: subscribe ntfy-ios on the
+iPad (and an iPhone) to `deploys`. The S26 keeps getting them on `bloodbank`;
+subscribe it to `deploys` too only if you then mute deployments on `bloodbank`.
 
 ### Why it filters
 
@@ -135,6 +138,7 @@ Compose maps `BLOODBANK_NTFY_ROUTER_*` from your shell onto these.
 | `SUBJECT_FILTER`       | `bloodbank.evt.>`      | NATS subject filter |
 | `NTFY_URL`             | `https://ntfy.delo.sh` | ntfy base URL; link events post JSON to its root |
 | `NTFY_TOPIC`           | `bloodbank`            | ntfy topic (`review.slop` events go to `slop`) |
+| `NTFY_DEPLOY_TOPIC`    | `deploys`              | Every `bloodbank.project.deployment.*` event is also published here (the topic the upstream gate forwards, so ntfy-ios wakes). Empty turns the copy off |
 | `NTFY_PRIORITY`        | `5`                    | Priority of individual routes, 1=min, 5=max (deployments set their own) |
 | `NTFY_TAGS`            | `drop_of_blood,zap`    | ntfy tags / emoji shortcodes (deployments set their own) |
 | `NTFY_TOKEN`           | _(required)_           | Bearer token for the `bloodbank-ntfy-router` ntfy user (`op://DeLoSecrets/ntfy Access Token/credential`). The router refuses to start without it. |
@@ -154,7 +158,9 @@ Compose maps `BLOODBANK_NTFY_ROUTER_*` from your shell onto these.
 
 ntfy runs `auth-default-access: deny-all`, so subscribe as a user granted
 `bloodbank` (e.g. `delorenj`): web `https://ntfy.delo.sh/bloodbank`, or the
-ntfy app with server `https://ntfy.delo.sh` and topic `bloodbank`.
+ntfy app with server `https://ntfy.delo.sh` and topic `bloodbank`. For deploys
+on an iPad or iPhone, subscribe to `deploys` instead (ntfy-ios is only woken
+for topics the upstream gate forwards).
 
 ## Run
 

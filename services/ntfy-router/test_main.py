@@ -65,10 +65,11 @@ def env(event_type: str, **data) -> dict:
     return {"type": event_type, "source": "urn:test", "data": data}
 
 
-def make(replies=None, rate_per_min=60.0, burst=2, policy=None, per_type_per_min=0.0, per_type_burst=3, sizer=None):
+def make(replies=None, rate_per_min=60.0, burst=2, policy=None, per_type_per_min=0.0, per_type_burst=3, sizer=None, deploy_topic=""):
     clock = Clock()
     ntfy = FakeNtfy(replies)
     router = main.NtfyRouter(
+        deploy_topic=deploy_topic,
         policy=policy or main.Policy(mute=(main.DEFAULT_MUTE.split(",")[0], main.DEFAULT_MUTE.split(",")[1]),
                                      digest=(main.DEFAULT_DIGEST,)),
         post=ntfy,
@@ -716,3 +717,51 @@ class PreviewTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# -- the deploy topic and sized buttons (mobile-deploy-hub v1.1.3) ---------------------
+
+
+class DeployTopicTest(unittest.TestCase):
+    """The upstream gate forwards only low-volume topics to ntfy.sh, so ntfy-ios is woken only for those: every
+    deployment also goes to the deploy topic, the firehose keeps its copy for the S26."""
+
+    def test_a_deployment_is_also_published_to_the_deploy_topic(self):
+        router, ntfy, _ = make(burst=10, deploy_topic="deploys")
+        self.assertEqual(run(router.handle(deployment(), "s")), "routed")
+        self.assertEqual([m["topic"] for m in ntfy.messages], [main.NTFY_TOPIC, "deploys"])
+        self.assertEqual(ntfy.messages[0]["actions"], ntfy.messages[1]["actions"], "the same buttons on both")
+        self.assertEqual(router.stats["deploy_topic"], 1)
+
+    def test_catch_ups_and_failures_go_there_too_and_other_events_do_not(self):
+        router, ntfy, _ = make(burst=10, deploy_topic="deploys")
+        run(router.handle(catch_up_ipad(), "s"))
+        run(router.handle(deployment(main.DEPLOYMENT_FAILED, links=[RUN], stage="build", reason="x"), "s"))
+        run(router.handle(env("bloodbank.agent.session.started", summary="hi"), "s"))
+        topics = [m["topic"] if m else main.NTFY_TOPIC for m in ntfy.messages]
+        self.assertEqual(topics.count("deploys"), 2)
+        self.assertEqual(len(topics), 5)
+
+    def test_a_deployment_without_links_gets_a_json_copy(self):
+        router, ntfy, _ = make(burst=10, deploy_topic="deploys")
+        run(router.handle(deployment(links=None), "s"))
+        self.assertIsNone(ntfy.messages[0], "the firehose copy is the header publish it always was")
+        self.assertEqual(ntfy.messages[1]["topic"], "deploys")
+        self.assertEqual(ntfy.messages[1]["priority"], 5)
+        self.assertTrue(ntfy.messages[1]["title"])
+
+    def test_the_copy_can_be_turned_off(self):
+        router, ntfy, _ = make(burst=10, deploy_topic="")
+        run(router.handle(deployment(), "s"))
+        self.assertEqual(len(ntfy.messages), 1)
+
+
+class SizedButtonTest(unittest.TestCase):
+    def test_a_size_in_the_install_button_needs_no_head_and_no_second_line(self):
+        sizer = FakeSizer(size=96_000_000)
+        router, ntfy, _ = make(burst=10, sizer=sizer)
+        sized = dict(APK, label="Install APK (74.7 MB)")
+        run(router.handle(deployment(links=(sized, PAGE, RUN)), "s"))
+        self.assertEqual(sizer.urls, [], "no HEAD")
+        self.assertNotIn("APK 96 MB", ntfy.messages[0]["message"])
+        self.assertEqual(ntfy.messages[0]["actions"][0]["label"], "Install APK (74.7 MB)")
