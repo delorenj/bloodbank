@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://33god.dev/schemas/bloodbank/project/deployment.completed.json",
   "title": "Project Deployment Completed Event",
-  "description": "A built artifact of one pjangler project was installed on a target (a phone, a host service or a site) and the deploy script's own post-checks passed. data.summary is the one line a notification shows. ordering_key is project:<slug>. See bloodbank/docs/event-naming.md (project).",
+  "description": "A built artifact of one pjangler project was installed on a target (a phone, a host service or a site) and the deploy script's own post-checks passed, or published for a later install while a device was away (deliveries[].status pending). data.summary is the one line a notification shows. ordering_key is project:<slug>. See bloodbank/docs/event-naming.md (project).",
   "$comment": "Hygiene inherited from the project domain: no credentials, no stderr dumps, no absolute filesystem paths in data. The artifact path stays on the build host; data.artifact.sha256 identifies the bytes.",
   "type": "object",
   "allOf": [
@@ -60,9 +60,56 @@
         "run": {
           "$ref": "#/$defs/run"
         },
+        "links": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "description": "Optional download and status links a notifier can turn into buttons (mobile-deploy-hub: Install APK, Install on iPad, the build page, the run). Any project event may carry them; a notifier treats every type the same way.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "rel": {
+                "type": "string",
+                "enum": [
+                  "page",
+                  "apk",
+                  "ota",
+                  "release",
+                  "run"
+                ],
+                "description": "page: the build page; apk: the Android package; ota: the iOS over-the-air install (itms-services); release: the GitHub Release; run: the CI run."
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "description": "Button text, e.g. 'Install APK'."
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 600,
+                "pattern": "^(https|itms-services)://[^\\s\"<>]+$"
+              }
+            },
+            "required": [
+              "rel",
+              "label",
+              "url"
+            ]
+          }
+        },
+        "trigger": {
+          "type": "string",
+          "enum": [
+            "deploy",
+            "catch-up"
+          ],
+          "description": "Optional; absent means deploy. catch-up: a later automatic install of a build a deploy published while the device was away (mobile-deploy-hub)."
+        },
         "verified": {
           "type": "boolean",
-          "description": "True when the deploy script's post-check passed: an installed-APK checksum match, or a service health check."
+          "description": "True when the deploy script's post-check passed: an installed-APK checksum match, or a service health check. False when any delivery in scope is pending or skipped."
         },
         "deployed_at": {
           "type": "string",
@@ -260,15 +307,41 @@
             "version",
             "build",
             "install",
-            "verify"
+            "verify",
+            "deliver"
           ],
-          "description": "Where this delivery stopped, when it failed."
+          "description": "Where this delivery stopped, when it failed. deliver: publishing the build (mobile-deploy-hub's build directory) after it was built."
         },
         "reason": {
           "type": "string",
           "minLength": 1,
           "maxLength": 300,
-          "description": "One short line, when it failed. No paths, no stderr dumps."
+          "description": "One short line: why it failed, or why it is pending or skipped. No paths, no stderr dumps."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "installed",
+            "pending",
+            "skipped",
+            "failed"
+          ],
+          "description": "Optional. installed: read back in this deploy; pending: built, checked and published, but the device could not be reached (a later catch-up installs it); skipped: not built for this device (its host offline or over its data budget, or the deploy narrowed it); failed: the device refused the install or the readback did not match."
+        },
+        "device": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "The device's friendly name (S26, iPad) next to its model in target."
+        },
+        "by": {
+          "type": "string",
+          "enum": [
+            "deploy",
+            "catch-up",
+            "manual"
+          ],
+          "description": "Optional. Who installed it: the deploy itself, a later catch-up, or a person (from a download link or Quickdrop)."
         }
       },
       "required": [
