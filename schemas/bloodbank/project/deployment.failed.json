@@ -48,17 +48,30 @@
         "target": {
           "$ref": "#/$defs/target"
         },
+        "deliveries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/delivery"
+          },
+          "description": "Optional: one entry per device when a deploy covers several (target.kind device-set)."
+        },
+        "run": {
+          "$ref": "#/$defs/run"
+        },
         "stage": {
           "type": "string",
           "enum": [
             "preflight",
+            "version",
             "build",
             "install",
             "verify",
             "launch",
             "health"
           ],
-          "description": "The step that failed."
+          "description": "The step that failed. version: the release version bump (mobile-deploy-hub) stopped before any build."
         },
         "reason": {
           "type": "string",
@@ -122,8 +135,10 @@
             "ios-app",
             "desktop-bundle",
             "web-site",
-            "service"
-          ]
+            "service",
+            "mobile-app"
+          ],
+          "description": "mobile-app is one app version delivered to several devices at once (data.deliveries); its sha256 is null."
         },
         "name": {
           "type": "string",
@@ -188,8 +203,10 @@
             "ios-simulator",
             "ios-device",
             "host",
-            "site"
-          ]
+            "site",
+            "device-set"
+          ],
+          "description": "device-set names several devices in one deploy, e.g. 'SM-S948U + iPad14,5'; data.deliveries holds one entry per device."
         },
         "name": {
           "type": "string",
@@ -209,6 +226,108 @@
       "required": [
         "kind",
         "name"
+      ]
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One device install inside a multi-device deploy (mobile-deploy-hub: the S26 and the iPad). verified means the device read back the planned version (and, for Android, the installed base.apk sha256).",
+      "properties": {
+        "platform": {
+          "type": "string",
+          "enum": [
+            "android",
+            "ios"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Device model, e.g. SM-S948U or iPad14,5."
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "build": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "description": "Android versionCode or iOS CFBundleVersion, as a string."
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Digest of the installed file (APK or IPA), when known."
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "preflight",
+            "version",
+            "build",
+            "install",
+            "verify"
+          ],
+          "description": "Where this delivery stopped, when it failed."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "One short line, when it failed. No paths, no stderr dumps."
+        }
+      },
+      "required": [
+        "platform",
+        "target",
+        "version",
+        "build",
+        "sha256",
+        "verified"
+      ]
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The CI run that made the deploy (mobile-deploy-hub: the app repo's Actions run). Reruns keep id and raise attempt.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300,
+          "pattern": "^https://"
+        },
+        "hub_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100,
+          "description": "The mobile-deploy-hub ref the run used (a tag after the pin)."
+        }
+      },
+      "required": [
+        "id"
       ]
     }
   }
