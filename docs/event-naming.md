@@ -281,7 +281,7 @@ Segment 3 of `type` MUST be one of:
 | `curator`      | Purpose-driven curation of a watched directory — classify, enrich, rename, and route incoming files (the `folder-curator` skill). | active   |
 | `reporting`    | Company reporting runs, archives, and delivery outcomes.             | active   |
 | `portfolio`    | Company-level intake, delegation receipts, approvals, escalations, and capacity facts. | active   |
-| `project`      | Project-scoped facts keyed by the pjangler project slug: periodic activity reports and other whole-project outcomes that span a project's repos and boards. | active   |
+| `project`      | Project-scoped facts keyed by the pjangler project slug: periodic activity reports, deployments of built artifacts, and other whole-project outcomes that span a project's repos and boards. | active   |
 | `telephony`    | Phone calls and text messages on the operator's lines: Telnyx numbers and the forwarded personal cell (SMS, RCS through notifications, later iMessage). Calls, recordings, voicemail transcripts, and send/call commands executed through Telnyx. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
@@ -351,6 +351,7 @@ Segment 4 of `type` MUST be one of:
 | `capacity`         | `portfolio`              | Snapshot of global pipeline or derivative delegation slots.  |
 | `lease`            | `portfolio`              | Time-bounded ownership of one global delegation slot.        |
 | `activity`         | `project`                | One audience-specific activity report over a bounded window of a project's repos, boards and agent sessions. |
+| `deployment`       | `project`                | One install of a project's built artifact on a target (phone, host service, site); version, commit, checksum and target live in data. |
 | `call`             | `telephony`              | One phone call on an operator line, from setup to hangup; recordings and voicemails are `call.recorded`. |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
@@ -487,7 +488,7 @@ transaction:<txn_id>
 subscription:<series_id>         # finance: recurring-series lifecycle incl. zombie strikes
 projection:liquid                # finance: single household-wide projection bucket
 clock:<clock_system>:<principal> # attendance: one worker/system time-clock state bucket
-project:<project_slug>           # project: one bucket per pjangler project; both audiences share it
+project:<project_slug>           # project: one bucket per pjangler project; activity audiences and deployments share it
 call:<call_id>                   # telephony: every event of one phone call, recording and transcript included
 line:<line>                      # telephony: messages on one line ("cell" or a Telnyx E.164)
 ```
@@ -559,6 +560,12 @@ The schema and `assert_project_invariants` (validate.py) together enforce:
 Hygiene inherited from `reporting`: no credentials, no stderr dumps, no
 absolute filesystem paths anywhere in `data`; `additionalProperties: false`
 at every level.
+
+`bloodbank.project.deployment.completed` / `.failed` share only the bucket
+rule (`ordering_key == "project:" + data.project.slug`), `data.schema_version == 1`
+and the path hygiene above; `assert_project_invariants` skips the window,
+token and audience rules for them. `data.summary` is the one line a
+notification shows.
 
 ---
 

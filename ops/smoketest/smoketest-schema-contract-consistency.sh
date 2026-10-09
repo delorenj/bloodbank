@@ -94,11 +94,14 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
     if domain == "project":
         # data: {} cannot satisfy assert_project_invariants; use the internal
         # fixture and bind the two cross-field keys the validator checks.
+        # Activity fixtures are keyed by audience; other project facts are one payload.
         fixtures = json.loads(Path("ops/fixtures/project-contracts.v1.json").read_text())
-        payload = fixtures[ce_type]["internal"]
+        entry = fixtures[ce_type]
+        payload = entry["internal"] if "internal" in entry else entry
         env["data"] = payload
         env["ordering_key"] = f"project:{payload['project']['slug']}"
-        env["correlationid"] = payload["generator"]["run_id"]
+        if "generator" in payload:
+            env["correlationid"] = payload["generator"]["run_id"]
     return env
 
 

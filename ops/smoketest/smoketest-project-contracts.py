@@ -145,7 +145,8 @@ def bb_emit_check(payload: dict, *extra: str) -> subprocess.CompletedProcess:
 
 class ProjectActivityContractTests(unittest.TestCase):
     def test_schema_family_is_exactly_one_file(self):
-        files = sorted(p.name for p in (ROOT / "schemas" / "bloodbank" / "project").glob("*.json"))
+        # Audience is data, not an address: the activity family must never split per audience.
+        files = sorted(p.name for p in (ROOT / "schemas" / "bloodbank" / "project").glob("activity.*.json"))
         self.assertEqual(files, ["activity.recorded.json"])
 
     def test_both_audiences_validate(self):
@@ -301,6 +302,63 @@ class ProjectActivityContractTests(unittest.TestCase):
         proc = bb_emit_check(payload)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("ticket key", proc.stderr)
+
+
+DEPLOYMENT_TYPES = ("bloodbank.project.deployment.completed", "bloodbank.project.deployment.failed")
+
+
+def deployment_envelope(ce_type: str, **overrides) -> dict:
+    payload = copy.deepcopy(FIXTURES[ce_type])
+    env = build_envelope("internal", type=ce_type, subject=subject_for(ce_type, "event"),
+                         dataschema=f"apicurio://holyfields/{ce_type}/versions/1", schemaref=f"{ce_type}.v1",
+                         source="repo://gruvato/scripts/android/deploy.sh", producer="local-script:gruvato",
+                         service="gruvato-deploy", correlationid=str(uuid.uuid4()),
+                         actor={"type": "service", "agent_id": "bloodbank.service.gruvato-deploy"},
+                         ordering_key=f"project:{payload['project']['slug']}", data=payload)
+    env.update(overrides)
+    return env
+
+
+class ProjectDeploymentContractTests(unittest.TestCase):
+    def test_both_outcomes_validate_without_report_rules(self):
+        for ce_type in DEPLOYMENT_TYPES:
+            validate_envelope(deployment_envelope(ce_type))
+
+    def test_ordering_key_is_bound_to_slug(self):
+        for ce_type in DEPLOYMENT_TYPES:
+            with self.assertRaises(failure_types, msg=ce_type):
+                validate_envelope(deployment_envelope(ce_type, ordering_key="project:other"))
+
+    def test_no_workstation_path_anywhere(self):
+        for ce_type in DEPLOYMENT_TYPES:
+            env = deployment_envelope(ce_type)
+            env["data"]["artifact"]["name"] = "/home/someone/app-universal-debug.apk"
+            with self.assertRaises(failure_types, msg=ce_type):
+                validate_envelope(env)
+
+    def test_unknown_fields_and_bad_digests_are_rejected(self):
+        for ce_type in DEPLOYMENT_TYPES:
+            env = deployment_envelope(ce_type)
+            env["data"]["target"]["serial_path"] = "x"
+            with self.assertRaises(failure_types, msg=ce_type):
+                validate_envelope(env)
+            env = deployment_envelope(ce_type)
+            env["data"]["artifact"]["sha256"] = "not-a-digest"
+            with self.assertRaises(failure_types, msg=ce_type):
+                validate_envelope(env)
+
+    def test_bb_emit_check_accepts_the_fixture(self):
+        for ce_type in DEPLOYMENT_TYPES:
+            proc = subprocess.run(
+                [sys.executable, str(BB_EMIT), "--check", "--type", ce_type,
+                 "--source", "repo://gruvato/scripts/android/deploy.sh", "--producer", "local-script:gruvato",
+                 "--service", "gruvato-deploy"],
+                input=json.dumps(FIXTURES[ce_type]), capture_output=True, text=True, cwd=str(ROOT),
+                env={**os.environ, "BLOODBANK_SCHEMAS_DIR": str(ROOT / "schemas")},
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("ordering_key  project:gruvato", proc.stdout)
+            self.assertIn("schema      yes", proc.stdout)
 
 
 if __name__ == "__main__":

@@ -79,7 +79,7 @@ ALLOWED_ENTITIES = frozenset({
     "sync", "account", "transaction", "subscription", "zombie_charge", "paycheck", "projection",
     "clock", "report", "journal", "incident",
     "work", "receipt", "approval", "escalation", "capacity", "lease",
-    "activity", "cost",
+    "activity", "deployment", "cost",
     "call",
 })
 
@@ -442,6 +442,20 @@ def _project_refuse_markers(field: str, text: str, markers) -> None:
             )
 
 
+def _project_refuse_paths_anywhere(value: object, where: str) -> None:
+    """No workstation path in any string of a project payload (§11.4 hygiene)."""
+    if isinstance(value, str):
+        hit = _PROJECT_ABS_PATH.search(value)
+        if hit:
+            raise ContractViolation(f"project {where} contains an absolute filesystem path ({hit.group(0)!r})")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _project_refuse_paths_anywhere(item, f"{where}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _project_refuse_paths_anywhere(item, f"{where}[{index}]")
+
+
 def assert_project_invariants(envelope: dict) -> None:
     """Enforce cross-field invariants for the project domain (§11.4).
 
@@ -470,6 +484,12 @@ def assert_project_invariants(envelope: dict) -> None:
             f"project envelope.ordering_key must be 'project:{slug}' (§11.1), "
             f"got {envelope.get('ordering_key')!r}"
         )
+
+    if envelope.get("type") != PROJECT_ACTIVITY_TYPE:
+        # Deployments and later project facts share the bucket rule above and the
+        # domain's path hygiene; the window, token and audience rules are the report's.
+        _project_refuse_paths_anywhere(data, "data")
+        return
 
     audience = data.get("audience")
     if audience not in PROJECT_AUDIENCES:

@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/project/deployment.completed.json",
+  "title": "Project Deployment Completed Event",
+  "description": "A built artifact of one pjangler project was installed on a target (a phone, a host service or a site) and the deploy script's own post-checks passed. data.summary is the one line a notification shows. ordering_key is project:<slug>. See bloodbank/docs/event-naming.md (project).",
+  "$comment": "Hygiene inherited from the project domain: no credentials, no stderr dumps, no absolute filesystem paths in data. The artifact path stays on the build host; data.artifact.sha256 identifies the bytes.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.project.deployment.completed"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "project"
+    },
+    "ordering_key": {
+      "type": "string",
+      "pattern": "^project:[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "description": "\u00a711.1 bucket project:<project_slug>, the same value as 'project:' + data.project.slug."
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.project.deployment.completed.",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "One human line, e.g. 'Gruvato v0.2.3 (2003) dd0e4c8 installed on SM-S948U, checksum verified'."
+        },
+        "project": {
+          "$ref": "#/$defs/project"
+        },
+        "artifact": {
+          "$ref": "#/$defs/artifact"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "True when the deploy script's post-check passed: an installed-APK checksum match, or a service health check."
+        },
+        "deployed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "schema_version",
+        "summary",
+        "project",
+        "artifact",
+        "target",
+        "verified",
+        "deployed_at"
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "ordering_key",
+    "data"
+  ],
+  "$defs": {
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+          "description": "The pjangler project slug."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "required": [
+        "slug",
+        "name"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "android-apk",
+            "desktop-bundle",
+            "web-site",
+            "service"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "What was deployed, e.g. the app, site or service name."
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "version_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "Platform build number when the platform has one (Android versionCode)."
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$",
+          "description": "Commit the artifact was built from."
+        },
+        "dirty": {
+          "type": "boolean",
+          "description": "True when the build tree had uncommitted tracked changes."
+        },
+        "variant": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "description": "Build variant, e.g. debug or release."
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Digest of the deployed artifact file, when the deploy has a single file."
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "version",
+        "commit",
+        "dirty"
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "android-device",
+            "host",
+            "site"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Device model, host name or site origin."
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120,
+          "description": "Stable target identifier when one exists, e.g. the device serial."
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    }
+  }
+}

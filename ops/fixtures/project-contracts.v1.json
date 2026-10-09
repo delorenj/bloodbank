@@ -160,5 +160,56 @@
         "dry_run": true
       }
     }
+  },
+  "bloodbank.project.deployment.completed": {
+    "schema_version": 1,
+    "summary": "Gruvato v0.2.3 (2003) dd0e4c8 installed on SM-S948U, checksum verified",
+    "project": {
+      "slug": "gruvato",
+      "name": "Gruvato"
+    },
+    "artifact": {
+      "kind": "android-apk",
+      "name": "Gruvato",
+      "version": "0.2.3",
+      "version_code": 2003,
+      "commit": "dd0e4c8",
+      "dirty": false,
+      "variant": "debug",
+      "sha256": "5edeb085086e906059b64f069664ebcc34e7b444f2fd3664d9671409fdb11610"
+    },
+    "target": {
+      "kind": "android-device",
+      "name": "SM-S948U",
+      "id": "R5GL43A7PCH"
+    },
+    "verified": true,
+    "deployed_at": "2026-10-09T03:30:00Z"
+  },
+  "bloodbank.project.deployment.failed": {
+    "schema_version": 1,
+    "summary": "Gruvato v0.2.3 deploy to SM-S948U failed at verify",
+    "project": {
+      "slug": "gruvato",
+      "name": "Gruvato"
+    },
+    "artifact": {
+      "kind": "android-apk",
+      "name": "Gruvato",
+      "version": "0.2.3",
+      "version_code": 2003,
+      "commit": "dd0e4c8",
+      "dirty": false,
+      "variant": "debug",
+      "sha256": "5edeb085086e906059b64f069664ebcc34e7b444f2fd3664d9671409fdb11610"
+    },
+    "target": {
+      "kind": "android-device",
+      "name": "SM-S948U",
+      "id": "R5GL43A7PCH"
+    },
+    "stage": "verify",
+    "reason": "Installed APK does not match the built artifact.",
+    "failed_at": "2026-10-09T03:30:00Z"
   }
 }
