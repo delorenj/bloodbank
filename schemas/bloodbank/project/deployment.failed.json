@@ -52,6 +52,7 @@
           "type": "string",
           "enum": [
             "preflight",
+            "build",
             "install",
             "verify",
             "launch",
