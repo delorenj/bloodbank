@@ -104,6 +104,7 @@
           "type": "string",
           "enum": [
             "android-apk",
+            "ios-app",
             "desktop-bundle",
             "web-site",
             "service"
@@ -169,6 +170,8 @@
           "type": "string",
           "enum": [
             "android-device",
+            "ios-simulator",
+            "ios-device",
             "host",
             "site"
           ]
@@ -177,7 +180,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 120,
-          "description": "Device model, host name or site origin."
+          "description": "Device model, simulator and its host, host name or site origin."
         },
         "id": {
           "type": [
