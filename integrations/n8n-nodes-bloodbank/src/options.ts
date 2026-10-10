@@ -68,6 +68,38 @@ export interface EventOptionSettings extends SchemaOptionSettings {
 /** Every canonical event, each followed by the provider aliases that filter it. */
 export function eventOptions(settings: EventOptionSettings = {}): INodePropertyOptions[] {
   const options: INodePropertyOptions[] = [];
+  
+  const domains = new Set<string>();
+  const entities = new Set<string>();
+
+  for (const schema of eventSchemas) {
+    const parts = schema.type.split('.');
+    if (parts.length >= 4) {
+      domains.add(parts[1]);
+      entities.add(`${parts[1]}.${parts[2]}`);
+    }
+  }
+
+  // Add domain wildcards
+  for (const domain of Array.from(domains).sort()) {
+    options.push({
+      name: `${providerTitle(domain)} · All Events (bloodbank.${domain}.>)`,
+      value: `bloodbank.${domain}.>`,
+      description: `Subscribe to all events in the ${domain} domain`,
+    });
+  }
+
+  // Add entity wildcards
+  for (const entity of Array.from(entities).sort()) {
+    const domain = entity.split('.')[0];
+    const entityName = entity.split('.')[1];
+    options.push({
+      name: `${providerTitle(domain)} · All ${providerTitle(entityName)} Events (bloodbank.${entity}.>)`,
+      value: `bloodbank.${entity}.>`,
+      description: `Subscribe to all ${entityName} events in the ${domain} domain`,
+    });
+  }
+
   for (const schema of eventSchemas) {
     options.push(schemaOption(schema, settings));
     if (settings.includeAliases) {

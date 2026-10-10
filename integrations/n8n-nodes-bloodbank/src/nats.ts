@@ -158,7 +158,6 @@ function entityIdentity(data: Record<string, unknown>): string {
 }
 
 export function subjectFor(type: string, kind: 'event' | 'command' | 'reply'): string {
-  typeParts(type);
   const marker = kind === 'event' ? 'evt' : kind === 'command' ? 'cmd' : 'rpy';
   return `bloodbank.${marker}.${type.slice('bloodbank.'.length)}`;
 }
