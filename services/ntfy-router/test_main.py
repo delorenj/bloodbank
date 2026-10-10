@@ -406,6 +406,10 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(message_of(env("bloodbank.review.slop.found", links=[PAGE]))["topic"], "slop")
         self.assertEqual(main.ntfy_request("bloodbank.review.slop.found", "b", {})[0], f"{main.NTFY_URL}/slop")
 
+    def test_audio_events_use_audio_topic(self):
+        self.assertEqual(message_of(env("bloodbank.audio.file.received", links=[PAGE]))["topic"], "audio")
+        self.assertEqual(main.ntfy_request("bloodbank.audio.file.received", "b", {})[0], f"{main.NTFY_URL}/audio")
+
     def test_utf8_titles_survive_the_json_publish(self):
         message = message_of(deployment(name="Grüvato ✨"))
         self.assertEqual(message["title"], "Grüvato ✨ 0.2.2 deployed")

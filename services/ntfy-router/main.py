@@ -93,6 +93,7 @@ NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "bloodbank")
 # ntfy.sh, so ntfy-ios (the iPad, an iPhone) is woken for them; the firehose topic never wakes an iOS device.
 # "" turns the copy off. The S26 keeps getting them on NTFY_TOPIC.
 DEPLOY_TOPIC = os.environ.get("NTFY_DEPLOY_TOPIC", "deploys")
+AUDIO_TOPIC = os.environ.get("NTFY_AUDIO_TOPIC", "audio")
 NTFY_PRIORITY = os.environ.get("NTFY_PRIORITY", "5")  # 1=min, 5=max (loud)
 NTFY_TAGS = os.environ.get("NTFY_TAGS", "drop_of_blood,zap")
 NTFY_TOKEN = os.environ.get("NTFY_TOKEN", "")
@@ -225,8 +226,12 @@ def _dict(value: Any) -> dict[str, Any]:
 
 
 def topic_for(event_type: str) -> str:
-    """review.slop events have their own topic; everything else goes to NTFY_TOPIC."""
-    return SLOP_TOPIC if "review.slop" in event_type else NTFY_TOPIC
+    """review.slop events have their own topic; audio events have their own topic; everything else goes to NTFY_TOPIC."""
+    if "review.slop" in event_type:
+        return SLOP_TOPIC
+    if "bloodbank.audio." in event_type:
+        return AUDIO_TOPIC
+    return NTFY_TOPIC
 
 
 def header_text(value: str) -> str:
