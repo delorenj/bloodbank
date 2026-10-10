@@ -38,7 +38,7 @@ services:
       SUBJECT_FILTER: "${BLOODBANK_NTFY_ROUTER_SUBJECT:-bloodbank.evt.>}"
       NTFY_URL: "${BLOODBANK_NTFY_ROUTER_NTFY_URL:-https://ntfy.delo.sh}"
       NTFY_TOPIC: "${BLOODBANK_NTFY_ROUTER_NTFY_TOPIC:-bloodbank}"
-      NTFY_AUDIO_TOPIC: "${BLOODBANK_NTFY_ROUTER_AUDIO_TOPIC:-audio}"
+
       # Deployments are also published here: the upstream gate forwards it, so ntfy-ios wakes (`-`: empty turns it off).
       NTFY_DEPLOY_TOPIC: "${BLOODBANK_NTFY_ROUTER_DEPLOY_TOPIC-deploys}"
       NTFY_PRIORITY: "${BLOODBANK_NTFY_ROUTER_NTFY_PRIORITY:-5}"
