@@ -386,7 +386,7 @@ class PublishTest(unittest.TestCase):
         message = ntfy.messages[0]
         self.assertEqual(headers, {})
         self.assertEqual(list(message), ["topic", "title", "message", "priority", "tags", "click", "actions"])
-        self.assertEqual(message["topic"], "project")
+        self.assertEqual(message["topic"], "project-deployment")
         self.assertEqual((title, body), (message["title"], message["message"]))
         self.assertEqual(message["click"], PAGE_URL)
         self.assertNotIn("attach", message)
@@ -403,11 +403,11 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(message["actions"], [{"action": "view", "label": "Builds", "url": PAGE_URL, "clear": True}])
 
     def test_dynamic_domain_routing(self):
-        self.assertEqual(message_of(env("bloodbank.review.slop.found", links=[PAGE]))["topic"], "review")
-        self.assertEqual(message_of(env("bloodbank.audio.file.received", links=[PAGE]))["topic"], "audio")
-        self.assertEqual(message_of(env("bloodbank.project.deployment.completed", links=[PAGE]))["topic"], "project")
-        self.assertEqual(main.ntfy_request("bloodbank.review.slop.found", "b", {})[0], f"{main.NTFY_URL}/review")
-        self.assertEqual(main.ntfy_request("bloodbank.audio.file.received", "b", {})[0], f"{main.NTFY_URL}/audio")
+        self.assertEqual(message_of(env("bloodbank.review.slop.found", links=[PAGE]))["topic"], "review-slop")
+        self.assertEqual(message_of(env("bloodbank.audio.file.received", links=[PAGE]))["topic"], "audio-file")
+        self.assertEqual(message_of(env("bloodbank.project.deployment.completed", links=[PAGE]))["topic"], "project-deployment")
+        self.assertEqual(main.ntfy_request("bloodbank.review.slop.found", "b", {})[0], f"{main.NTFY_URL}/review-slop")
+        self.assertEqual(main.ntfy_request("bloodbank.audio.file.received", "b", {})[0], f"{main.NTFY_URL}/audio-file")
 
 
     def test_utf8_titles_survive_the_json_publish(self):
@@ -655,7 +655,7 @@ class WireTest(unittest.TestCase):
         self.assertNotIn("Attach", request.headers)
         self.assertNotIn("Actions", request.headers)
         body = json.loads(request.content)
-        self.assertEqual(body["topic"], "project")
+        self.assertEqual(body["topic"], "project-deployment")
         self.assertEqual(len(body["actions"]), 3)
         self.assertNotIn("attach", body)
 
@@ -672,7 +672,7 @@ class WireTest(unittest.TestCase):
                 await router.handle(event, "s")
                 # The publish as main.py made it before links existed (2026-10-07).
                 headers = {"Title": title, "Priority": main.NTFY_PRIORITY, "Tags": main.NTFY_TAGS}
-                await old_client.post(f"{main.NTFY_URL}/agent",
+                await old_client.post(f"{main.NTFY_URL}/agent-session",
                                       headers={**headers, "Authorization": "Bearer tk_secret"},
                                       content=body.encode("utf-8"))
 
@@ -714,7 +714,7 @@ class PreviewTest(unittest.TestCase):
 
     def test_preview_shows_the_header_publish_for_an_event_without_links(self):
         shown = main.preview(env("bloodbank.agent.session.started", summary="hi"))
-        self.assertEqual(shown["url"], f"{main.NTFY_URL}/agent")
+        self.assertEqual(shown["url"], f"{main.NTFY_URL}/agent-session")
         self.assertEqual(shown["headers"]["Title"], "bloodbank.agent.session.started")
         self.assertEqual(shown["body"], "src: urn:test\nsummary: hi")
 
@@ -733,7 +733,7 @@ class DeployTopicTest(unittest.TestCase):
     def test_a_deployment_is_also_published_to_the_deploy_topic(self):
         router, ntfy, _ = make(burst=10, deploy_topic="deploys")
         self.assertEqual(run(router.handle(deployment(), "s")), "routed")
-        self.assertEqual([m["topic"] for m in ntfy.messages], ["project", "deploys"])
+        self.assertEqual([m["topic"] for m in ntfy.messages], ["project-deployment", "deploys"])
         self.assertEqual(ntfy.messages[0]["actions"], ntfy.messages[1]["actions"], "the same buttons on both")
         self.assertEqual(router.stats["deploy_topic"], 1)
 

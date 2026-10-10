@@ -462,7 +462,7 @@ Continue, so the execution stays green and the failure is visible only as an
 pushes authenticate as the ntfy user `n8n` (credential *Ntfy account (n8n
 token)*), which sits on ntfy's `service` tier and so has its own request limit.
 Until 2026-09-22 it had no tier and shared a per-IP limit with the Bloodbank
-event toaster, which answered most lane pushes with 429.
+ntfy router, which answered most lane pushes with 429.
 
 **The chip is stateless.** Everything it needs rides on the gateway's echoed
 `data.context` (`workspace`, `board_id`, `ticket_id`, `ticket_key`, `reason`):

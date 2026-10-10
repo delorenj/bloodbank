@@ -226,8 +226,10 @@ def _dict(value: Any) -> dict[str, Any]:
 
 
 def topic_for(event_type: str) -> str:
-    """Dynamically route to a topic matching the domain (the second segment of the event type), or fallback to NTFY_TOPIC."""
+    """Dynamically route to a topic matching <domain>-<entity>, or fallback to NTFY_TOPIC."""
     parts = event_type.split(".")
+    if len(parts) >= 3 and parts[0] == "bloodbank":
+        return f"{parts[1]}-{parts[2]}"
     if len(parts) >= 2 and parts[0] == "bloodbank":
         return parts[1]
     return NTFY_TOPIC
