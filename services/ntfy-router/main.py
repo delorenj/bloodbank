@@ -93,6 +93,7 @@ NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "bloodbank")
 # ntfy.sh, so ntfy-ios (the iPad, an iPhone) is woken for them; the firehose topic never wakes an iOS device.
 # "" turns the copy off. The S26 keeps getting them on NTFY_TOPIC.
 DEPLOY_TOPIC = os.environ.get("NTFY_DEPLOY_TOPIC", "deploys")
+MIRROR_DOMAIN = os.environ.get("NTFY_MIRROR_DOMAIN", "true").lower() in ("true", "1", "yes")
 
 NTFY_PRIORITY = os.environ.get("NTFY_PRIORITY", "5")  # 1=min, 5=max (loud)
 NTFY_TAGS = os.environ.get("NTFY_TAGS", "drop_of_blood,zap")
@@ -102,8 +103,8 @@ SLOP_TOPIC = "slop"
 
 DEFAULT_MUTE = "bloodbank.agent.hook.updated,bloodbank.system.hook.updated"
 DEFAULT_DIGEST = "bloodbank.agent.tool.*"
-# Deploys and their catch-up installs: rare, and wanted the moment they happen.
-DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*"
+# Deploys, slop alerts, telephony and audio: rare, and wanted the moment they happen.
+DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.audio.*"
 
 DEPLOYMENT_COMPLETED = "bloodbank.project.deployment.completed"
 DEPLOYMENT_FAILED = "bloodbank.project.deployment.failed"
@@ -132,7 +133,12 @@ class Policy:
     digest: tuple[str, ...]
     # Loud types route one push each without spending the per-type cap or the
     # shared bucket. ntfy's own pushback still pauses them.
-    loud: tuple[str, ...] = ("bloodbank.project.deployment.*", "bloodbank.review.slop.*")
+    loud: tuple[str, ...] = (
+        "bloodbank.project.deployment.*",
+        "bloodbank.review.slop.*",
+        "bloodbank.telephony.*",
+        "bloodbank.audio.*",
+    )
 
     @classmethod
     def from_env(cls, env: dict[str, str] | os._Environ[str] = os.environ) -> "Policy":
@@ -556,6 +562,8 @@ class NtfyRouter:
     max_remembered_installs: int = 512
     # Where a copy of every deployment goes (see DEPLOY_TOPIC); "" for none.
     deploy_topic: str = DEPLOY_TOPIC
+    # Whether to mirror nested <domain>-<entity> routes back to the parent <domain> topic.
+    mirror_domain: bool = MIRROR_DOMAIN
 
     digested: Counter = field(default_factory=Counter)
     overflow: Counter = field(default_factory=Counter)
@@ -697,6 +705,7 @@ class NtfyRouter:
                 log.info("buttons: %s", " | ".join(action["label"] for action in message["actions"]))
             await self._copy_to_deploy_topic(event_type, title, body, headers, message)
             await self._copy_to_slop_topic(event_type, title, body, headers, message)
+            await self._copy_to_domain_topic(event_type, title, body, headers, message)
             return "routed"
         self.overflow[event_type] += 1
         return "failed"
@@ -737,6 +746,29 @@ class NtfyRouter:
         copy["topic"] = self.deploy_topic
         if await self._send(event_type, title, body, {}, copy):
             self.stats["deploy_topic"] += 1
+
+    async def _copy_to_domain_topic(
+        self, event_type: str, title: str, body: str, headers: dict[str, str], message: dict[str, Any] | None,
+    ) -> None:
+        """Also send notification to the parent <domain> topic if routed to a nested topic."""
+        if not self.mirror_domain:
+            return
+        parts = event_type.split(".")
+        if len(parts) < 3 or parts[0] != "bloodbank":
+            return
+        domain = parts[1]
+        nested_topic = topic_for(event_type)
+        if nested_topic == domain:
+            return
+        copy = dict(message) if message is not None else {
+            "title": " ".join(str(title).split()),
+            "message": body,
+            "priority": priority_number(headers.get("Priority", self.priority)),
+            "tags": [tag.strip() for tag in headers.get("Tags", self.tags).split(",") if tag.strip()],
+        }
+        copy["topic"] = domain
+        if await self._send(event_type, title, body, {}, copy):
+            self.stats["domain_topic"] += 1
 
     # -- periodic -------------------------------------------------------------
 

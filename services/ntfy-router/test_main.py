@@ -65,11 +65,12 @@ def env(event_type: str, **data) -> dict:
     return {"type": event_type, "source": "urn:test", "data": data}
 
 
-def make(replies=None, rate_per_min=60.0, burst=2, policy=None, per_type_per_min=0.0, per_type_burst=3, sizer=None, deploy_topic=""):
+def make(replies=None, rate_per_min=60.0, burst=2, policy=None, per_type_per_min=0.0, per_type_burst=3, sizer=None, deploy_topic="", mirror_domain=False):
     clock = Clock()
     ntfy = FakeNtfy(replies)
     router = main.NtfyRouter(
         deploy_topic=deploy_topic,
+        mirror_domain=mirror_domain,
         policy=policy or main.Policy(mute=(main.DEFAULT_MUTE.split(",")[0], main.DEFAULT_MUTE.split(",")[1]),
                                      digest=(main.DEFAULT_DIGEST,)),
         post=ntfy,
@@ -173,6 +174,8 @@ class PolicyTest(unittest.TestCase):
         policy = main.Policy.from_env({})
         self.assertTrue(policy.is_loud("bloodbank.project.deployment.completed"))
         self.assertTrue(policy.is_loud("bloodbank.project.deployment.failed"))
+        self.assertTrue(policy.is_loud("bloodbank.telephony.message.received"))
+        self.assertTrue(policy.is_loud("bloodbank.audio.file.received"))
         self.assertFalse(policy.is_loud("bloodbank.llm.usage.recorded"))
         self.assertEqual(policy.classify("bloodbank.project.deployment.completed"), "route")
         self.assertFalse(main.Policy.from_env({"NTFY_ROUTER_LOUD_TYPES": ""}).is_loud(main.DEPLOYMENT_COMPLETED))
@@ -791,3 +794,42 @@ class SizedButtonTest(unittest.TestCase):
         self.assertEqual(sizer.urls, [], "no HEAD")
         self.assertNotIn("APK 96 MB", ntfy.messages[0]["message"])
         self.assertEqual(ntfy.messages[0]["actions"][0]["label"], "Install APK (74.7 MB)")
+
+
+class DomainMirrorTest(unittest.TestCase):
+    def test_nested_route_is_also_published_to_domain_topic(self):
+        router, ntfy, _ = make(burst=10, mirror_domain=True)
+        event = env("bloodbank.telephony.message.received", summary="New voicemail from +15551234567")
+        self.assertEqual(run(router.handle(event, "s")), "routed")
+        self.assertEqual(len(ntfy.posts), 2)
+        # First post is the primary to telephony-message (headers publish)
+        self.assertIsNone(ntfy.messages[0])
+        # Second post is the JSON copy to telephony
+        self.assertEqual(ntfy.messages[1]["topic"], "telephony")
+        self.assertEqual(ntfy.messages[1]["title"], "bloodbank.telephony.message.received")
+        self.assertIn("New voicemail", ntfy.messages[1]["message"])
+        self.assertEqual(router.stats["domain_topic"], 1)
+
+    def test_nested_route_with_links_preserves_buttons_on_domain_topic(self):
+        router, ntfy, _ = make(burst=10, mirror_domain=True)
+        event = env("bloodbank.audio.file.received", summary="Audio ready", links=[PAGE])
+        self.assertEqual(run(router.handle(event, "s")), "routed")
+        self.assertEqual(len(ntfy.posts), 2)
+        self.assertEqual(ntfy.messages[0]["topic"], "audio-file")
+        self.assertEqual(ntfy.messages[1]["topic"], "audio")
+        self.assertEqual(ntfy.messages[0]["actions"], ntfy.messages[1]["actions"])
+        self.assertEqual(router.stats["domain_topic"], 1)
+
+    def test_unsegmented_or_non_bloodbank_event_does_not_mirror(self):
+        router, ntfy, _ = make(burst=10, mirror_domain=True)
+        self.assertEqual(run(router.handle(env("bloodbank.audio"), "s")), "routed")
+        self.assertEqual(len(ntfy.posts), 1)
+        self.assertEqual(router.stats.get("domain_topic", 0), 0)
+
+    def test_mirroring_can_be_disabled(self):
+        router, ntfy, _ = make(burst=10, mirror_domain=False)
+        event = env("bloodbank.telephony.message.received", summary="Hello")
+        self.assertEqual(run(router.handle(event, "s")), "routed")
+        self.assertEqual(len(ntfy.posts), 1)
+        self.assertEqual(router.stats.get("domain_topic", 0), 0)
+
