@@ -103,7 +103,7 @@ SLOP_TOPIC = "slop"
 DEFAULT_MUTE = "bloodbank.agent.hook.updated,bloodbank.system.hook.updated"
 DEFAULT_DIGEST = "bloodbank.agent.tool.*"
 # Deploys and their catch-up installs: rare, and wanted the moment they happen.
-DEFAULT_LOUD = "bloodbank.project.deployment.*"
+DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*"
 
 DEPLOYMENT_COMPLETED = "bloodbank.project.deployment.completed"
 DEPLOYMENT_FAILED = "bloodbank.project.deployment.failed"
@@ -132,7 +132,7 @@ class Policy:
     digest: tuple[str, ...]
     # Loud types route one push each without spending the per-type cap or the
     # shared bucket. ntfy's own pushback still pauses them.
-    loud: tuple[str, ...] = (DEFAULT_LOUD,)
+    loud: tuple[str, ...] = ("bloodbank.project.deployment.*", "bloodbank.review.slop.*")
 
     @classmethod
     def from_env(cls, env: dict[str, str] | os._Environ[str] = os.environ) -> "Policy":
@@ -200,6 +200,21 @@ def format_route(envelope: dict[str, Any], raw_subject: str) -> tuple[str, str]:
     # Title: ASCII only (HTTP headers can't carry raw UTF-8 in httpx; emoji
     # comes from the Tags header instead, rendered client-side by ntfy).
     title = event_type
+
+    if "review.slop" in event_type and isinstance(data, dict):
+        tool = data.get("tool_name") or "tool"
+        conf = data.get("confidence")
+        conf_str = f" ({int(conf * 100)}%)" if isinstance(conf, (int, float)) else ""
+        title = f"Slop Detected: {tool}{conf_str}"
+        lines = []
+        if data.get("reason"):
+            lines.append(f"Reason: {data['reason']}")
+        if data.get("cwd"):
+            lines.append(f"CWD: {data['cwd']}")
+        if data.get("target_event_id"):
+            lines.append(f"Event: {data['target_event_id']}")
+        body = "\n".join(lines) if lines else f"src: {source}\n{json.dumps(data)}"
+        return title, body
 
     # Body: surface the most useful 1-2 fields from `data`, fall back to a
     # truncated JSON dump.
@@ -452,6 +467,10 @@ def publication(
     it is the header publish to the event's topic it always was (message None);
     with links it is a JSON publish to the ntfy root, so the title may be UTF-8
     and the actions need no header escaping."""
+    event_type = envelope.get("type") or subject or "unknown"
+    if "review.slop" in event_type:
+        priority = "5"
+        tags = "warning,wastebasket"
     if not links:
         title, body = format_route(envelope, subject)
         return title, body, headers_for(title, priority, tags), None
@@ -677,9 +696,29 @@ class NtfyRouter:
             if message is not None:
                 log.info("buttons: %s", " | ".join(action["label"] for action in message["actions"]))
             await self._copy_to_deploy_topic(event_type, title, body, headers, message)
+            await self._copy_to_slop_topic(event_type, title, body, headers, message)
             return "routed"
         self.overflow[event_type] += 1
         return "failed"
+
+    async def _copy_to_slop_topic(
+        self, event_type: str, title: str, body: str, headers: dict[str, str], message: dict[str, Any] | None,
+    ) -> None:
+        """Also send review.slop notifications to the 'slop' topic as a JSON publish."""
+        if "review.slop" not in event_type or not SLOP_TOPIC:
+            return
+        topic = topic_for(event_type)
+        if topic == SLOP_TOPIC:
+            return
+        copy = dict(message) if message is not None else {
+            "title": " ".join(str(title).split()),
+            "message": body,
+            "priority": priority_number(headers.get("Priority", self.priority)),
+            "tags": [tag.strip() for tag in headers.get("Tags", self.tags).split(",") if tag.strip()],
+        }
+        copy["topic"] = SLOP_TOPIC
+        if await self._send(event_type, title, body, {}, copy):
+            self.stats["slop_topic"] += 1
 
     async def _copy_to_deploy_topic(
         self, event_type: str, title: str, body: str, headers: dict[str, str], message: dict[str, Any] | None,

@@ -49,7 +49,7 @@ services:
       NTFY_ROUTER_MUTE_TYPES: "${BLOODBANK_NTFY_ROUTER_MUTE_TYPES-bloodbank.agent.hook.updated,bloodbank.system.hook.updated}"
       NTFY_ROUTER_DIGEST_TYPES: "${BLOODBANK_NTFY_ROUTER_DIGEST_TYPES-bloodbank.agent.tool.*}"
       # Skip the per-type cap and the shared bucket (still wait out ntfy pushback).
-      NTFY_ROUTER_LOUD_TYPES: "${BLOODBANK_NTFY_ROUTER_LOUD_TYPES-bloodbank.project.deployment.*}"
+      NTFY_ROUTER_LOUD_TYPES: "${BLOODBANK_NTFY_ROUTER_LOUD_TYPES-bloodbank.project.deployment.*,bloodbank.review.slop.*}"
       ROUTE_RATE_PER_MIN: "${BLOODBANK_NTFY_ROUTER_RATE_PER_MIN:-20}"
       ROUTE_BURST: "${BLOODBANK_NTFY_ROUTER_BURST:-10}"
       ROUTE_PER_TYPE_PER_MIN: "${BLOODBANK_NTFY_ROUTER_PER_TYPE_PER_MIN:-6}"

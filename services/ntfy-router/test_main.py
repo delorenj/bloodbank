@@ -417,6 +417,28 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(headers, {"Content-Type": "application/json"})
         self.assertIn("Grüvato ✨ 0.2.2 deployed".encode("utf-8"), content)
 
+    def test_slop_event_formatting_and_copy(self):
+        router, ntfy, _ = make(burst=10)
+        slop = env(
+            "bloodbank.review.slop.annotated",
+            tool_name="write_to_file",
+            confidence=0.88,
+            reason="Boilerplate slop without implementation",
+            cwd="/home/delorenj/code/33GOD/bloodbank",
+            target_event_id="evt-123",
+        )
+        self.assertEqual(run(router.handle(slop, "s")), "routed")
+        self.assertEqual(len(ntfy.posts), 2)
+        title, body, headers = ntfy.posts[0]
+        self.assertEqual(title, "Slop Detected: write_to_file (88%)")
+        self.assertIn("Reason: Boilerplate slop without implementation", body)
+        self.assertIn("CWD: /home/delorenj/code/33GOD/bloodbank", body)
+        self.assertEqual(headers["Priority"], "5")
+        self.assertEqual(headers["Tags"], "warning,wastebasket")
+        self.assertEqual(ntfy.messages[1]["topic"], "slop")
+        self.assertEqual(ntfy.messages[1]["title"], "Slop Detected: write_to_file (88%)")
+        self.assertEqual(ntfy.messages[1]["priority"], 5)
+
     def test_events_without_links_keep_the_header_publish(self):
         router, ntfy, _ = make(burst=10)
         run(router.handle(env("bloodbank.agent.session.started", summary="hello"), "s"))
