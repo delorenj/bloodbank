@@ -283,7 +283,7 @@ const directory = %(directory)s;
 const receipt = %(receipt)s;
 const subscribers = new Set();
 const history = new Map();
-const registry = { prompt: [], context: [], 'tool.execute.before': [], 'tool.execute.after': [] };
+const registry = { prompt: [], context: [], 'tool.execute.before': [], 'tool.execute.after': [], 'shell.create.before': [] };
 const ctx = {
   location: { directory }, options: {},
   event: { subscribe({ signal } = {}) {
@@ -304,6 +304,7 @@ const ctx = {
     context: async ({ sessionID }) => (history.get(sessionID) || []).map((m) => ({ id: m.id, role: 'user', content: [{ type: 'text', text: m.text }] })),
   },
   tool: { hook: async (name, fn) => { registry['tool.' + name].push(fn); return { dispose() {} }; } },
+  shell: { hook: async (name, fn) => { registry['shell.' + name].push(fn); return { dispose() {} }; } },
 };
 const cleanup = await plugin.setup(ctx);
 const settle = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -324,6 +325,7 @@ const message = async (sessionID, messageID) => {
 };
 const toolBefore = (sessionID, id, input) => Promise.all(registry['tool.execute.before'].map((fn) => fn({ tool: 'bash', sessionID, agent: 'build', messageID: 'm', id, input })));
 const toolAfter = (sessionID, id, input, rest) => Promise.all(registry['tool.execute.after'].map((fn) => fn({ tool: 'bash', sessionID, agent: 'build', messageID: 'm', id, input, ...rest })));
+const shellBefore = (command, cwd, env) => Promise.all(registry['shell.create.before'].map((fn) => fn({ command, cwd, timeout: 0, shell: '/bin/sh', env })));
 const gate = (native, sessionID, key) => join(directory, `${native}-${sessionID}-${key}.blocked`);
 const block = (native, sessionID, key) => writeFileSync(gate(native, sessionID, key), '');
 const release = (native, sessionID, key) => unlinkSync(gate(native, sessionID, key));
@@ -346,7 +348,14 @@ from pathlib import Path
 payload = json.load(sys.stdin)
 receipt = Path(os.environ["BB_TEST_RECEIPTS"])
 with receipt.open("a") as stream:
-    stream.write(json.dumps({"args": sys.argv[1:], "payload": payload}) + "\n")
+    stream.write(json.dumps({
+        "args": sys.argv[1:],
+        "payload": payload,
+        "env": {
+            "ZELLIJ_PANE_ID": os.environ.get("ZELLIJ_PANE_ID"),
+            "ZELLIJ_SESSION_NAME": os.environ.get("ZELLIJ_SESSION_NAME"),
+        },
+    }) + "\n")
 native = payload["hook_event_name"]
 key = payload.get("turn_id") or payload.get("source") or ""
 gate = receipt.parent / f"{native}-{payload['session_id']}-{key}.blocked"
@@ -371,7 +380,7 @@ elif native == "chat.message" and os.environ["BB_TEST_PROMPT_CONTEXT"] == "1":
 
 
 class TestOpenCodeBridge(unittest.TestCase):
-    def run_bridge(self, script, startup_format="nested", prompt_context=False):
+    def run_bridge(self, script, startup_format="nested", prompt_context=False, env_extra=None):
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)
             helper = directory / "bb-hook"
@@ -384,6 +393,8 @@ class TestOpenCodeBridge(unittest.TestCase):
                                        "receipt": json.dumps(str(receipt))}
             env = {**os.environ, "BB_HOOK_COMMAND": str(helper), "BB_TEST_RECEIPTS": str(receipt),
                    "BB_TEST_STARTUP_FORMAT": startup_format, "BB_TEST_PROMPT_CONTEXT": str(int(prompt_context))}
+            if env_extra:
+                env.update(env_extra)
             result = subprocess.run(["node", "--input-type=module", "-e", prelude + script],
                                     env=env, capture_output=True, text=True, timeout=20, check=True)
             calls = [json.loads(line) for line in receipt.read_text().splitlines()] if receipt.exists() else []
@@ -450,6 +461,70 @@ console.log('{}');
         self.assertEqual(len(afters), 1)
         self.assertIs(afters[0]["is_error"], True)
         self.assertEqual(afters[0]["error"], "stopped")
+
+    # ------------------------------------------------------------------
+    # Pane attribution: the plugin's process env names the SERVER's terminal
+    # (under `opencode serve --service`, a pane that died long ago); a
+    # session's own shells name the pane it is actually attached to.
+    # ------------------------------------------------------------------
+
+    STALE_SERVER_ENV = {"ZELLIJ_PANE_ID": "16", "ZELLIJ_SESSION_NAME": "Workspace"}
+
+    def test_a_sessions_own_shell_binds_its_pane_for_later_hooks(self):
+        _, calls = self.run_bridge("""
+await created('session-A');
+await toolBefore('session-A', 'call-1', { command: 'npm test', workdir: directory });
+await shellBefore('npm test', directory, { ZELLIJ_PANE_ID: '39', ZELLIJ_SESSION_NAME: 'Workspace' });
+await toolBefore('session-A', 'call-2', { command: 'ls' });
+await waitFor('tool.execute.before', 'session-A');
+console.log('{}');
+""", env_extra=self.STALE_SERVER_ENV)
+        befores = [call for call in calls if call["payload"]["hook_event_name"] == "tool.execute.before"]
+        self.assertEqual(len(befores), 2)
+        # Before the bind: the server's stale pane, as it always was.
+        self.assertEqual(befores[0]["env"]["ZELLIJ_PANE_ID"], "16")
+        # After the bind: the session's own pane.
+        self.assertEqual(befores[1]["env"]["ZELLIJ_PANE_ID"], "39")
+        self.assertEqual(befores[1]["env"]["ZELLIJ_SESSION_NAME"], "Workspace")
+
+    def test_a_headless_session_publishes_no_pane_rather_than_the_servers(self):
+        # A session whose own shells carry no ZELLIJ_* must not inherit the
+        # server's dead pane: pane-less events are ignored, dead-pane events
+        # are refused forever.
+        _, calls = self.run_bridge("""
+await created('session-A');
+await toolBefore('session-A', 'call-1', { command: 'npm test', workdir: directory });
+await shellBefore('npm test', directory, { TERM: 'xterm-256color' });
+await toolBefore('session-A', 'call-2', { command: 'ls' });
+await waitFor('tool.execute.before', 'session-A');
+console.log('{}');
+""", env_extra=self.STALE_SERVER_ENV)
+        befores = [call for call in calls if call["payload"]["hook_event_name"] == "tool.execute.before"]
+        self.assertEqual(len(befores), 2)
+        self.assertEqual(befores[0]["env"]["ZELLIJ_PANE_ID"], "16")
+        self.assertIsNone(befores[1]["env"]["ZELLIJ_PANE_ID"])
+        self.assertIsNone(befores[1]["env"]["ZELLIJ_SESSION_NAME"])
+
+    def test_an_ambiguous_shell_key_binds_nothing(self):
+        # Two sessions waiting on the same (command, cwd): the create.before
+        # cannot say whose it is, so it binds nothing for either. A wrong pane
+        # is worse than none.
+        _, calls = self.run_bridge("""
+await created('session-A');
+await created('session-B');
+await toolBefore('session-A', 'call-1', { command: 'make', workdir: directory });
+await toolBefore('session-B', 'call-2', { command: 'make', workdir: directory });
+await shellBefore('make', directory, { ZELLIJ_PANE_ID: '39', ZELLIJ_SESSION_NAME: 'Workspace' });
+await toolBefore('session-A', 'call-3', { command: 'ls' });
+await waitFor('tool.execute.before', 'session-A');
+console.log('{}');
+""", env_extra=self.STALE_SERVER_ENV)
+        last = [call for call in calls
+                if call["payload"]["hook_event_name"] == "tool.execute.before"
+                and call["payload"].get("tool_input") == {"command": "ls"}]
+        self.assertEqual(len(last), 1)
+        self.assertEqual(last[0]["env"]["ZELLIJ_PANE_ID"], "16",
+                         "an ambiguous bind must leave the process env untouched")
 
     def test_chat_message_reports_the_model_the_session_selected(self):
         _, calls = self.run_bridge("""

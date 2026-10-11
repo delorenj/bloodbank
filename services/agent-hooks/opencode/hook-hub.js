@@ -35,6 +35,21 @@ import { join } from "node:path";
 // SHUTDOWN_GRACE_MS for in-flight hooks. Without both, the turn-end hook is lost.
 // Injected context is held in memory per user message, not persisted: a restarted
 // server does not replay earlier turns' hub context (v1 persisted a synthetic part).
+//
+// Pane attribution (ZELLIJ_PANE_ID / ZELLIJ_SESSION_NAME): this plugin runs
+// inside ONE long-lived server process that serves every session — under
+// `opencode serve --service` that process was started in some terminal once,
+// and its own environment names a pane that has usually been closed for weeks.
+// Publishing the server's pane would attribute every session's events to a
+// dead pane (deckard refuses them; nothing lights up). The only place v2
+// exposes a session's OWN environment is the shell `create.before` hook, which
+// fires per spawned shell with the resolved env but no sessionID. So:
+// `tool.execute.before` records the pending shell call (command + cwd, both
+// sides of the pair verified), and the next `create.before` with exactly that
+// (command, cwd) binds that session's terminal identity for every later
+// bb-hook spawn. Zero or multiple waiters for the key bind nothing — a wrong
+// pane is worse than none. Sessions that never spawn a shell keep the
+// process env (pre-existing behaviour, no regression).
 
 const MAX_CAPTURED = 2048;
 const MAX_INJECTED = 256;
@@ -108,6 +123,8 @@ export default {
     const injected = new Map();     // user messageID -> context text for that turn
     const chains = new Map();       // sessionID -> tail of that session's event queue
     const pending = new Set();      // emit() promises still waiting on bb-hook
+    const sessionEnv = new Map();   // sessionID -> { pane, session } captured from its own shells
+    const pendingShellCalls = new Map(); // `${command}\0${cwd}` -> [sessionID, ...] awaiting create.before
 
     const directoryOf = (sessionID) => directories.get(sessionID) || home;
 
@@ -127,12 +144,26 @@ export default {
       const slow = native === "chat.message" || native === "session.created";
       const args = ["--cli", "opencode", "--native", native];
       if (slow) args.push("--deadline", "15");
+      // Terminal identity: the session's own captured env when there is one,
+      // else the server's. A session whose own shells carry no ZELLIJ_* at all
+      // (headless) publishes pane-less events rather than the server's stale
+      // pane — deckard ignores the missing pane and refuses the dead one, and
+      // only one of those spams the log forever.
+      let env = process.env;
+      const captured = payload.session_id ? sessionEnv.get(payload.session_id) : undefined;
+      if (captured) {
+        env = { ...process.env };
+        if (captured.pane) env.ZELLIJ_PANE_ID = captured.pane;
+        else delete env.ZELLIJ_PANE_ID;
+        if (captured.session) env.ZELLIJ_SESSION_NAME = captured.session;
+        else delete env.ZELLIJ_SESSION_NAME;
+      }
       let child;
       try {
         // Own process group: `opencode run` tears its server down the moment the
         // last turn ends, and a hook still starting up (the turn-completed one)
         // must outlive that.
-        child = spawn(command, args, { cwd: directory, env: process.env, stdio: ["pipe", "pipe", "ignore"], detached: true });
+        child = spawn(command, args, { cwd: directory, env, stdio: ["pipe", "pipe", "ignore"], detached: true });
         child.unref();
       } catch { resolve(""); return; }
       children.add(child);
@@ -199,6 +230,7 @@ export default {
       turns.delete(sessionID);
       models.delete(sessionID);
       running.delete(sessionID);
+      sessionEnv.delete(sessionID);
     };
 
     const completeTurn = async (sessionID) => {
@@ -355,6 +387,18 @@ export default {
             tool_name: event.tool, tool_call_id: event.id, tool_input: event.input,
           };
           rememberEntry(toolInputs, `${sessionID}:${event.id}`, payload, MAX_CAPTURED);
+          // A shell tool call is about to spawn: its `create.before` will carry
+          // this session's own environment (see the pane-attribution note up
+          // top). Keyed by the exact (command, cwd) pair, which both sides
+          // report, so the bind is exact or absent — never guessed.
+          if (event.input && typeof event.input.command === "string") {
+            const cwd = (typeof event.input.workdir === "string" && event.input.workdir)
+              || directoryOf(sessionID);
+            const key = `${event.input.command}\u0000${cwd}`;
+            const waiting = pendingShellCalls.get(key) || [];
+            waiting.push(sessionID);
+            rememberEntry(pendingShellCalls, key, waiting, MAX_CAPTURED);
+          }
           await emit("tool.execute.before", payload, directoryOf(sessionID));
         } catch { /* never block a tool over telemetry */ }
       });
@@ -377,6 +421,29 @@ export default {
           }, directoryOf(sessionID));
         } catch { /* never block a tool over telemetry */ }
       });
+
+      // The one v2 seam that sees a session's own environment: fired per
+      // spawned shell, with the resolved env (the session's, else the server's)
+      // but no sessionID. Bound to the pending shell tool call by the exact
+      // (command, cwd) pair recorded in `execute.before`. Shells spawned
+      // outside the shell tool (or with an ambiguous key) bind nothing.
+      // Guarded: a host build without the shell domain keeps the legacy
+      // process-env attribution rather than failing the whole plugin.
+      try {
+        await ctx.shell.hook("create.before", (event) => {
+          try {
+            const key = `${event.command}\u0000${event.cwd}`;
+            const waiting = pendingShellCalls.get(key);
+            pendingShellCalls.delete(key);
+            if (!waiting || waiting.length !== 1) return;
+            const env = event.env || {};
+            rememberEntry(sessionEnv, waiting[0], {
+              pane: typeof env.ZELLIJ_PANE_ID === "string" ? env.ZELLIJ_PANE_ID : null,
+              session: typeof env.ZELLIJ_SESSION_NAME === "string" ? env.ZELLIJ_SESSION_NAME : null,
+            }, MAX_CAPTURED);
+          } catch { /* never break a shell over attribution capture */ }
+        });
+      } catch { /* no shell domain on this host build */ }
     };
 
     // The subscription is open before the hooks register so a session created in
@@ -394,6 +461,8 @@ export default {
       owned.clear();
       injected.clear();
       toolInputs.clear();
+      sessionEnv.clear();
+      pendingShellCalls.clear();
     });
   },
 };
