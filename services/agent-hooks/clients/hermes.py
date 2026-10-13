@@ -119,18 +119,35 @@ class HermesAdapter(ClientAdapter):
         cwd = _value(flat, "cwd", "working_directory") or os.getcwd()
 
         if ce_type == "bloodbank.conversation.turn.started":
+            # Extract the user prompt so subscribers (compressors, sidecars,
+            # roll-up summarizers) can read what was actually said without
+            # hitting Hindsight. The payload carries it in extra.prompt or
+            # extra.user_input depending on the Hermes version.
+            prompt_text = str(
+                _value(flat, "prompt", "user_input", "user_prompt", "message", "content") or ""
+            )
             return {
                 "thread_id": correlation,
                 "turn_id": self.native_turn_id(payload) or session.current_turn_id,
+                "prompt_text": prompt_text,
+                "prompt_length": len(prompt_text.encode("utf-8")),
                 "working_directory": cwd,
                 **raw,
             }
 
         if ce_type == "bloodbank.conversation.turn.completed":
             outcome = "canceled" if flat.get("interrupted") else "failed" if flat.get("failed") else "completed"
+            # The agent's final reply for this turn — subscribers need the
+            # actual response, not just the outcome label.
+            reply_text = str(
+                _value(flat, "last_assistant_message", "assistant_message", "response", "reply", "output", "result") or ""
+            )
             return {"thread_id": correlation,
                     "turn_id": self.native_turn_id(payload) or session.current_turn_id,
-                    "outcome": outcome, "working_directory": cwd, **raw}
+                    "outcome": outcome,
+                    "reply_text": reply_text,
+                    "reply_length": len(reply_text.encode("utf-8")),
+                    "working_directory": cwd, **raw}
 
         if ce_type == "bloodbank.agent.session.started":
             return {
