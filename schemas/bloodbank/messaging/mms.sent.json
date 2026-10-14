@@ -52,7 +52,7 @@
         },
         "from": {
           "type": "string",
-          "description": "Sending number (E.164).",
+          "description": "Sending number (E.164) for Telnyx; 'me' when observed from the phone through BlueBubbles.",
           "minLength": 1
         },
         "to": {

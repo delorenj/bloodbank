@@ -52,7 +52,7 @@
         },
         "from": {
           "type": "string",
-          "description": "Sending number (E.164).",
+          "description": "The operator side of the text as the bridge reports it, e.g. 'me' from BlueBubbles; not an E.164 number.",
           "minLength": 1
         },
         "to": {
@@ -83,7 +83,7 @@
             "string",
             "null"
           ],
-          "description": "command_id of the messaging.rcs.send command that caused it, if any."
+          "description": "command_id of the command that caused it, if any. None today: these are sent from the phone (BlueBubbles), never by a Bloodbank command."
         },
         "cost": {
           "type": [

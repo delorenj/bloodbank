@@ -44,7 +44,9 @@ Lineage and ordering: causationid is always emitted (null unless --causation
 is given -- a root event). ordering_key is --ordering-key when given, else the
 narrowest §11.1 bucket the payload names: transcription:<id> when the data
 carries a transcription_id/id, project:<data.project.slug> for the project
-domain, else <domain>:<uuid4>.
+domain, line:<data.line> for messaging carrier texts (sms/mms/rcs/imessage),
+messaging:<platform>:<thread_id|notification_id> for messaging chat platforms,
+else <domain>:<uuid4>.
 
 Every event envelope carries an `actor` (§10, and REQUIRED_EVENT_FIELDS in
 core/validate.py). bb-emit shipped without one for months: NATS core PUB does
@@ -185,7 +187,9 @@ def main():
     ap.add_argument("--causation", help="explicit causationid (uuid); default null = root event")
     ap.add_argument("--ordering-key",
                     help="explicit §11.1 ordering bucket (default derived from data: "
-                         "transcription:<id>, project:<data.project.slug>, else <domain>:<uuid4>)")
+                         "transcription:<id>, project:<data.project.slug>, line:<data.line> for "
+                         "messaging carrier texts, messaging:<platform>:<thread_id> for "
+                         "messaging chat platforms, else <domain>:<uuid4>)")
     ap.add_argument("--actor-type", default="service",
                     help="actor.type archetype: service|operator|scheduler|agent_cli|... (default: service)")
     ap.add_argument("--actor-id",

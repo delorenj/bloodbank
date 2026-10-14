@@ -41,10 +41,11 @@ async function writeRegistry(t, value) {
 function executionContext(parameters, input = [{ json: { source: 'test' } }]) {
   return {
     getInputData: () => input,
-    getNodeParameter(name, _index, fallback) {
-      return Object.prototype.hasOwnProperty.call(parameters, name)
-        ? parameters[name]
-        : fallback;
+    // A function value stands in for an n8n expression: resolved per item.
+    getNodeParameter(name, index, fallback) {
+      if (!Object.prototype.hasOwnProperty.call(parameters, name)) return fallback;
+      const value = parameters[name];
+      return typeof value === 'function' ? value(input[index].json) : value;
     },
     getNode: () => ({
       id: 'publisher-node-test',
@@ -337,4 +338,41 @@ test('event mode honors an explicit ordering key', async () => {
   assert.equal(messages.length, 1);
   assert.equal(messages[0].subject, 'bloodbank.evt.telephony.call.ended');
   assert.equal(messages[0].envelope.ordering_key, 'call:v3:call-1');
+});
+
+test('event mode resolves a per-item type, so one node publishes every carrier transport', async () => {
+  const messages = [];
+  const node = new Bloodbank();
+  const text = (channel, id) => ({
+    channel,
+    data: {
+      message_id: id, line: 'cell', source: 'android-sms', from: '+12155550199',
+      to: 'cell', text: 'hi', received_at: '2026-10-14T12:00:00Z', thread_id: null,
+    },
+  });
+  await node.execute.call(executionContext({
+    mode: 'event',
+    event: (item) => `bloodbank.messaging.${item.channel}.received`,
+    data: (item) => item.data,
+    connection: { natsHost: 'test-nats', natsPort: 4222 },
+  }, [{ json: text('sms', 'm-1') }, { json: text('rcs', 'm-2') }]), capturedPublisher(messages));
+
+  assert.deepEqual(messages.map((m) => m.subject), [
+    'bloodbank.evt.messaging.sms.received',
+    'bloodbank.evt.messaging.rcs.received',
+  ]);
+  assert.deepEqual(messages.map((m) => m.envelope.ordering_key), ['line:cell', 'line:cell']);
+});
+
+test('event mode refuses an evaluated type with no schema', async () => {
+  const node = new Bloodbank();
+  await assert.rejects(
+    node.execute.call(executionContext({
+      mode: 'event',
+      event: 'bloodbank.telephony.message.received',
+      data: {},
+      connection: { natsHost: 'test-nats', natsPort: 4222 },
+    }), capturedPublisher([])),
+    /Unknown bloodbank event: bloodbank\.telephony\.message\.received/,
+  );
 });
