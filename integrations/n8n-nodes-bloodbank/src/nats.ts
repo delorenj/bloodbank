@@ -157,10 +157,15 @@ function entityIdentity(data: Record<string, unknown>): string {
   return '';
 }
 
-/** messaging is one entity per chat platform (`messaging.<platform>.received`);
- *  every one of those schemas pins ordering_key to `thread:<thread_id>`. The
- *  contract test fails if a messaging schema lands without a rule here. */
+/** messaging is one entity per chat platform (`messaging.<platform>.<action>`);
+ *  every one of those schemas pins ordering_key to `messaging:<platform>:<id>`,
+ *  never `thread:` (that bucket belongs to agent conversations). The contract
+ *  test fails if a messaging schema lands without a rule here. */
 const MESSAGING_PLATFORMS = ['email', 'telegram', 'slack', 'teams', 'whatsapp', 'google_chat'];
+const MESSAGING_BUCKET_SOURCES: Record<string, string[]> = {
+  received: ['thread_id'],
+  notified: ['thread_id', 'notification_id'],
+};
 
 /** §11.1 ordering buckets some payloads/schema patterns require the derivation
  *  to produce by name, overriding the generic `<domain>:<identity>` fallback.
@@ -171,12 +176,14 @@ const MESSAGING_PLATFORMS = ['email', 'telegram', 'slack', 'teams', 'whatsapp', 
  *  when the payload actually names the bucket source. */
 const ENTITY_BUCKET_RULES: Record<
   string,
-  { source: string; bucket: (value: string) => string }
+  { sources: string[]; bucket: (value: string) => string }
 > = Object.fromEntries(
-  MESSAGING_PLATFORMS.map((platform) => [
-    `bloodbank.messaging.${platform}.received`,
-    { source: 'thread_id', bucket: (threadId: string) => `thread:${threadId}` },
-  ]),
+  MESSAGING_PLATFORMS.flatMap((platform) =>
+    Object.entries(MESSAGING_BUCKET_SOURCES).map(([action, sources]) => [
+      `bloodbank.messaging.${platform}.${action}`,
+      { sources, bucket: (id: string) => `messaging:${platform}:${id}` },
+    ]),
+  ),
 );
 
 /** §11.1 ordering bucket for an event envelope. An explicit opts.orderingKey
@@ -190,10 +197,10 @@ function deriveOrderingKey(
   eventId: string,
 ): string {
   const rule = ENTITY_BUCKET_RULES[type];
-  if (rule) {
-    const value = data[rule.source];
+  for (const source of rule?.sources ?? []) {
+    const value = data[source];
     const trimmed = typeof value === 'string' ? value.trim() : '';
-    if (trimmed) return rule.bucket(trimmed);
+    if (trimmed) return rule!.bucket(trimmed);
   }
   return identity ? `${domain}:${identity}` : `${domain}:${eventId}`;
 }

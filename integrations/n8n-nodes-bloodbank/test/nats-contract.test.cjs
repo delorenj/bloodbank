@@ -193,33 +193,64 @@ const MESSAGING_PAYLOAD = {
   thread_id: 'thread-42',
 };
 
+const NOTIFIED_PAYLOAD = {
+  schema_version: 1,
+  category: 'reaction',
+  sender: { handle: '@counterpart' },
+  recipient: { handle: '@operator' },
+  summary: 'counterpart reacted 👍 to your message',
+  reaction: '👍',
+  received_at: '2026-10-14T12:00:00.000Z',
+  notification_id: 'notif-7',
+  message_id: 'msg-1',
+  thread_id: 'thread-42',
+};
+const PAYLOAD_BY_ACTION = { received: MESSAGING_PAYLOAD, notified: NOTIFIED_PAYLOAD };
+
 const MESSAGING_SCHEMA_DIR = require('node:path').resolve(
   __dirname, '..', '..', '..', 'schemas', 'bloodbank', 'messaging');
 const MESSAGING_TYPES = require('node:fs')
   .readdirSync(MESSAGING_SCHEMA_DIR)
-  .filter((name) => name.endsWith('.received.json'))
+  .filter((name) => name.endsWith('.json'))
   .map((name) => `bloodbank.messaging.${name.slice(0, -'.json'.length)}`);
 
-test('messaging is split per platform; no generic message.received remains', () => {
-  assert.ok(MESSAGING_TYPES.includes('bloodbank.messaging.email.received'));
-  assert.ok(MESSAGING_TYPES.includes('bloodbank.messaging.telegram.received'));
-  assert.ok(!MESSAGING_TYPES.includes('bloodbank.messaging.message.received'));
+test('messaging is split per platform for messages and notifications', () => {
+  for (const platform of ['email', 'telegram', 'slack', 'teams', 'whatsapp', 'google_chat']) {
+    assert.ok(MESSAGING_TYPES.includes(`bloodbank.messaging.${platform}.received`), platform);
+    assert.ok(MESSAGING_TYPES.includes(`bloodbank.messaging.${platform}.notified`), platform);
+  }
+  assert.ok(!MESSAGING_TYPES.some((type) => /\.(message|notification)\./.test(type)));
 });
 
 for (const type of MESSAGING_TYPES) {
-  test(`${type} derives a thread: ordering bucket`, () => {
+  const [, , platform, action] = type.split('.');
+  test(`${type} derives a messaging:${platform}: ordering bucket`, () => {
     const { subject, envelope } = buildEnvelope({
       type,
       kind: 'event',
-      data: MESSAGING_PAYLOAD,
+      data: PAYLOAD_BY_ACTION[action],
       eventId: EVENT_ID,
       observedAt: '2026-10-14T12:00:00.000Z',
     });
     assert.equal(subject, `bloodbank.evt.${type.slice('bloodbank.'.length)}`);
-    assert.equal(envelope.ordering_key, 'thread:thread-42');
+    assert.equal(envelope.ordering_key, `messaging:${platform}:thread-42`);
     assert.doesNotThrow(() => validateEnvelope(type, envelope));
   });
 }
+
+test('a threadless notification buckets on its notification_id and validates', () => {
+  const { thread_id, message_id, sender, reaction, ...ping } = NOTIFIED_PAYLOAD;
+  const type = 'bloodbank.messaging.slack.notified';
+  const { envelope } = buildEnvelope({
+    type,
+    kind: 'event',
+    data: { ...ping, category: 'activity' },
+    eventId: EVENT_ID,
+    observedAt: '2026-10-14T12:00:00.000Z',
+  });
+  assert.equal(envelope.ordering_key, 'messaging:slack:notif-7');
+  assert.doesNotThrow(() => validateEnvelope(type, envelope));
+});
 
 test('messaging ordering bucket rule falls back to event id without thread_id', () => {
   const { thread_id, ...noThread } = MESSAGING_PAYLOAD;

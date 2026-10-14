@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://33god.dev/schemas/bloodbank/messaging/whatsapp.received.json",
   "title": "Messaging WhatsApp Received Event",
-  "description": "A human chat message arrived on WhatsApp. One type per platform: the platform is the entity segment (messaging.<platform>.received), so subscribers bind to exactly the platforms they care about, or to bloodbank.evt.messaging.*.received for all of them. ordering_key is thread:<thread_id>: every event of one platform-native conversation thread orders together. Consumers deduplicate on message_id. NOT telephony: PSTN-addressed communication (E.164 numbers, carrier SMS/RCS/MMS) is the telephony domain. See bloodbank/docs/event-naming.md (messaging).",
+  "description": "A human chat message arrived on WhatsApp. One type per platform: the platform is the entity segment (messaging.<platform>.received), so subscribers bind to exactly the platforms they care about, or to bloodbank.evt.messaging.*.received for all of them. ordering_key is messaging:whatsapp:<thread_id>: every event of one platform-native conversation thread orders together. Consumers deduplicate on message_id. NOT telephony: PSTN-addressed communication (E.164 numbers, carrier SMS/RCS/MMS) is the telephony domain. See bloodbank/docs/event-naming.md (messaging).",
   "type": "object",
   "allOf": [
     {
@@ -21,8 +21,8 @@
     },
     "ordering_key": {
       "type": "string",
-      "pattern": "^thread:.+$",
-      "description": "Section 11.1 bucket 'thread:<thread_id>', the same value as 'thread:' + data.thread_id: all events of one platform-native conversation thread order together."
+      "pattern": "^messaging:whatsapp:.+$",
+      "description": "Section 11.1 bucket 'messaging:whatsapp:<thread_id>', the same value as 'messaging:whatsapp:' + data.thread_id: all events of one platform-native conversation thread order together. Not 'thread:', which is the agent-conversation bucket."
     },
     "data": {
       "type": "object",

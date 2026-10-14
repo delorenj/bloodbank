@@ -283,7 +283,7 @@ Segment 3 of `type` MUST be one of:
 | `portfolio`    | Company-level intake, delegation receipts, approvals, escalations, and capacity facts. | active   |
 | `project`      | Project-scoped facts keyed by the pjangler project slug: periodic activity reports, deployments of built artifacts, and other whole-project outcomes that span a project's repos and boards. | active   |
 | `telephony`    | Phone calls and text messages on the operator's lines: Telnyx numbers and the forwarded personal cell (SMS, RCS through notifications, later iMessage). Calls, recordings, voicemail transcripts, and send/call commands executed through Telnyx. | active   |
-| `messaging`    | Platform-addressed human chat messages — email, chat platforms, and messaging apps. The entity segment names the platform (`messaging.<platform>.<action>`, e.g. `messaging.telegram.received`); see the platform rows in §7. | active   |
+| `messaging`    | Platform-addressed human chat messages and platform alerts — email, chat platforms, and messaging apps. The entity segment names the platform (`messaging.<platform>.<action>`: `received` for a message, `notified` for a mention/reaction/activity alert); see the platform rows in §7. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
@@ -301,16 +301,15 @@ Segment 4 of `type` MUST be one of:
 | Entity             | Domain pairing (typical) | Notes                                                       |
 | ------------------ | ------------------------ | ----------------------------------------------------------- |
 | `cost`             | `billing`                | Scoped provider bill-period snapshot, replaced by revisions. |
-| `thread`           | `conversation`           | One durable conversation across many turns. (In `messaging` a thread is `data.thread_id`, not an entity.) |
+| `thread`           | `conversation`           | One durable agent conversation across many turns — the original model of an agent session. `thread:<thread_id>` is the ordering bucket for `conversation.turn.*`; `thread.created`/`thread.resumed` have schemas but no producer emits them. Not used by `messaging` (there a thread is `data.thread_id`). |
 | `turn`             | `conversation`           | One user-prompt-to-final-response unit inside a thread.     |
 | `message`          | `conversation`, `telephony` | A single user/assistant message appended to the transcript; in `telephony`, one SMS/MMS/RCS/iMessage text. |
-| `notification`     | `messaging` (reserved)   | A platform alert that isn't a received message (mention, reaction, activity ping). No schema yet; may move to per-platform entities like messages did. |
-| `email`            | `messaging`              | One email message on the operator's inboxes (`messaging.email.received`). |
-| `telegram`         | `messaging`              | One Telegram message. |
-| `slack`            | `messaging`              | One Slack message. |
-| `teams`            | `messaging`              | One Microsoft Teams message. |
-| `whatsapp`         | `messaging`              | One WhatsApp message. |
-| `google_chat`      | `messaging`              | One Google Chat message. |
+| `email`            | `messaging`              | The email platform: `messaging.email.received` (one message), `messaging.email.notified` (one alert). |
+| `telegram`         | `messaging`              | The Telegram platform: `messaging.telegram.received` (one message), `messaging.telegram.notified` (one alert). |
+| `slack`            | `messaging`              | The Slack platform: `messaging.slack.received` (one message), `messaging.slack.notified` (one alert). |
+| `teams`            | `messaging`              | The Microsoft Teams platform: `messaging.teams.received` (one message), `messaging.teams.notified` (one alert). |
+| `whatsapp`         | `messaging`              | The WhatsApp platform: `messaging.whatsapp.received` (one message), `messaging.whatsapp.notified` (one alert). |
+| `google_chat`      | `messaging`              | The Google Chat platform: `messaging.google_chat.received` (one message), `messaging.google_chat.notified` (one alert). |
 | `invocation`       | `agent`                  | One round of agent runtime calling an LLM.                  |
 | `session`          | `cli`                    | One CLI session (e.g. `claude` or `copilot` process tree).  |
 | `process`          | `cli`                    | An OS process spawned within a CLI session.                 |
@@ -367,15 +366,19 @@ emit an entity not paired with it here.
 
 **`messaging` entities are platforms, on purpose.** In `messaging` the entity
 segment names the chat platform (`messaging.email.received`,
-`messaging.telegram.received`, …) rather than a generic `message` entity with
-the platform in `data`. A chat platform is the addressable channel a message
+`messaging.telegram.notified`, …) rather than generic `message` /
+`notification` entities with the platform in `data`. A chat platform is the addressable channel a message
 travels on, not a compute provider: it is not a §9 banned token, and the §10
 rule (provider/CLI/model identity lives in `actor`) is about who *produced* an
 event, not where a human message was *sent*. Splitting by platform lets each
 platform's schema grow its own payload (email headers, Slack blocks) and lets
-subscribers bind to `bloodbank.evt.messaging.<platform>.received`, or to
-`bloodbank.evt.messaging.*.received` for every platform. A new platform is a
-new entity row here plus a new schema; there is no `data.platform` field.
+subscribers bind to `bloodbank.evt.messaging.<platform>.>`, or to
+`bloodbank.evt.messaging.*.received` / `.*.notified` across every platform.
+The action says what happened: `received` is a message, `notified` is an alert
+that isn't one (mention, reaction, activity ping). A new platform is a new
+entity row here plus a `received` and a `notified` schema; there is no
+`data.platform` field. Ordering is `messaging:<platform>:<thread_id>` (§11.1),
+never the agent-conversation `thread:` bucket.
 
 ---
 
@@ -388,7 +391,7 @@ new entity row here plus a new schema; there is no `data.platform` field.
 `closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`,
 `recorded`, `triaged`, `updated`, `reached`, `resolved`, `detected`,
 `flagged`, `routed`, `breached`, `observed`, `clocked_in`, `clocked_out`.
-`delegated`, `raised`, `released`, `expired`, `skipped`.
+`delegated`, `raised`, `released`, `expired`, `skipped`, `notified`.
 
 ### 8.2 Command actions (imperative present)
 
@@ -493,7 +496,7 @@ keyword is not documentation-only.
 order with siblings on the same logical entity. Convention:
 
 ```
-thread:<thread_id>
+thread:<thread_id>               # agent conversation (conversation.turn.*); not messaging
 turn:<turn_id>
 invocation:<invocation_id>
 session:<session_id>             # agent CLI session (was cli_session)
@@ -511,6 +514,7 @@ clock:<clock_system>:<principal> # attendance: one worker/system time-clock stat
 project:<project_slug>           # project: one bucket per pjangler project; activity audiences and deployments share it
 call:<call_id>                   # telephony: every event of one phone call, recording and transcript included
 line:<line>                      # telephony: messages on one line ("cell" or a Telnyx E.164)
+messaging:<platform>:<thread_id> # messaging: one platform-native thread; a threadless notified alert uses its notification_id
 ```
 
 Pick the narrowest bucket that captures the event's natural ordering.

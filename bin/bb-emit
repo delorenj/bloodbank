@@ -143,15 +143,18 @@ def _nats_publish(subject, body, host, port, timeout=3.0):
                 raise IOError("NATS -ERR: " + line.decode(errors="replace").strip())
 
 
-def _derive_ordering_key(domain, data, tid):
+def _derive_ordering_key(domain, entity, data, tid):
     """§11.1 bucket when the caller gave none: the narrowest one the payload names."""
     if tid:
         return f"transcription:{tid}"
     if domain == "project" and isinstance(data.get("project"), dict) and data["project"].get("slug"):
         return f"project:{data['project']['slug']}"
-    # every messaging.<platform>.* schema pins ordering_key to thread:<thread_id>
-    if domain == "messaging" and isinstance(data.get("thread_id"), str) and data["thread_id"].strip():
-        return f"thread:{data['thread_id'].strip()}"
+    # messaging.<platform>.*: messaging:<platform>:<thread_id>, else the notification itself
+    if domain == "messaging":
+        for field in ("thread_id", "notification_id"):
+            value = data.get(field)
+            if isinstance(value, str) and value.strip():
+                return f"messaging:{entity}:{value.strip()}"
     return f"{domain}:{uuid.uuid4()}"
 
 
@@ -238,7 +241,7 @@ def main():
               f"got '{a.type}'", file=sys.stderr)
         return usage_rc
 
-    domain = ce_type.split(".")[1]
+    domain, entity = ce_type.split(".")[1:3]
     subject = f"bloodbank.{_KIND_MARKERS[kind]}." + ce_type[len("bloodbank."):]
 
     tid = str(data.get("transcription_id") or data.get("id") or "").strip()
@@ -293,7 +296,7 @@ def main():
         "dataschema": dataschema,
         "kind": kind,
         "actor": actor,
-        "ordering_key": a.ordering_key or _derive_ordering_key(domain, data, tid),
+        "ordering_key": a.ordering_key or _derive_ordering_key(domain, entity, data, tid),
         "data": data,
     }
     if kind == "command":

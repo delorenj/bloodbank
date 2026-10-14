@@ -65,7 +65,7 @@ ALLOWED_DOMAINS = frozenset({
 })
 
 ALLOWED_ENTITIES = frozenset({
-    "thread", "turn", "message", "notification",
+    "thread", "turn", "message",
     "invocation",
     "session", "process", "stdout", "stderr",
     "request", "response", "usage", "allowance",
@@ -81,7 +81,7 @@ ALLOWED_ENTITIES = frozenset({
     "work", "receipt", "approval", "escalation", "capacity", "lease",
     "activity", "deployment", "cost",
     "call", "slop",
-    # messaging: one entity per chat platform (messaging.<platform>.received)
+    # messaging: one entity per chat platform (messaging.<platform>.received|notified)
     "email", "telegram", "slack", "teams", "whatsapp", "google_chat",
 })
 
@@ -93,7 +93,7 @@ EVENT_ACTIONS = frozenset({
     "updated", "reached", "resolved",
     "detected", "flagged", "routed", "breached", "observed", "clocked_in", "clocked_out",
     "delegated", "raised", "released", "expired", "exhausted",
-    "skipped", "annotated",
+    "skipped", "annotated", "notified",
 })
 
 COMMAND_ACTIONS = frozenset({
