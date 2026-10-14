@@ -283,7 +283,7 @@ Segment 3 of `type` MUST be one of:
 | `portfolio`    | Company-level intake, delegation receipts, approvals, escalations, and capacity facts. | active   |
 | `project`      | Project-scoped facts keyed by the pjangler project slug: periodic activity reports, deployments of built artifacts, and other whole-project outcomes that span a project's repos and boards. | active   |
 | `telephony`    | Phone calls and text messages on the operator's lines: Telnyx numbers and the forwarded personal cell (SMS, RCS through notifications, later iMessage). Calls, recordings, voicemail transcripts, and send/call commands executed through Telnyx. | active   |
-| `messaging`    | Platform-addressed human chat messages — email, chat platforms, and messaging apps. Provider identity lives in data.platform. | active   |
+| `messaging`    | Platform-addressed human chat messages — email, chat platforms, and messaging apps. The entity segment names the platform (`messaging.<platform>.<action>`, e.g. `messaging.telegram.received`); see the platform rows in §7. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
@@ -303,8 +303,14 @@ Segment 4 of `type` MUST be one of:
 | `cost`             | `billing`                | Scoped provider bill-period snapshot, replaced by revisions. |
 | `thread`           | `conversation`, `messaging` | One durable conversation across many turns; in `messaging`, a platform-native conversation thread. |
 | `turn`             | `conversation`           | One user-prompt-to-final-response unit inside a thread.     |
-| `message`          | `conversation`, `telephony`, `messaging` | A single user/assistant message appended to the transcript; in `telephony`, one SMS/MMS/RCS/iMessage text; in `messaging`, one inbound or outbound message on a chat platform. |
+| `message`          | `conversation`, `telephony` | A single user/assistant message appended to the transcript; in `telephony`, one SMS/MMS/RCS/iMessage text. |
 | `notification`     | `messaging`               | A platform alert that isn't a message (mention, reaction, activity ping). |
+| `email`            | `messaging`              | One email message on the operator's inboxes (`messaging.email.received`). |
+| `telegram`         | `messaging`              | One Telegram message. |
+| `slack`            | `messaging`              | One Slack message. |
+| `teams`            | `messaging`              | One Microsoft Teams message. |
+| `whatsapp`         | `messaging`              | One WhatsApp message. |
+| `google_chat`      | `messaging`              | One Google Chat message. |
 | `invocation`       | `agent`                  | One round of agent runtime calling an LLM.                  |
 | `session`          | `cli`                    | One CLI session (e.g. `claude` or `copilot` process tree).  |
 | `process`          | `cli`                    | An OS process spawned within a CLI session.                 |
@@ -358,6 +364,18 @@ Segment 4 of `type` MUST be one of:
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
+
+**`messaging` entities are platforms, on purpose.** In `messaging` the entity
+segment names the chat platform (`messaging.email.received`,
+`messaging.telegram.received`, …) rather than a generic `message` entity with
+the platform in `data`. A chat platform is the addressable channel a message
+travels on, not a compute provider: it is not a §9 banned token, and the §10
+rule (provider/CLI/model identity lives in `actor`) is about who *produced* an
+event, not where a human message was *sent*. Splitting by platform lets each
+platform's schema grow its own payload (email headers, Slack blocks) and lets
+subscribers bind to `bloodbank.evt.messaging.<platform>.received`, or to
+`bloodbank.evt.messaging.*.received` for every platform. A new platform is a
+new entity row here plus a new schema; there is no `data.platform` field.
 
 ---
 

@@ -164,15 +164,20 @@ function entityIdentity(data: Record<string, unknown>): string {
  *  schemas declare no ordering_key pattern; do not widen an entry to a bare
  *  domain without checking every schema under that domain). A rule only fires
  *  when the payload actually names the bucket source. */
+/** messaging is one entity per chat platform (`messaging.<platform>.received`);
+ *  every one of those schemas pins ordering_key to `thread:<thread_id>`. The
+ *  contract test fails if a messaging schema lands without a rule here. */
+const MESSAGING_PLATFORMS = ['email', 'telegram', 'slack', 'teams', 'whatsapp', 'google_chat'];
+
 const ENTITY_BUCKET_RULES: Record<
   string,
   { source: string; bucket: (value: string) => string }
-> = {
-  'bloodbank.messaging.message.received': {
-    source: 'thread_id',
-    bucket: (threadId) => `thread:${threadId}`,
-  },
-};
+> = Object.fromEntries(
+  MESSAGING_PLATFORMS.map((platform) => [
+    `bloodbank.messaging.${platform}.received`,
+    { source: 'thread_id', bucket: (threadId: string) => `thread:${threadId}` },
+  ]),
+);
 
 /** §11.1 ordering bucket for an event envelope. An explicit opts.orderingKey
  *  always wins; the generic fallback is `<domain>:<identity>` (or the event id

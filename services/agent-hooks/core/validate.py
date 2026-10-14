@@ -81,6 +81,8 @@ ALLOWED_ENTITIES = frozenset({
     "work", "receipt", "approval", "escalation", "capacity", "lease",
     "activity", "deployment", "cost",
     "call", "slop",
+    # messaging: one entity per chat platform (messaging.<platform>.received)
+    "email", "telegram", "slack", "teams", "whatsapp", "google_chat",
 })
 
 EVENT_ACTIONS = frozenset({

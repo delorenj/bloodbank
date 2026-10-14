@@ -184,7 +184,6 @@ test('extensions cannot replace canonical envelope fields', () => {
 
 const MESSAGING_PAYLOAD = {
   schema_version: 1,
-  platform: 'telegram',
   direction: 'inbound',
   sender: { handle: '@counterpart' },
   recipient: { handle: '@operator' },
@@ -194,23 +193,38 @@ const MESSAGING_PAYLOAD = {
   thread_id: 'thread-42',
 };
 
-test('messaging.message.received derives a thread: ordering bucket', () => {
-  const { envelope } = buildEnvelope({
-    type: 'bloodbank.messaging.message.received',
-    kind: 'event',
-    data: MESSAGING_PAYLOAD,
-    eventId: EVENT_ID,
-    observedAt: '2026-10-14T12:00:00.000Z',
-  });
-  assert.equal(envelope.ordering_key, 'thread:thread-42');
-  assert.doesNotThrow(() =>
-    validateEnvelope('bloodbank.messaging.message.received', envelope));
+const MESSAGING_SCHEMA_DIR = require('node:path').resolve(
+  __dirname, '..', '..', '..', 'schemas', 'bloodbank', 'messaging');
+const MESSAGING_TYPES = require('node:fs')
+  .readdirSync(MESSAGING_SCHEMA_DIR)
+  .filter((name) => name.endsWith('.received.json'))
+  .map((name) => `bloodbank.messaging.${name.slice(0, -'.json'.length)}`);
+
+test('messaging is split per platform; no generic message.received remains', () => {
+  assert.ok(MESSAGING_TYPES.includes('bloodbank.messaging.email.received'));
+  assert.ok(MESSAGING_TYPES.includes('bloodbank.messaging.telegram.received'));
+  assert.ok(!MESSAGING_TYPES.includes('bloodbank.messaging.message.received'));
 });
+
+for (const type of MESSAGING_TYPES) {
+  test(`${type} derives a thread: ordering bucket`, () => {
+    const { subject, envelope } = buildEnvelope({
+      type,
+      kind: 'event',
+      data: MESSAGING_PAYLOAD,
+      eventId: EVENT_ID,
+      observedAt: '2026-10-14T12:00:00.000Z',
+    });
+    assert.equal(subject, `bloodbank.evt.${type.slice('bloodbank.'.length)}`);
+    assert.equal(envelope.ordering_key, 'thread:thread-42');
+    assert.doesNotThrow(() => validateEnvelope(type, envelope));
+  });
+}
 
 test('messaging ordering bucket rule falls back to event id without thread_id', () => {
   const { thread_id, ...noThread } = MESSAGING_PAYLOAD;
   const { envelope } = buildEnvelope({
-    type: 'bloodbank.messaging.message.received',
+    type: 'bloodbank.messaging.telegram.received',
     kind: 'event',
     data: noThread,
     eventId: EVENT_ID,

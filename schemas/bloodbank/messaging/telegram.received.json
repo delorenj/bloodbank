@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://33god.dev/schemas/bloodbank/messaging/message.received.json",
-  "title": "Messaging Message Received Event",
-  "description": "A human chat message arrived on a platform-addressed messaging integration (email, Telegram, Slack, Teams, WhatsApp, Google Chat). Platform identity lives in data.platform, never in the type. ordering_key is thread:<thread_id>: every event of one platform-native conversation thread orders together. Consumers deduplicate on message_id. NOT telephony: PSTN-addressed communication (E.164 numbers, carrier SMS/RCS/MMS) is the telephony domain. See bloodbank/docs/event-naming.md (messaging).",
+  "$id": "https://33god.dev/schemas/bloodbank/messaging/telegram.received.json",
+  "title": "Messaging Telegram Received Event",
+  "description": "A human chat message arrived on Telegram. One type per platform: the platform is the entity segment (messaging.<platform>.received), so subscribers bind to exactly the platforms they care about, or to bloodbank.evt.messaging.*.received for all of them. ordering_key is thread:<thread_id>: every event of one platform-native conversation thread orders together. Consumers deduplicate on message_id. NOT telephony: PSTN-addressed communication (E.164 numbers, carrier SMS/RCS/MMS) is the telephony domain. See bloodbank/docs/event-naming.md (messaging).",
   "type": "object",
   "allOf": [
     {
@@ -11,7 +11,7 @@
   ],
   "properties": {
     "type": {
-      "const": "bloodbank.messaging.message.received"
+      "const": "bloodbank.messaging.telegram.received"
     },
     "kind": {
       "const": "event"
@@ -26,23 +26,11 @@
     },
     "data": {
       "type": "object",
-      "description": "Payload for bloodbank.messaging.message.received.",
+      "description": "Payload for bloodbank.messaging.telegram.received.",
       "properties": {
         "schema_version": {
           "const": 1,
           "description": "Payload contract revision. Currently 1."
-        },
-        "platform": {
-          "type": "string",
-          "description": "The chat platform the message was observed on. Provider identity lives here, never in the type.",
-          "enum": [
-            "email",
-            "telegram",
-            "slack",
-            "teams",
-            "whatsapp",
-            "google_chat"
-          ]
         },
         "direction": {
           "type": "string",
@@ -132,7 +120,6 @@
       },
       "required": [
         "schema_version",
-        "platform",
         "direction",
         "sender",
         "recipient",
