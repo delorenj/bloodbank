@@ -92,12 +92,15 @@ export class Bloodbank implements INodeType {
         displayName: 'Event',
         name: 'event',
         type: 'options',
-        noDataExpression: true,
+        // An expression is allowed so one node can publish a per-item type, e.g.
+        // messaging.{{ $json.channel }}.received; it is still checked against
+        // the schema list at run time.
         options: eventOptions({ withRequired: true }),
         default: eventSchemas.length ? eventSchemas[0].type : '',
         required: true,
         displayOptions: { show: { mode: ['event'] } },
-        description: 'The bloodbank event to publish (generated from schemas/bloodbank/**)',
+        description:
+          'The bloodbank event to publish (generated from schemas/bloodbank/**). An expression may pick the type per item.',
       },
       {
         displayName: 'Data (JSON)',
