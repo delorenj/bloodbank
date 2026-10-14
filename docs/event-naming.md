@@ -283,6 +283,7 @@ Segment 3 of `type` MUST be one of:
 | `portfolio`    | Company-level intake, delegation receipts, approvals, escalations, and capacity facts. | active   |
 | `project`      | Project-scoped facts keyed by the pjangler project slug: periodic activity reports, deployments of built artifacts, and other whole-project outcomes that span a project's repos and boards. | active   |
 | `telephony`    | Phone calls and text messages on the operator's lines: Telnyx numbers and the forwarded personal cell (SMS, RCS through notifications, later iMessage). Calls, recordings, voicemail transcripts, and send/call commands executed through Telnyx. | active   |
+| `messaging`    | Platform-addressed human chat messages — email, chat platforms, and messaging apps. Provider identity lives in data.platform. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
@@ -300,9 +301,10 @@ Segment 4 of `type` MUST be one of:
 | Entity             | Domain pairing (typical) | Notes                                                       |
 | ------------------ | ------------------------ | ----------------------------------------------------------- |
 | `cost`             | `billing`                | Scoped provider bill-period snapshot, replaced by revisions. |
-| `thread`           | `conversation`           | One durable conversation across many turns.                 |
+| `thread`           | `conversation`, `messaging` | One durable conversation across many turns; in `messaging`, a platform-native conversation thread. |
 | `turn`             | `conversation`           | One user-prompt-to-final-response unit inside a thread.     |
-| `message`          | `conversation`, `telephony` | A single user/assistant message appended to the transcript; in `telephony`, one SMS/MMS/RCS/iMessage text. |
+| `message`          | `conversation`, `telephony`, `messaging` | A single user/assistant message appended to the transcript; in `telephony`, one SMS/MMS/RCS/iMessage text; in `messaging`, one inbound or outbound message on a chat platform. |
+| `notification`     | `messaging`               | A platform alert that isn't a message (mention, reaction, activity ping). |
 | `invocation`       | `agent`                  | One round of agent runtime calling an LLM.                  |
 | `session`          | `cli`                    | One CLI session (e.g. `claude` or `copilot` process tree).  |
 | `process`          | `cli`                    | An OS process spawned within a CLI session.                 |
@@ -591,9 +593,10 @@ JSON Schema documents with their own revision line (§13's `<n>`), not event
 types. Everything under `bloodbank/<domain>/` is named for the fact it
 describes and nothing else.
 
-There are 14 live domains — `agent`, `attendance`, `audio`, `cli`,
-`conversation`, `curator`, `finance`, `lifecycle`, `llm`, `portfolio`,
-`project`, `repo`, `reporting`, `system` — matching the active half of
+There are 19 live domains — `agent`, `attendance`, `audio`, `billing`,
+`cli`, `conversation`, `curator`, `finance`, `lifecycle`, `llm`,
+`messaging`, `portfolio`, `project`, `repo`, `reporting`, `review`,
+`system`, `telephony`, `workflow` — matching the active half of
 `ALLOWED_DOMAINS` in `services/agent-hooks/core/validate.py`. A domain
 directory appears when its first schema does.
 
