@@ -155,6 +155,9 @@ negative_probe "retired 5-token versioned type/subject (bloodbank.v1.*)" "$VERSI
 RETIRED_MESSAGING='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.messaging.message.received","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"messaging","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"thread:t","data":{}}'
 negative_probe "retired messaging.message (split per platform)" "$RETIRED_MESSAGING"
 
+RETIRED_TELEPHONY_TEXT='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.telephony.message.received","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"telephony","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"line:cell","data":{}}'
+negative_probe "retired telephony.message (texts moved to messaging)" "$RETIRED_TELEPHONY_TEXT"
+
 total=$((pass_count + fail_count))
 echo "smoketest-bloodbank-naming: ${pass_count}/${total} checks passed"
 

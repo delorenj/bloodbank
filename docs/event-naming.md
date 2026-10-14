@@ -282,8 +282,8 @@ Segment 3 of `type` MUST be one of:
 | `reporting`    | Company reporting runs, archives, and delivery outcomes.             | active   |
 | `portfolio`    | Company-level intake, delegation receipts, approvals, escalations, and capacity facts. | active   |
 | `project`      | Project-scoped facts keyed by the pjangler project slug: periodic activity reports, deployments of built artifacts, and other whole-project outcomes that span a project's repos and boards. | active   |
-| `telephony`    | Phone calls and text messages on the operator's lines: Telnyx numbers and the forwarded personal cell (SMS, RCS through notifications, later iMessage). Calls, recordings, voicemail transcripts, and send/call commands executed through Telnyx. | active   |
-| `messaging`    | Platform-addressed human chat messages and platform alerts — email, chat platforms, and messaging apps. The entity segment names the platform (`messaging.<platform>.<action>`: `received` for a message, `notified` for a mention/reaction/activity alert); see the platform rows in §7. | active   |
+| `telephony`    | Phone calls on the operator's lines (Telnyx numbers and the forwarded personal cell): calls, recordings, voicemail transcripts, and call commands executed through Telnyx. Text messages are `messaging` (one entity per transport: `sms`, `mms`, `rcs`, `imessage`). | active   |
+| `messaging`    | Human messages and platform alerts on every channel — email, chat platforms, messaging apps, and carrier texts (SMS/MMS/RCS/iMessage). The entity segment names the platform (`messaging.<platform>.<action>`: `received` for a message, `notified` for a mention/reaction/activity alert); see the platform rows in §7. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
@@ -303,13 +303,17 @@ Segment 4 of `type` MUST be one of:
 | `cost`             | `billing`                | Scoped provider bill-period snapshot, replaced by revisions. |
 | `thread`           | `conversation`           | One durable agent conversation across many turns — the original model of an agent session. `thread:<thread_id>` is the ordering bucket for `conversation.turn.*`; `thread.created`/`thread.resumed` have schemas but no producer emits them. Not used by `messaging` (there a thread is `data.thread_id`). |
 | `turn`             | `conversation`           | One user-prompt-to-final-response unit inside a thread.     |
-| `message`          | `conversation`, `telephony` | A single user/assistant message appended to the transcript; in `telephony`, one SMS/MMS/RCS/iMessage text. |
+| `message`          | `conversation`           | A single user/assistant message appended to the transcript. (Retired in `telephony` and `messaging`: texts and chat messages are per-transport/per-platform `messaging` entities.) |
 | `email`            | `messaging`              | The email platform: `messaging.email.received` (one message), `messaging.email.notified` (one alert). |
 | `telegram`         | `messaging`              | The Telegram platform: `messaging.telegram.received` (one message), `messaging.telegram.notified` (one alert). |
 | `slack`            | `messaging`              | The Slack platform: `messaging.slack.received` (one message), `messaging.slack.notified` (one alert). |
 | `teams`            | `messaging`              | The Microsoft Teams platform: `messaging.teams.received` (one message), `messaging.teams.notified` (one alert). |
 | `whatsapp`         | `messaging`              | The WhatsApp platform: `messaging.whatsapp.received` (one message), `messaging.whatsapp.notified` (one alert). |
 | `google_chat`      | `messaging`              | The Google Chat platform: `messaging.google_chat.received` (one message), `messaging.google_chat.notified` (one alert). |
+| `sms`              | `messaging`              | Carrier SMS: `messaging.sms.{received,sent,completed,failed}` and the `messaging.sms.send` command (Telnyx). |
+| `mms`              | `messaging`              | Carrier MMS (media): `messaging.mms.{received,sent,completed,failed}` and the `messaging.mms.send` command (Telnyx). |
+| `rcs`              | `messaging`              | RCS chat through Google Messages / BlueBubbles: `messaging.rcs.{received,sent}`. |
+| `imessage`         | `messaging`              | iMessage through BlueBubbles: `messaging.imessage.{received,sent}`. |
 | `invocation`       | `agent`                  | One round of agent runtime calling an LLM.                  |
 | `session`          | `cli`                    | One CLI session (e.g. `claude` or `copilot` process tree).  |
 | `process`          | `cli`                    | An OS process spawned within a CLI session.                 |
@@ -379,6 +383,15 @@ that isn't one (mention, reaction, activity ping). A new platform is a new
 entity row here plus a `received` and a `notified` schema; there is no
 `data.platform` field. Ordering is `messaging:<platform>:<thread_id>` (§11.1),
 never the agent-conversation `thread:` bucket.
+
+Carrier texts follow the same rule, with the transport as the entity:
+`messaging.sms.*`, `messaging.mms.*`, `messaging.rcs.*`,
+`messaging.imessage.*` (there is no `data.channel` field). They moved here
+from `telephony.message.*`, which is retired; telephony keeps calls. Unlike
+chat platforms, carrier texts order per operator line (`line:<line>`), so a
+conversation that switches between SMS and MMS, or falls back from RCS to
+SMS, stays in one bucket. `bloodbank.evt.messaging.*.received` therefore
+covers every inbound human message, texts included.
 
 ---
 
@@ -513,7 +526,7 @@ projection:liquid                # finance: single household-wide projection buc
 clock:<clock_system>:<principal> # attendance: one worker/system time-clock state bucket
 project:<project_slug>           # project: one bucket per pjangler project; activity audiences and deployments share it
 call:<call_id>                   # telephony: every event of one phone call, recording and transcript included
-line:<line>                      # telephony: messages on one line ("cell" or a Telnyx E.164)
+line:<line>                      # messaging carrier texts (sms/mms/rcs/imessage) on one line ("cell", "imessage" or a Telnyx E.164)
 messaging:<platform>:<thread_id> # messaging: one platform-native thread; a threadless notified alert uses its notification_id
 ```
 

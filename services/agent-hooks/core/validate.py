@@ -83,6 +83,8 @@ ALLOWED_ENTITIES = frozenset({
     "call", "slop",
     # messaging: one entity per chat platform (messaging.<platform>.received|notified)
     "email", "telegram", "slack", "teams", "whatsapp", "google_chat",
+    # messaging: one entity per carrier-text transport (messaging.<transport>.*)
+    "sms", "mms", "rcs", "imessage",
 })
 
 EVENT_ACTIONS = frozenset({
@@ -110,6 +112,10 @@ RETIRED_PAIRS = {
     ("messaging", "message"): (
         "messaging is one entity per platform: use "
         "bloodbank.messaging.<platform>.<action> (e.g. messaging.telegram.received)"
+    ),
+    ("telephony", "message"): (
+        "carrier texts moved to messaging, one entity per transport: use "
+        "bloodbank.messaging.<sms|mms|rcs|imessage>.<action>; telephony keeps calls"
     ),
 }
 

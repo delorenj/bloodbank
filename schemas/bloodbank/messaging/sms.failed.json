@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://33god.dev/schemas/bloodbank/telephony/message.failed.json",
-  "title": "Telephony Message Failed Event",
-  "description": "An outbound message could not be sent or delivered, e.g. Telnyx 40010 (sending number not 10DLC-registered). ordering_key is line:<line>. See bloodbank/docs/event-naming.md (telephony).",
+  "$id": "https://33god.dev/schemas/bloodbank/messaging/sms.failed.json",
+  "title": "Messaging SMS Failed Event",
+  "description": "An outbound SMS text could not be sent or delivered, e.g. Telnyx 40010 (sending number not 10DLC-registered). One entity per transport (messaging.<transport>.<action>), the same split as the chat platforms; carrier texts order per operator line, ordering_key line:<line>, so one conversation stays ordered when it switches SMS/MMS or falls back from RCS. Calls and voicemail stay in telephony. See bloodbank/docs/event-naming.md (messaging).",
   "type": "object",
   "allOf": [
     {
@@ -11,17 +11,22 @@
   ],
   "properties": {
     "type": {
-      "const": "bloodbank.telephony.message.failed"
+      "const": "bloodbank.messaging.sms.failed"
     },
     "kind": {
       "const": "event"
     },
     "domain": {
-      "const": "telephony"
+      "const": "messaging"
+    },
+    "ordering_key": {
+      "type": "string",
+      "pattern": "^line:.+$",
+      "description": "Section 11.1 bucket 'line:<line>', the same value as 'line:' + data.line: every carrier text on one operator line orders together, whatever the transport."
     },
     "data": {
       "type": "object",
-      "description": "Payload for bloodbank.telephony.message.failed.",
+      "description": "Payload for bloodbank.messaging.sms.failed.",
       "properties": {
         "message_id": {
           "type": [
@@ -71,7 +76,7 @@
             "string",
             "null"
           ],
-          "description": "command_id of the causing telephony.message.send, if any."
+          "description": "command_id of the causing messaging.sms.send, if any."
         }
       },
       "required": [
@@ -86,6 +91,7 @@
     "type",
     "kind",
     "domain",
+    "ordering_key",
     "data"
   ]
 }

@@ -143,14 +143,20 @@ def _nats_publish(subject, body, host, port, timeout=3.0):
                 raise IOError("NATS -ERR: " + line.decode(errors="replace").strip())
 
 
+CARRIER_TRANSPORTS = frozenset({"sms", "mms", "rcs", "imessage"})
+
+
 def _derive_ordering_key(domain, entity, data, tid):
     """§11.1 bucket when the caller gave none: the narrowest one the payload names."""
     if tid:
         return f"transcription:{tid}"
     if domain == "project" and isinstance(data.get("project"), dict) and data["project"].get("slug"):
         return f"project:{data['project']['slug']}"
+    # messaging carrier texts order per operator line, whatever the transport
+    if domain == "messaging" and entity in CARRIER_TRANSPORTS and isinstance(data.get("line"), str) and data["line"].strip():
+        return f"line:{data['line'].strip()}"
     # messaging.<platform>.*: messaging:<platform>:<thread_id>, else the notification itself
-    if domain == "messaging":
+    if domain == "messaging" and entity not in CARRIER_TRANSPORTS:
         for field in ("thread_id", "notification_id"):
             value = data.get(field)
             if isinstance(value, str) and value.strip():

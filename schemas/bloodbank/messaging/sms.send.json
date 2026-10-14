@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://33god.dev/schemas/bloodbank/telephony/message.send.json",
-  "title": "Telephony Message Send Command",
-  "description": "Imperative request to send a text from one of the operator's Telnyx numbers. The executor answers with telephony.message.sent (accepted) and then telephony.message.completed or telephony.message.failed, carrying this command_id. Telnyx long codes need 10DLC registration to reach US mobiles (error 40010 otherwise). Recommended idempotency_key: 'telephony.message.send:<to>:<sha256(text)>:<minute>'. See bloodbank/docs/event-naming.md (telephony).",
+  "$id": "https://33god.dev/schemas/bloodbank/messaging/sms.send.json",
+  "title": "Messaging SMS Send Command",
+  "description": "Imperative request to send an sms text from one of the operator's Telnyx numbers. The executor answers with messaging.sms.sent (accepted) and then messaging.sms.completed or messaging.sms.failed, carrying this command_id. Telnyx long codes need 10DLC registration to reach US mobiles (error 40010 otherwise). Recommended idempotency_key: 'messaging.sms.send:<to>:<sha256(text)>:<minute>'. See bloodbank/docs/event-naming.md (messaging).",
   "type": "object",
   "allOf": [
     {
@@ -11,20 +11,20 @@
   ],
   "properties": {
     "type": {
-      "const": "bloodbank.telephony.message.send"
+      "const": "bloodbank.messaging.sms.send"
     },
     "kind": {
       "const": "command"
     },
     "domain": {
-      "const": "telephony"
+      "const": "messaging"
     },
     "delivery": {
       "const": "single_consumer"
     },
     "data": {
       "type": "object",
-      "description": "Payload for bloodbank.telephony.message.send.",
+      "description": "Payload for bloodbank.messaging.sms.send.",
       "properties": {
         "to": {
           "type": "string",
@@ -44,14 +44,6 @@
           ],
           "description": "Sending Telnyx number (E.164); null uses the default line.",
           "pattern": "^\\+[1-9][0-9]{6,14}$"
-        },
-        "media_urls": {
-          "type": "array",
-          "description": "Public URLs to send as MMS.",
-          "items": {
-            "type": "string",
-            "description": "Media URL."
-          }
         }
       },
       "required": [

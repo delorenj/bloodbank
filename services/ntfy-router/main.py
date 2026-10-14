@@ -103,8 +103,8 @@ SLOP_TOPIC = "slop"
 
 DEFAULT_MUTE = "bloodbank.agent.hook.updated,bloodbank.system.hook.updated"
 DEFAULT_DIGEST = "bloodbank.agent.tool.*"
-# Deploys, slop alerts, telephony and audio: rare, and wanted the moment they happen.
-DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.audio.*"
+# Deploys, slop alerts, telephony, carrier texts and audio: rare, and wanted the moment they happen.
+DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.*"
 
 DEPLOYMENT_COMPLETED = "bloodbank.project.deployment.completed"
 DEPLOYMENT_FAILED = "bloodbank.project.deployment.failed"
@@ -137,6 +137,10 @@ class Policy:
         "bloodbank.project.deployment.*",
         "bloodbank.review.slop.*",
         "bloodbank.telephony.*",
+        "bloodbank.messaging.sms.*",
+        "bloodbank.messaging.mms.*",
+        "bloodbank.messaging.rcs.*",
+        "bloodbank.messaging.imessage.*",
         "bloodbank.audio.*",
     )
 

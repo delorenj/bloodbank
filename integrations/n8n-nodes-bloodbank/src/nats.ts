@@ -166,14 +166,22 @@ const MESSAGING_BUCKET_SOURCES: Record<string, string[]> = {
   received: ['thread_id'],
   notified: ['thread_id', 'notification_id'],
 };
+/** Carrier texts are messaging entities too, one per transport, but they order
+ *  per operator line (`line:<line>`) so a conversation that switches SMS/MMS or
+ *  falls back from RCS stays in one bucket. */
+const CARRIER_TRANSPORTS: Record<string, string[]> = {
+  sms: ['received', 'sent', 'completed', 'failed'],
+  mms: ['received', 'sent', 'completed', 'failed'],
+  rcs: ['received', 'sent'],
+  imessage: ['received', 'sent'],
+};
 
 /** §11.1 ordering buckets some payloads/schema patterns require the derivation
  *  to produce by name, overriding the generic `<domain>:<identity>` fallback.
  *  Keyed on the full type so one domain can carry different rules per entity
- *  (telephony currently keeps its legacy `<domain>:<id>` behavior because its
- *  schemas declare no ordering_key pattern; do not widen an entry to a bare
- *  domain without checking every schema under that domain). A rule only fires
- *  when the payload actually names the bucket source. */
+ *  (messaging chat platforms and carrier texts bucket differently; do not widen
+ *  an entry to a bare domain without checking every schema under that domain).
+ *  A rule fires on the first bucket source the payload actually names. */
 const ENTITY_BUCKET_RULES: Record<
   string,
   { sources: string[]; bucket: (value: string) => string }
@@ -183,6 +191,13 @@ const ENTITY_BUCKET_RULES: Record<
       `bloodbank.messaging.${platform}.${action}`,
       { sources, bucket: (id: string) => `messaging:${platform}:${id}` },
     ]),
+  ).concat(
+    Object.entries(CARRIER_TRANSPORTS).flatMap(([transport, actions]) =>
+      actions.map((action) => [
+        `bloodbank.messaging.${transport}.${action}`,
+        { sources: ['line'], bucket: (line: string) => `line:${line}` },
+      ]),
+    ),
   ),
 );
 

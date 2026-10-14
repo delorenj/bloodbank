@@ -174,7 +174,10 @@ class PolicyTest(unittest.TestCase):
         policy = main.Policy.from_env({})
         self.assertTrue(policy.is_loud("bloodbank.project.deployment.completed"))
         self.assertTrue(policy.is_loud("bloodbank.project.deployment.failed"))
-        self.assertTrue(policy.is_loud("bloodbank.telephony.message.received"))
+        self.assertTrue(policy.is_loud("bloodbank.telephony.call.started"))
+        self.assertTrue(policy.is_loud("bloodbank.messaging.sms.received"))
+        self.assertTrue(policy.is_loud("bloodbank.messaging.imessage.received"))
+        self.assertFalse(policy.is_loud("bloodbank.messaging.email.received"))
         self.assertTrue(policy.is_loud("bloodbank.audio.file.received"))
         self.assertFalse(policy.is_loud("bloodbank.llm.usage.recorded"))
         self.assertEqual(policy.classify("bloodbank.project.deployment.completed"), "route")
@@ -799,15 +802,15 @@ class SizedButtonTest(unittest.TestCase):
 class DomainMirrorTest(unittest.TestCase):
     def test_nested_route_is_also_published_to_domain_topic(self):
         router, ntfy, _ = make(burst=10, mirror_domain=True)
-        event = env("bloodbank.telephony.message.received", summary="New voicemail from +15551234567")
+        event = env("bloodbank.messaging.sms.received", summary="New text from +15551234567")
         self.assertEqual(run(router.handle(event, "s")), "routed")
         self.assertEqual(len(ntfy.posts), 2)
-        # First post is the primary to telephony-message (headers publish)
+        # First post is the primary to messaging-sms (headers publish)
         self.assertIsNone(ntfy.messages[0])
-        # Second post is the JSON copy to telephony
-        self.assertEqual(ntfy.messages[1]["topic"], "telephony")
-        self.assertEqual(ntfy.messages[1]["title"], "bloodbank.telephony.message.received")
-        self.assertIn("New voicemail", ntfy.messages[1]["message"])
+        # Second post is the JSON copy to messaging
+        self.assertEqual(ntfy.messages[1]["topic"], "messaging")
+        self.assertEqual(ntfy.messages[1]["title"], "bloodbank.messaging.sms.received")
+        self.assertIn("New text", ntfy.messages[1]["message"])
         self.assertEqual(router.stats["domain_topic"], 1)
 
     def test_nested_route_with_links_preserves_buttons_on_domain_topic(self):
@@ -828,7 +831,7 @@ class DomainMirrorTest(unittest.TestCase):
 
     def test_mirroring_can_be_disabled(self):
         router, ntfy, _ = make(burst=10, mirror_domain=False)
-        event = env("bloodbank.telephony.message.received", summary="Hello")
+        event = env("bloodbank.messaging.sms.received", summary="Hello")
         self.assertEqual(run(router.handle(event, "s")), "routed")
         self.assertEqual(len(ntfy.posts), 1)
         self.assertEqual(router.stats.get("domain_topic", 0), 0)

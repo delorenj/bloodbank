@@ -41,7 +41,7 @@ services:
 
       # Deployments are also published here: the upstream gate forwards it, so ntfy-ios wakes (`-`: empty turns it off).
       NTFY_DEPLOY_TOPIC: "${BLOODBANK_NTFY_ROUTER_DEPLOY_TOPIC-deploys}"
-      # Mirror nested <domain>-<entity> routes back to parent <domain> topic (e.g. telephony-message -> telephony)
+      # Mirror nested <domain>-<entity> routes back to parent <domain> topic (e.g. messaging-sms -> messaging)
       NTFY_MIRROR_DOMAIN: "${BLOODBANK_NTFY_ROUTER_MIRROR_DOMAIN-true}"
       NTFY_PRIORITY: "${BLOODBANK_NTFY_ROUTER_NTFY_PRIORITY:-5}"
       NTFY_TAGS: "${BLOODBANK_NTFY_ROUTER_NTFY_TAGS:-drop_of_blood,zap}"
@@ -51,7 +51,7 @@ services:
       NTFY_ROUTER_MUTE_TYPES: "${BLOODBANK_NTFY_ROUTER_MUTE_TYPES-bloodbank.agent.hook.updated,bloodbank.system.hook.updated}"
       NTFY_ROUTER_DIGEST_TYPES: "${BLOODBANK_NTFY_ROUTER_DIGEST_TYPES-bloodbank.agent.tool.*}"
       # Skip the per-type cap and the shared bucket (still wait out ntfy pushback).
-      NTFY_ROUTER_LOUD_TYPES: "${BLOODBANK_NTFY_ROUTER_LOUD_TYPES-bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.audio.*}"
+      NTFY_ROUTER_LOUD_TYPES: "${BLOODBANK_NTFY_ROUTER_LOUD_TYPES-bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.*}"
       ROUTE_RATE_PER_MIN: "${BLOODBANK_NTFY_ROUTER_RATE_PER_MIN:-20}"
       ROUTE_BURST: "${BLOODBANK_NTFY_ROUTER_BURST:-10}"
       ROUTE_PER_TYPE_PER_MIN: "${BLOODBANK_NTFY_ROUTER_PER_TYPE_PER_MIN:-6}"

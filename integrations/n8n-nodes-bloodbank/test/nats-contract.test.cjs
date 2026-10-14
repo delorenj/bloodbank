@@ -207,11 +207,28 @@ const NOTIFIED_PAYLOAD = {
 };
 const PAYLOAD_BY_ACTION = { received: MESSAGING_PAYLOAD, notified: NOTIFIED_PAYLOAD };
 
+const CARRIER_TRANSPORTS = ['sms', 'mms', 'rcs', 'imessage'];
+const CARRIER_PAYLOAD_BY_ACTION = {
+  received: {
+    message_id: 'msg-1', line: 'cell', source: 'android-sms', from: '+12125550100',
+    to: 'cell', text: 'hi', received_at: '2026-10-14T12:00:00.000Z', thread_id: null,
+  },
+  sent: {
+    message_id: 'msg-1', line: 'cell', source: 'telnyx', from: '+12125550101',
+    to: '+12125550100', text: 'hi', sent_at: '2026-10-14T12:00:00.000Z', status: 'sent',
+  },
+  completed: {
+    message_id: 'msg-1', line: 'cell', to: '+12125550100', status: 'delivered',
+    completed_at: '2026-10-14T12:00:00.000Z',
+  },
+  failed: { line: 'cell', to: '+12125550100', failed_at: '2026-10-14T12:00:00.000Z' },
+};
+
 const MESSAGING_SCHEMA_DIR = require('node:path').resolve(
   __dirname, '..', '..', '..', 'schemas', 'bloodbank', 'messaging');
 const MESSAGING_TYPES = require('node:fs')
   .readdirSync(MESSAGING_SCHEMA_DIR)
-  .filter((name) => name.endsWith('.json'))
+  .filter((name) => name.endsWith('.json') && !name.endsWith('.send.json'))
   .map((name) => `bloodbank.messaging.${name.slice(0, -'.json'.length)}`);
 
 test('messaging is split per platform for messages and notifications', () => {
@@ -222,8 +239,30 @@ test('messaging is split per platform for messages and notifications', () => {
   assert.ok(!MESSAGING_TYPES.some((type) => /\.(message|notification)\./.test(type)));
 });
 
+test('carrier texts are messaging entities, one per transport', () => {
+  for (const transport of CARRIER_TRANSPORTS) {
+    assert.ok(MESSAGING_TYPES.includes(`bloodbank.messaging.${transport}.received`), transport);
+    assert.ok(MESSAGING_TYPES.includes(`bloodbank.messaging.${transport}.sent`), transport);
+  }
+});
+
 for (const type of MESSAGING_TYPES) {
   const [, , platform, action] = type.split('.');
+  if (CARRIER_TRANSPORTS.includes(platform)) {
+    test(`${type} orders per operator line`, () => {
+      const { subject, envelope } = buildEnvelope({
+        type,
+        kind: 'event',
+        data: CARRIER_PAYLOAD_BY_ACTION[action],
+        eventId: EVENT_ID,
+        observedAt: '2026-10-14T12:00:00.000Z',
+      });
+      assert.equal(subject, `bloodbank.evt.${type.slice('bloodbank.'.length)}`);
+      assert.equal(envelope.ordering_key, 'line:cell');
+      assert.doesNotThrow(() => validateEnvelope(type, envelope));
+    });
+    continue;
+  }
   test(`${type} derives a messaging:${platform}: ordering bucket`, () => {
     const { subject, envelope } = buildEnvelope({
       type,
@@ -264,23 +303,13 @@ test('messaging ordering bucket rule falls back to event id without thread_id', 
   assert.equal(envelope.ordering_key, `messaging:${EVENT_ID}`);
 });
 
-test('telephony.message.received keeps legacy domain:id ordering derivation', () => {
-  const { envelope } = buildEnvelope({
-    type: 'bloodbank.telephony.message.received',
-    kind: 'event',
-    data: {
-      message_id: 'msg-1',
-      line: 'cell',
-      channel: 'sms',
-      source: 'android-sms',
-      from: '+12125550100',
-      to: '+12125550101',
-      text: 'hi',
-      received_at: '2026-10-14T12:00:00.000Z',
-      thread_id: 'thread-42',
-    },
-    eventId: EVENT_ID,
-    observedAt: '2026-10-14T12:00:00.000Z',
-  });
-  assert.equal(envelope.ordering_key, `telephony:${EVENT_ID}`);
+test('carrier send commands validate as messaging commands', () => {
+  for (const [type, data] of [
+    ['bloodbank.messaging.sms.send', { to: '+12125550100', text: 'hi' }],
+    ['bloodbank.messaging.mms.send', { to: '+12125550100', text: 'hi', media_urls: ['https://x.y/a.jpg'] }],
+  ]) {
+    const { subject, envelope } = buildEnvelope(commandOptions({ type, data }));
+    assert.equal(subject, `bloodbank.cmd.${type.slice('bloodbank.'.length)}`);
+    assert.doesNotThrow(() => validateEnvelope(type, envelope));
+  }
 });

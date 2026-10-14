@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/messaging/mms.sent.json",
+  "title": "Messaging MMS Sent Event",
+  "description": "An MMS text left one of the operator's lines: accepted by Telnyx for sending, or sent from the phone. Delivery outcome follows as messaging.mms.completed or messaging.mms.failed with the same message_id. One entity per transport (messaging.<transport>.<action>), the same split as the chat platforms; carrier texts order per operator line, ordering_key line:<line>, so one conversation stays ordered when it switches SMS/MMS or falls back from RCS. Calls and voicemail stay in telephony. See bloodbank/docs/event-naming.md (messaging).",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.messaging.mms.sent"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "messaging"
+    },
+    "ordering_key": {
+      "type": "string",
+      "pattern": "^line:.+$",
+      "description": "Section 11.1 bucket 'line:<line>', the same value as 'line:' + data.line: every carrier text on one operator line orders together, whatever the transport."
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.messaging.mms.sent.",
+      "properties": {
+        "message_id": {
+          "type": "string",
+          "description": "Provider message id (Telnyx) or <source>:<id>.",
+          "minLength": 1
+        },
+        "line": {
+          "type": "string",
+          "description": "The operator line involved: 'cell' (the personal Verizon line, forwarded from the Android phone), 'imessage' (the operator's iMessage account on the Mac, through BlueBubbles), or the E.164 of a Telnyx number.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Which integration observed the message.",
+          "enum": [
+            "telnyx",
+            "android-sms",
+            "android-notification",
+            "bluebubbles",
+            "phone",
+            "other"
+          ]
+        },
+        "from": {
+          "type": "string",
+          "description": "Sending number (E.164).",
+          "minLength": 1
+        },
+        "to": {
+          "type": "string",
+          "description": "Destination (E.164).",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "description": "Message body."
+        },
+        "sent_at": {
+          "type": "string",
+          "description": "When it was submitted.",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "description": "Provider status at submission.",
+          "enum": [
+            "queued",
+            "sending",
+            "sent"
+          ]
+        },
+        "command_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "command_id of the messaging.mms.send command that caused it, if any."
+        },
+        "cost": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Provider charge, when known.",
+          "properties": {
+            "amount": {
+              "type": "string",
+              "description": "Decimal amount as the provider reports it."
+            },
+            "currency": {
+              "type": "string",
+              "description": "ISO 4217 code.",
+              "minLength": 3,
+              "maxLength": 3
+            }
+          },
+          "required": [
+            "amount",
+            "currency"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "message_id",
+        "line",
+        "source",
+        "from",
+        "to",
+        "text",
+        "sent_at"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "ordering_key",
+    "data"
+  ]
+}
