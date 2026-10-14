@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/messaging/message.received.json",
+  "title": "Messaging Message Received Event",
+  "description": "A human chat message arrived on a platform-addressed messaging integration (email, Telegram, Slack, Teams, WhatsApp, Google Chat). Platform identity lives in data.platform, never in the type. ordering_key is thread:<thread_id>: every event of one platform-native conversation thread orders together. Consumers deduplicate on message_id. NOT telephony: PSTN-addressed communication (E.164 numbers, carrier SMS/RCS/MMS) is the telephony domain. See bloodbank/docs/event-naming.md (messaging).",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.messaging.message.received"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "messaging"
+    },
+    "ordering_key": {
+      "type": "string",
+      "pattern": "^thread:.+$",
+      "description": "Section 11.1 bucket 'thread:<thread_id>', the same value as 'thread:' + data.thread_id: all events of one platform-native conversation thread order together."
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.messaging.message.received.",
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "description": "Payload contract revision. Currently 1."
+        },
+        "platform": {
+          "type": "string",
+          "description": "The chat platform the message was observed on. Provider identity lives here, never in the type.",
+          "enum": [
+            "email",
+            "telegram",
+            "slack",
+            "teams",
+            "whatsapp",
+            "google_chat"
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "description": "Whether the message arrived from a counterpart or was sent by the operator.",
+          "enum": [
+            "inbound",
+            "outbound"
+          ]
+        },
+        "sender": {
+          "type": "object",
+          "description": "Who sent the message, in platform terms.",
+          "properties": {
+            "handle": {
+              "type": "string",
+              "description": "Platform address of the sender: email address, @username, or platform user ID.",
+              "minLength": 1
+            },
+            "display_name": {
+              "type": "string",
+              "description": "Sender's display name, when the platform exposes one."
+            }
+          },
+          "required": [
+            "handle"
+          ],
+          "additionalProperties": false
+        },
+        "recipient": {
+          "type": "object",
+          "description": "Who received the message, in platform terms.",
+          "properties": {
+            "handle": {
+              "type": "string",
+              "description": "Platform address of the recipient: email address, @username, channel, or platform user ID.",
+              "minLength": 1
+            },
+            "display_name": {
+              "type": "string",
+              "description": "Recipient's display name, when the platform exposes one."
+            }
+          },
+          "required": [
+            "handle"
+          ],
+          "additionalProperties": false
+        },
+        "content": {
+          "type": "object",
+          "description": "The message body as observed.",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "Message body. Platforms and notifications may truncate long bodies."
+            },
+            "format": {
+              "type": "string",
+              "description": "Markup dialect of the body.",
+              "enum": [
+                "plain",
+                "markdown",
+                "html"
+              ]
+            }
+          },
+          "required": [
+            "text",
+            "format"
+          ],
+          "additionalProperties": false
+        },
+        "received_at": {
+          "type": "string",
+          "description": "When the platform received the message (source clock), RFC 3339.",
+          "format": "date-time"
+        },
+        "message_id": {
+          "type": "string",
+          "description": "Platform-native message ID; consumers deduplicate on it.",
+          "minLength": 1
+        },
+        "thread_id": {
+          "type": "string",
+          "description": "Platform-native thread/chat ID; the ordering bucket names it.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "platform",
+        "direction",
+        "sender",
+        "recipient",
+        "content",
+        "received_at",
+        "message_id",
+        "thread_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "ordering_key",
+    "data"
+  ]
+}

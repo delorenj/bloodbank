@@ -59,13 +59,13 @@ ALLOWED_DOMAINS = frozenset({
     # active
     "conversation", "agent", "llm", "cli", "system", "audio", "repo", "lifecycle",
     "finance", "billing", "attendance", "curator", "reporting", "portfolio", "project",
-    "workflow", "telephony", "review",
+    "workflow", "telephony", "messaging", "review",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "memory",
 })
 
 ALLOWED_ENTITIES = frozenset({
-    "thread", "turn", "message",
+    "thread", "turn", "message", "notification",
     "invocation",
     "session", "process", "stdout", "stderr",
     "request", "response", "usage", "allowance",
