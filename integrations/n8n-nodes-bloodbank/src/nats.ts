@@ -157,6 +157,42 @@ function entityIdentity(data: Record<string, unknown>): string {
   return '';
 }
 
+/** §11.1 ordering buckets some payloads/schema patterns require the derivation
+ *  to produce by name, overriding the generic `<domain>:<identity>` fallback.
+ *  Keyed on the full type so one domain can carry different rules per entity
+ *  (telephony currently keeps its legacy `<domain>:<id>` behavior because its
+ *  schemas declare no ordering_key pattern; do not widen an entry to a bare
+ *  domain without checking every schema under that domain). A rule only fires
+ *  when the payload actually names the bucket source. */
+const ENTITY_BUCKET_RULES: Record<
+  string,
+  { source: string; bucket: (value: string) => string }
+> = {
+  'bloodbank.messaging.message.received': {
+    source: 'thread_id',
+    bucket: (threadId) => `thread:${threadId}`,
+  },
+};
+
+/** §11.1 ordering bucket for an event envelope. An explicit opts.orderingKey
+ *  always wins; the generic fallback is `<domain>:<identity>` (or the event id
+ *  when the payload names no identity). */
+function deriveOrderingKey(
+  type: string,
+  domain: string,
+  data: Record<string, unknown>,
+  identity: string,
+  eventId: string,
+): string {
+  const rule = ENTITY_BUCKET_RULES[type];
+  if (rule) {
+    const value = data[rule.source];
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (trimmed) return rule.bucket(trimmed);
+  }
+  return identity ? `${domain}:${identity}` : `${domain}:${eventId}`;
+}
+
 export function subjectFor(type: string, kind: 'event' | 'command' | 'reply'): string {
   const marker = kind === 'event' ? 'evt' : kind === 'command' ? 'cmd' : 'rpy';
   return `bloodbank.${marker}.${type.slice('bloodbank.'.length)}`;
@@ -201,7 +237,7 @@ export function buildEnvelope(opts: EmitOptions): {
   };
   if (kind === 'event') {
     envelope.ordering_key =
-      opts.orderingKey || (identity ? `${domain}:${identity}` : `${domain}:${eventId}`);
+      opts.orderingKey || deriveOrderingKey(opts.type, domain, opts.data, identity, eventId);
   } else {
     const target = typeof opts.data.target_agent_id === 'string'
       ? opts.data.target_agent_id.trim()
