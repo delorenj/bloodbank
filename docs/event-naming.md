@@ -593,9 +593,10 @@ JSON Schema documents with their own revision line (§13's `<n>`), not event
 types. Everything under `bloodbank/<domain>/` is named for the fact it
 describes and nothing else.
 
-There are 14 live domains — `agent`, `attendance`, `audio`, `cli`,
-`conversation`, `curator`, `finance`, `lifecycle`, `llm`, `portfolio`,
-`project`, `repo`, `reporting`, `system` — matching the active half of
+There are 19 live domains — `agent`, `attendance`, `audio`, `billing`,
+`cli`, `conversation`, `curator`, `finance`, `lifecycle`, `llm`,
+`messaging`, `portfolio`, `project`, `repo`, `reporting`, `review`,
+`system`, `telephony`, `workflow` — matching the active half of
 `ALLOWED_DOMAINS` in `services/agent-hooks/core/validate.py`. A domain
 directory appears when its first schema does.
 
