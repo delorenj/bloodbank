@@ -181,3 +181,61 @@ test('extensions cannot replace canonical envelope fields', () => {
     );
   }
 });
+
+const MESSAGING_PAYLOAD = {
+  schema_version: 1,
+  platform: 'telegram',
+  direction: 'inbound',
+  sender: { handle: '@counterpart' },
+  recipient: { handle: '@operator' },
+  content: { text: 'hello', format: 'plain' },
+  received_at: '2026-10-14T12:00:00.000Z',
+  message_id: 'msg-1',
+  thread_id: 'thread-42',
+};
+
+test('messaging.message.received derives a thread: ordering bucket', () => {
+  const { envelope } = buildEnvelope({
+    type: 'bloodbank.messaging.message.received',
+    kind: 'event',
+    data: MESSAGING_PAYLOAD,
+    eventId: EVENT_ID,
+    observedAt: '2026-10-14T12:00:00.000Z',
+  });
+  assert.equal(envelope.ordering_key, 'thread:thread-42');
+  assert.doesNotThrow(() =>
+    validateEnvelope('bloodbank.messaging.message.received', envelope));
+});
+
+test('messaging ordering bucket rule falls back to event id without thread_id', () => {
+  const { thread_id, ...noThread } = MESSAGING_PAYLOAD;
+  const { envelope } = buildEnvelope({
+    type: 'bloodbank.messaging.message.received',
+    kind: 'event',
+    data: noThread,
+    eventId: EVENT_ID,
+    observedAt: '2026-10-14T12:00:00.000Z',
+  });
+  assert.equal(envelope.ordering_key, `messaging:${EVENT_ID}`);
+});
+
+test('telephony.message.received keeps legacy domain:id ordering derivation', () => {
+  const { envelope } = buildEnvelope({
+    type: 'bloodbank.telephony.message.received',
+    kind: 'event',
+    data: {
+      message_id: 'msg-1',
+      line: 'cell',
+      channel: 'sms',
+      source: 'android-sms',
+      from: '+12125550100',
+      to: '+12125550101',
+      text: 'hi',
+      received_at: '2026-10-14T12:00:00.000Z',
+      thread_id: 'thread-42',
+    },
+    eventId: EVENT_ID,
+    observedAt: '2026-10-14T12:00:00.000Z',
+  });
+  assert.equal(envelope.ordering_key, `telephony:${EVENT_ID}`);
+});
