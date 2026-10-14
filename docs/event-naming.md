@@ -301,10 +301,10 @@ Segment 4 of `type` MUST be one of:
 | Entity             | Domain pairing (typical) | Notes                                                       |
 | ------------------ | ------------------------ | ----------------------------------------------------------- |
 | `cost`             | `billing`                | Scoped provider bill-period snapshot, replaced by revisions. |
-| `thread`           | `conversation`, `messaging` | One durable conversation across many turns; in `messaging`, a platform-native conversation thread. |
+| `thread`           | `conversation`           | One durable conversation across many turns. (In `messaging` a thread is `data.thread_id`, not an entity.) |
 | `turn`             | `conversation`           | One user-prompt-to-final-response unit inside a thread.     |
 | `message`          | `conversation`, `telephony` | A single user/assistant message appended to the transcript; in `telephony`, one SMS/MMS/RCS/iMessage text. |
-| `notification`     | `messaging`               | A platform alert that isn't a message (mention, reaction, activity ping). |
+| `notification`     | `messaging` (reserved)   | A platform alert that isn't a received message (mention, reaction, activity ping). No schema yet; may move to per-platform entities like messages did. |
 | `email`            | `messaging`              | One email message on the operator's inboxes (`messaging.email.received`). |
 | `telegram`         | `messaging`              | One Telegram message. |
 | `slack`            | `messaging`              | One Slack message. |

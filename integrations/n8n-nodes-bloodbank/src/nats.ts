@@ -157,6 +157,11 @@ function entityIdentity(data: Record<string, unknown>): string {
   return '';
 }
 
+/** messaging is one entity per chat platform (`messaging.<platform>.received`);
+ *  every one of those schemas pins ordering_key to `thread:<thread_id>`. The
+ *  contract test fails if a messaging schema lands without a rule here. */
+const MESSAGING_PLATFORMS = ['email', 'telegram', 'slack', 'teams', 'whatsapp', 'google_chat'];
+
 /** §11.1 ordering buckets some payloads/schema patterns require the derivation
  *  to produce by name, overriding the generic `<domain>:<identity>` fallback.
  *  Keyed on the full type so one domain can carry different rules per entity
@@ -164,11 +169,6 @@ function entityIdentity(data: Record<string, unknown>): string {
  *  schemas declare no ordering_key pattern; do not widen an entry to a bare
  *  domain without checking every schema under that domain). A rule only fires
  *  when the payload actually names the bucket source. */
-/** messaging is one entity per chat platform (`messaging.<platform>.received`);
- *  every one of those schemas pins ordering_key to `thread:<thread_id>`. The
- *  contract test fails if a messaging schema lands without a rule here. */
-const MESSAGING_PLATFORMS = ['email', 'telegram', 'slack', 'teams', 'whatsapp', 'google_chat'];
-
 const ENTITY_BUCKET_RULES: Record<
   string,
   { source: string; bucket: (value: string) => string }

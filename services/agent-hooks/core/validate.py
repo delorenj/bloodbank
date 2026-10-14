@@ -103,6 +103,16 @@ COMMAND_ACTIONS = frozenset({
     "request", "toggle", "clock_in", "clock_out",
 })
 
+# (domain, entity) pairs that are allowlisted individually but retired together.
+# The entity allowlist is global, so without this a removed type keeps passing
+# the contract after its schema is gone.
+RETIRED_PAIRS = {
+    ("messaging", "message"): (
+        "messaging is one entity per platform: use "
+        "bloodbank.messaging.<platform>.<action> (e.g. messaging.telegram.received)"
+    ),
+}
+
 BANNED_TOKENS = frozenset({
     "claude", "anthropic", "copilot", "github", "openai", "gemini",
     "cursor", "opencode", "amazonq", "codex", "ollama", "llama", "mistral",
@@ -176,6 +186,11 @@ def assert_type_shape(ce_type: str) -> tuple[str, str, str]:
         raise ContractViolation(
             f"entity {entity!r} not in allowlist (§7)"
             f"{_banned_token_hint(entity)}; see docs/event-naming.md"
+        )
+    retired = RETIRED_PAIRS.get((domain, entity))
+    if retired:
+        raise ContractViolation(
+            f"{domain}.{entity} is retired (§7): {retired}; see docs/event-naming.md"
         )
     return domain, entity, action
 
@@ -806,6 +821,7 @@ __all__ = [
     "ALLOWED_DOMAINS",
     "ALLOWED_ENTITIES",
     "BANNED_TOKENS",
+    "RETIRED_PAIRS",
     "COMMAND_ACTIONS",
     "ContractViolation",
     "EVENT_ACTIONS",

@@ -152,6 +152,9 @@ negative_probe "subject suffix mismatch with envelope type" "$SUBJECT_TYPE_MISMA
 VERSIONED_TYPE='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.v1.conversation.message.appended","subject":"bloodbank.evt.v1.conversation.message.appended","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
 negative_probe "retired 5-token versioned type/subject (bloodbank.v1.*)" "$VERSIONED_TYPE"
 
+RETIRED_MESSAGING='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.messaging.message.received","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"messaging","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"thread:t","data":{}}'
+negative_probe "retired messaging.message (split per platform)" "$RETIRED_MESSAGING"
+
 total=$((pass_count + fail_count))
 echo "smoketest-bloodbank-naming: ${pass_count}/${total} checks passed"
 

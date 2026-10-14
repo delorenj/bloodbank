@@ -149,6 +149,9 @@ def _derive_ordering_key(domain, data, tid):
         return f"transcription:{tid}"
     if domain == "project" and isinstance(data.get("project"), dict) and data["project"].get("slug"):
         return f"project:{data['project']['slug']}"
+    # every messaging.<platform>.* schema pins ordering_key to thread:<thread_id>
+    if domain == "messaging" and isinstance(data.get("thread_id"), str) and data["thread_id"].strip():
+        return f"thread:{data['thread_id'].strip()}"
     return f"{domain}:{uuid.uuid4()}"
 
 
