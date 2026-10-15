@@ -171,10 +171,9 @@ per node.
 
 ## Plane ingress
 
-Import the versioned workflow:
-
-    n8n import:workflow --input=../n8n-workflows/plane-bloodbank.v1.json
-    n8n update:workflow --id=iMw484J1ZCqKME2C --active=true
+The workflow (`iMw484J1ZCqKME2C`) lives in n8n; its export is in
+[delonet-n8n-workflows](https://github.com/delorenj/delonet-n8n-workflows)
+(`workflows/plane-bloodbank--iMw484J1ZCqKME2C.json`), synced every 15 minutes.
 
 The Webhook node must retain Raw Body. Plane to Bloodbank rejects unsigned or
 invalid requests before publishing. `Webhook Secret References` is a JSON
@@ -420,12 +419,10 @@ even sees it.
 
 ### The lifecycle lane
 
-Five versioned workflows in `../n8n-workflows/` carry a Plane ticket from
-webhook to working agent. Import all five; each export records `active: true`.
-
-    for f in plane-bloodbank plane-ingress-reconcile ticket-grooming ticket-delegation ticket-pickup-chip; do
-      n8n import:workflow --input=../n8n-workflows/$f.v1.json
-    done
+Five workflows carry a Plane ticket from webhook to working agent. They live
+in n8n; their exports are in
+[delonet-n8n-workflows](https://github.com/delorenj/delonet-n8n-workflows),
+synced every 15 minutes (`workflows/<name>--<id>.json`).
 
 | Workflow (id) | Starts on | Does | Pushes to ntfy `lifecycle` |
 | --- | --- | --- | --- |
