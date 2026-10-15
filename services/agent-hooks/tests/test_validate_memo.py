@@ -31,6 +31,8 @@ PAYLOADS = {
                    "prompt_chars": 21, "dispatch_ms": 120},
     "replied": {**BASE, "reply_s3_key": "replies/2026/10/15/201612Z-holocene-pm-abcd1234.ogg",
                 "reply_text": "Done.", "reply_chars": 5, "tts_seconds": 3.2, "journey_seconds": 61.0},
+    "played": {"memo_id": MEMO_ID, "target_agent_id": "holocene-pm", "phase": "started", "played_seconds": None,
+               "reply_s3_key": "replies/2026/10/15/201612Z-holocene-pm-" + MEMO_ID + ".ogg", "reply_age_ms": 4100},
     "failed": {**BASE, "stage": "agent_reply", "error_code": "timeout",
                "error_message": "no reply after 600s", "retryable": False, "attempt": 1},
 }
@@ -85,7 +87,7 @@ class MemoContract(unittest.TestCase):
 
     def test_memo_is_not_an_entity_of_other_domains_by_accident(self):
         self.assertIn("memo", validate.ALLOWED_ENTITIES)
-        for action in ("uploaded", "transcribed", "dispatched", "replied"):
+        for action in ("uploaded", "transcribed", "dispatched", "replied", "played"):
             self.assertIn(action, validate.EVENT_ACTIONS)
             self.assertNotIn(action, validate.COMMAND_ACTIONS)
 
@@ -102,6 +104,21 @@ class MemoContract(unittest.TestCase):
         try:
             with self.assertRaises(validate.EnvelopeInvalid):
                 validate.validate_envelope(envelope("failed", stage="vibes"))
+        except validate.ValidationUnavailable:
+            self.skipTest("jsonschema is not installed")
+
+    def test_playback_failure_is_a_legal_failed_stage(self):
+        try:
+            validate.validate_envelope(envelope("failed", stage="playback", retryable=True))
+        except validate.ValidationUnavailable:
+            self.skipTest("jsonschema is not installed")
+
+    def test_played_needs_a_phase(self):
+        bad = envelope("played")
+        del bad["data"]["phase"]
+        try:
+            with self.assertRaises(validate.EnvelopeInvalid):
+                validate.validate_envelope(bad)
         except validate.ValidationUnavailable:
             self.skipTest("jsonschema is not installed")
 

@@ -51,9 +51,10 @@
             "agent",
             "agent_reply",
             "tts",
-            "reply_upload"
+            "reply_upload",
+            "playback"
           ],
-          "description": "Pipeline stage that failed. agent = the gateway turn failed or was rejected; agent_reply = no reply text arrived (timeout or empty)."
+          "description": "Pipeline stage that failed. agent = the gateway turn failed or was rejected; agent_reply = no reply text arrived (timeout or empty). playback = the Agent Pad could not play the spoken reply (autoplay blocked, decode or network error); for this stage s3_key is the reply object and the failure is always retryable."
         },
         "error_code": {
           "type": [

@@ -97,7 +97,7 @@ EVENT_ACTIONS = frozenset({
     "delegated", "raised", "released", "expired", "exhausted",
     "skipped", "annotated", "notified",
     # audio.memo journey stages (voice memo -> transcript -> agent command -> spoken reply)
-    "uploaded", "transcribed", "dispatched", "replied",
+    "uploaded", "transcribed", "dispatched", "replied", "played",
 })
 
 COMMAND_ACTIONS = frozenset({
