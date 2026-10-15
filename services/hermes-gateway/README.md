@@ -27,12 +27,23 @@ This repository change performs none of those rollout actions.
 
 ## Installation
 
-Install this directory into the Python environment used by the dedicated
-Hermes gateway process:
+Hermes now runs from a PM-managed environment that is rebuilt on every
+`hermes update`; anything pip-installed by hand is dropped (this is what silently
+killed command consumption on 2026-10-13). Do NOT `pip install` this package.
+Instead install the vendored directory plugin, which carries the adapter code
+and declares `nats-py`/`PyYAML` in `plugin.yaml` `pip_dependencies` so PM keeps
+them in the shared environment:
 
 ```bash
-python -m pip install ./services/hermes-gateway
+services/hermes-gateway/hermes-plugin/install.sh   # links ~/.hermes/plugins/bloodbank-platform, runs `hermes pm install`
+systemctl --user restart hermes-gateway.service
 ```
+
+Verify: `~/.hermes/gateway_state.json` `.platforms.bloodbank.state == "connected"`
+and `curl -s 'http://127.0.0.1:8222/jsz?consumers=true'` shows the
+`bloodbank-hermes-gateway` consumer with activity (`num_waiting >= 1` when idle).
+
+The legacy pip layout below is kept for reference only.
 
 The package advertises the `bloodbank-platform` entry point in the
 `hermes_agent.plugins` group. Enable that plugin in the host/default Hermes

@@ -1,0 +1,19 @@
+name: bloodbank-platform
+version: 0.1.0
+description: "Bloodbank-owned shared gateway platform adapter for Hermes Agent (JetStream command lane). Vendored from bloodbank/services/hermes-gateway."
+author: 33GOD Bloodbank
+kind: platform
+# PM (hermes pm) reads these into the shared environment. Do not pip-install by hand:
+# the next `hermes update` builds a fresh environment and drops manual installs.
+pip_dependencies:
+  - nats-py==2.15.0
+  - PyYAML==6.0.3
+optional_env:
+  - name: BLOODBANK_NATS_URL
+    description: "NATS endpoint; defaults to nats://127.0.0.1:4222"
+    prompt: "NATS URL"
+    password: false
+  - name: BLOODBANK_NATS_CREDS
+    description: "Path to a NATS credentials file"
+    prompt: "NATS credentials file"
+    password: true
