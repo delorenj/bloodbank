@@ -43,6 +43,7 @@
         "stage": {
           "type": "string",
           "enum": [
+            "record",
             "upload",
             "receive",
             "download",
@@ -54,7 +55,7 @@
             "reply_upload",
             "playback"
           ],
-          "description": "Pipeline stage that failed. agent = the gateway turn failed or was rejected; agent_reply = no reply text arrived (timeout or empty). playback = the Agent Pad could not play the spoken reply (autoplay blocked, decode or network error); for this stage s3_key is the reply object and the failure is always retryable."
+          "description": "Pipeline stage that failed. agent = the gateway turn failed or was rejected; agent_reply = no reply text arrived (timeout or empty). record = the device could not capture audio (mic unavailable, empty capture); s3_key is the key the memo would have had. upload = the PUT never completed (short body, retries exhausted on the device). playback = the Agent Pad could not play the spoken reply (autoplay blocked, decode or network error); for this stage s3_key is the reply object and the failure is always retryable."
         },
         "error_code": {
           "type": [

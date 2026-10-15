@@ -113,6 +113,13 @@ class MemoContract(unittest.TestCase):
         except validate.ValidationUnavailable:
             self.skipTest("jsonschema is not installed")
 
+    def test_device_side_record_and_upload_failures_are_legal_stages(self):
+        for stage in ("record", "upload"):
+            try:
+                validate.validate_envelope(envelope("failed", stage=stage, retryable=True))
+            except validate.ValidationUnavailable:
+                self.skipTest("jsonschema is not installed")
+
     def test_played_needs_a_phase(self):
         bad = envelope("played")
         del bad["data"]["phase"]
