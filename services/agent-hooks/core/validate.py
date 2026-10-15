@@ -74,7 +74,7 @@ ALLOWED_ENTITIES = frozenset({
     "decision", "intake", "task", "board", "maintenance", "skill",
     "approval_request",
     "worktree", "branch", "diff",
-    "file", "transcription",
+    "file", "transcription", "memo",
     "mission", "checkpoint", "gate", "roadmap", "status",
     "sync", "account", "transaction", "subscription", "zombie_charge", "paycheck", "projection",
     "clock", "report", "journal", "incident",
@@ -96,6 +96,8 @@ EVENT_ACTIONS = frozenset({
     "detected", "flagged", "routed", "breached", "observed", "clocked_in", "clocked_out",
     "delegated", "raised", "released", "expired", "exhausted",
     "skipped", "annotated", "notified",
+    # audio.memo journey stages (voice memo -> transcript -> agent command -> spoken reply)
+    "uploaded", "transcribed", "dispatched", "replied",
 })
 
 COMMAND_ACTIONS = frozenset({

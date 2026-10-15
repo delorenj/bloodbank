@@ -196,6 +196,12 @@ def main():
                     help="actor.agent_id (default: bloodbank.service.<--service>)")
     ap.add_argument("--actor",
                     help="whole actor object as JSON; overrides --actor-type/--actor-id")
+    ap.add_argument("--command-id",
+                    help="explicit command_id (uuid) for --kind command; default uuid4. Lets a "
+                         "caller persist the id BEFORE publishing so a crash cannot lose it")
+    ap.add_argument("--print-ids", action="store_true",
+                    help="after a successful publish (or --check), print one JSON line on stdout "
+                         "with id, command_id, idempotency_key, correlationid, subject, type")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=4222)
     ap.add_argument("--strict", action="store_true",
@@ -313,7 +319,7 @@ def main():
         # §11.2 — a command envelope is not a contract-valid event envelope; it
         # carries its own required fields. Without these a --kind command emit
         # would fail assert_contract on a shape bb-emit itself chose.
-        command_id = str(uuid.uuid4())
+        command_id = a.command_id or str(uuid.uuid4())
         envelope["command_id"] = command_id
         envelope["idempotency_key"] = str(uuid.uuid5(_NS, f"{ce_type}:{correlationid}"))
         envelope["delivery"] = "single_consumer"
@@ -329,6 +335,21 @@ def main():
     elif _IMPORT_ERROR is not None:
         print(f"bb-emit: WARNING — core/validate.py is present but failed to import "
               f"({_IMPORT_ERROR!r}); publishing UNVALIDATED", file=sys.stderr)
+
+    def _ids_line():
+        return json.dumps({
+            "id": envelope["id"],
+            "type": ce_type,
+            "subject": subject,
+            "correlationid": correlationid,
+            "command_id": envelope.get("command_id"),
+            "idempotency_key": envelope.get("idempotency_key"),
+            "ordering_key": envelope["ordering_key"],
+        }, separators=(",", ":"))
+
+    if a.command_id is not None and kind != "command":
+        print("bb-emit: --command-id only applies to --kind command", file=sys.stderr)
+        return usage_rc
 
     if a.check:
         # Dry run. Everything above already ran, so a PASS here means the very
@@ -367,6 +388,8 @@ def main():
         else:
             print("  validated   yes (core.validate.assert_contract)")
         print(f"  schema      {schema_note}")
+        if a.print_ids:
+            print(_ids_line())
         print("bb-emit: --check, nothing published", file=sys.stderr)
         return 0
 
@@ -386,6 +409,8 @@ def main():
         print(f"bb-emit: publish FAILED ({e}); {outcome}", file=sys.stderr)
         return fail_rc
     print(f"bb-emit: published {ce_type} -> {subject} (corr={correlationid[:8]})", file=sys.stderr)
+    if a.print_ids:
+        print(_ids_line())
     return 0
 
 

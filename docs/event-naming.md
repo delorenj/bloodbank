@@ -334,6 +334,7 @@ Segment 4 of `type` MUST be one of:
 | `skill`            | `repo`                   | Repo-scoped agent skill mutation from an automated tuning cycle; repo slug and skill name live in data. |
 | `file`             | `audio`, `curator`       | An on-disk artifact observed by a watcher — an audio inbox file, or a file arriving in a curated directory. |
 | `transcription`    | `audio`, `telephony`     | A speech-to-text job over a single audio file, or over a call recording or voicemail. |
+| `memo`             | `audio`                  | A short voice prompt captured on a device (Holocene Auto / Agent Pad) and routed to an agent. One memo is one journey: `uploaded` -> `received` -> `transcribed` -> `dispatched` -> `replied`, or `failed` at any stage. Every stage fact and the agent invocation command share `correlationid = data.memo_id`. |
 | `approval_request` | `approval` (reserved)    | Human approval prompt issued.                               |
 | `worktree`         | `workspace` (reserved)   | Git worktree lifecycle.                                     |
 | `branch`           | `workspace` (reserved)   | Git branch state changes.                                   |
@@ -404,7 +405,10 @@ covers every inbound human message, texts included.
 `closed`, `spawned`, `exited`, `checked_out`, `requested`, `invoked`,
 `recorded`, `triaged`, `updated`, `reached`, `resolved`, `detected`,
 `flagged`, `routed`, `breached`, `observed`, `clocked_in`, `clocked_out`.
-`delegated`, `raised`, `released`, `expired`, `skipped`, `notified`.
+`delegated`, `raised`, `released`, `expired`, `skipped`, `notified`,
+`uploaded`, `transcribed`, `dispatched`, `replied` (the `audio.memo.*` journey
+stages: a voice memo that is uploaded, transcribed, dispatched to an agent and
+answered aloud).
 
 ### 8.2 Command actions (imperative present)
 
@@ -518,6 +522,7 @@ transcription:<transcription_id>
 usage:<usage_id>
 allowance:<provider>:<account_id>:<window>
 file:<sha256(file_path)|file_id>
+memo:<memo_id>                   # audio.memo.*: every stage of one voice memo journey
 sync:<run_id>                    # finance: one tiller sync run
 account:<account_id>             # finance: per-account transaction/paycheck order
 transaction:<txn_id>
@@ -537,7 +542,8 @@ A `conversation.message.appended` uses `turn:<turn_id>`. A
 and every `audio.intake.detected` extracted from that transcript shares the
 bucket so the intakes order after the completion that caused them;
 an `audio.file.received` uses `file:<sha256(file_path)>` so re-detections
-of the same artifact form a stable bucket. A `project.activity.recorded`
+of the same artifact form a stable bucket. Every `audio.memo.*` stage uses
+`memo:<memo_id>`, where `memo_id = uuid5(NAMESPACE_URL, "s3://holocene-auto/" + key)`. A `project.activity.recorded`
 uses `project:<project_slug>` — the slug from the project's `.project.json`
 — never `activity:<slug>`; the bucket names the aggregate, not the entity.
 An `llm.usage.recorded` event uses `usage:<usage_id>`, and an
