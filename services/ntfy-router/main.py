@@ -101,10 +101,15 @@ NTFY_TOKEN = os.environ.get("NTFY_TOKEN", "")
 MAX_BODY_CHARS = int(os.environ.get("MAX_BODY_CHARS", "400"))
 SLOP_TOPIC = "slop"
 
-DEFAULT_MUTE = "bloodbank.agent.hook.updated,bloodbank.system.hook.updated"
+# audio.memo.* progress facts (uploaded/received/transcribed/dispatched/replied/played) are the
+# voice pipeline's own trace: about 8 per memo, readable in Holocene /voice and `memo:trace`.
+# Pushing each one to a phone was the pre-2026-10-15 behaviour; only audio.memo.failed pages.
+DEFAULT_MUTE = ("bloodbank.agent.hook.updated,bloodbank.system.hook.updated,"
+                "bloodbank.audio.memo.uploaded,bloodbank.audio.memo.received,bloodbank.audio.memo.transcribed,"
+                "bloodbank.audio.memo.dispatched,bloodbank.audio.memo.replied,bloodbank.audio.memo.played")
 DEFAULT_DIGEST = "bloodbank.agent.tool.*"
 # Deploys, slop alerts, telephony, carrier texts and audio: rare, and wanted the moment they happen.
-DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.*"
+DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed"
 
 DEPLOYMENT_COMPLETED = "bloodbank.project.deployment.completed"
 DEPLOYMENT_FAILED = "bloodbank.project.deployment.failed"
@@ -141,7 +146,8 @@ class Policy:
         "bloodbank.messaging.mms.*",
         "bloodbank.messaging.rcs.*",
         "bloodbank.messaging.imessage.*",
-        "bloodbank.audio.*",
+        "bloodbank.audio.file.*",
+        "bloodbank.audio.memo.failed",
     )
 
     @classmethod

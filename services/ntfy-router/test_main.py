@@ -179,12 +179,20 @@ class PolicyTest(unittest.TestCase):
         self.assertTrue(policy.is_loud("bloodbank.messaging.imessage.received"))
         self.assertFalse(policy.is_loud("bloodbank.messaging.email.received"))
         self.assertTrue(policy.is_loud("bloodbank.audio.file.received"))
+        self.assertTrue(policy.is_loud("bloodbank.audio.memo.failed"))
+        self.assertFalse(policy.is_loud("bloodbank.audio.memo.transcribed"))
         self.assertFalse(policy.is_loud("bloodbank.llm.usage.recorded"))
         self.assertEqual(policy.classify("bloodbank.project.deployment.completed"), "route")
         self.assertFalse(main.Policy.from_env({"NTFY_ROUTER_LOUD_TYPES": ""}).is_loud(main.DEPLOYMENT_COMPLETED))
 
 
 class DispositionTest(unittest.TestCase):
+    def test_voice_memo_progress_facts_are_muted_and_only_failures_page(self):
+        policy = main.Policy.from_env({})
+        for a in ("uploaded", "received", "transcribed", "dispatched", "replied", "played"):
+            self.assertEqual(policy.classify(f"bloodbank.audio.memo.{a}"), "mute", a)
+        self.assertEqual(policy.classify("bloodbank.audio.memo.failed"), "route")
+
     def test_muted_and_digested_events_never_post(self):
         router, ntfy, _ = make()
         for _ in range(500):
