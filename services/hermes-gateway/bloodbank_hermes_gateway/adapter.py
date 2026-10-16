@@ -287,11 +287,11 @@ class BloodbankAdapter(BasePlatformAdapter):
             spec=INTERACTIVE,
             durable=durable,
             max_inflight=_bounded_int(raw, "max_inflight", 2, 1, 64, prefix=prefix),
-            max_deliver=_bounded_int(raw, "max_deliver", 3, 1, 100, prefix=prefix),
+            max_deliver=_bounded_int(raw, "max_deliver", 8, 1, 100, prefix=prefix),
             ack_wait=ack_wait,
             ack_progress=ack_progress,
             nak_delay=_bounded_float(
-                raw, "nak_delay_seconds", 2.0, 0.0, 300.0, prefix=prefix
+                raw, "nak_delay_seconds", 3.0, 0.0, 300.0, prefix=prefix
             ),
         )
 
@@ -462,40 +462,59 @@ class BloodbankAdapter(BasePlatformAdapter):
                 pass
 
     async def _consume_loop(self, lane: LaneRuntime | None = None) -> None:
+        """Pull this lane's commands until disconnect, surviving unexpected errors.
+
+        Each lane has its own task and nothing else watches it: if an unexpected
+        exception ended the task the gateway would stay "connected" while the lane
+        silently stopped pulling (voice memos then fall back to the slow lane).
+        Anything but cancellation is logged and the loop resumes."""
+
         lane = self._lane(lane)
         while self._running:
-            capacity = lane.max_inflight - len(lane.inflight)
-            if capacity <= 0:
-                await asyncio.wait(
-                    lane.inflight,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                continue
             try:
-                messages = await lane.subscription.fetch(
-                    capacity, timeout=self.fetch_timeout_seconds
-                )
-            # nats-py may surface an idle pull as either its own timeout class
-            # or asyncio's timeout depending on which fetch path completed.
-            # Both mean "no command available", not a broker failure.
-            except TimeoutError:
-                continue
+                await self._consume_once(lane)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.error(
-                    "Bloodbank durable fetch failed lane=%s error_type=%s",
+                    "Bloodbank lane consume loop crashed lane=%s error_type=%s; resuming",
                     lane.name,
                     type(exc).__name__,
                 )
-                await asyncio.sleep(min(self.fetch_timeout_seconds, 5.0))
-                continue
+                await asyncio.sleep(1.0)
 
-            for message in messages:
-                task = asyncio.create_task(self._handle_broker_message(message, lane))
-                lane.inflight.add(task)
-                task.add_done_callback(lane.inflight.discard)
-                task.add_done_callback(self._log_task_failure)
+    async def _consume_once(self, lane: LaneRuntime) -> None:
+        """One fetch cycle: wait for a free slot, pull, start a task per command."""
+
+        capacity = lane.max_inflight - len(lane.inflight)
+        if capacity <= 0:
+            await asyncio.wait(lane.inflight, return_when=asyncio.FIRST_COMPLETED)
+            return
+        try:
+            messages = await lane.subscription.fetch(
+                capacity, timeout=self.fetch_timeout_seconds
+            )
+        # nats-py may surface an idle pull as either its own timeout class
+        # or asyncio's timeout depending on which fetch path completed.
+        # Both mean "no command available", not a broker failure.
+        except TimeoutError:
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "Bloodbank durable fetch failed lane=%s error_type=%s",
+                lane.name,
+                type(exc).__name__,
+            )
+            await asyncio.sleep(min(self.fetch_timeout_seconds, 5.0))
+            return
+
+        for message in messages:
+            task = asyncio.create_task(self._handle_broker_message(message, lane))
+            lane.inflight.add(task)
+            task.add_done_callback(lane.inflight.discard)
+            task.add_done_callback(self._log_task_failure)
 
     @staticmethod
     def _log_task_failure(task: asyncio.Task[None]) -> None:
@@ -529,7 +548,21 @@ class BloodbankAdapter(BasePlatformAdapter):
             # redelivery cannot observe the same pending row and dispatch a
             # second Hermes turn. Different commands still execute concurrently.
             async with self._execution_claim_lock:
-                if command_id in self._records:
+                running = self._records.get(command_id)
+                if running is not None:
+                    # Only a same-lane, same-envelope redelivery of a command that is
+                    # still running is worth another try. A twin from the other
+                    # lane (or with a different envelope) can never become valid, so
+                    # terminate it now instead of letting it burn max_deliver and
+                    # sit in the workqueue forever once the original finishes.
+                    if (
+                        running.invocation.lane != lane.name
+                        or running.envelope_digest != digest
+                    ):
+                        raise CommandInvalid(
+                            "command_id is already executing on another lane or "
+                            "with a different command envelope"
+                        )
                     await message.nak(delay=lane.nak_delay)
                     return
 

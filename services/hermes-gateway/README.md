@@ -77,10 +77,10 @@ gateway:
           enabled: true
           durable_name: bloodbank-hermes-gateway-interactive
           max_inflight: 2
-          max_deliver: 3
+          max_deliver: 8
           ack_wait_seconds: 180
           ack_progress_seconds: 30
-          nak_delay_seconds: 2
+          nak_delay_seconds: 3
 ```
 
 Resolution precedence is the explicit `target_profiles` mapping, followed by
@@ -156,7 +156,9 @@ a busy profile does not block an interactive turn on a different `thread_id`.
   the batch one, is poison and receives a terminal acknowledgement.
 - The journal is shared and keyed by `command_id`, so a command id can never
   run twice across lanes (the type differs, so the second envelope is a digest
-  collision and is terminated). The journal row has a nullable `lane` column
+  collision and is terminated; a twin that arrives on the other lane while the
+  first copy is still running is terminated at once, not nak'd into a dead
+  letter). The journal row has a nullable `lane` column
   (`batch` | `interactive`; NULL for rows written before lanes existed),
   added in place on first start.
 - Every lifecycle fact (`turn.started`, `invocation.started/completed/failed`,
@@ -166,6 +168,28 @@ a busy profile does not block an interactive turn on a different `thread_id`.
   `hookd_bridge` stay on `start`. A producer that cannot see the interactive
   consumer pulling should fall back to `start` and record why (the Holocene
   inbox watcher does, and stamps `lane`/`lane_reason` on `audio.memo.dispatched`).
+- Retry horizon: `max_deliver x nak_delay_seconds` is how long a transient
+  registry or journal error keeps being retried before the message is abandoned
+  in the stream with no consumer action. Interactive is 8 x 3 s (about 21 s);
+  batch is 5 x 5 s. A durable's `max_deliver` is part of the bind contract, so
+  changing it means updating the live durable (`add_consumer` with the new
+  value, a mutable field) before restarting the gateway.
+- Each lane's fetch loop is supervised: an unexpected exception is logged
+  (`Bloodbank lane consume loop crashed lane=...; resuming`) and the loop
+  resumes, so one lane cannot silently stop pulling while the platform still
+  reads as connected.
+- Alerts: the `nats-exporter` container (monitoring stack) exposes
+  `jetstream_consumer_*`; `BloodbankLaneNotPulled` fires when a lane's consumer
+  has `num_waiting == 0` and `num_ack_pending == 0` for 4 minutes, and
+  `BloodbankInteractiveLaneBacklog` when commands sit queued on the interactive
+  lane for 2 minutes.
+- Known limits: the interactive lane has 2 slots, FIFO within the lane, and a
+  slot is held until the Hermes turn completes (progress acks keep extending
+  `ack_wait`). Two memos that make the agent do long work hold both slots, and a
+  third waits as it would under a single queue. Nothing restricts `invoke` to
+  voice memos, so any producer that emits it competes for the same two slots;
+  the split is by convention. A turn whose completion never fires holds its slot
+  until the gateway restarts. There is no per-turn wall clock on this lane.
 - Design and rollout: `docs/interactive-command-lane.md`.
 
 ## Delivery behavior

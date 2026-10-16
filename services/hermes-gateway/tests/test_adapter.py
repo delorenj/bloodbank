@@ -1609,3 +1609,93 @@ def test_journal_gains_a_nullable_lane_column_without_losing_rows(tmp_path):
     assert claimed.lane == "interactive"
     # Reopening an already-migrated journal is a no-op.
     assert ExecutionStateStore(path).get(claimed.command_id).lane == "interactive"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_cross_lane_twin_of_a_running_command_is_terminated(
+    tmp_path, valid_command
+):
+    """A twin on the other lane can never become valid: term it, do not nak it into a dead letter."""
+
+    adapter = make_lane_adapter(tmp_path)
+    batch, interactive = lane(adapter, "batch"), lane(adapter, "interactive")
+    started, release = asyncio.Event(), asyncio.Event()
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+        started.set()
+        await release.wait()
+        return "done"
+
+    adapter.set_message_handler(handler)
+    memo = as_interactive(valid_command)
+    first = FakeMessage(memo)
+    task = asyncio.create_task(adapter._handle_broker_message(first, interactive))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    twin = FakeMessage(valid_command)  # same command_id on the batch subject, original still running
+    await adapter._handle_broker_message(twin, batch)
+    assert twin.termed == 1 and twin.nacked == 0 and twin.acked == 0
+    assert executions == 1
+
+    # a same-lane redelivery of the running command is still just retried later
+    again = FakeMessage(memo)
+    await adapter._handle_broker_message(again, interactive)
+    assert again.nacked == 1 and again.termed == 0
+
+    release.set()
+    await asyncio.wait_for(task, timeout=1)
+    assert first.acked == 1 and executions == 1
+
+
+@pytest.mark.asyncio
+async def test_a_lane_loop_that_hits_an_unexpected_error_resumes_pulling(
+    tmp_path, valid_command, monkeypatch
+):
+    adapter = make_lane_adapter(tmp_path)
+    interactive = lane(adapter, "interactive")
+    interactive.subscription = QueueSubscription()
+    adapter.fetch_timeout_seconds = 0.05
+    ran = []
+
+    async def handler(event):
+        ran.append(event.raw_message["command_id"])
+        return "done"
+
+    adapter.set_message_handler(handler)
+    real_once = adapter._consume_once
+    calls = 0
+
+    async def flaky(lane_):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise AttributeError("boom")
+        await real_once(lane_)
+
+    monkeypatch.setattr(adapter, "_consume_once", flaky)
+    adapter._running = True
+    loop = asyncio.create_task(adapter._consume_loop(interactive))
+    try:
+        message = FakeMessage(as_interactive(valid_command))
+        interactive.subscription.queue.put_nowait(message)
+        for _ in range(300):
+            if ran:
+                break
+            await asyncio.sleep(0.02)
+        assert ran, "the lane never resumed after an unexpected error"
+        assert not loop.done()
+    finally:
+        adapter._running = False
+        loop.cancel()
+        await asyncio.gather(loop, return_exceptions=True)
+
+
+def test_interactive_lane_defaults_give_a_retry_horizon_beyond_a_registry_rewrite(tmp_path):
+    adapter = make_adapter(tmp_path)
+    adapter.config.extra["interactive"] = {"enabled": True}
+    interactive = lane(BloodbankAdapter(adapter.config), "interactive")
+    # max_deliver x nak_delay is how long a transient registry/journal error keeps being retried
+    assert interactive.max_deliver * interactive.nak_delay >= 20

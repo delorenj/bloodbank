@@ -126,8 +126,8 @@ rule in section 3.2.
 | `max_ack_pending` = `max_inflight` | 4 (unchanged) | 2 |
 | `ack_wait` | 180 s (live config) | 180 s |
 | `ack_progress_seconds` | 30 s | 30 s |
-| `max_deliver` | 5 | 3 |
-| `nak_delay_seconds` | 5 s | 2 s |
+| `max_deliver` | 5 | 8 (was 3: a ~6 s horizon abandoned a memo on a transient registry rewrite) |
+| `nak_delay_seconds` | 5 s | 3 s |
 | `max_waiting` | 1 | 1 |
 | `deliver_policy` / `ack_policy` | all / explicit | all / explicit |
 
@@ -483,10 +483,10 @@ it in this order anyway.
        enabled: true
        durable_name: bloodbank-hermes-gateway-interactive
        max_inflight: 2
-       max_deliver: 3
+       max_deliver: 8
        ack_wait_seconds: 180
        ack_progress_seconds: 30
-       nak_delay_seconds: 2
+       nak_delay_seconds: 3
    ```
 4. **Restart once.** `systemctl --user restart hermes-gateway.service`, then wait
    for reconnection (about 2 minutes):
@@ -589,3 +589,21 @@ restart.
 - The watcher's `gateway_liveness(lane)` defaults to `batch` (old callers keep their meaning)
   rather than returning both lanes with no argument; `gateway_lanes()` returns both from one
   monitor read.
+
+## Review round 2 (2026-10-15)
+
+Fixed after review of the as-built lane:
+
+- Fallback no longer sends a memo to batch when the whole gateway is down. The
+  watcher reads both lanes in one monitor call and falls back only when
+  interactive has no puller and batch does. With both unpulled (a gateway
+  restart) the memo stays on `invoke` and starts first on reconnect
+  (`lane_reason=gateway_not_pulling_queued_on_interactive`).
+- A concurrent same-`command_id` twin on the other lane (or with another
+  envelope) is terminated instead of nak'd.
+- Interactive `max_deliver` 3 -> 8 and `nak_delay` 2 -> 3 s: the retry horizon was
+  about 6 s. The live durable was updated in place before the gateway restart.
+- Each lane's fetch loop is supervised, and Prometheus alerts exist for a lane
+  losing its puller or building a backlog (monitoring stack, `nats-exporter`).
+- Known limit, not fixed: 2 interactive slots and no per-turn wall clock; `invoke`
+  is restricted to voice memos by convention only.
