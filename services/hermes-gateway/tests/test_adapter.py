@@ -1866,6 +1866,11 @@ async def test_timeout_frees_the_slot_so_a_third_interactive_command_runs(
                 break
             await asyncio.sleep(0.02)
         assert third_message.acked == 1, "the freed slot never ran the third command"
+        # the second hung turn expires at the same moment; give it time to settle
+        for _ in range(100):
+            if all(message.acked for message in hung_messages):
+                break
+            await asyncio.sleep(0.02)
         assert all(message.acked == 1 for message in hung_messages)
         assert "memo-third" in ran
         assert failed_fact(adapter, hung[0])["data"]["error_code"] == "turn_timeout"
