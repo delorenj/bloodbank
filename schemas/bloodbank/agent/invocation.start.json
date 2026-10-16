@@ -68,6 +68,11 @@
           "type": ["object", "null"],
           "description": "Optional structured context for the target agent invocation.",
           "additionalProperties": true
+        },
+        "deadline_seconds": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0,
+          "description": "Optional wall-clock budget for the turn, in seconds. A lane that enforces a per-turn timeout (the interactive lane does, 300 s by default; the batch lane only when configured) stops the Hermes turn after min(this, the lane's turn_timeout_seconds) and publishes bloodbank.agent.invocation.failed with error_code turn_timeout. It can only shorten the lane limit, never extend it; a lane with no timeout ignores it."
         }
       },
       "required": ["target_agent_id", "prompt"],

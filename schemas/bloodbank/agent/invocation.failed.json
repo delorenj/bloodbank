@@ -31,7 +31,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "description": "Machine reason. The Hermes gateway uses processing_failed, processing_cancelled, route_policy_invalid_before_dispatch and turn_timeout (the lane's per-turn wall clock expired and the gateway stopped the turn; see elapsed_seconds, timeout_seconds, timeout_source and turn_stopped)."
         },
         "error_message": {
           "type": [
@@ -58,6 +59,39 @@
             null
           ],
           "description": "Delivery lane of the originating command: batch (bloodbank.agent.invocation.start) or interactive (bloodbank.agent.invocation.invoke). Stamped by the Hermes gateway on every lifecycle fact; absent on facts written before the interactive lane existed."
+        },
+        "elapsed_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "turn_timeout only: seconds between dispatching the turn to Hermes and stopping it."
+        },
+        "timeout_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "turn_timeout only: the wall-clock budget that expired (the lane limit, or a shorter data.deadline_seconds from the command)."
+        },
+        "timeout_source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "lane",
+            "envelope",
+            null
+          ],
+          "description": "turn_timeout only: where the expired budget came from: the lane's turn_timeout_seconds, or the command's data.deadline_seconds."
+        },
+        "turn_stopped": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "turn_timeout only: true when Hermes confirmed the turn is no longer running (session idle) after the gateway's stop; false when the stop could not be confirmed and the turn may still be unwinding."
         }
       },
       "required": [

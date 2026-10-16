@@ -493,3 +493,36 @@ def test_interactive_command_schema_matches_the_batch_data_contract(repo_root):
         assert start["properties"][key] == invoke["properties"][key]
     assert invoke["properties"]["type"]["const"] == "bloodbank.agent.invocation.invoke"
     assert invoke["properties"]["subject"]["const"] == "bloodbank.cmd.agent.invocation.invoke"
+
+
+def test_turn_timeout_failed_fact_validates_and_cannot_override_owned_fields(
+    valid_command, repo_root
+):
+    import sys
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", "interactive")
+    failed, turn = terminal_events(
+        invocation,
+        outcome="failure",
+        failure_code="turn_timeout",
+        failure_message="agent turn timed out after 300s on the interactive lane",
+        failure_data={
+            "elapsed_seconds": 300.2,
+            "timeout_seconds": 300.0,
+            "timeout_source": "lane",
+            "turn_stopped": True,
+            "invocation_id": "attacker",
+            "lane": "batch",
+        },
+    )
+    for event in (failed, turn):
+        validate_envelope(event)
+    data = failed["data"]
+    assert data["error_code"] == "turn_timeout"
+    assert data["timeout_source"] == "lane" and data["turn_stopped"] is True
+    assert data["invocation_id"] == valid_command["command_id"]
+    assert data["lane"] == "interactive"
+    assert turn["data"]["outcome"] == "failed"

@@ -56,6 +56,10 @@ class ExecutionRecord:
     # Delivery lane the command arrived on ('batch' | 'interactive'); None for
     # rows written before the interactive lane existed.
     lane: str | None = None
+    # Machine reason a 'failure' outcome was closed with, e.g. 'turn_timeout'
+    # when the lane's per-turn wall clock expired; None for ordinary outcomes
+    # and for rows written before the column existed.
+    failure_code: str | None = None
 
 
 class ExecutionStateStore:
@@ -88,9 +92,14 @@ class ExecutionStateStore:
                     )
                 if version != 3 or "rejected_at" not in columns:
                     self._migrate_to_current_schema(db, columns)
-                elif "lane" not in columns:
-                    # Additive and nullable: pre-lane rows read back as NULL.
-                    db.execute("ALTER TABLE executions ADD COLUMN lane TEXT")
+                else:
+                    # Additive and nullable: older rows read back as NULL, and an
+                    # older gateway ignores columns it does not select.
+                    for column in ("lane", "failure_code"):
+                        if column not in columns:
+                            db.execute(
+                                f"ALTER TABLE executions ADD COLUMN {column} TEXT"
+                            )
         os.chmod(self.path, 0o600)
 
     @staticmethod
@@ -113,6 +122,7 @@ class ExecutionStateStore:
                 rejection_reason TEXT,
                 rejected_at TEXT,
                 lane TEXT,
+                failure_code TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 CHECK (
@@ -254,6 +264,7 @@ class ExecutionStateStore:
             rejection_reason=str(row[7]) if row[7] is not None else None,
             rejected_at=str(row[8]) if row[8] is not None else None,
             lane=str(row[9]) if row[9] is not None else None,
+            failure_code=str(row[10]) if row[10] is not None else None,
         )
 
     @classmethod
@@ -261,7 +272,7 @@ class ExecutionStateStore:
         row = db.execute(
             """SELECT command_id, envelope_digest, profile, state, outcome,
                       started_events, terminal_events, rejection_reason, rejected_at,
-                      lane
+                      lane, failure_code
                FROM executions WHERE command_id = ?""",
             (command_id,),
         ).fetchone()
@@ -355,6 +366,7 @@ class ExecutionStateStore:
         digest: str,
         outcome: str,
         terminal_events: tuple[dict[str, Any], ...],
+        failure_code: str | None = None,
     ) -> ExecutionRecord:
         if outcome not in {"success", "failure", "cancelled"}:
             raise ValueError(f"unsupported execution outcome: {outcome}")
@@ -389,9 +401,10 @@ class ExecutionStateStore:
                 raise RuntimeError("execution must be started before completion")
             db.execute(
                 """UPDATE executions
-                   SET state = 'completed', outcome = ?, terminal_events = ?, updated_at = ?
+                   SET state = 'completed', outcome = ?, terminal_events = ?,
+                       failure_code = ?, updated_at = ?
                    WHERE command_id = ? AND state = 'started'""",
-                (outcome, encoded_terminal, now, command_id),
+                (outcome, encoded_terminal, failure_code, now, command_id),
             )
             record = self._select(db, command_id)
             db.commit()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import uuid
 from dataclasses import dataclass
@@ -58,6 +59,9 @@ TURN_STARTED = "bloodbank.conversation.turn.started"
 INVOCATION_STARTED = "bloodbank.agent.invocation.started"
 INVOCATION_COMPLETED = "bloodbank.agent.invocation.completed"
 INVOCATION_FAILED = "bloodbank.agent.invocation.failed"
+# error_code stamped on invocation.failed when a lane's per-turn wall clock
+# expired and the gateway stopped the Hermes turn.
+TURN_TIMEOUT_CODE = "turn_timeout"
 TURN_COMPLETED = "bloodbank.conversation.turn.completed"
 
 _UUID_NAMESPACE = uuid.UUID("633de934-f359-50f8-978f-3ef4ebbdac69")
@@ -96,6 +100,17 @@ def _uuid_string(value: Any, field: str) -> str:
     except (ValueError, AttributeError) as exc:
         raise CommandInvalid(f"{field} must be an RFC 4122 UUID") from exc
     return text
+
+
+def _positive_number(value: Any) -> bool:
+    """True for a finite number > 0 (a JSON bool is not a number here)."""
+
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    )
 
 
 def _timestamp(value: Any) -> str:
@@ -190,6 +205,9 @@ def decode_command(
     context = data.get("context")
     if context is not None and not isinstance(context, dict):
         raise CommandInvalid("data.context must be null or an object")
+    deadline = data.get("deadline_seconds")
+    if deadline is not None and not _positive_number(deadline):
+        raise CommandInvalid("data.deadline_seconds must be null or a positive number")
 
     expected_schema = f"apicurio://holyfields/{lane.command_type}/versions/1"
     if "dataschema" in envelope and envelope["dataschema"] != expected_schema:
@@ -459,8 +477,15 @@ def terminal_events(
     outcome: str,
     failure_code: str | None = None,
     failure_message: str | None = None,
+    failure_data: dict[str, Any] | None = None,
     occurred_at: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build the terminal invocation fact and its closing turn fact.
+
+    ``failure_data`` adds optional fields to a failed invocation payload (the
+    turn-timeout path carries ``elapsed_seconds``/``timeout_seconds``/...); it
+    cannot override the fields the contract owns."""
+
     started_id = invocation.event_id(INVOCATION_STARTED)
     if outcome == "success":
         terminal = lifecycle_event(
@@ -484,6 +509,7 @@ def terminal_events(
             causation_id=started_id,
             occurred_at=occurred_at,
             data={
+                **(failure_data or {}),
                 "invocation_id": invocation.invocation_id,
                 "thread_id": invocation.thread_id,
                 "turn_id": invocation.turn_id,

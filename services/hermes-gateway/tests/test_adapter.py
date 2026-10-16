@@ -1699,3 +1699,423 @@ def test_interactive_lane_defaults_give_a_retry_horizon_beyond_a_registry_rewrit
     interactive = lane(BloodbankAdapter(adapter.config), "interactive")
     # max_deliver x nak_delay is how long a transient registry/journal error keeps being retried
     assert interactive.max_deliver * interactive.nak_delay >= 20
+
+
+# --- per-turn wall clock on the interactive lane ---------------------------
+
+
+def make_timeout_adapter(tmp_path, *, timeout=0.2, max_inflight=2):
+    adapter = make_lane_adapter(tmp_path, max_inflight=max_inflight)
+    lane(adapter, "interactive").turn_timeout = timeout
+    return adapter
+
+
+def memo_command(valid_command, thread, **data):
+    command = as_interactive(valid_command)
+    command["command_id"] = str(uuid.uuid4())
+    command["data"]["thread_id"] = thread
+    command["data"].update(data)
+    return command
+
+
+def lifecycle_types(adapter, command):
+    return [
+        event["type"]
+        for event in adapter._js.events
+        if event["data"]["command_id"] == command["command_id"]
+    ]
+
+
+def failed_fact(adapter, command):
+    return next(
+        event
+        for event in adapter._js.events
+        if event["data"]["command_id"] == command["command_id"]
+        and event["type"] == "bloodbank.agent.invocation.failed"
+    )
+
+
+def test_turn_timeout_defaults_and_validation(tmp_path):
+    adapter = make_adapter(tmp_path)
+    # absent on a lane that exists = the interactive default; batch has none
+    adapter.config.extra["interactive"] = {"enabled": True}
+    built = BloodbankAdapter(adapter.config)
+    assert lane(built, "interactive").turn_timeout == 300.0
+    assert lane(built, "batch").turn_timeout is None
+
+    adapter.config.extra["interactive"] = {"enabled": True, "turn_timeout_seconds": 45}
+    assert lane(BloodbankAdapter(adapter.config), "interactive").turn_timeout == 45.0
+    adapter.config.extra["interactive"] = {"enabled": True, "turn_timeout_seconds": 0.5}
+    assert lane(BloodbankAdapter(adapter.config), "interactive").turn_timeout == 0.5
+
+    for bad in (0, -1, True, False, None, "300", float("nan"), float("inf"), 86_401, [], {}):
+        adapter.config.extra["interactive"] = {
+            "enabled": True,
+            "turn_timeout_seconds": bad,
+        }
+        with pytest.raises(ValueError, match="turn_timeout_seconds"):
+            BloodbankAdapter(adapter.config)
+
+
+def test_batch_turn_timeout_is_opt_in_and_strict(tmp_path):
+    adapter = make_adapter(tmp_path)
+    adapter.config.extra["turn_timeout_seconds"] = 900
+    assert lane(BloodbankAdapter(adapter.config), "batch").turn_timeout == 900.0
+    adapter.config.extra["turn_timeout_seconds"] = 0
+    with pytest.raises(ValueError, match="turn_timeout_seconds"):
+        BloodbankAdapter(adapter.config)
+
+
+@pytest.mark.asyncio
+async def test_timeout_stops_the_turn_publishes_failed_and_acks_once(
+    tmp_path, valid_command
+):
+    adapter = make_timeout_adapter(tmp_path, timeout=0.2)
+    interactive = lane(adapter, "interactive")
+    cancelled = asyncio.Event()
+
+    async def handler(_event):
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-slow")
+    message = FakeMessage(memo)
+    await asyncio.wait_for(adapter._handle_broker_message(message, interactive), 5)
+
+    # the Hermes turn was really stopped, through the /stop path
+    assert cancelled.is_set()
+    assert [e.text for e in adapter.stop_events] == ["/stop"]
+    assert adapter._active_sessions == {}
+
+    # acked exactly once: no redelivery, no NAK, no terminate
+    assert message.acked == 1 and message.nacked == 0 and message.termed == 0
+
+    assert lifecycle_types(adapter, memo) == [
+        "bloodbank.conversation.turn.started",
+        "bloodbank.agent.invocation.started",
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed",
+    ]
+    failed = failed_fact(adapter, memo)["data"]
+    assert failed["error_code"] == "turn_timeout"
+    assert failed["lane"] == "interactive"
+    assert failed["timeout_seconds"] == 0.2
+    assert failed["timeout_source"] == "lane"
+    assert failed["turn_stopped"] is True
+    assert failed["elapsed_seconds"] >= 0.2
+    assert "timed out after" in failed["error_message"]
+    assert "interactive lane" in failed["error_message"]
+    completed = [
+        e for e in adapter._js.events if e["type"] == "bloodbank.conversation.turn.completed"
+    ]
+    assert completed[-1]["data"]["outcome"] == "failed"
+
+    record = adapter.execution_state.get(memo["command_id"])
+    assert record.state == "completed"
+    assert record.outcome == "failure"
+    assert record.failure_code == "turn_timeout"
+    assert record.lane == "interactive"
+    assert [e["type"] for e in record.terminal_events][0] == (
+        "bloodbank.agent.invocation.failed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_timeout_frees_the_slot_so_a_third_interactive_command_runs(
+    tmp_path, valid_command
+):
+    adapter = make_timeout_adapter(tmp_path, timeout=0.3, max_inflight=2)
+    interactive = lane(adapter, "interactive")
+    interactive.subscription = QueueSubscription()
+    adapter.fetch_timeout_seconds = 0.05
+    ran = []
+
+    async def handler(event):
+        ran.append(event.source.chat_id)
+        if event.source.chat_id.startswith("hung-"):
+            await asyncio.sleep(60)
+        return "done"
+
+    adapter.set_message_handler(handler)
+    hung = [memo_command(valid_command, f"hung-{i}") for i in range(2)]
+    hung_messages = [FakeMessage(command) for command in hung]
+    for message in hung_messages:
+        interactive.subscription.queue.put_nowait(message)
+    third = memo_command(valid_command, "memo-third")
+    third_message = FakeMessage(third)
+
+    adapter._running = True
+    loop = asyncio.create_task(adapter._consume_loop(interactive))
+    try:
+        for _ in range(100):
+            if len(interactive.inflight) == 2:
+                break
+            await asyncio.sleep(0.01)
+        # both slots are held by hung turns; the third is not pulled yet
+        assert len(interactive.inflight) == 2
+        interactive.subscription.queue.put_nowait(third_message)
+        await asyncio.sleep(0.1)
+        assert "memo-third" not in ran
+
+        for _ in range(300):
+            if third_message.acked:
+                break
+            await asyncio.sleep(0.02)
+        assert third_message.acked == 1, "the freed slot never ran the third command"
+        assert all(message.acked == 1 for message in hung_messages)
+        assert "memo-third" in ran
+        assert failed_fact(adapter, hung[0])["data"]["error_code"] == "turn_timeout"
+        assert "bloodbank.agent.invocation.completed" in lifecycle_types(adapter, third)
+        # nothing was redelivered or retried
+        assert all(m.nacked == 0 and m.termed == 0 for m in hung_messages + [third_message])
+    finally:
+        adapter._running = False
+        loop.cancel()
+        await asyncio.gather(loop, return_exceptions=True)
+        await asyncio.gather(*interactive.inflight, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_inside_its_budget_is_unaffected(tmp_path, valid_command):
+    adapter = make_timeout_adapter(tmp_path, timeout=5)
+    interactive = lane(adapter, "interactive")
+
+    async def handler(_event):
+        await asyncio.sleep(0.05)
+        return "done"
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-fast")
+    message = FakeMessage(memo)
+    await adapter._handle_broker_message(message, interactive)
+
+    assert message.acked == 1
+    assert adapter.stop_events == []
+    assert "bloodbank.agent.invocation.completed" in lifecycle_types(adapter, memo)
+    record = adapter.execution_state.get(memo["command_id"])
+    assert record.outcome == "success" and record.failure_code is None
+
+
+@pytest.mark.asyncio
+async def test_late_completion_after_timeout_is_ignored(tmp_path, valid_command):
+    adapter = make_timeout_adapter(tmp_path, timeout=0.15)
+    interactive = lane(adapter, "interactive")
+    seen = {}
+
+    async def handler(event):
+        seen["event"] = event
+        await asyncio.sleep(30)
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-late")
+    message = FakeMessage(memo)
+    await adapter._handle_broker_message(message, interactive)
+    published = list(adapter._js.events)
+    before = adapter.execution_state.get(memo["command_id"])
+
+    # Hermes finishes the turn after the gateway gave up on it
+    await adapter.on_processing_complete(
+        seen["event"], __import__("gateway.platforms.base", fromlist=["x"]).ProcessingOutcome.SUCCESS
+    )
+
+    assert adapter._js.events == published
+    assert adapter.execution_state.get(memo["command_id"]) == before
+    assert message.acked == 1
+
+
+@pytest.mark.asyncio
+async def test_completion_racing_the_stop_cannot_flip_the_outcome(
+    tmp_path, valid_command, monkeypatch
+):
+    from gateway.platforms.base import ProcessingOutcome
+
+    adapter = make_timeout_adapter(tmp_path, timeout=0.15)
+    interactive = lane(adapter, "interactive")
+    seen = {}
+
+    async def handler(event):
+        seen["event"] = event
+        await asyncio.sleep(30)
+
+    adapter.set_message_handler(handler)
+    real_cancel = adapter.cancel_session_processing
+
+    async def racing_cancel(key, **kwargs):
+        # a success arrives while the gateway is stopping the turn
+        await adapter.on_processing_complete(seen["event"], ProcessingOutcome.SUCCESS)
+        await real_cancel(key, **kwargs)
+
+    monkeypatch.setattr(adapter, "cancel_session_processing", racing_cancel)
+    memo = memo_command(valid_command, "memo-race")
+    message = FakeMessage(memo)
+    await adapter._handle_broker_message(message, interactive)
+
+    types = lifecycle_types(adapter, memo)
+    assert types.count("bloodbank.agent.invocation.failed") == 1
+    assert "bloodbank.agent.invocation.completed" not in types
+    assert adapter.execution_state.get(memo["command_id"]).failure_code == "turn_timeout"
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_stop_is_reported_not_hidden(tmp_path, valid_command):
+    adapter = make_timeout_adapter(tmp_path, timeout=0.15)
+    interactive = lane(adapter, "interactive")
+    adapter.stop_ineffective = True
+    release = asyncio.Event()
+
+    async def handler(_event):
+        await release.wait()
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-stuck")
+    message = FakeMessage(memo)
+    try:
+        await asyncio.wait_for(adapter._handle_broker_message(message, interactive), 5)
+        failed = failed_fact(adapter, memo)["data"]
+        assert failed["error_code"] == "turn_timeout"
+        assert failed["turn_stopped"] is False
+        assert "did not confirm" in failed["error_message"]
+        # the slot is still freed and the message settled
+        assert message.acked == 1
+    finally:
+        release.set()
+        await adapter.cancel_background_tasks()
+
+
+@pytest.mark.asyncio
+async def test_envelope_deadline_can_shorten_but_never_extend_the_lane_limit(
+    tmp_path, valid_command
+):
+    adapter = make_timeout_adapter(tmp_path, timeout=0.4)
+    interactive = lane(adapter, "interactive")
+
+    async def handler(_event):
+        await asyncio.sleep(30)
+
+    adapter.set_message_handler(handler)
+
+    short = memo_command(valid_command, "memo-short", deadline_seconds=0.1)
+    await adapter._handle_broker_message(FakeMessage(short), interactive)
+    data = failed_fact(adapter, short)["data"]
+    assert data["timeout_source"] == "envelope" and data["timeout_seconds"] == 0.1
+
+    long = memo_command(valid_command, "memo-long", deadline_seconds=3600)
+    await adapter._handle_broker_message(FakeMessage(long), interactive)
+    data = failed_fact(adapter, long)["data"]
+    assert data["timeout_source"] == "lane" and data["timeout_seconds"] == 0.4
+
+
+@pytest.mark.asyncio
+async def test_batch_lane_has_no_wall_clock_unless_configured(tmp_path, valid_command):
+    adapter = make_timeout_adapter(tmp_path, timeout=0.05)
+    finished = asyncio.Event()
+
+    async def handler(_event):
+        await asyncio.sleep(0.3)
+        finished.set()
+        return "done"
+
+    adapter.set_message_handler(handler)
+    command = json.loads(json.dumps(valid_command))
+    command["data"]["deadline_seconds"] = 0.05  # ignored: batch has no ceiling
+    message = FakeMessage(command)
+    await adapter._handle_broker_message(message, lane(adapter, "batch"))
+
+    assert finished.is_set() and message.acked == 1
+    assert adapter.stop_events == []
+    types = [e["type"] for e in adapter._js.events]
+    assert "bloodbank.agent.invocation.completed" in types
+
+
+@pytest.mark.asyncio
+async def test_timed_out_command_replays_its_failure_without_rerunning(
+    tmp_path, valid_command
+):
+    adapter = make_timeout_adapter(tmp_path, timeout=0.1)
+    interactive = lane(adapter, "interactive")
+    runs = []
+
+    async def handler(event):
+        runs.append(event.message_id)
+        await asyncio.sleep(30)
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-replay")
+    first = FakeMessage(memo)
+    await adapter._handle_broker_message(first, interactive)
+    count = len(adapter._js.events)
+
+    # a duplicate delivery (ack lost on the wire) must not run the prompt again
+    again = FakeMessage(memo)
+    await adapter._handle_broker_message(again, interactive)
+    assert runs == [memo["command_id"]]
+    assert again.acked == 1 and again.nacked == 0
+    assert len(adapter._js.events) == count + 4  # identical facts, same Nats-Msg-Id
+
+
+@pytest.mark.asyncio
+async def test_failed_terminal_publish_after_timeout_naks_and_replays(
+    tmp_path, valid_command
+):
+    adapter = make_timeout_adapter(tmp_path, timeout=0.1)
+    interactive = lane(adapter, "interactive")
+    runs = []
+
+    async def handler(event):
+        runs.append(event.message_id)
+        await asyncio.sleep(30)
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-publish")
+    real_publish = adapter._js.publish
+    failures = {"left": 1}
+
+    async def flaky(subject, payload, **kwargs):
+        if subject.endswith("invocation.failed") and failures["left"]:
+            failures["left"] -= 1
+            raise RuntimeError("broker unavailable")
+        return await real_publish(subject, payload, **kwargs)
+
+    adapter._js.publish = flaky
+    first = FakeMessage(memo)
+    await adapter._handle_broker_message(first, interactive)
+    assert first.nacked == 1 and first.acked == 0
+    assert adapter.execution_state.get(memo["command_id"]).failure_code == "turn_timeout"
+
+    second = FakeMessage(memo)
+    await adapter._handle_broker_message(second, interactive)
+    assert second.acked == 1
+    assert runs == [memo["command_id"]]  # the prompt was never run twice
+    assert failed_fact(adapter, memo)["data"]["error_code"] == "turn_timeout"
+
+
+def test_deadline_seconds_is_validated_at_the_boundary(valid_command):
+    from bloodbank_hermes_gateway.contract import CommandInvalid, INTERACTIVE, decode_command
+
+    command = as_interactive(valid_command)
+    for good in (None, 5, 0.5):
+        command["data"]["deadline_seconds"] = good
+        assert decode_command(json.dumps(command).encode(), lane=INTERACTIVE)
+    for bad in (0, -3, True, "20", float("inf"), [], {}):
+        command["data"]["deadline_seconds"] = bad
+        with pytest.raises(CommandInvalid, match="deadline_seconds"):
+            decode_command(json.dumps(command, allow_nan=True).encode(), lane=INTERACTIVE)
+
+
+def test_journal_gains_a_nullable_failure_code_column_without_losing_rows(tmp_path):
+    path = tmp_path / "state.sqlite3"
+    ExecutionStateStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE executions DROP COLUMN failure_code")
+        db.execute(
+            """INSERT INTO executions(command_id, envelope_digest, profile, state,
+               started_events, lane, created_at, updated_at)
+               VALUES ('old', 'd', 'p', 'pending', '[]', 'interactive', 't', 't')"""
+        )
+    store = ExecutionStateStore(path)
+    row = store.get("old")
+    assert row is not None and row.failure_code is None and row.lane == "interactive"

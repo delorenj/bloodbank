@@ -62,7 +62,40 @@ class BasePlatformAdapter:
     def build_source(self, **kwargs):
         return types.SimpleNamespace(platform=self.platform, profile=None, **kwargs)
 
+    # -- Hermes session model --------------------------------------------
+    # Mirrors the parts of gateway.platforms.base the adapter relies on: one
+    # processing task per session key, a "/stop" command that bypasses the
+    # active-session guard and cancels that task, and
+    # cancel_session_processing().  ``stop_ineffective`` models a turn stuck in
+    # a thread that ignores both (the adapter must then say the stop was not
+    # confirmed).
+    stop_ineffective = False
+
+    def _event_session_key(self, event):
+        return f"{event.source.profile}:{event.source.chat_id}"
+
+    @property
+    def _active_sessions(self):
+        return self.__dict__.setdefault("_active_session_map", {})
+
+    @property
+    def stop_events(self):
+        return self.__dict__.setdefault("_stop_event_list", [])
+
+    async def cancel_session_processing(self, session_key, **_kwargs):
+        task = self._active_sessions.get(session_key)
+        if task is None or self.stop_ineffective:
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
     async def handle_message(self, event):
+        key = self._event_session_key(event)
+        if event.text.strip() == "/stop":
+            self.stop_events.append(event)
+            await self.cancel_session_processing(key)
+            return
+
         async def run():
             outcome = ProcessingOutcome.SUCCESS
             try:
@@ -77,9 +110,13 @@ class BasePlatformAdapter:
                 raise
             except Exception:
                 outcome = ProcessingOutcome.FAILURE
+            finally:
+                if self._active_sessions.get(key) is asyncio.current_task():
+                    del self._active_sessions[key]
             await self.on_processing_complete(event, outcome)
 
         task = asyncio.create_task(run())
+        self._active_sessions[key] = task
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 

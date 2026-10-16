@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +32,7 @@ from .contract import (
     COMMAND_STREAM,
     EVENT_STREAM,
     INTERACTIVE,
+    TURN_TIMEOUT_CODE,
     CommandInvalid,
     Invocation,
     LaneSpec,
@@ -85,6 +88,45 @@ def _bounded_float(
     return value
 
 
+DEFAULT_INTERACTIVE_TURN_TIMEOUT_SECONDS = 300.0
+MAX_TURN_TIMEOUT_SECONDS = 86_400.0
+# How long the gateway waits for Hermes to unwind a stopped turn before it
+# reports the turn as not confirmed stopped.
+STOP_BUDGET_SECONDS = 10.0
+
+
+def _turn_timeout(
+    extra: dict[str, Any],
+    default: float | None,
+    *,
+    prefix: str = "bloodbank.extra",
+) -> float | None:
+    """Per-turn wall-clock seconds: absent = ``default``, otherwise a strict
+    positive finite number (not a bool, not a numeric string, not null)."""
+
+    if "turn_timeout_seconds" not in extra:
+        return default
+    raw = extra["turn_timeout_seconds"]
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, (int, float))
+        or not math.isfinite(raw)
+        or raw <= 0
+        or raw > MAX_TURN_TIMEOUT_SECONDS
+    ):
+        raise ValueError(
+            f"{prefix}.turn_timeout_seconds must be a positive number "
+            f"no greater than {int(MAX_TURN_TIMEOUT_SECONDS)}"
+        )
+    return float(raw)
+
+
+def _seconds(value: float) -> str:
+    """Human seconds: whole when it is whole, else one decimal."""
+
+    return f"{value:.0f}" if abs(value - round(value)) < 0.05 else f"{value:.1f}"
+
+
 def _strict_bool(
     extra: dict[str, Any],
     key: str,
@@ -113,6 +155,8 @@ class LaneRuntime:
     ack_wait: float
     ack_progress: float
     nak_delay: float
+    # Wall-clock budget for one Hermes turn on this lane; None = unlimited.
+    turn_timeout: float | None = None
     subscription: Any = None
     task: asyncio.Task[None] | None = None
     inflight: set[asyncio.Task[None]] = field(default_factory=set)
@@ -137,6 +181,13 @@ class PendingInvocation:
     broker_message: Any
     completion: asyncio.Future[None]
     envelope_digest: str
+    # The MessageEvent handed to Hermes (its source addresses the session a
+    # timeout must stop).
+    event: Any = None
+    # Set synchronously by whichever path owns the terminal outcome first
+    # (Hermes' processing-complete hook or the turn timeout); the other path
+    # then stands down, so a late completion can never double-publish.
+    finalizing: bool = False
 
 
 class BloodbankAdapter(BasePlatformAdapter):
@@ -204,6 +255,9 @@ class BloodbankAdapter(BasePlatformAdapter):
             ack_wait=ack_wait,
             ack_progress=ack_progress,
             nak_delay=_bounded_float(extra, "nak_delay_seconds", 5.0, 0.0, 300.0),
+            # Batch turns (ticket grooming, delegation) are legitimately long:
+            # no wall clock unless the operator opts in.
+            turn_timeout=_turn_timeout(extra, None),
         )
         self._lanes: list[LaneRuntime] = [self._batch]
         interactive = self._interactive_lane(extra.get("interactive"))
@@ -292,6 +346,9 @@ class BloodbankAdapter(BasePlatformAdapter):
             ack_progress=ack_progress,
             nak_delay=_bounded_float(
                 raw, "nak_delay_seconds", 3.0, 0.0, 300.0, prefix=prefix
+            ),
+            turn_timeout=_turn_timeout(
+                raw, DEFAULT_INTERACTIVE_TURN_TIMEOUT_SECONDS, prefix=prefix
             ),
         )
 
@@ -678,8 +735,12 @@ class BloodbankAdapter(BasePlatformAdapter):
                     # claimed or restarted pending command must not execute on
                     # a route disabled while lifecycle publication was in flight.
                     await self._assert_dispatch_route(invocation)
+                    record.event = event
+                    # The wall clock starts at dispatch, not at claim: time spent
+                    # waiting for a same-thread predecessor is not the turn's.
+                    dispatched_at = time.monotonic()
                     await super().handle_message(event)
-                    await completion
+                    await self._await_turn(record, lane, dispatched_at)
             finally:
                 remaining = self._conversation_lock_refs.get(lock_key, 1) - 1
                 if remaining <= 0:
@@ -830,12 +891,167 @@ class BloodbankAdapter(BasePlatformAdapter):
                 headers={"Nats-Msg-Id": envelope["id"]},
             )
 
+    @staticmethod
+    def _turn_deadline(
+        lane: LaneRuntime, invocation: Invocation
+    ) -> tuple[float | None, str]:
+        """Effective wall-clock budget for one turn and where it came from.
+
+        The lane's ``turn_timeout`` is the ceiling.  A command may only ask for
+        less, through ``data.deadline_seconds``; a lane without a timeout has no
+        ceiling to cap against, so it ignores the deadline."""
+
+        if lane.turn_timeout is None:
+            return None, "none"
+        deadline = invocation.envelope["data"].get("deadline_seconds")
+        if deadline is not None and deadline < lane.turn_timeout:
+            return float(deadline), "envelope"
+        return lane.turn_timeout, "lane"
+
+    async def _await_turn(
+        self, record: PendingInvocation, lane: LaneRuntime, dispatched_at: float
+    ) -> None:
+        """Wait for Hermes to finish the turn, or stop it when the budget runs out."""
+
+        timeout, source = self._turn_deadline(lane, record.invocation)
+        if timeout is None:
+            await record.completion
+            return
+        try:
+            # shield: expiry must not cancel the future the completion hook sets.
+            await asyncio.wait_for(asyncio.shield(record.completion), timeout)
+        except asyncio.TimeoutError:
+            await self._expire_turn(record, lane, timeout, source, dispatched_at)
+
+    async def _expire_turn(
+        self,
+        record: PendingInvocation,
+        lane: LaneRuntime,
+        timeout: float,
+        source: str,
+        dispatched_at: float,
+    ) -> None:
+        """The turn outlived its budget: stop it, close the journal, publish failed.
+
+        Order matters.  The outcome is claimed synchronously first so a late
+        completion (or the CANCELLED hook our own stop provokes) stands down.
+        The turn is stopped before the journal is written so the failed fact can
+        say truthfully whether Hermes confirmed the stop.  The journal row is
+        written before publication so a publish failure replays the identical
+        terminal events on redelivery instead of running the prompt again."""
+
+        if record.finalizing or record.completion.done():
+            # Lost the race to a legitimate completion: let it finish.
+            await record.completion
+            return
+        record.finalizing = True
+        invocation = record.invocation
+        try:
+            stopped = await self._stop_turn(record)
+            elapsed = time.monotonic() - dispatched_at
+            message = (
+                f"agent turn timed out after {_seconds(elapsed)}s on {lane.name} "
+                f"lane (limit {_seconds(timeout)}s)"
+            )
+            events = terminal_events(
+                invocation,
+                outcome="failure",
+                failure_code=TURN_TIMEOUT_CODE,
+                failure_message=message
+                + ("" if stopped else "; Hermes did not confirm the turn stopped"),
+                failure_data={
+                    "elapsed_seconds": round(elapsed, 1),
+                    "timeout_seconds": round(timeout, 1),
+                    "timeout_source": source,
+                    "turn_stopped": stopped,
+                },
+            )
+            await asyncio.to_thread(
+                self.execution_state.mark_completed,
+                command_id=invocation.invocation_id,
+                digest=record.envelope_digest,
+                outcome="failure",
+                terminal_events=events,
+                failure_code=TURN_TIMEOUT_CODE,
+            )
+            logger.warning(
+                "Bloodbank turn timed out lane=%s profile=%s command_id=%s "
+                "elapsed=%.1fs limit=%.1fs source=%s stopped=%s",
+                lane.name,
+                invocation.profile,
+                invocation.invocation_id,
+                elapsed,
+                timeout,
+                source,
+                stopped,
+            )
+            await self._publish_many(events)
+        except Exception as exc:
+            record.completion.set_exception(exc)
+            # Retrieved here: the handler re-raises it into the NAK path.
+            record.completion.exception()
+            raise
+        record.completion.set_result(None)
+
+    def _session_key(self, event: Any) -> str | None:
+        derive = getattr(self, "_event_session_key", None)
+        if derive is None:
+            return None
+        try:
+            return str(derive(event))
+        except Exception:
+            return None
+
+    async def _stop_turn(self, record: PendingInvocation) -> bool:
+        """Stop the Hermes turn behind ``record``; True once its session is idle.
+
+        The stop goes through Hermes' own ``/stop`` command path: the gateway
+        runner hard-interrupts the running agent, invalidates its run
+        generation, kills the shell processes the turn spawned and cancels the
+        session's processing task.  If the session guard is still held after
+        that, fall back to the adapter-level session cancellation, which
+        cancels the owning asyncio task directly.  A tool call blocked in a
+        thread that never checks its interrupt flag can outlive both; the
+        return value tells the caller (and the failed fact) when that happens."""
+
+        event = record.event
+        if event is None:
+            return False
+        key = self._session_key(event)
+        stop = MessageEvent(
+            text="/stop",
+            message_type=MessageType.TEXT,
+            source=event.source,
+            message_id=f"{record.invocation.invocation_id}:turn-timeout-stop",
+            internal=True,
+        )
+        try:
+            await asyncio.wait_for(super().handle_message(stop), STOP_BUDGET_SECONDS)
+        except Exception as exc:
+            logger.error(
+                "Bloodbank turn stop request failed error_type=%s", type(exc).__name__
+            )
+        active = getattr(self, "_active_sessions", None)
+        if key is None or active is None:
+            return False
+        if key in active:
+            try:
+                await asyncio.wait_for(
+                    self.cancel_session_processing(key), STOP_BUDGET_SECONDS
+                )
+            except Exception as exc:
+                logger.error(
+                    "Bloodbank session cancel failed error_type=%s", type(exc).__name__
+                )
+        return key not in active
+
     async def on_processing_complete(
         self, event: MessageEvent, outcome: ProcessingOutcome
     ) -> None:
         record = self._records.get(str(event.message_id or ""))
-        if record is None or record.completion.done():
+        if record is None or record.completion.done() or record.finalizing:
             return
+        record.finalizing = True
         result = getattr(outcome, "value", str(outcome)).lower()
         terminal_outcome = (
             "success"
