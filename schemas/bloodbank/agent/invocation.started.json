@@ -51,8 +51,20 @@
             "object",
             "null"
           ],
-          "description": "Echo of the originating bloodbank.agent.invocation.start command's data.context, verbatim. Ticket turns carry reason (ticket-grooming|ticket-delegation), repo, ticket_key, ticket_id, board_id, workspace, title and phase so consumers can act statelessly. Omitted when the command carried no context.",
+          "description": "Echo of the originating bloodbank.agent.invocation.start or .invoke command's data.context, verbatim. Ticket turns carry reason (ticket-grooming|ticket-delegation), repo, ticket_key, ticket_id, board_id, workspace, title and phase so consumers can act statelessly. Omitted when the command carried no context.",
           "additionalProperties": true
+        },
+        "lane": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "batch",
+            "interactive",
+            null
+          ],
+          "description": "Delivery lane of the originating command: batch (bloodbank.agent.invocation.start) or interactive (bloodbank.agent.invocation.invoke). Stamped by the Hermes gateway on every lifecycle fact; absent on facts written before the interactive lane existed."
         }
       },
       "required": [

@@ -57,6 +57,7 @@ change gets a new action or entity, never a version segment, so
 Imperative action. Examples:
 
 - `bloodbank.cmd.agent.invocation.start` (canonical PM->agent invocation command; route via `data.target_agent_id`)
+- `bloodbank.cmd.agent.invocation.invoke` (interactive-lane twin of `start`: same payload, own durable consumer and reserved slots; only for commands a human is waiting on)
 - `bloodbank.cmd.cli.process.spawn`
 
 ### Replies: `bloodbank.rpy.<domain>.<entity>.<action>`

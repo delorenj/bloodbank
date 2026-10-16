@@ -193,6 +193,21 @@ Canonical PM->agent dispatch contract:
 Routers and consumers MUST dispatch this command by `data.target_agent_id`
 rather than encoding the target agent in the subject path.
 
+**Two delivery lanes.** The same data payload travels on two command types, each
+with its own durable consumer on `BLOODBANK_COMMANDS` and its own in-flight
+slots, so interactive work never queues behind batch work:
+
+| type | subject | meaning |
+| --- | --- | --- |
+| `bloodbank.agent.invocation.start` | `bloodbank.cmd.agent.invocation.start` | Batch lane. Unattended or scheduled work: ticket grooming, delegation, PM fan-out. FIFO behind other batch work. Durable `bloodbank-hermes-gateway`, 4 slots. |
+| `bloodbank.agent.invocation.invoke` | `bloodbank.cmd.agent.invocation.invoke` | Interactive lane. A human is waiting on the answer (a voice memo, a chat nudge). Durable `bloodbank-hermes-gateway-interactive`, 2 reserved slots. |
+
+`invoke` is for commands where a human is waiting, nothing else. The gateway
+still emits `agent.invocation.started/completed/failed` for both (not
+`agent.invocation.invoked`; Section 8.2 pairing is by review, not enforced),
+stamping `data.lane` (`batch` | `interactive`) on every lifecycle fact. Design:
+`docs/interactive-command-lane.md`.
+
 The fleet-shared Hermes consumer treats registry routing as an explicit
 eligibility contract. The registry root must be a mapping with exact integer
 `schema_version: 1` and an explicit `agents` mapping. Empty/missing documents,

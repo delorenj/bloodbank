@@ -42,6 +42,8 @@ systemctl --user restart hermes-gateway.service
 Verify: `~/.hermes/gateway_state.json` `.platforms.bloodbank.state == "connected"`
 and `curl -s 'http://127.0.0.1:8222/jsz?consumers=true'` shows the
 `bloodbank-hermes-gateway` consumer with activity (`num_waiting >= 1` when idle).
+With the interactive lane enabled (below) it also shows
+`bloodbank-hermes-gateway-interactive`, `max_ack_pending: 2`, `num_waiting >= 1`.
 
 The legacy pip layout below is kept for reference only.
 
@@ -70,6 +72,15 @@ gateway:
         max_inflight: 4
         ack_wait_seconds: 90
         ack_progress_seconds: 20
+        # Optional second lane; absent or `enabled: false` = single-lane gateway.
+        interactive:
+          enabled: true
+          durable_name: bloodbank-hermes-gateway-interactive
+          max_inflight: 2
+          max_deliver: 3
+          ack_wait_seconds: 180
+          ack_progress_seconds: 30
+          nak_delay_seconds: 2
 ```
 
 Resolution precedence is the explicit `target_profiles` mapping, followed by
@@ -118,6 +129,45 @@ record. Unknown targets never fall back to the default profile.
 point at a credentials file; credentials belong in runtime secret injection,
 not tracked YAML.
 
+## Lanes: batch and interactive
+
+Two command types carry the same `data` payload, each through its own durable
+pull consumer on `BLOODBANK_COMMANDS` and its own in-flight slots:
+
+| lane | type / subject | durable | slots | for |
+| --- | --- | --- | --- | --- |
+| batch | `bloodbank.agent.invocation.start` / `bloodbank.cmd.agent.invocation.start` | `bloodbank-hermes-gateway` | `max_inflight` (4) | unattended work: ticket grooming, delegation, PM fan-out |
+| interactive | `bloodbank.agent.invocation.invoke` / `bloodbank.cmd.agent.invocation.invoke` | `bloodbank-hermes-gateway-interactive` | `interactive.max_inflight` (2) | a human is waiting: a voice memo, a chat nudge |
+
+A grooming burst that holds all four batch slots no longer delays an
+interactive command: the lanes share only the NATS connection and the execution
+journal, each has its own fetch loop, and total concurrency is the sum of the
+slots (6 turns). Hermes runs distinct sessions of one profile concurrently, so
+a busy profile does not block an interactive turn on a different `thread_id`.
+
+- Enabled only by `extra.interactive.enabled: true` (strict boolean). Absent
+  means the single-lane gateway exactly as before, so the code can ship before
+  the config. Rollback is `enabled: false` plus a gateway restart.
+- The adapter creates both durables on `connect()` and refuses a stale durable
+  whose filter, `max_ack_pending` or `max_deliver` differs (delete the durable
+  once and restart). If either lane cannot bind, the platform reports
+  `bloodbank_connect_failed` and retries; a half-bound gateway is not accepted.
+- A `start` envelope delivered on the interactive subject, or an `invoke` on
+  the batch one, is poison and receives a terminal acknowledgement.
+- The journal is shared and keyed by `command_id`, so a command id can never
+  run twice across lanes (the type differs, so the second envelope is a digest
+  collision and is terminated). The journal row has a nullable `lane` column
+  (`batch` | `interactive`; NULL for rows written before lanes existed),
+  added in place on first start.
+- Every lifecycle fact (`turn.started`, `invocation.started/completed/failed`,
+  `turn.completed`) carries `data.lane`, so consumers can tell a human-waiting
+  turn from batch work. Types and subjects are unchanged.
+- The producer rule: use `invoke` only when a human is waiting. n8n, PMs and
+  `hookd_bridge` stay on `start`. A producer that cannot see the interactive
+  consumer pulling should fall back to `start` and record why (the Holocene
+  inbox watcher does, and stamps `lane`/`lane_reason` on `audio.memo.dispatched`).
+- Design and rollout: `docs/interactive-command-lane.md`.
+
 ## Delivery behavior
 
 - Input is capped by `max_command_bytes` (default 256 KiB).
@@ -145,7 +195,8 @@ not tracked YAML.
   Hermes. Every durable rejection state is immutable and can never execute,
   even if its route is later re-enabled.
 - The command's correlation, causation, command, idempotency, target, thread,
-  and turn identifiers are carried into schema-conformant lifecycle events.
+  and turn identifiers are carried into schema-conformant lifecycle events,
+  together with the delivery `lane`.
 
 This is not an exactly-once transport claim. JetStream delivery and lifecycle
 publication remain at-least-once. The local guarantee is at-most-once Hermes

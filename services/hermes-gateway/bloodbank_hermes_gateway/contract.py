@@ -20,8 +20,37 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-COMMAND_TYPE = "bloodbank.agent.invocation.start"
-COMMAND_SUBJECT = "bloodbank.cmd.agent.invocation.start"
+
+
+@dataclass(frozen=True)
+class LaneSpec:
+    """One command delivery lane: a command type, its subject and a lane name.
+
+    The lanes carry the same ``data`` payload.  They differ only in which
+    durable consumer (and therefore which in-flight slots) they are delivered
+    through, so a human-facing command is never queued behind batch work.
+    """
+
+    name: str
+    command_type: str
+    subject: str
+
+
+BATCH = LaneSpec(
+    "batch",
+    "bloodbank.agent.invocation.start",
+    "bloodbank.cmd.agent.invocation.start",
+)
+INTERACTIVE = LaneSpec(
+    "interactive",
+    "bloodbank.agent.invocation.invoke",
+    "bloodbank.cmd.agent.invocation.invoke",
+)
+LANES = {lane.name: lane for lane in (BATCH, INTERACTIVE)}
+
+# The batch lane is the original single lane; keep these importable.
+COMMAND_TYPE = BATCH.command_type
+COMMAND_SUBJECT = BATCH.subject
 COMMAND_STREAM = "BLOODBANK_COMMANDS"
 EVENT_STREAM = "BLOODBANK_EVENTS"
 
@@ -81,8 +110,13 @@ def _timestamp(value: Any) -> str:
     return text
 
 
-def decode_command(payload: bytes, *, max_bytes: int = 262_144) -> dict[str, Any]:
+def decode_command(
+    payload: bytes, *, max_bytes: int = 262_144, lane: LaneSpec = BATCH
+) -> dict[str, Any]:
     """Decode and validate the canonical invocation command envelope.
+
+    ``lane`` selects the command type the envelope must carry: a ``start``
+    envelope delivered on the interactive subject (or the reverse) is poison.
 
     The canonical schema permits a null prompt because it describes the wire
     family.  This consumer needs executable content, so an empty/null prompt is
@@ -119,8 +153,8 @@ def decode_command(payload: bytes, *, max_bytes: int = 262_144) -> dict[str, Any
 
     if envelope.get("specversion") != "1.0":
         raise CommandInvalid("specversion must be '1.0'")
-    if envelope["type"] != COMMAND_TYPE:
-        raise CommandInvalid(f"type must be {COMMAND_TYPE!r}")
+    if envelope["type"] != lane.command_type:
+        raise CommandInvalid(f"type must be {lane.command_type!r}")
     if envelope["kind"] != "command":
         raise CommandInvalid("kind must be 'command'")
     if envelope["domain"] != "agent":
@@ -157,10 +191,10 @@ def decode_command(payload: bytes, *, max_bytes: int = 262_144) -> dict[str, Any
     if context is not None and not isinstance(context, dict):
         raise CommandInvalid("data.context must be null or an object")
 
-    expected_schema = f"apicurio://holyfields/{COMMAND_TYPE}/versions/1"
+    expected_schema = f"apicurio://holyfields/{lane.command_type}/versions/1"
     if "dataschema" in envelope and envelope["dataschema"] != expected_schema:
         raise CommandInvalid(f"dataschema must be {expected_schema!r}")
-    expected_ref = f"{COMMAND_TYPE}.v1"
+    expected_ref = f"{lane.command_type}.v1"
     if "schemaref" in envelope and envelope["schemaref"] != expected_ref:
         raise CommandInvalid(f"schemaref must be {expected_ref!r}")
 
@@ -302,9 +336,12 @@ class Invocation:
     thread_id: str
     turn_id: str
     invocation_id: str
+    lane: str = BATCH.name
 
     @classmethod
-    def from_envelope(cls, envelope: dict[str, Any], profile: str) -> "Invocation":
+    def from_envelope(
+        cls, envelope: dict[str, Any], profile: str, lane: str = BATCH.name
+    ) -> "Invocation":
         data = envelope["data"]
         command_id = envelope["command_id"]
         correlation_id = envelope["correlationid"]
@@ -316,6 +353,7 @@ class Invocation:
             thread_id=(data.get("thread_id") or f"bloodbank:{correlation_id}").strip(),
             turn_id=(data.get("turn_id") or command_id).strip(),
             invocation_id=command_id,
+            lane=lane,
         )
 
     def event_id(self, event_type: str) -> str:
@@ -371,6 +409,7 @@ def lifecycle_event(
             "idempotency_key": invocation.envelope["idempotency_key"],
             "target_agent_id": invocation.target_agent_id,
             "profile_name": invocation.profile,
+            "lane": invocation.lane,
         },
     }
 

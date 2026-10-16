@@ -1,7 +1,8 @@
 # Interactive command lane for the Hermes gateway
 
-**Status:** Design, not implemented. Written 2026-10-15 from a read of the live
-code and the live broker. Nothing in this document has been rolled out.
+**Status:** Implemented 2026-10-15 (adapter, schema, watcher, trace, /voice). Written
+from a read of the live code and the live broker. Departures from this design are
+listed at the end under "As built".
 
 **Problem.** Voice memos and ticket grooming share one JetStream consumer,
 `bloodbank-hermes-gateway`, with `max_ack_pending: 4`. A grooming burst of 20+
@@ -563,3 +564,18 @@ restart.
   `bloodbank.cmd.agent.invocation.start` and is the place for the `invoke` twin.
 - **Fairness knob if one operator is ever not the user:** `interactive.max_inflight`
   is the only dial; do not add per-agent quotas.
+
+---
+
+## 6. As built (2026-10-15)
+
+- Adapter: `LaneSpec`/`BATCH`/`INTERACTIVE` in `contract.py`; `LaneRuntime` and
+  `extra.interactive` in `adapter.py`. The old flat attributes
+  (`max_inflight`, `_subscription`, ...) remain as properties over the batch lane.
+- Lane recording is both a nullable journal column `lane` (added in place with
+  `ALTER TABLE`, `user_version` stays 3, so a code rollback is safe) and
+  `data.lane` on every lifecycle fact, not inside the echoed `data.context`
+  (context stays a verbatim echo of the command). The three `invocation.*` schemas
+  document `data.lane`.
+- `ack_wait` and `ack_progress` default to 180 s and 30 s for the interactive lane
+  in code (the batch code defaults stay 90/20; live config overrides them).

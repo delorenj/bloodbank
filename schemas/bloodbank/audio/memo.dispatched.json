@@ -59,6 +59,25 @@
           ],
           "description": "NATS subject the command was published to."
         },
+        "lane": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "interactive",
+            "batch",
+            null
+          ],
+          "description": "Gateway lane the command was published to: interactive (invocation.invoke, reserved slots) or batch (invocation.start). Derivable from command_subject on older facts."
+        },
+        "lane_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why the lane differs from the configured one, e.g. interactive_consumer_not_pulling when the watcher fell back to batch. Null on the normal path."
+        },
         "thread_id": {
           "type": [
             "string",

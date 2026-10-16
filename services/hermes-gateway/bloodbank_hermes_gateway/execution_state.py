@@ -53,6 +53,9 @@ class ExecutionRecord:
     terminal_events: tuple[dict[str, Any], ...]
     rejection_reason: str | None
     rejected_at: str | None
+    # Delivery lane the command arrived on ('batch' | 'interactive'); None for
+    # rows written before the interactive lane existed.
+    lane: str | None = None
 
 
 class ExecutionStateStore:
@@ -85,6 +88,9 @@ class ExecutionStateStore:
                     )
                 if version != 3 or "rejected_at" not in columns:
                     self._migrate_to_current_schema(db, columns)
+                elif "lane" not in columns:
+                    # Additive and nullable: pre-lane rows read back as NULL.
+                    db.execute("ALTER TABLE executions ADD COLUMN lane TEXT")
         os.chmod(self.path, 0o600)
 
     @staticmethod
@@ -106,6 +112,7 @@ class ExecutionStateStore:
                 terminal_events TEXT,
                 rejection_reason TEXT,
                 rejected_at TEXT,
+                lane TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 CHECK (
@@ -246,13 +253,15 @@ class ExecutionStateStore:
             terminal_events=_decode_events(row[6]),
             rejection_reason=str(row[7]) if row[7] is not None else None,
             rejected_at=str(row[8]) if row[8] is not None else None,
+            lane=str(row[9]) if row[9] is not None else None,
         )
 
     @classmethod
     def _select(cls, db: sqlite3.Connection, command_id: str) -> ExecutionRecord | None:
         row = db.execute(
             """SELECT command_id, envelope_digest, profile, state, outcome,
-                      started_events, terminal_events, rejection_reason, rejected_at
+                      started_events, terminal_events, rejection_reason, rejected_at,
+                      lane
                FROM executions WHERE command_id = ?""",
             (command_id,),
         ).fetchone()
@@ -281,6 +290,7 @@ class ExecutionStateStore:
         digest: str,
         profile: str,
         started_events: tuple[dict[str, Any], ...],
+        lane: str | None = None,
     ) -> ExecutionRecord:
         now = _now()
         with self._connect() as db:
@@ -288,9 +298,17 @@ class ExecutionStateStore:
             db.execute(
                 """INSERT OR IGNORE INTO executions
                    (command_id, envelope_digest, profile, state, outcome,
-                    started_events, terminal_events, created_at, updated_at)
-                   VALUES (?, ?, ?, 'pending', NULL, ?, NULL, ?, ?)""",
-                (command_id, digest, profile, _events_json(started_events), now, now),
+                    started_events, terminal_events, lane, created_at, updated_at)
+                   VALUES (?, ?, ?, 'pending', NULL, ?, NULL, ?, ?, ?)""",
+                (
+                    command_id,
+                    digest,
+                    profile,
+                    _events_json(started_events),
+                    lane,
+                    now,
+                    now,
+                ),
             )
             record = self._select(db, command_id)
             db.commit()

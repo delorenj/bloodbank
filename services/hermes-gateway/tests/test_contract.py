@@ -429,3 +429,67 @@ def test_ticket_context_rides_on_started_completed_and_failed(valid_command, rep
     for event in (started, completed, failed):
         validate_envelope(event)
         assert event["data"]["context"] == ticket
+
+
+def test_decode_command_enforces_the_lane_command_type(valid_command):
+    from bloodbank_hermes_gateway.contract import BATCH, INTERACTIVE, LANES
+
+    assert LANES == {"batch": BATCH, "interactive": INTERACTIVE}
+    assert INTERACTIVE.subject == "bloodbank.cmd.agent.invocation.invoke"
+    assert INTERACTIVE.command_type == "bloodbank.agent.invocation.invoke"
+
+    start = json.dumps(valid_command).encode()
+    assert decode_command(start)["type"] == BATCH.command_type
+    assert decode_command(start, lane=BATCH)["type"] == BATCH.command_type
+    with pytest.raises(CommandInvalid, match="invocation.invoke"):
+        decode_command(start, lane=INTERACTIVE)
+
+    invoke = json.loads(json.dumps(valid_command))
+    invoke["type"] = INTERACTIVE.command_type
+    invoke["dataschema"] = "apicurio://holyfields/bloodbank.agent.invocation.invoke/versions/1"
+    invoke["schemaref"] = "bloodbank.agent.invocation.invoke.v1"
+    raw = json.dumps(invoke).encode()
+    assert decode_command(raw, lane=INTERACTIVE)["type"] == INTERACTIVE.command_type
+    with pytest.raises(CommandInvalid, match="invocation.start"):
+        decode_command(raw)
+
+    # An invoke envelope carrying the start schema refs is poison.
+    mixed = dict(invoke, schemaref="bloodbank.agent.invocation.start.v1")
+    with pytest.raises(CommandInvalid, match="schemaref"):
+        decode_command(json.dumps(mixed).encode(), lane=INTERACTIVE)
+
+
+def test_lifecycle_events_carry_the_lane_and_validate(valid_command, repo_root):
+    jsonschema = pytest.importorskip("jsonschema")
+    for lane_name in ("batch", "interactive"):
+        invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", lane_name)
+        events = started_events(invocation) + terminal_events(
+            invocation, outcome="success"
+        )
+        for event in events:
+            assert event["data"]["lane"] == lane_name
+        for event in events:
+            if not event["type"].startswith("bloodbank.agent.invocation."):
+                continue
+            domain, entity, action = event["type"].split(".")[1:]
+            schema_path = repo_root / "schemas" / "bloodbank" / domain / f"{entity}.{action}.json"
+            schema = json.loads(schema_path.read_text())
+            jsonschema.validate(event["data"], schema["properties"]["data"])
+
+
+def test_interactive_command_schema_matches_the_batch_data_contract(repo_root):
+    agent = repo_root / "schemas" / "bloodbank" / "agent"
+    start = json.loads((agent / "invocation.start.json").read_text())
+    invoke = json.loads((agent / "invocation.invoke.json").read_text())
+
+    def payload(schema):
+        data = dict(schema["properties"]["data"])
+        data.pop("description")  # names its own type
+        return data
+
+    assert payload(start) == payload(invoke)
+    assert start["required"] == invoke["required"]
+    for key in ("kind", "domain", "delivery", "idempotency_key"):
+        assert start["properties"][key] == invoke["properties"][key]
+    assert invoke["properties"]["type"]["const"] == "bloodbank.agent.invocation.invoke"
+    assert invoke["properties"]["subject"]["const"] == "bloodbank.cmd.agent.invocation.invoke"

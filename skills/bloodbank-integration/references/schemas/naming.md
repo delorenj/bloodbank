@@ -57,6 +57,8 @@ marker is transport routing; `envelope.kind` remains authoritative.
 - `bloodbank.evt.>` — event catch-all used by `bloodbank-ntfy-router`.
 - `bloodbank.cmd.agent.invocation.start` — command to start an invocation;
   target agent lives in `data.target_agent_id`, not in the subject path.
+- `bloodbank.cmd.agent.invocation.invoke` — interactive-lane twin of `start` (same payload,
+  own durable consumer, reserved slots); only for commands a human is waiting on.
 
 The legacy `event.>` / `command.>` / `reply.>` prefixes are deprecated.
 

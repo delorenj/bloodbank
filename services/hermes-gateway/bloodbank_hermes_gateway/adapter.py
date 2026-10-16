@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -26,11 +26,13 @@ from hermes_cli.profiles import (
 )
 
 from .contract import (
+    BATCH,
     COMMAND_STREAM,
-    COMMAND_SUBJECT,
     EVENT_STREAM,
+    INTERACTIVE,
     CommandInvalid,
     Invocation,
+    LaneSpec,
     ProfileResolver,
     RegistryInvalid,
     RouteInvalid,
@@ -46,40 +48,87 @@ ROUTE_REJECTION_MESSAGE = "Hermes route became ineligible before dispatch"
 
 
 def _bounded_int(
-    extra: dict[str, Any], key: str, default: int, minimum: int, maximum: int
+    extra: dict[str, Any],
+    key: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+    *,
+    prefix: str = "bloodbank.extra",
 ) -> int:
     raw = extra.get(key, default)
     try:
         value = int(raw)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"bloodbank.extra.{key} must be an integer") from exc
+        raise ValueError(f"{prefix}.{key} must be an integer") from exc
     if value < minimum or value > maximum:
-        raise ValueError(
-            f"bloodbank.extra.{key} must be between {minimum} and {maximum}"
-        )
+        raise ValueError(f"{prefix}.{key} must be between {minimum} and {maximum}")
     return value
 
 
 def _bounded_float(
-    extra: dict[str, Any], key: str, default: float, minimum: float, maximum: float
+    extra: dict[str, Any],
+    key: str,
+    default: float,
+    minimum: float,
+    maximum: float,
+    *,
+    prefix: str = "bloodbank.extra",
 ) -> float:
     raw = extra.get(key, default)
     try:
         value = float(raw)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"bloodbank.extra.{key} must be numeric") from exc
+        raise ValueError(f"{prefix}.{key} must be numeric") from exc
     if value < minimum or value > maximum:
-        raise ValueError(
-            f"bloodbank.extra.{key} must be between {minimum} and {maximum}"
-        )
+        raise ValueError(f"{prefix}.{key} must be between {minimum} and {maximum}")
     return value
 
 
-def _strict_bool(extra: dict[str, Any], key: str, default: bool = False) -> bool:
+def _strict_bool(
+    extra: dict[str, Any],
+    key: str,
+    default: bool = False,
+    *,
+    prefix: str = "bloodbank.extra",
+) -> bool:
     value = extra.get(key, default)
     if not isinstance(value, bool):
-        raise ValueError(f"bloodbank.extra.{key} must be true or false")
+        raise ValueError(f"{prefix}.{key} must be true or false")
     return value
+
+
+@dataclass
+class LaneRuntime:
+    """One delivery lane: its durable consumer, bounds and live tasks.
+
+    Lanes share nothing at runtime except the NATS connection and the
+    execution journal, so a saturated lane cannot delay another lane's fetch.
+    """
+
+    spec: LaneSpec
+    durable: str
+    max_inflight: int
+    max_deliver: int
+    ack_wait: float
+    ack_progress: float
+    nak_delay: float
+    subscription: Any = None
+    task: asyncio.Task[None] | None = None
+    inflight: set[asyncio.Task[None]] = field(default_factory=set)
+
+    @property
+    def name(self) -> str:
+        return self.spec.name
+
+
+def _batch_attr(name: str) -> property:
+    """Expose a batch-lane setting under its original flat adapter name."""
+
+    return property(
+        lambda self: getattr(self._batch, name),
+        lambda self, value: setattr(self._batch, name, value),
+    )
 
 
 @dataclass
@@ -91,11 +140,28 @@ class PendingInvocation:
 
 
 class BloodbankAdapter(BasePlatformAdapter):
-    """A single durable command consumer shared by a multiplex Hermes gateway."""
+    """Durable command consumers (one per lane) shared by a multiplex gateway.
+
+    The batch lane (``invocation.start``) is always present and configured by
+    the flat ``extra`` keys.  The interactive lane (``invocation.invoke``) is
+    added by ``extra.interactive.enabled: true`` and has its own durable
+    consumer and in-flight slots.
+    """
 
     supports_async_delivery = False
     interactive_resume = False
     allow_update_command = False
+
+    # Flat names predate lanes and always address the batch lane.
+    durable_name = _batch_attr("durable")
+    max_inflight = _batch_attr("max_inflight")
+    max_deliver = _batch_attr("max_deliver")
+    ack_wait_seconds = _batch_attr("ack_wait")
+    ack_progress_seconds = _batch_attr("ack_progress")
+    nak_delay_seconds = _batch_attr("nak_delay")
+    _subscription = _batch_attr("subscription")
+    _consumer_task = _batch_attr("task")
+    _inflight_tasks = _batch_attr("inflight")
 
     def __init__(self, config: Any) -> None:
         super().__init__(config=config, platform=Platform("bloodbank"))
@@ -109,24 +175,20 @@ class BloodbankAdapter(BasePlatformAdapter):
         self.nats_credentials = os.getenv("BLOODBANK_NATS_CREDS") or str(
             extra.get("credentials_file", "")
         )
-        self.durable_name = str(
+        durable_name = str(
             extra.get("durable_name", "bloodbank-hermes-gateway")
         ).strip()
-        if not self.durable_name:
+        if not durable_name:
             raise ValueError("bloodbank.extra.durable_name must be non-empty")
 
-        self.max_inflight = _bounded_int(extra, "max_inflight", 4, 1, 64)
-        self.max_deliver = _bounded_int(extra, "max_deliver", 5, 1, 100)
         self.max_command_bytes = _bounded_int(
             extra, "max_command_bytes", 262_144, 1_024, 1_048_576
         )
-        self.ack_wait_seconds = _bounded_float(
-            extra, "ack_wait_seconds", 90.0, 10.0, 3_600.0
-        )
-        self.ack_progress_seconds = _bounded_float(
+        ack_wait = _bounded_float(extra, "ack_wait_seconds", 90.0, 10.0, 3_600.0)
+        ack_progress = _bounded_float(
             extra, "ack_progress_seconds", 20.0, 1.0, 1_200.0
         )
-        if self.ack_progress_seconds >= self.ack_wait_seconds:
+        if ack_progress >= ack_wait:
             raise ValueError("ack_progress_seconds must be less than ack_wait_seconds")
         self.fetch_timeout_seconds = _bounded_float(
             extra, "fetch_timeout_seconds", 1.0, 0.1, 30.0
@@ -134,9 +196,24 @@ class BloodbankAdapter(BasePlatformAdapter):
         self.publish_timeout_seconds = _bounded_float(
             extra, "publish_timeout_seconds", 5.0, 0.1, 60.0
         )
-        self.nak_delay_seconds = _bounded_float(
-            extra, "nak_delay_seconds", 5.0, 0.0, 300.0
+        self._batch = LaneRuntime(
+            spec=BATCH,
+            durable=durable_name,
+            max_inflight=_bounded_int(extra, "max_inflight", 4, 1, 64),
+            max_deliver=_bounded_int(extra, "max_deliver", 5, 1, 100),
+            ack_wait=ack_wait,
+            ack_progress=ack_progress,
+            nak_delay=_bounded_float(extra, "nak_delay_seconds", 5.0, 0.0, 300.0),
         )
+        self._lanes: list[LaneRuntime] = [self._batch]
+        interactive = self._interactive_lane(extra.get("interactive"))
+        if interactive is not None:
+            if interactive.durable == self._batch.durable:
+                raise ValueError(
+                    "bloodbank.extra.interactive.durable_name must differ from "
+                    "the batch durable_name"
+                )
+            self._lanes.append(interactive)
 
         target_profiles = extra.get("target_profiles", {}) or {}
         if not isinstance(target_profiles, dict) or any(
@@ -175,17 +252,59 @@ class BloodbankAdapter(BasePlatformAdapter):
 
         self._nc: Any = None
         self._js: Any = None
-        self._subscription: Any = None
-        self._consumer_task: asyncio.Task[None] | None = None
-        self._inflight_tasks: set[asyncio.Task[None]] = set()
         self._records: dict[str, PendingInvocation] = {}
         self._execution_claim_lock = asyncio.Lock()
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self._conversation_lock_refs: dict[str, int] = {}
 
+    @staticmethod
+    def _interactive_lane(raw: Any) -> LaneRuntime | None:
+        """Build the interactive lane from ``extra.interactive`` (absent = off)."""
+
+        if raw is None:
+            return None
+        if not isinstance(raw, dict):
+            raise ValueError("bloodbank.extra.interactive must be a mapping")
+        prefix = "bloodbank.extra.interactive"
+        if not _strict_bool(raw, "enabled", False, prefix=prefix):
+            return None
+        durable = str(
+            raw.get("durable_name", "bloodbank-hermes-gateway-interactive")
+        ).strip()
+        if not durable:
+            raise ValueError(f"{prefix}.durable_name must be non-empty")
+        ack_wait = _bounded_float(
+            raw, "ack_wait_seconds", 180.0, 10.0, 3_600.0, prefix=prefix
+        )
+        ack_progress = _bounded_float(
+            raw, "ack_progress_seconds", 30.0, 1.0, 1_200.0, prefix=prefix
+        )
+        if ack_progress >= ack_wait:
+            raise ValueError(
+                f"{prefix}.ack_progress_seconds must be less than ack_wait_seconds"
+            )
+        return LaneRuntime(
+            spec=INTERACTIVE,
+            durable=durable,
+            max_inflight=_bounded_int(raw, "max_inflight", 2, 1, 64, prefix=prefix),
+            max_deliver=_bounded_int(raw, "max_deliver", 3, 1, 100, prefix=prefix),
+            ack_wait=ack_wait,
+            ack_progress=ack_progress,
+            nak_delay=_bounded_float(
+                raw, "nak_delay_seconds", 2.0, 0.0, 300.0, prefix=prefix
+            ),
+        )
+
     @property
     def name(self) -> str:
         return "Bloodbank"
+
+    @property
+    def lanes(self) -> tuple[LaneRuntime, ...]:
+        return tuple(self._lanes)
+
+    def _lane(self, lane: LaneRuntime | None) -> LaneRuntime:
+        return self._batch if lane is None else lane
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
         del is_reconnect
@@ -210,31 +329,34 @@ class BloodbankAdapter(BasePlatformAdapter):
                 connect_kwargs["user_credentials"] = self.nats_credentials
             self._nc = await nats.connect(**connect_kwargs)
             self._js = self._nc.jetstream()
-            consumer_config = ConsumerConfig(
-                durable_name=self.durable_name,
-                description="Hermes host gateway invocation consumer",
-                deliver_policy=DeliverPolicy.ALL,
-                ack_policy=AckPolicy.EXPLICIT,
-                ack_wait=self.ack_wait_seconds,
-                max_deliver=self.max_deliver,
-                filter_subject=COMMAND_SUBJECT,
-                max_waiting=1,
-                max_ack_pending=self.max_inflight,
-            )
-            self._subscription = await self._js.pull_subscribe(
-                COMMAND_SUBJECT,
-                durable=self.durable_name,
-                stream=COMMAND_STREAM,
-                config=consumer_config,
-                pending_msgs_limit=self.max_inflight,
-                pending_bytes_limit=self.max_inflight * self.max_command_bytes,
-            )
-            info = await self._js.consumer_info(
-                COMMAND_STREAM,
-                self.durable_name,
-                timeout=self.publish_timeout_seconds,
-            )
-            self._assert_consumer_contract(info.config)
+            # Every lane must bind: a half-bound gateway is worse than a
+            # loudly failed (and retried) one.
+            for lane in self._lanes:
+                consumer_config = ConsumerConfig(
+                    durable_name=lane.durable,
+                    description=f"Hermes host gateway invocation consumer ({lane.name} lane)",
+                    deliver_policy=DeliverPolicy.ALL,
+                    ack_policy=AckPolicy.EXPLICIT,
+                    ack_wait=lane.ack_wait,
+                    max_deliver=lane.max_deliver,
+                    filter_subject=lane.spec.subject,
+                    max_waiting=1,
+                    max_ack_pending=lane.max_inflight,
+                )
+                lane.subscription = await self._js.pull_subscribe(
+                    lane.spec.subject,
+                    durable=lane.durable,
+                    stream=COMMAND_STREAM,
+                    config=consumer_config,
+                    pending_msgs_limit=lane.max_inflight,
+                    pending_bytes_limit=lane.max_inflight * self.max_command_bytes,
+                )
+                info = await self._js.consumer_info(
+                    COMMAND_STREAM,
+                    lane.durable,
+                    timeout=self.publish_timeout_seconds,
+                )
+                self._assert_consumer_contract(info.config, lane)
         except Exception as exc:
             logger.error(
                 "Bloodbank gateway could not connect to JetStream error_type=%s",
@@ -251,26 +373,32 @@ class BloodbankAdapter(BasePlatformAdapter):
 
         self._running = True
         self._mark_connected()
-        self._consumer_task = asyncio.create_task(
-            self._consume_loop(), name="bloodbank-hermes-consumer"
-        )
-        logger.info(
-            "Bloodbank gateway connected durable=%s max_inflight=%d",
-            self.durable_name,
-            self.max_inflight,
-        )
+        for lane in self._lanes:
+            lane.task = asyncio.create_task(
+                self._consume_loop(lane),
+                name=f"bloodbank-hermes-consumer-{lane.name}",
+            )
+            logger.info(
+                "Bloodbank gateway connected lane=%s durable=%s max_inflight=%d",
+                lane.name,
+                lane.durable,
+                lane.max_inflight,
+            )
         return True
 
-    def _assert_consumer_contract(self, actual: Any) -> None:
+    def _assert_consumer_contract(
+        self, actual: Any, lane: LaneRuntime | None = None
+    ) -> None:
         """Refuse to bind a stale durable with unsafe delivery semantics."""
 
+        lane = self._lane(lane)
         ack_policy = getattr(actual, "ack_policy", None)
         ack_policy = getattr(ack_policy, "value", ack_policy)
         expected = {
-            "filter_subject": COMMAND_SUBJECT,
+            "filter_subject": lane.spec.subject,
             "ack_policy": "explicit",
-            "max_ack_pending": self.max_inflight,
-            "max_deliver": self.max_deliver,
+            "max_ack_pending": lane.max_inflight,
+            "max_deliver": lane.max_deliver,
         }
         observed = {
             "filter_subject": getattr(actual, "filter_subject", None),
@@ -287,16 +415,17 @@ class BloodbankAdapter(BasePlatformAdapter):
     async def disconnect(self) -> None:
         self._running = False
         self._mark_disconnected()
-        if self._consumer_task is not None:
-            self._consumer_task.cancel()
-            await asyncio.gather(self._consumer_task, return_exceptions=True)
-            self._consumer_task = None
+        for lane in self._lanes:
+            if lane.task is not None:
+                lane.task.cancel()
+                await asyncio.gather(lane.task, return_exceptions=True)
+                lane.task = None
 
         # Ensure Hermes turns reach their processing-complete hook before the
         # broker waiters are canceled. A canceled turn publishes its terminal
         # failure/turn outcome and may then be acknowledged safely.
         await self.cancel_background_tasks()
-        tasks = list(self._inflight_tasks)
+        tasks = [task for lane in self._lanes for task in lane.inflight]
         if tasks:
             try:
                 await asyncio.wait_for(
@@ -307,14 +436,16 @@ class BloodbankAdapter(BasePlatformAdapter):
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
-        self._inflight_tasks.clear()
+        for lane in self._lanes:
+            lane.inflight.clear()
         await self._close_nats()
         self._release_platform_lock()
 
     async def _close_nats(self) -> None:
         nc, self._nc = self._nc, None
         self._js = None
-        self._subscription = None
+        for lane in self._lanes:
+            lane.subscription = None
         if nc is None:
             return
         try:
@@ -330,17 +461,18 @@ class BloodbankAdapter(BasePlatformAdapter):
             except Exception:
                 pass
 
-    async def _consume_loop(self) -> None:
+    async def _consume_loop(self, lane: LaneRuntime | None = None) -> None:
+        lane = self._lane(lane)
         while self._running:
-            capacity = self.max_inflight - len(self._inflight_tasks)
+            capacity = lane.max_inflight - len(lane.inflight)
             if capacity <= 0:
                 await asyncio.wait(
-                    self._inflight_tasks,
+                    lane.inflight,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 continue
             try:
-                messages = await self._subscription.fetch(
+                messages = await lane.subscription.fetch(
                     capacity, timeout=self.fetch_timeout_seconds
                 )
             # nats-py may surface an idle pull as either its own timeout class
@@ -352,16 +484,17 @@ class BloodbankAdapter(BasePlatformAdapter):
                 raise
             except Exception as exc:
                 logger.error(
-                    "Bloodbank durable fetch failed error_type=%s",
+                    "Bloodbank durable fetch failed lane=%s error_type=%s",
+                    lane.name,
                     type(exc).__name__,
                 )
                 await asyncio.sleep(min(self.fetch_timeout_seconds, 5.0))
                 continue
 
             for message in messages:
-                task = asyncio.create_task(self._handle_broker_message(message))
-                self._inflight_tasks.add(task)
-                task.add_done_callback(self._inflight_tasks.discard)
+                task = asyncio.create_task(self._handle_broker_message(message, lane))
+                lane.inflight.add(task)
+                task.add_done_callback(lane.inflight.discard)
                 task.add_done_callback(self._log_task_failure)
 
     @staticmethod
@@ -378,13 +511,18 @@ class BloodbankAdapter(BasePlatformAdapter):
                 type(error).__name__,
             )
 
-    async def _handle_broker_message(self, message: Any) -> None:
+    async def _handle_broker_message(
+        self, message: Any, lane: LaneRuntime | None = None
+    ) -> None:
+        lane = self._lane(lane)
         progress_task: asyncio.Task[None] | None = None
         record: PendingInvocation | None = None
         persisted: ExecutionRecord | None = None
         started_publish_complete = False
         try:
-            envelope = decode_command(message.data, max_bytes=self.max_command_bytes)
+            envelope = decode_command(
+                message.data, max_bytes=self.max_command_bytes, lane=lane.spec
+            )
             command_id = envelope["command_id"]
             digest = envelope_digest(envelope)
             # Serialize the short durable-claim section so a concurrent local
@@ -392,7 +530,7 @@ class BloodbankAdapter(BasePlatformAdapter):
             # second Hermes turn. Different commands still execute concurrently.
             async with self._execution_claim_lock:
                 if command_id in self._records:
-                    await message.nak(delay=self.nak_delay_seconds)
+                    await message.nak(delay=lane.nak_delay)
                     return
 
                 persisted = await asyncio.to_thread(
@@ -407,13 +545,14 @@ class BloodbankAdapter(BasePlatformAdapter):
                         self.profile_resolver.resolve,
                         envelope["data"]["target_agent_id"],
                     )
-                    invocation = Invocation.from_envelope(envelope, profile)
+                    invocation = Invocation.from_envelope(envelope, profile, lane.name)
                     persisted = await asyncio.to_thread(
                         self.execution_state.claim_pending,
                         command_id=command_id,
                         digest=digest,
                         profile=profile,
                         started_events=started_events(invocation),
+                        lane=lane.name,
                     )
                     if persisted.envelope_digest != digest:
                         raise CommandInvalid(
@@ -421,13 +560,15 @@ class BloodbankAdapter(BasePlatformAdapter):
                         )
 
                 if persisted.state in {"pending", "started"}:
-                    invocation = Invocation.from_envelope(envelope, persisted.profile)
+                    invocation = Invocation.from_envelope(
+                        envelope, persisted.profile, lane.name
+                    )
                     completion = asyncio.get_running_loop().create_future()
                     record = PendingInvocation(invocation, message, completion, digest)
                     self._records[invocation.invocation_id] = record
 
             if persisted.state == "completed":
-                progress_task = asyncio.create_task(self._ack_progress(message))
+                progress_task = asyncio.create_task(self._ack_progress(message, lane))
                 await self._publish_many(persisted.started_events)
                 await self._publish_many(persisted.terminal_events)
                 await message.ack()
@@ -436,8 +577,10 @@ class BloodbankAdapter(BasePlatformAdapter):
                 await message.term()
                 return
             if persisted.state in {"rejected_closing", "rejected_closed"}:
-                progress_task = asyncio.create_task(self._ack_progress(message))
-                invocation = Invocation.from_envelope(envelope, persisted.profile)
+                progress_task = asyncio.create_task(self._ack_progress(message, lane))
+                invocation = Invocation.from_envelope(
+                    envelope, persisted.profile, lane.name
+                )
                 await self._persist_and_publish_route_rejection(
                     invocation=invocation,
                     digest=digest,
@@ -449,7 +592,7 @@ class BloodbankAdapter(BasePlatformAdapter):
 
             assert record is not None
             invocation = record.invocation
-            progress_task = asyncio.create_task(self._ack_progress(message))
+            progress_task = asyncio.create_task(self._ack_progress(message, lane))
 
             lock_key = f"{invocation.profile}:{invocation.thread_id}"
             lock = self._conversation_locks.setdefault(lock_key, asyncio.Lock())
@@ -528,7 +671,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                         "error_type=%s",
                         type(journal_error).__name__,
                     )
-                    await message.nak(delay=self.nak_delay_seconds)
+                    await message.nak(delay=lane.nak_delay)
                     return
             logger.warning("Terminally rejecting Bloodbank command: %s", exc)
             await message.term()
@@ -537,10 +680,10 @@ class BloodbankAdapter(BasePlatformAdapter):
             await message.term()
         except RegistryInvalid as exc:
             logger.error("Bloodbank fleet routing is unavailable: %s", exc)
-            await message.nak(delay=self.nak_delay_seconds)
+            await message.nak(delay=lane.nak_delay)
         except asyncio.CancelledError:
             try:
-                await message.nak(delay=self.nak_delay_seconds)
+                await message.nak(delay=lane.nak_delay)
             except Exception:
                 pass
             raise
@@ -551,7 +694,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 type(exc).__name__,
             )
             try:
-                await message.nak(delay=self.nak_delay_seconds)
+                await message.nak(delay=lane.nak_delay)
             except Exception:
                 logger.warning("Bloodbank command NAK failed", exc_info=True)
         finally:
@@ -626,9 +769,12 @@ class BloodbankAdapter(BasePlatformAdapter):
         await self._publish_many(persisted.terminal_events)
         return persisted
 
-    async def _ack_progress(self, message: Any) -> None:
+    async def _ack_progress(
+        self, message: Any, lane: LaneRuntime | None = None
+    ) -> None:
+        lane = self._lane(lane)
         while True:
-            await asyncio.sleep(self.ack_progress_seconds)
+            await asyncio.sleep(lane.ack_progress)
             try:
                 await message.in_progress()
             except asyncio.CancelledError:
