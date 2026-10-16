@@ -81,6 +81,9 @@ gateway:
           ack_wait_seconds: 180
           ack_progress_seconds: 30
           nak_delay_seconds: 3
+          # Wall clock for ONE Hermes turn on this lane. Absent = 300. A strict
+          # positive number of seconds (not a bool, string or null), at most 86400.
+          turn_timeout_seconds: 300
 ```
 
 Resolution precedence is the explicit `target_profiles` mapping, followed by
@@ -184,13 +187,88 @@ a busy profile does not block an interactive turn on a different `thread_id`.
   `BloodbankInteractiveLaneBacklog` when commands sit queued on the interactive
   lane for 2 minutes.
 - Known limits: the interactive lane has 2 slots, FIFO within the lane, and a
-  slot is held until the Hermes turn completes (progress acks keep extending
-  `ack_wait`). Two memos that make the agent do long work hold both slots, and a
-  third waits as it would under a single queue. Nothing restricts `invoke` to
-  voice memos, so any producer that emits it competes for the same two slots;
-  the split is by convention. A turn whose completion never fires holds its slot
-  until the gateway restarts. There is no per-turn wall clock on this lane.
+  slot is held until the Hermes turn completes or its wall clock expires
+  (progress acks keep extending `ack_wait`). Nothing restricts `invoke` to voice
+  memos, so any producer that emits it competes for the same two slots; the
+  split is by convention. A turn that outlives `turn_timeout_seconds` is
+  stopped and its slot freed (next section); a turn whose completion hook never
+  fires is now bounded by the same clock instead of holding the slot until the
+  gateway restarts.
 - Design and rollout: `docs/interactive-command-lane.md`.
+
+## Per-turn wall clock
+
+A turn that never finishes (a hung tool call, a model that loops, a shell
+command that sleeps for ten minutes) used to hold its lane slot until the
+gateway restarted; two of them blocked every later voice memo. Each lane now has
+an optional wall clock for one Hermes turn.
+
+| lane | config | default |
+| --- | --- | --- |
+| interactive | `extra.interactive.turn_timeout_seconds` | **300** when the key is absent |
+| batch | `extra.turn_timeout_seconds` | none (ticket grooming and delegation turns are long on purpose) |
+
+The value is a strict positive number of seconds, at most 86400. A bool, a
+numeric string, `null`, zero, a negative, `NaN`/`inf` or a mapping refuses to
+start the adapter with `... turn_timeout_seconds must be a positive number ...`;
+an absent key takes the lane default. The clock starts when the gateway hands
+the turn to Hermes (not while it waits for a same-thread predecessor) and ends
+when Hermes reports the turn processed.
+
+**Envelope deadline.** A command may carry `data.deadline_seconds` (a positive
+number, on both `invocation.invoke` and `invocation.start`). The effective
+budget is `min(deadline_seconds, lane turn_timeout_seconds)`: a command can
+shorten the lane limit, never extend it, and a lane with no timeout (batch by
+default) ignores it. A non-positive, non-numeric or boolean deadline is poison
+and is terminated like any other malformed envelope.
+
+**What happens at expiry**, in this order:
+
+1. The outcome is claimed synchronously (`PendingInvocation.finalizing`), so a
+   completion that arrives from now on, including the CANCELLED hook the stop
+   itself provokes, is ignored. It cannot publish a second terminal fact or flip
+   the outcome.
+2. The Hermes turn is **stopped through Hermes' own `/stop` path**: the adapter
+   injects an internal `/stop` message for the same session. `BasePlatformAdapter`
+   bypasses the active-session guard for it, the gateway runner hard-interrupts
+   the running agent (`request_hard_interrupt`), invalidates its run generation,
+   reaps the shell processes the turn spawned (so `sleep 120` actually dies) and
+   cancels the session's processing task. If the session guard is still held
+   afterwards, the adapter calls `cancel_session_processing(session_key)` as a
+   fallback. Both are bounded (10 s each).
+3. The adapter records whether the session is idle afterwards
+   (`turn_stopped`). Hermes can only interrupt a turn at its next
+   interruptible point: a tool call blocked in a thread that never checks the
+   interrupt flag may keep running after the session is released. In that case
+   `turn_stopped` is `false`, the failed fact says "Hermes did not confirm the
+   turn stopped", and the slot is **still freed**. That is the one case where a
+   timed-out turn may keep spending tokens or tool calls until it unwinds.
+4. The journal row is closed: `state = completed`, `outcome = failure`,
+   `failure_code = turn_timeout` (a nullable column added in place; an older
+   gateway ignores it), with the exact terminal events stored.
+5. `bloodbank.agent.invocation.failed` and `bloodbank.conversation.turn.completed`
+   (`outcome: failed`) are published, then the JetStream message is **acked**,
+   so it is never redelivered. The journal is written before publication: if
+   publishing fails the message is NAK'd and the redelivery replays the stored
+   events without running the prompt again, like any completed command.
+
+The failed fact:
+
+```json
+{"type": "bloodbank.agent.invocation.failed",
+ "data": {"error_code": "turn_timeout",
+          "error_message": "agent turn timed out after 300s on interactive lane (limit 300s)",
+          "lane": "interactive", "elapsed_seconds": 300.2, "timeout_seconds": 300.0,
+          "timeout_source": "lane", "turn_stopped": true, "command_id": "...", "...": "..."}}
+```
+
+`timeout_source` is `lane` or `envelope` (the command's `deadline_seconds` was
+the shorter budget). The slot the turn held is free as soon as the handler
+returns, so the next queued interactive command is fetched immediately.
+
+Look it up: `sqlite3 ~/.hermes/bloodbank-hermes-gateway-state.sqlite3
+"select command_id, lane, state, outcome, failure_code from executions where
+failure_code='turn_timeout'"`, or `mise run memo:trace` for a voice memo.
 
 ## Delivery behavior
 
@@ -218,6 +296,8 @@ a busy profile does not block an interactive turn on a different `thread_id`.
 - Redelivery of a completed record republishes stored events without invoking
   Hermes. Every durable rejection state is immutable and can never execute,
   even if its route is later re-enabled.
+- A turn that exceeds its lane's wall clock is stopped and closed as
+  `outcome = failure`, `failure_code = turn_timeout` (see "Per-turn wall clock").
 - The command's correlation, causation, command, idempotency, target, thread,
   and turn identifiers are carried into schema-conformant lifecycle events,
   together with the delivery `lane`.
@@ -250,7 +330,8 @@ The plugin publishes only existing canonical events:
 
 The implementation relies on the public platform-plugin registration seam,
 `BasePlatformAdapter.build_source()`, `MessageEvent.internal`,
-`SessionSource.profile`, and the processing lifecycle hooks. Hermes currently
+`SessionSource.profile`, the processing lifecycle hooks, and, for the per-turn
+wall clock, the `/stop` command and `cancel_session_processing()`. Hermes currently
 defines `BasePlatformAdapter.handle_message()` as background dispatch; the
 adapter therefore waits on `on_processing_complete()` before acknowledging the
 JetStream command.

@@ -605,5 +605,142 @@ Fixed after review of the as-built lane:
   about 6 s. The live durable was updated in place before the gateway restart.
 - Each lane's fetch loop is supervised, and Prometheus alerts exist for a lane
   losing its puller or building a backlog (monitoring stack, `nats-exporter`).
-- Known limit, not fixed: 2 interactive slots and no per-turn wall clock; `invoke`
-  is restricted to voice memos by convention only.
+- Known limit: 2 interactive slots; `invoke` is restricted to voice memos by
+  convention only. The missing per-turn wall clock was added the next day (section 7).
+
+---
+
+## 7. Per-turn wall clock (2026-10-16)
+
+### 7.1 Problem
+
+A slot is held until Hermes reports the turn processed, and progress acks keep
+the message alive indefinitely. Two long or hung voice turns (a model loop, a
+shell command that never returns) therefore held both interactive slots and
+blocked every later memo until the gateway was restarted, which costs about two
+minutes of reconnect and interrupts every other in-flight turn.
+
+### 7.2 Decision
+
+A wall clock per Hermes turn, enforced by the adapter, per lane:
+
+- `extra.interactive.turn_timeout_seconds`, default **300** (a human is waiting;
+  five minutes is already a failure from their side). Strict positive number,
+  at most 86400.
+- `extra.turn_timeout_seconds` for the batch lane, **absent = no timeout**
+  (grooming and delegation turns are long on purpose). The option is lane-generic
+  (`LaneRuntime.turn_timeout`), so enabling it for batch is a config change.
+- `data.deadline_seconds` on the command (both command schemas, which must keep
+  an identical `data` payload): effective budget is `min(deadline, lane limit)`.
+  It can only shorten the lane limit; a lane with no limit ignores it. It exists
+  for callers that know a task is short, and it makes the live proof possible
+  without touching the gateway config.
+
+Rejected: ending the wait without stopping the turn (frees the NATS slot but the
+agent keeps spending tokens and tool calls, and the next memo then competes with
+a ghost); a timeout only in the Holocene watcher (the watcher cannot stop a turn
+and the other `invoke` producers would stay unbounded); lowering `ack_wait` to
+let JetStream redeliver (it would re-run the prompt, the opposite of the goal).
+
+### 7.3 How a turn is stopped
+
+Read from the Hermes gateway source in use
+(`~/.hermes/hermes-agent/gateway/platforms/base.py`, `slash_commands.py`,
+`run_agent_cache.py`). `/stop` is the supported path and it is what a user
+typing `/stop` in a chat gets:
+
+1. `BasePlatformAdapter.handle_message` sees a command that bypasses the
+   active-session guard (`should_bypass_active_session`) and calls
+   `_dispatch_active_session_command`.
+2. The runner's `_handle_stop_command` -> `_interrupt_and_clear_session` ->
+   `_interrupt_running_turn`: `request_hard_interrupt(running_agent)`, bump the
+   session's run generation (so a late result is discarded), and start a reaper
+   that kills the shell processes the turn spawned (`sleep 120` dies, it is not
+   merely abandoned). It also interrupts detached delegations of that session.
+3. `cancel_session_processing(session_key)` cancels the session's asyncio task.
+   The cancelled task's `on_processing_complete(CANCELLED)` hook fires.
+
+The adapter injects an internal `/stop` `MessageEvent` for the same source
+(profile, `chat_id = thread_id`), so it needs no private runner API. Afterwards
+it checks the session guard; if Hermes still holds it, it calls
+`cancel_session_processing` itself. `turn_stopped` records whether the session
+was idle at the end.
+
+What Hermes cannot do: interrupt a tool call that is blocked inside a thread
+that never polls its interrupt flag. The session is released and the task is
+cancelled, but that thread can outlive them. The adapter then publishes
+`turn_stopped: false` and the failed fact says so; the slot is freed anyway, so
+the failure is bounded to one stray tool call, not a stuck lane.
+
+### 7.4 Sequence at expiry
+
+1. Claim the outcome synchronously (`PendingInvocation.finalizing = true`). The
+   Hermes completion hook, including the CANCELLED one our own stop causes, returns
+   early when the flag is set; and a completion that wins the race first makes the
+   timeout stand down. There is exactly one terminal outcome per command.
+2. Stop the turn (7.3), bounded to 10 s per step.
+3. `ExecutionStateStore.mark_completed(outcome="failure", failure_code="turn_timeout")`
+   with the stored terminal events. Journal before publish, so a failed publish
+   replays the identical events on redelivery and never re-runs the prompt.
+4. Publish `agent.invocation.failed` (`error_code turn_timeout`, plus
+   `elapsed_seconds`, `timeout_seconds`, `timeout_source`, `turn_stopped`) and
+   `conversation.turn.completed` (`outcome failed`).
+5. Release the conversation lock, ack the message (no redelivery), free the slot
+   (the lane's fetch loop wakes as the in-flight task ends).
+
+The journal keeps `state='completed'`, `outcome='failure'` and adds a nullable
+`failure_code` column. A new `outcome='timeout'` would have needed a table
+rebuild because the `CHECK` on `outcome` is baked into existing databases, and a
+rebuild is a one-way schema bump that a code rollback cannot read.
+`failure_code` is added in place like `lane` (`user_version` stays 3).
+
+### 7.5 Holocene
+
+- Inbox watcher: reads `failure_code` from the journal (and the `error_code` on
+  the failed fact from Candystore) and fails the memo
+  `failed(stage=agent_reply, error_code=turn_timeout, retryable=false)` with
+  `lane`, `elapsed_seconds`, `timeout_seconds`, `timeout_source`, `turn_stopped`.
+  `memo:retry` re-dispatches under a fresh command id.
+- `memo:trace` verdict: `STOPPED AT agent finished: turn timeout - <message>`.
+- API/`/voice`: stage label `Agent turn timed out after Ns`; the **Agent
+  finished** hop carries the code, message and a `turn stopped` meta line.
+
+### 7.6 Tests
+
+`services/hermes-gateway/tests/test_adapter.py` (`make_timeout_adapter`): the
+timeout fires, `/stop` is invoked and the session is idle, journal and lifecycle
+facts are correct, the message is acked once with no NAK or redelivery, a third
+interactive command runs in the freed slot, a late or racing completion is
+ignored, an unconfirmed stop is reported as such, `deadline_seconds` shortens but
+never extends, batch has no clock by default, a replayed timed-out command never
+re-runs, a failed terminal publish NAKs then replays, and the config is strict.
+The conftest fake models Hermes' `/stop` and `cancel_session_processing`.
+
+### 7.7 Live proof (2026-10-16)
+
+Single gateway restart at 16:39 UTC with both consumers at `ack_pending 0`;
+`turn_timeout_seconds: 300` set under `interactive`. Both durables pulling and
+`gateway_state` bloodbank `connected` afterwards. Production value stays 300; no
+second restart was needed because the proof used `data.deadline_seconds`.
+
+- Hung turn: `invoke` to `holocene-pm` with prompt "Run the shell command: sleep 120;
+  then reply with the single word done" and `deadline_seconds: 20`. 20.1 s later the
+  journal row read `completed / failure / turn_timeout`, `invocation.failed` carried
+  `turn_timeout`, `elapsed_seconds 20.1`, `timeout_source envelope`, `turn_stopped true`, and the gateway
+  logged `Bloodbank turn timed out lane=interactive ... stopped=True`. No `sleep 120` process
+  remained and the Hermes session ended with no "done" (Hermes recorded only its own
+  "request was not processed" notice).
+- Slot freed: two such hung turns (25 s deadline) plus a smoke command emitted 2 s
+  later on the 2-slot lane. The smoke command's journal row was created 37 ms after the first
+  slot closed (16:45:08.36 -> 16:45:08.40) and it completed `success`, where before
+  this change it would have waited for a gateway restart.
+- Normal turn: an `invoke` smoke command completed `success` in 11 s.
+- Real memo, production value (300 s, no envelope deadline): a synthesized voice memo
+  ("Run the shell command sleep 1000 in the foreground, wait for it to finish, and then reply
+  done") uploaded to `inbox/holocene-pm/2026/10/16/`. The agent started `sleep 1000`; at 300.1 s the
+  journal row closed `completed / failure / turn_timeout`, the Hermes session shows the process
+  killed (`process_manage` exit -15, `termination_source: gateway_turn_interrupt`) and no "done"
+  reply, the watcher published `audio.memo.failed(agent_reply, turn_timeout, retryable=false)`,
+  `memo:trace` ended `STOPPED AT agent finished: turn timeout - agent turn timed out after 300.1s
+  on interactive lane (limit 300s)`, and `GET /api/modules/voice/memos/<id>` reports stage label
+  `Agent turn timed out after 300s`.

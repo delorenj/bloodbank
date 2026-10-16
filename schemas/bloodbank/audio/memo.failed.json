@@ -55,7 +55,7 @@
             "reply_upload",
             "playback"
           ],
-          "description": "Pipeline stage that failed. agent = the gateway turn failed or was rejected; agent_reply = no reply text arrived (timeout or empty). record = the device could not capture audio (mic unavailable, empty capture); s3_key is the key the memo would have had. upload = the PUT never completed (short body, retries exhausted on the device). playback = the Agent Pad could not play the spoken reply (autoplay blocked, decode or network error); for this stage s3_key is the reply object and the failure is always retryable."
+          "description": "Pipeline stage that failed. agent = the gateway turn failed or was rejected; agent_reply = no reply text arrived (error_code timeout: the watcher gave up waiting; no_reply_text: empty; turn_timeout: the gateway stopped the agent's turn at its per-turn wall clock). record = the device could not capture audio (mic unavailable, empty capture); s3_key is the key the memo would have had. upload = the PUT never completed (short body, retries exhausted on the device). playback = the Agent Pad could not play the spoken reply (autoplay blocked, decode or network error); for this stage s3_key is the reply object and the failure is always retryable."
         },
         "error_code": {
           "type": [
@@ -86,6 +86,28 @@
             "null"
           ],
           "description": "command_id when the failure happened after dispatch."
+        },
+        "lane": {
+          "type": ["string", "null"],
+          "enum": ["batch", "interactive", null],
+          "description": "error_code turn_timeout only: lane of the timed-out command."
+        },
+        "elapsed_seconds": {
+          "type": ["number", "null"],
+          "description": "error_code turn_timeout only: seconds the gateway let the agent turn run before stopping it."
+        },
+        "timeout_seconds": {
+          "type": ["number", "null"],
+          "description": "error_code turn_timeout only: the wall-clock budget that expired."
+        },
+        "timeout_source": {
+          "type": ["string", "null"],
+          "enum": ["lane", "envelope", null],
+          "description": "error_code turn_timeout only: lane = the lane's turn_timeout_seconds, envelope = a shorter data.deadline_seconds on the command."
+        },
+        "turn_stopped": {
+          "type": ["boolean", "null"],
+          "description": "error_code turn_timeout only: false when Hermes did not confirm the turn stopped."
         }
       },
       "required": [
