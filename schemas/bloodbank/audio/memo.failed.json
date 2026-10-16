@@ -62,7 +62,72 @@
             "string",
             "null"
           ],
-          "description": "Short machine-readable code."
+          "description": "Short machine-readable code. For stage record: silent_capture = the pad measured the whole recording under -60 dBFS (see capture) and held it back, nothing was uploaded. For stage transcribe: silent_audio = the recording is digital silence or near it (audio_max_dbfs below the watcher's threshold, default -60 dBFS), so the microphone delivered no sound and no transcription was run; empty_transcript = the audio was audible (see audio_max_dbfs) but no words were recognised; garbage_transcript = a typical Whisper hallucination on noise; too_short; undecodable_audio; timeout."
+        },
+        "audio_max_dbfs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -96,
+          "maximum": 0,
+          "description": "stage transcribe: loudest sample of the recording in dBFS (see memo.transcribed). Present on every transcribe-stage failure that happened after the level was measured, including silent_audio."
+        },
+        "audio_mean_dbfs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -96,
+          "maximum": 0,
+          "description": "stage transcribe: mean volume in dBFS, same measurement as audio_max_dbfs."
+        },
+        "audio_duration_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "stage transcribe: length of the recording in seconds."
+        },
+        "capture": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Input level measured on the device while it recorded (Agent Pad, from the native recorder's getMaxAmplitude or a browser AnalyserNode). Absent when the host cannot measure. peak_dbfs below -60 means no sound reached the microphone: a healthy path never produces it, a stuck emulator capture stream or muted mic always does.",
+          "properties": {
+            "peak_dbfs": {
+              "type": "number",
+              "minimum": -120,
+              "maximum": 6,
+              "description": "Loudest 100 ms window of the whole recording, dBFS. -96 is digital silence."
+            },
+            "rms_dbfs": {
+              "type": "number",
+              "minimum": -120,
+              "maximum": 6,
+              "description": "RMS of the per-window peaks over the recording, dBFS (an upper bound on true RMS)."
+            },
+            "samples": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of level windows measured."
+            },
+            "source": {
+              "type": "string",
+              "description": "native (Holocene Auto MediaRecorder) or analyser (browser Web Audio)."
+            },
+            "sent_anyway": {
+              "type": "boolean",
+              "description": "True when the pad had flagged the recording as silent and the operator chose to send it anyway."
+            }
+          },
+          "required": [
+            "peak_dbfs",
+            "rms_dbfs"
+          ],
+          "additionalProperties": true
         },
         "error_message": {
           "type": "string",

@@ -69,6 +69,45 @@
           ],
           "description": "Milliseconds the proxy spent storing the object in S3.",
           "minimum": 0
+        },
+        "capture": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Input level measured on the device while it recorded (Agent Pad, from the native recorder's getMaxAmplitude or a browser AnalyserNode). Absent when the host cannot measure. peak_dbfs below -60 means no sound reached the microphone: a healthy path never produces it, a stuck emulator capture stream or muted mic always does.",
+          "properties": {
+            "peak_dbfs": {
+              "type": "number",
+              "minimum": -120,
+              "maximum": 6,
+              "description": "Loudest 100 ms window of the whole recording, dBFS. -96 is digital silence."
+            },
+            "rms_dbfs": {
+              "type": "number",
+              "minimum": -120,
+              "maximum": 6,
+              "description": "RMS of the per-window peaks over the recording, dBFS (an upper bound on true RMS)."
+            },
+            "samples": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of level windows measured."
+            },
+            "source": {
+              "type": "string",
+              "description": "native (Holocene Auto MediaRecorder) or analyser (browser Web Audio)."
+            },
+            "sent_anyway": {
+              "type": "boolean",
+              "description": "True when the pad had flagged the recording as silent and the operator chose to send it anyway."
+            }
+          },
+          "required": [
+            "peak_dbfs",
+            "rms_dbfs"
+          ],
+          "additionalProperties": true
         }
       },
       "required": [

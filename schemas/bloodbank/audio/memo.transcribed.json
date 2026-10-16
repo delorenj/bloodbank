@@ -92,6 +92,18 @@
             "null"
           ],
           "description": "Detected language code."
+        },
+        "audio_max_dbfs": {
+          "type": ["number", "null"],
+          "minimum": -96,
+          "maximum": 0,
+          "description": "Loudest sample of the recording in dBFS (0 = full scale; digital silence reads about -91). Measured by the watcher with ffmpeg volumedetect BEFORE transcribing. Real speech peaks above -20; a microphone that delivered no sound stays below -60."
+        },
+        "audio_mean_dbfs": {
+          "type": ["number", "null"],
+          "minimum": -96,
+          "maximum": 0,
+          "description": "Mean (RMS-style) volume of the recording in dBFS, same measurement as audio_max_dbfs."
         }
       },
       "required": [
