@@ -579,3 +579,13 @@ restart.
   document `data.lane`.
 - `ack_wait` and `ack_progress` default to 180 s and 30 s for the interactive lane
   in code (the batch code defaults stay 90/20; live config overrides them).
+- Live proof (2026-10-15, after the single gateway restart at 22:09 EDT with `ack_pending` 0):
+  with all 4 batch slots busy and 1 queued (`bloodbank-hermes-gateway` `num_ack_pending 4`,
+  `num_pending 1`), an `invoke` command to `holocene-pm` had a journal row (`lane=interactive`)
+  55 ms after the emit and completed in 7 s, reply `lane ok`. A real voice memo
+  (`memo:trace` e2b0b883) dispatched on `invoke` and the agent started 0.02 s later.
+- Unrelated finding: `BLOODBANK_COMMANDS` holds 41 old messages on `bloodbank.cmd.audio.task.start`
+  that no consumer pulls (workqueue retention, `max_age` 1 d). They are not lane traffic.
+- The watcher's `gateway_liveness(lane)` defaults to `batch` (old callers keep their meaning)
+  rather than returning both lanes with no argument; `gateway_lanes()` returns both from one
+  monitor read.
