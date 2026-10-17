@@ -1455,6 +1455,32 @@ class WorktreeTests(unittest.TestCase):
         store = artifact_lib.ensure_store_root(tmp / "store")
         return tmp, registry, store, umb, wt, bbmain
 
+    def test_subdirectory_cwd_attributes_to_enclosing_repo(self):
+        # Regression (found deploying live): a session rooted in <repo>/native
+        # made git print a RELATIVE common dir ('../.git') that was resolved
+        # against the toplevel, so the identity never matched and the
+        # capture was held instead of attributed.
+        tmp, registry, store, umb, wt, bbmain = self._world()
+        sub = bbmain / "native" / "godot"
+        sub.mkdir(parents=True)
+        self.assertEqual(
+            artifact_lib.git_repo_identity(str(sub)),
+            artifact_lib.git_repo_identity(str(bbmain)),
+        )
+        with SidecarState(tmp / "state.sqlite3") as state:
+            sidecar = Sidecar(state=state, store_root=store, registry=registry)
+            env = tool_completed_envelope(
+                path=str(bbmain / "_bmad-output" / "implementation-artifacts" / "s.md"),
+                content="spec",
+                working_directory=str(sub),
+                delivered=False,
+            )
+            [d] = sidecar.process(env)
+            self.assertEqual(d.kind, "enqueued", d.detail)
+            self.assertIsNotNone(
+                state.artifact_head(artifact_id_for("bb", "_bmad-output/implementation-artifacts/s.md"))
+            )
+
     def test_worktree_attributes_to_owning_repo_not_umbrella(self):
         tmp, registry, store, umb, wt, bbmain = self._world()
         with SidecarState(tmp / "state.sqlite3") as state:

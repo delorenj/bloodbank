@@ -668,7 +668,10 @@ def git_repo_identity(wd: str) -> tuple[str, str] | None:
     top = Path(lines[0])
     common = Path(lines[1])
     if not common.is_absolute():
-        common = Path(top) / common
+        # git prints a relative --git-common-dir relative to the directory
+        # it was run IN (the working directory: '.git' at the root,
+        # '../.git' from a subdirectory), NOT to the toplevel.
+        common = Path(wd) / common
     try:
         return str(top.resolve(strict=False)), str(common.resolve(strict=False))
     except OSError:
