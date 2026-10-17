@@ -177,17 +177,33 @@ def matches_producer_output(
 ) -> bool:
     """Is this path inside a project-configured producer output tree?
 
-    Requires a working_directory to anchor the project-relative comparison;
-    without it there is no project to be relative to, so False. The excluded
+    Requires a working_directory to anchor the project-relative comparison
+    (the cwd itself or any ancestor of it: sessions rooted in a project
+    subdirectory still qualify); without it there is no project to be
+    relative to, so False. The excluded
     component floor (evidence/logs/scratch/tmp) applies regardless of the
     configured glob list.
     """
-    rel = _project_relative(absolute_path, working_directory)
-    if rel is None:
+    # The agent's cwd is frequently a SUBDIRECTORY of the project root (a
+    # Claude session in <repo>/native writing <repo>/_bmad-output/x.md). Try
+    # the working directory and each of its ancestors as the anchor; the
+    # output-tree glob must match the path relative to that anchor, and the
+    # sidecar's repo-root containment check (safe_resolve_under_root) still
+    # refuses any path that falls outside the attributed project.
+    if not working_directory:
         return False
-    if any(part in PRODUCER_OUTPUT_EXCLUDED_PARTS for part in PurePosixPath(rel).parts):
-        return False
-    return any(_fnmatch_posix(g, rel) for g in globs)
+    wd = PurePosixPath(str(working_directory).replace("\\", "/"))
+    for anchor in (wd, *wd.parents):
+        if anchor == PurePosixPath("/"):
+            break  # never anchor at the filesystem root
+        rel = _project_relative(absolute_path, str(anchor))
+        if rel is None:
+            continue
+        if any(part in PRODUCER_OUTPUT_EXCLUDED_PARTS for part in PurePosixPath(rel).parts):
+            continue
+        if any(_fnmatch_posix(g, rel) for g in globs):
+            return True
+    return False
 
 
 def write_with_content_but_refused(envelope: dict[str, Any]) -> bool:

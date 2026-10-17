@@ -450,6 +450,73 @@ class BrokerTests(unittest.TestCase):
         # nats-py serializes the enum field as its lowercase value.
         self.assertEqual(dp.lower().rstrip(), DeliverPolicy.NEW.value.lower())
 
+    def test_backfill_since_bounds_first_creation_and_is_ignored_when_existing(self):
+        w = self.world
+        durable = f"probe-since-{self.port}-{uuid.uuid4().hex[:6]}"
+
+        async def probe():
+            from datetime import datetime, timezone
+            nc = await nats.connect(w.url)
+            js = nc.jetstream()
+            subj = "bloodbank.evt.agent.tool.completed"
+            for i in range(2):  # BEFORE the boundary
+                await js.publish(subj, json.dumps(tool_completed_envelope(
+                    path=f"/noop/before{i}.md", content=f"before {i}", working_directory=None
+                )).encode())
+            await asyncio.sleep(1.5)
+            boundary = datetime.now(timezone.utc)
+            await asyncio.sleep(0.5)
+            for i in range(3):  # AFTER the boundary
+                await js.publish(subj, json.dumps(tool_completed_envelope(
+                    path=f"/noop/after{i}.md", content=f"after {i}", working_directory=None
+                )).encode())
+            from sidecar import Sidecar, SidecarState
+            from artifact_lib import ProjectRegistry, ensure_store_root
+            import importlib.util
+            tmp = Path(tempfile.mkdtemp(prefix="probe-since-"))
+            state = None
+            try:
+                state = SidecarState(tmp / "s.db")
+                store = ensure_store_root(tmp / "store")
+                reg = ProjectRegistry.from_payload(json.loads(w.registry_file.read_text()))
+                spec = importlib.util.spec_from_file_location(
+                    "sidecar_main_since", REPO / "services" / "artifact-sidecar" / "main.py"
+                )
+                assert spec and spec.loader
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                rt = mod.Runtime(Sidecar(state=state, store_root=store, registry=reg))
+                await rt.connect(w.url, durable, backfill_since=boundary)
+                info = await js.consumer_info("BLOODBANK_EVENTS", durable)
+                first = (str(info.config.deliver_policy), info.num_pending + info.num_ack_pending)
+                await rt.aclose()
+                # Second connect with a DIFFERENT (much earlier) since: ignored,
+                # the durable keeps its original policy and cursor.
+                rt2 = mod.Runtime(Sidecar(state=state, store_root=store, registry=reg))
+                await rt2.connect(w.url, durable, backfill_since=datetime(2020, 1, 1, tzinfo=timezone.utc))
+                info2 = await js.consumer_info("BLOODBANK_EVENTS", durable)
+                second = (str(info2.config.deliver_policy), info2.num_pending + info2.num_ack_pending)
+                await rt2.aclose()
+                await nc.close()
+                return first, second
+            finally:
+                if state is not None:
+                    state.close()
+                shutil.rmtree(tmp, ignore_errors=True)
+                try:
+                    nc2 = await nats.connect(w.url)
+                    await nc2.jetstream().delete_consumer("BLOODBANK_EVENTS", durable)
+                    await nc2.drain(); await nc2.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        first, second = asyncio.run(probe())
+        self.assertEqual(first[0].lower().rstrip(), DeliverPolicy.BY_START_TIME.value.lower())
+        # Only the 3 post-boundary tool events of THIS test (earlier tests'
+        # events are all older than the boundary).
+        self.assertEqual(first[1], 3)
+        self.assertEqual(second, first)
+
     def test_cleanup_deletes_only_own_consumers(self):
         w = self.world
 

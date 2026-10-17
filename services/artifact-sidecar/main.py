@@ -18,7 +18,9 @@ backoff and bounded attempts; exhausted rows stay visible in --status
 
 Delivery policy: a NEW durable is created with DeliverPolicy.NEW (no
 seven-day vault dump); backfill over retained history is the explicit
-ARTIFACT_SIDECAR_BACKFILL=1 operator choice at first start.
+ARTIFACT_SIDECAR_BACKFILL=1 operator choice at first start; a bounded
+backfill is ARTIFACT_SIDECAR_BACKFILL_SINCE=<RFC3339> (DeliverPolicy
+BY_START_TIME). Both apply ONLY when the durable is first created.
 
 Usage:
   python3 main.py                 # run the consumer loop
@@ -37,6 +39,16 @@ Environment:
   ARTIFACT_SIDECAR_REGISTRY_REFRESH_S registry re-fetch period, default 300 (0 disables)
   ARTIFACT_SIDECAR_DURABLE      default bloodbank-artifact-sidecar
   ARTIFACT_SIDECAR_BACKFILL     "1" => new durable created with DeliverPolicy.ALL
+  ARTIFACT_SIDECAR_BACKFILL_SINCE RFC3339 timestamp (must carry a zone, e.g.
+                                2026-10-16T18:17:21Z) => new durable created
+                                with DeliverPolicy.BY_START_TIME from that
+                                instant. Takes precedence over BACKFILL=1.
+                                IGNORED when the durable already exists
+                                (consumer delivery policy is fixed at
+                                creation; to re-run a different window,
+                                delete the durable AND the sidecar state db
+                                deliberately). An unparseable value aborts
+                                startup rather than silently falling back.
   ARTIFACT_SIDECAR_OUTBOX_RETRY_S idle-timer outbox retry period, default 5
   ARTIFACT_SIDECAR_CAPTURE_ROOTS ':'-separated ABSOLUTE roots under which an
                                 explicitly delivered local file (MEDIA:/path
@@ -61,6 +73,7 @@ import os
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +112,48 @@ _TERMINAL_KINDS = frozenset({"enqueued", "duplicate", "held", "skipped", "unsupp
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
+
+
+def parse_backfill_since(raw: str) -> datetime | None:
+    """Parse ARTIFACT_SIDECAR_BACKFILL_SINCE (RFC3339 with a zone) -> aware UTC."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"ARTIFACT_SIDECAR_BACKFILL_SINCE is not RFC3339: {raw!r}") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(
+            f"ARTIFACT_SIDECAR_BACKFILL_SINCE must carry a timezone (e.g. ...Z): {raw!r}"
+        )
+    return parsed.astimezone(timezone.utc)
+
+
+def build_consumer_config(
+    durable: str, *, backfill: bool = False, backfill_since: datetime | None = None
+) -> ConsumerConfig:
+    """Config for a NEW durable. since > backfill(ALL) > NEW."""
+    kwargs: dict[str, Any] = {}
+    if backfill_since is not None:
+        policy = DeliverPolicy.BY_START_TIME
+        kwargs["opt_start_time"] = backfill_since.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    elif backfill:
+        policy = DeliverPolicy.ALL
+    else:
+        policy = DeliverPolicy.NEW
+    return ConsumerConfig(
+        durable_name=durable,
+        description="Project artifact discovery sidecar (tool/turn source events)",
+        deliver_policy=policy,
+        ack_policy=AckPolicy.EXPLICIT,
+        ack_wait=30,
+        max_deliver=10,
+        filter_subjects=list(SOURCE_SUBJECTS),
+        max_waiting=1,
+        max_ack_pending=32,
+        **kwargs,
+    )
 
 
 def _default_state_dir() -> Path:
@@ -140,7 +195,14 @@ class Runtime:
         self._js: Any = None
         self._stop = asyncio.Event()
 
-    async def connect(self, nats_url: str, durable: str, *, backfill: bool = False) -> None:
+    async def connect(
+        self,
+        nats_url: str,
+        durable: str,
+        *,
+        backfill: bool = False,
+        backfill_since: datetime | None = None,
+    ) -> None:
         self._nc = await nats.connect(
             nats_url,
             name=f"bloodbank-{durable}",
@@ -159,16 +221,8 @@ class Runtime:
         # retained window — a seven-day vault dump is never the default).
         config = None
         if not existing:
-            config = ConsumerConfig(
-                durable_name=durable,
-                description="Project artifact discovery sidecar (tool/turn source events)",
-                deliver_policy=DeliverPolicy.ALL if backfill else DeliverPolicy.NEW,
-                ack_policy=AckPolicy.EXPLICIT,
-                ack_wait=30,
-                max_deliver=10,
-                filter_subjects=list(SOURCE_SUBJECTS),
-                max_waiting=1,
-                max_ack_pending=32,
+            config = build_consumer_config(
+                durable, backfill=backfill, backfill_since=backfill_since
             )
         self._sub = await self._js.pull_subscribe(
             SOURCE_SUBJECTS[0],
@@ -180,7 +234,12 @@ class Runtime:
             "consumer %s (%s, deliver=%s)",
             durable,
             "existing" if existing else "created",
-            "ALL(backfill)" if (not existing and backfill) else "NEW" if not existing else "bound",
+            (
+                f"BY_START_TIME({backfill_since.isoformat()})"
+                if (not existing and backfill_since is not None)
+                else "ALL(backfill)" if (not existing and backfill)
+                else "NEW" if not existing else "bound"
+            ),
         )
 
     async def aclose(self) -> None:
@@ -386,9 +445,12 @@ async def amain(args: argparse.Namespace) -> int:
         nats_url = _env("ARTIFACT_SIDECAR_NATS_URL", "nats://127.0.0.1:4222")
         durable = _env("ARTIFACT_SIDECAR_DURABLE", "bloodbank-artifact-sidecar")
         backfill = _env("ARTIFACT_SIDECAR_BACKFILL", "") == "1"
+        backfill_since = parse_backfill_since(_env("ARTIFACT_SIDECAR_BACKFILL_SINCE", ""))
         runtime = Runtime(sidecar)
         log.info("connecting %s durable=%s subjects=%s", nats_url, durable, SOURCE_SUBJECTS)
-        await runtime.connect(nats_url, durable, backfill=backfill)
+        await runtime.connect(
+            nats_url, durable, backfill=backfill, backfill_since=backfill_since
+        )
         # Crash catch-up: publish anything the outbox still holds through the
         # REAL transport (awaited JetStream publish, Nats-Msg-Id dedupe).
         try:

@@ -54,7 +54,10 @@ no-absolute-path hygiene across all of `data`.
 - **Delivery policy:** NEW durables are created with `DeliverPolicy.NEW`
   (no seven-day vault dump). Backfill over retained history is the explicit
   `ARTIFACT_SIDECAR_BACKFILL=1` / `ARTIFACT_VAULT_BACKFILL=1` operator
-  choice at first start.
+  choice at first start. `ARTIFACT_SIDECAR_BACKFILL_SINCE=<RFC3339 with
+  zone>` is the bounded form (`DeliverPolicy.BY_START_TIME`; wins over
+  `BACKFILL=1`). Like every delivery policy it applies ONLY when the durable
+  is first created and is ignored (logged as `bound`) once it exists.
 - **Enablement order matters:** with NEW delivery, enable the PROJECTOR's
   durable before artifact events start flowing (or accept skipping them);
   sidecar-first then projector requires the projector backfill opt-in.

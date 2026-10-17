@@ -449,6 +449,29 @@ class DiscoveryTests(unittest.TestCase):
         result = discovery.from_tool_completed(env)
         self.assertIsNotNone(result)
 
+    def test_output_tree_qualifies_from_project_subdirectory_cwd(self):
+        # Real traffic: Claude cwd = <repo>/native, writes <repo>/_bmad-output/x.md.
+        env = tool_completed_envelope(
+            path="/repo/_bmad-output/implementation-artifacts/spec-1.md",
+            content="# spec",
+            working_directory="/repo/native/godot",
+            delivered=False,
+        )
+        result = discovery.from_tool_completed(env)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertIn("producer output tree", result.qualification_reason)
+
+    def test_output_tree_subdir_cwd_still_excludes_exhaust_and_sibling_paths(self):
+        for path in (
+            "/repo/_bmad-output/evidence/x.md",  # excluded component
+            "/repo/notes/x.md",  # not an output tree
+        ):
+            env = tool_completed_envelope(
+                path=path, content="# x", working_directory="/repo/native", delivered=False
+            )
+            self.assertIsNone(discovery.from_tool_completed(env), path)
+
     def test_bmad_output_requires_working_directory_anchor(self):
         # No working_directory -> no project-relative comparison -> the
         # output-tree signal cannot fire (fail-closed, never ambient).
@@ -1996,6 +2019,51 @@ class FakeTransportTests(unittest.TestCase):
         h, _ = self._world()
         self.assertEqual(h.state.exhausted(), [])
         self.assertEqual(h.state.holds(), [])
+
+
+class BackfillSinceTests(unittest.TestCase):
+    """ARTIFACT_SIDECAR_BACKFILL_SINCE: bounded first-start backfill."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "sidecar_main_backfill", HERE / "main.py"
+        )
+        assert spec and spec.loader
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)
+
+    def test_parse_accepts_z_and_offset(self):
+        z = self.mod.parse_backfill_since("2026-10-16T18:17:21Z")
+        off = self.mod.parse_backfill_since("2026-10-16T14:17:21-04:00")
+        self.assertEqual(z, off)
+        self.assertEqual(z.utcoffset().total_seconds(), 0)
+
+    def test_parse_empty_is_none(self):
+        self.assertIsNone(self.mod.parse_backfill_since(""))
+        self.assertIsNone(self.mod.parse_backfill_since("   "))
+
+    def test_parse_rejects_naive_and_garbage(self):
+        with self.assertRaises(ValueError):
+            self.mod.parse_backfill_since("2026-10-16T18:17:21")
+        with self.assertRaises(ValueError):
+            self.mod.parse_backfill_since("yesterday")
+
+    def test_config_precedence_since_over_all_over_new(self):
+        from nats.js.api import DeliverPolicy
+        since = self.mod.parse_backfill_since("2026-10-16T18:17:21Z")
+        c = self.mod.build_consumer_config("d", backfill=True, backfill_since=since)
+        self.assertEqual(c.deliver_policy, DeliverPolicy.BY_START_TIME)
+        self.assertEqual(c.opt_start_time, "2026-10-16T18:17:21.000000Z")
+        self.assertEqual(
+            self.mod.build_consumer_config("d", backfill=True).deliver_policy,
+            DeliverPolicy.ALL,
+        )
+        c = self.mod.build_consumer_config("d")
+        self.assertEqual(c.deliver_policy, DeliverPolicy.NEW)
+        self.assertIsNone(c.opt_start_time)
+        self.assertEqual(c.ack_policy.value, "explicit")
 
 
 if __name__ == "__main__":
