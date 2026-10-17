@@ -59,6 +59,25 @@ class HermesNativeWireTest(unittest.TestCase):
         })
         self.assertEqual(data["reply_text"], "")
 
+    def test_completed_reply_is_delivered(self):
+        for platform in ("telegram", "cli", "cron", "bloodbank", None):
+            extra = {"final_response": "a reply", "completed": True}
+            if platform:
+                extra["platform"] = platform
+            data = _shape("bloodbank.conversation.turn.completed", {"cwd": PROJECT, "extra": extra})
+            self.assertIs(data.get("delivered"), True, platform)
+
+    def test_subagent_empty_and_failed_replies_are_not_delivered(self):
+        cases = [
+            {"final_response": "child result", "platform": "subagent"},
+            {"final_response": "   "},
+            {"final_response": "partial", "failed": True},
+            {"final_response": "partial", "interrupted": True},
+        ]
+        for extra in cases:
+            data = _shape("bloodbank.conversation.turn.completed", {"cwd": PROJECT, "extra": extra})
+            self.assertNotIn("delivered", data, extra)
+
     def test_tool_completed_promotes_tool_input(self):
         args = {"path": f"{PROJECT}/_bmad-output/x.md", "content": "# hi"}
         data = _shape("bloodbank.agent.tool.completed", {

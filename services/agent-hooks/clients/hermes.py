@@ -162,6 +162,13 @@ class HermesAdapter(ClientAdapter):
             # conversation_reply_delivered gate reads exactly these keys;
             # without a marker the reply stays process, never a deliverable.
             data_out.update(_delivered_markers(payload, flat))
+            # Operator policy (2026-10-17): a Hermes reply IS delivered to the
+            # user — Telegram, CLI, cron and Bloodbank-dispatched turns all end
+            # in front of someone. The one exception is platform=subagent, a
+            # child handing its result back to a parent agent.
+            if (outcome == "completed" and reply_text.strip()
+                    and _value(flat, "platform") != "subagent"):
+                data_out.setdefault("delivered", True)
             return {**data_out, **raw}
 
         if ce_type == "bloodbank.agent.session.started":

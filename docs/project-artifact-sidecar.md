@@ -145,9 +145,13 @@ no-absolute-path hygiene across all of `data`.
   Text deliverables (SVG/mermaid/markdown) delivered by path work the same
   way. The Hermes adapter (`services/agent-hooks/clients/hermes.py`)
   promotes `delivered`/`user_facing`/`deliverables`/`attachments` from the
-  native payload when present, so a Hermes reply carrying `MEDIA:` in its
-  final message and a delivery marker captures end to end (covered by
-  tests); without a marker nothing is read.
+  native payload when present, and (operator policy, 2026-10-17) sets
+  `delivered: true` itself on every completed Hermes turn with a non-empty
+  reply except `platform=subagent` — a Hermes reply reaches the user
+  (Telegram, CLI, cron, Bloodbank-dispatched). So every substantive Hermes
+  reply, and every `MEDIA:` file it names under the capture roots, becomes a
+  `conversation_reply_delivered` artifact. Other producers still need an
+  explicit marker; without one nothing is read.
 - `project_activity_report`: a `bloodbank.project.activity.recorded` event
   (the activity-report skill; `data.report.{title,raw,markdown,html}`). The
   report names its own project, so there is NO cwd attribution: the slug in
