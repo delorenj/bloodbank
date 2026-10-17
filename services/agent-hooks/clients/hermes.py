@@ -143,9 +143,12 @@ class HermesAdapter(ClientAdapter):
         if ce_type == "bloodbank.conversation.turn.completed":
             outcome = "canceled" if flat.get("interrupted") else "failed" if flat.get("failed") else "completed"
             # The agent's final reply for this turn — subscribers need the
-            # actual response, not just the outcome label.
+            # actual response, not just the outcome label. Hermes' on_session_end
+            # (fired once per turn by turn_finalizer) carries it as
+            # `final_response` (hermes-agent 1a046ce7be); the other keys cover
+            # operator-written hooks and other harness dialects.
             reply_text = str(
-                _value(flat, "last_assistant_message", "assistant_message", "response", "reply", "output", "result") or ""
+                _value(flat, "final_response", "last_assistant_message", "assistant_message", "response", "reply", "output", "result") or ""
             )
             data_out = {"thread_id": correlation,
                     "turn_id": self.native_turn_id(payload) or session.current_turn_id,
