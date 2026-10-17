@@ -211,5 +211,41 @@
     "stage": "verify",
     "reason": "Installed APK does not match the built artifact.",
     "failed_at": "2026-10-09T03:30:00Z"
+  },
+  "bloodbank.project.artifact.created": {
+    "schema_version": 1,
+    "project": {
+      "slug": "gruvato",
+      "name": "Gruvato"
+    },
+    "artifact": {
+      "artifact_id": "ffffffffffffffffffffffffffffffff",
+      "revision": 1,
+      "title": "launch diagram.md",
+      "media_type": "text/markdown",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bytes": 128,
+      "content": {
+        "storage": "content-addressed",
+        "ref": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "origin": {
+      "detected_by": "artifact-sidecar",
+      "basis": "agent_tool_write",
+      "qualification_reason": "write_file tool call carried file_path plus full inline content (128 bytes, text/markdown); path inside project producer output tree",
+      "source_event": {
+        "type": "bloodbank.agent.tool.completed",
+        "id": "11111111-1111-1111-1111-111111111111",
+        "time": "2026-10-16T20:11:00Z"
+      },
+      "session": {
+        "producer": "hermes-agent:test",
+        "cli": "hermes",
+        "thread_id": null,
+        "invocation_id": "abc"
+      },
+      "created_at": "2026-10-16T20:11:00Z"
+    }
   }
 }

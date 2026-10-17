@@ -102,6 +102,11 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
         env["ordering_key"] = f"project:{payload['project']['slug']}"
         if "generator" in payload:
             env["correlationid"] = payload["generator"]["run_id"]
+        if ce_type == "bloodbank.project.artifact.created":
+            # An artifact fact is caused by the agent event whose bytes were
+            # captured (assert_project_invariants); bind the envelope to the
+            # fixture's source_event.id the way the sidecar producer does.
+            env["causationid"] = payload["origin"]["source_event"]["id"]
     return env
 
 

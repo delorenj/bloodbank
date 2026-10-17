@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/project/artifact.created.json",
+  "title": "Project Artifact Created Event",
+  "description": "A durable user-facing deliverable (diagram, chart, document, note, idea, BMAD artifact) of one pjangler project was captured into content-addressed storage and published for projection. The event carries references to the preserved bytes, never the bytes and never filesystem paths; see bloodbank/docs/event-naming.md (project) and docs/project-artifact-sidecar.md.",
+  "$comment": "Schema-first companion to the artifact-sidecar producer. Hygiene inherited from the project domain (§11.4): no credentials, no absolute filesystem paths anywhere in data, additionalProperties false at every level. The source bytes live in the sidecar's content-addressed store; data.artifact.sha256 and data.artifact.content.ref identify them (ref must equal 'sha256:' + sha256 — checked by assert_project_invariants). A render/source pair (e.g. mermaid text + rendered SVG) is ONE artifact: data.artifact carries the canonical form and data.artifact.render the rendered twin. Causation: envelope.causationid must equal data.origin.source_event.id, the id of the agent event whose bytes were captured (checked by assert_project_invariants).",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.project.artifact.created"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "project"
+    },
+    "subject": {
+      "const": "bloodbank.evt.project.artifact.created"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "apicurio://holyfields/bloodbank.project.artifact.created/versions/1"
+    },
+    "schemaref": {
+      "const": "bloodbank.project.artifact.created.v1"
+    },
+    "ordering_key": {
+      "type": "string",
+      "pattern": "^project:[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "description": "§11.1 bucket project:<project_slug>; must equal 'project:' + data.project.slug (checked by assert_project_invariants)."
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "project": {
+          "$ref": "#/$defs/project",
+          "description": "The pjangler project the artifact belongs to, copied from its registry entry. Never guessed: attribution comes from the canonical pjangler registry or an explicit operator resolution of a held artifact."
+        },
+        "artifact": {
+          "$ref": "#/$defs/artifact",
+          "description": "The captured deliverable: stable id, revision, title, media type and the content-addressed reference to the preserved bytes."
+        },
+        "origin": {
+          "$ref": "#/$defs/origin",
+          "description": "How the artifact was qualified and which agent event produced it: deterministic detection basis, qualification reason, source event identity, session context and creation time."
+        }
+      },
+      "required": [
+        "schema_version",
+        "project",
+        "artifact",
+        "origin"
+      ]
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "subject",
+    "time",
+    "datacontenttype",
+    "dataschema",
+    "correlationid",
+    "causationid",
+    "producer",
+    "service",
+    "kind",
+    "domain",
+    "schemaref",
+    "actor",
+    "ordering_key",
+    "data"
+  ],
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+    },
+    "no_absolute_path": {
+      "not": {
+        "pattern": "(^|[^A-Za-z0-9_.])/(home|Users|root|tmp|var|etc|opt|srv|mnt)/"
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "slug": {
+          "$ref": "#/$defs/slug"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "required": [
+        "slug",
+        "name"
+      ]
+    },
+    "content_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "storage": {
+          "const": "content-addressed"
+        },
+        "ref": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Opaque content-addressed reference. NOT a filesystem path, NOT a URL; the projector resolves it against its configured store. Must equal 'sha256:' + the sibling sha256 field (checked by assert_project_invariants)."
+        }
+      },
+      "required": [
+        "storage",
+        "ref"
+      ]
+    },
+    "media_type": {
+      "type": "string",
+      "maxLength": 127,
+      "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "representation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "$ref": "#/$defs/media_type"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 67108864,
+          "description": "Size of the preserved bytes; at most 64 MiB."
+        },
+        "content": {
+          "$ref": "#/$defs/content_ref"
+        }
+      },
+      "required": [
+        "media_type",
+        "sha256",
+        "bytes",
+        "content"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 160,
+          "pattern": "^[a-z0-9][a-z0-9._-]{7,159}$",
+          "description": "Stable logical id: same id across revisions of the same deliverable, derived deterministically from the project slug and the project-relative logical path (uuid5)."
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "description": "1 for the first capture of this artifact_id; incremented when the same logical path is captured with different bytes. The same bytes at the same revision are idempotent, never re-published."
+        },
+        "title": {
+          "$ref": "#/$defs/no_absolute_path",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Human-facing title. The file basename for tool writes, a derived label for inline captures. Never an absolute path."
+        },
+        "media_type": {
+          "$ref": "#/$defs/media_type"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "Digest of the canonical (source) bytes preserved before this event was published."
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 67108864
+        },
+        "content": {
+          "$ref": "#/$defs/content_ref",
+          "description": "The canonical representation (source when a source/render pair exists)."
+        },
+        "render": {
+          "$ref": "#/$defs/representation",
+          "description": "Optional rendered twin of the same logical artifact at the same revision (e.g. an SVG rendered from a mermaid source). Present only when a real hook or renderer produced it; the sidecar never invents one."
+        }
+      },
+      "required": [
+        "artifact_id",
+        "revision",
+        "title",
+        "media_type",
+        "sha256",
+        "bytes",
+        "content"
+      ]
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "detected_by": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$",
+          "description": "The service that qualified the artifact, e.g. artifact-sidecar."
+        },
+        "basis": {
+          "type": "string",
+          "enum": [
+            "agent_tool_write",
+            "conversation_reply_mermaid",
+            "conversation_reply_delivered",
+            "operator_resolution"
+          ],
+          "description": "agent_tool_write: an agent.tool.completed whose arguments carried a file path plus full inline content. conversation_reply_mermaid: a fenced mermaid block extracted from a conversation.turn.completed reply_text. conversation_reply_delivered: substantial reply text the producer explicitly marked user-facing/delivered (data.delivered/user_facing truthy, or non-empty data.deliverables). operator_resolution: attribution was ambiguous and an operator mapped a held capture to its project."
+        },
+        "qualification_reason": {
+          "$ref": "#/$defs/no_absolute_path",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "The deterministic reason this capture qualified (which adapter matched, which fields). No absolute paths."
+        },
+        "source_event": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "pattern": "^bloodbank\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+            },
+            "id": {
+              "$ref": "../../_common/types.v1.json#/$defs/uuid",
+              "description": "Envelope id of the agent event whose bytes were captured. Must equal the envelope causationid (checked by assert_project_invariants)."
+            },
+            "time": {
+              "$ref": "../../_common/types.v1.json#/$defs/timestamp"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "time"
+          ]
+        },
+        "session": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "producer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "cli": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 40
+            },
+            "thread_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            },
+            "invocation_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            }
+          },
+          "required": [
+            "producer",
+            "cli",
+            "thread_id",
+            "invocation_id"
+          ]
+        },
+        "created_at": {
+          "$ref": "../../_common/types.v1.json#/$defs/timestamp",
+          "description": "When the artifact bytes were produced — the source event's time, not publication time."
+        }
+      },
+      "required": [
+        "detected_by",
+        "basis",
+        "qualification_reason",
+        "source_event",
+        "session",
+        "created_at"
+      ]
+    }
+  }
+}

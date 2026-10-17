@@ -80,6 +80,8 @@ ALLOWED_ENTITIES = frozenset({
     "clock", "report", "journal", "incident",
     "work", "receipt", "approval", "escalation", "capacity", "lease",
     "activity", "deployment", "cost",
+    # project: durable user-facing deliverables captured by the artifact sidecar
+    "artifact",
     "call", "slop",
     # messaging: one entity per chat platform (messaging.<platform>.received|notified)
     "email", "telegram", "slack", "teams", "whatsapp", "google_chat",
@@ -429,6 +431,15 @@ def assert_terminal_receipt_retry(prior: dict, candidate: dict) -> None:
 # --------------------------------------------------------------------------
 
 PROJECT_ACTIVITY_TYPE = "bloodbank.project.activity.recorded"
+PROJECT_ARTIFACT_TYPE = "bloodbank.project.artifact.created"
+PROJECT_ARTIFACT_BASES = frozenset(
+    {
+        "agent_tool_write",
+        "conversation_reply_mermaid",
+        "conversation_reply_delivered",
+        "operator_resolution",
+    }
+)
 PROJECT_AUDIENCES = frozenset({"internal", "external"})
 PROJECT_INTERNAL_ONLY_FIELDS = ("sources", "tickets")
 PROJECT_WINDOW_BASES = frozenset({"previous_report", "cap_24h", "explicit"})
@@ -465,6 +476,74 @@ def _project_refuse_markers(field: str, text: str, markers) -> None:
                 f"project external report.{field} contains {what} ({hit.group(0)!r}); "
                 "that fact belongs on the audience=internal event"
             )
+
+
+def _assert_project_artifact_representation(
+    where: str, rep: object
+) -> None:
+    """One representation (artifact body or render twin): content ref is its own sha."""
+    if not isinstance(rep, dict):
+        raise ContractViolation(f"project {where} must be an object")
+    sha = rep.get("sha256")
+    content = rep.get("content")
+    if not isinstance(content, dict):
+        raise ContractViolation(f"project {where}.content must be an object")
+    expected_ref = f"sha256:{sha}" if isinstance(sha, str) and sha else None
+    if content.get("ref") != expected_ref:
+        raise ContractViolation(
+            f"project {where}.content.ref must equal 'sha256:' + {where}.sha256"
+        )
+    if content.get("storage") != "content-addressed":
+        raise ContractViolation(
+            f"project {where}.content.storage must be 'content-addressed'"
+        )
+
+
+def _assert_project_artifact(envelope: dict, data: dict, slug: str) -> None:
+    """Cross-field invariants for bloodbank.project.artifact.created (§11.4).
+
+    The schema fixes the shape; this fixes what it cannot see: the content
+    refs are bound to the digests, the causation chain names the agent event
+    the bytes were captured from, the detection basis is one of the
+    deterministic adapters (or an operator resolution of a held capture), and
+    no workstation path leaks into the payload.
+    """
+    _project_refuse_paths_anywhere(data, "data")
+
+    artifact = data.get("artifact")
+    if not isinstance(artifact, dict):
+        raise ContractViolation("project data.artifact must be an object")
+    _assert_project_artifact_representation("data.artifact", artifact)
+    render = artifact.get("render")
+    if render is not None:
+        _assert_project_artifact_representation("data.artifact.render", render)
+        if render.get("sha256") == artifact.get("sha256"):
+            raise ContractViolation(
+                "project data.artifact.render.sha256 must differ from the "
+                "canonical sha256 (a render twin is a different byte sequence)"
+            )
+
+    origin = data.get("origin")
+    if not isinstance(origin, dict):
+        raise ContractViolation("project data.origin must be an object")
+    if origin.get("basis") not in PROJECT_ARTIFACT_BASES:
+        raise ContractViolation(
+            "project data.origin.basis must be one of "
+            f"{sorted(PROJECT_ARTIFACT_BASES)}"
+        )
+    source_event = origin.get("source_event")
+    if not isinstance(source_event, dict):
+        raise ContractViolation("project data.origin.source_event must be an object")
+    if envelope.get("causationid") != source_event.get("id"):
+        raise ContractViolation(
+            "project envelope.causationid must equal "
+            "data.origin.source_event.id (the artifact fact is caused by the "
+            "agent event whose bytes were captured)"
+        )
+    if not _is_rfc3339_datetime(origin.get("created_at")):
+        raise ContractViolation(
+            "project data.origin.created_at must be an RFC 3339 date-time"
+        )
 
 
 def _project_refuse_paths_anywhere(value: object, where: str) -> None:
@@ -509,6 +588,10 @@ def assert_project_invariants(envelope: dict) -> None:
             f"project envelope.ordering_key must be 'project:{slug}' (§11.1), "
             f"got {envelope.get('ordering_key')!r}"
         )
+
+    if envelope.get("type") == PROJECT_ARTIFACT_TYPE:
+        _assert_project_artifact(envelope, data, slug)
+        return
 
     if envelope.get("type") != PROJECT_ACTIVITY_TYPE:
         # Deployments and later project facts share the bucket rule above and the
@@ -837,6 +920,8 @@ __all__ = [
     "KIND_MARKERS",
     "MARKER_TO_KIND",
     "PROJECT_ACTIVITY_TYPE",
+    "PROJECT_ARTIFACT_BASES",
+    "PROJECT_ARTIFACT_TYPE",
     "PROJECT_AUDIENCES",
     "SUBJECT_REGEX",
     "TYPE_REGEX",

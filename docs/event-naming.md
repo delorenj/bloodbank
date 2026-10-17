@@ -379,6 +379,7 @@ Segment 4 of `type` MUST be one of:
 | `lease`            | `portfolio`              | Time-bounded ownership of one global delegation slot.        |
 | `activity`         | `project`                | One audience-specific activity report over a bounded window of a project's repos, boards and agent sessions. |
 | `deployment`       | `project`                | One install of a project's built artifact on a target (phone, host service, site); version, commit, checksum and target live in data. |
+| `artifact`         | `project`                | One durable user-facing deliverable of a project (diagram, chart, document, idea, BMAD artifact) captured into content-addressed storage before publication; digest, media type, revision and provenance live in data, never paths or bytes. |
 | `call`             | `telephony`              | One phone call on an operator line, from setup to hangup; recordings and voicemails are `call.recorded`. |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
@@ -561,6 +562,8 @@ of the same artifact form a stable bucket. Every `audio.memo.*` stage uses
 `memo:<memo_id>`, where `memo_id = uuid5(NAMESPACE_URL, "s3://holocene-auto/" + key)`. A `project.activity.recorded`
 uses `project:<project_slug>` — the slug from the project's `.project.json`
 — never `activity:<slug>`; the bucket names the aggregate, not the entity.
+A `project.artifact.created` event uses the same `project:<project_slug>`
+bucket: the artifact is a fact of the same aggregate.
 An `llm.usage.recorded` event uses `usage:<usage_id>`, and an
 `llm.allowance.observed` event uses
 `allowance:<provider>:<account_id>:<window>` so retries and observations for
@@ -624,6 +627,26 @@ rule (`ordering_key == "project:" + data.project.slug`), `data.schema_version ==
 and the path hygiene above; `assert_project_invariants` skips the window,
 token and audience rules for them. `data.summary` is the one line a
 notification shows.
+
+`bloodbank.project.artifact.created` also shares only the bucket rule and the
+path hygiene, plus artifact-specific invariants enforced by the same
+function: every `content.ref` equals `sha256:` + its sibling digest
+(`storage: "content-addressed"`, never a path or URL), a `render` twin (when
+present) has a different digest from the canonical form, and
+`envelope.causationid == data.origin.source_event.id` — the artifact fact is
+caused by the agent event whose bytes were captured. `data.origin.basis` is
+one of `agent_tool_write`, `conversation_reply_mermaid`,
+`conversation_reply_delivered`, `operator_resolution`; attribution always
+comes from the canonical pjangler registry or an operator resolution of a
+held capture, never a guess. Qualification is strict: a write qualifies only
+with the full structural shape (path + full inline content, user-facing
+media type, non-denied location) AND an explicit user-facing signal — a
+producer delivery marker or a project producer-output tree (`_bmad_output/`,
+`_bmad-output/`; evidence/logs/scratch/tmp excluded). Genuine binaries
+(PNG/PDF) are captured only from explicitly delivered local files read under
+operator-allowlisted roots, never from inline strings. The
+bytes never travel in the event; they live in the sidecar's content-addressed
+store before the event is published (docs/project-artifact-sidecar.md).
 
 ---
 
