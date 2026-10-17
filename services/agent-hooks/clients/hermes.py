@@ -126,14 +126,19 @@ class HermesAdapter(ClientAdapter):
             prompt_text = str(
                 _value(flat, "prompt", "user_input", "user_prompt", "message", "content") or ""
             )
-            return {
+            data_out = {
                 "thread_id": correlation,
                 "turn_id": self.native_turn_id(payload) or session.current_turn_id,
                 "prompt_text": prompt_text,
                 "prompt_length": len(prompt_text.encode("utf-8")),
                 "working_directory": cwd,
-                **raw,
             }
+            # `user_message` is the key the hook-hub normalized shape uses
+            # (concerns.normalized); promote it alongside prompt_text so
+            # downstream consumers need no Hermes-specific lookup.
+            if prompt_text:
+                data_out["user_message"] = prompt_text
+            return {**data_out, **raw}
 
         if ce_type == "bloodbank.conversation.turn.completed":
             outcome = "canceled" if flat.get("interrupted") else "failed" if flat.get("failed") else "completed"
@@ -142,12 +147,19 @@ class HermesAdapter(ClientAdapter):
             reply_text = str(
                 _value(flat, "last_assistant_message", "assistant_message", "response", "reply", "output", "result") or ""
             )
-            return {"thread_id": correlation,
+            data_out = {"thread_id": correlation,
                     "turn_id": self.native_turn_id(payload) or session.current_turn_id,
                     "outcome": outcome,
                     "reply_text": reply_text,
                     "reply_length": len(reply_text.encode("utf-8")),
-                    "working_directory": cwd, **raw}
+                    "working_directory": cwd}
+            # Promote explicit user-facing delivery markers when the native
+            # payload carries them (delivered/user_facing truthy, or
+            # deliverables/attachments lists). The artifact sidecar's
+            # conversation_reply_delivered gate reads exactly these keys;
+            # without a marker the reply stays process, never a deliverable.
+            data_out.update(_delivered_markers(payload, flat))
+            return {**data_out, **raw}
 
         if ce_type == "bloodbank.agent.session.started":
             return {
@@ -169,20 +181,32 @@ class HermesAdapter(ClientAdapter):
                 "invocation_id": correlation,
                 "tool_call_id": _tool_call_id(correlation, flat),
                 "tool_name": _tool_name(flat),
-                "arguments": _value(flat, "tool_input", "arguments") or {},
+                "arguments": _tool_arguments(flat) or {},
                 "working_directory": cwd,
                 **raw,
             }
 
         if ce_type == "bloodbank.agent.tool.completed":
-            return {
+            data_out = {
                 "invocation_id": correlation,
                 "tool_call_id": _tool_call_id(correlation, flat),
                 "tool_name": _tool_name(flat),
                 "outcome": _outcome(flat),
                 "working_directory": cwd,
-                **raw,
             }
+            # Hermes post_tool_call payloads carry the call's arguments as
+            # `tool_input` (shell_hooks wire) and the raw result; completed
+            # events previously published neither, so downstream consumers
+            # (artifact sidecar) saw tool_name/outcome/cwd only. Promote
+            # both, additively; both are absent-safe.
+            arguments = _tool_arguments(flat)
+            if arguments:
+                data_out["arguments"] = arguments
+            result = _value(flat, "result", "tool_response", "tool_output")
+            if result is not None:
+                data_out["result"] = result
+            data_out.update(_delivered_markers(payload, flat))
+            return {**data_out, **raw}
 
         if ce_type == "bloodbank.agent.invocation.completed":
             return {
@@ -215,6 +239,45 @@ def _value(payload: dict, *keys: str) -> Any:
 
 def _model(payload: dict) -> Any:
     return _value(payload, "model", "model_name") or os.environ.get("HERMES_MODEL") or None
+
+
+# Hermes (shell_hooks wire, agent/shell_hooks.py _payload_fields) sends the
+# tool call arguments as `tool_input` — top-level on the payload for tool
+# events, landing under `extra` for kwargs the bridge did not promote. The
+# earlier shape read only `arguments`, which post_tool_call payloads NEVER
+# carry: every completed write event reached the bus with empty arguments.
+_TOOL_ARGUMENT_KEYS = ("tool_input", "arguments", "toolInput", "args")
+
+
+def _tool_arguments(payload: dict) -> Any:
+    """The tool call's argument object, or {} when the payload carries none."""
+    value = _value(payload, *_TOOL_ARGUMENT_KEYS)
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _delivered_markers(payload: dict, flat: dict) -> dict[str, Any]:
+    """User-facing delivery markers lifted from the native Hermes payload.
+
+    Hermes does not name deliverables in its hook payload today; when it (or
+    an operator-written hook) starts to, `delivered` / `user_facing` /
+    `deliverables` / `attachments` are the keys this adapter promotes, so the
+    artifact sidecar's explicit delivery gate has a real producer to read.
+    Only explicit native truth is promoted — never inferred from content.
+    """
+    markers: dict[str, Any] = {}
+    for key in ("delivered", "user_facing"):
+        value = _value(flat, key) if isinstance(flat, dict) else None
+        value = value if value is not None else _value(payload, key)
+        if value is True:
+            markers[key] = True
+    for key in ("deliverables", "attachments"):
+        value = _value(flat, key) if isinstance(flat, dict) else None
+        value = value if value is not None else _value(payload, key)
+        if isinstance(value, (list, tuple)) and value:
+            markers[key] = list(value)
+    return markers
 
 
 def _tool_name(payload: dict) -> str:
