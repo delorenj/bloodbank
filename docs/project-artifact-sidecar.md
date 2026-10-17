@@ -11,15 +11,19 @@ sidecar was requested; applied once, when the durable was created). The
 vault mapping lives in `~/.config/bloodbank/artifact-vault-mapping.json`
 (`bb`->Projects/Bloodbank, `33god`->Projects/33GOD,
 `greeninbetween`->Projects/green-in-between, `holocene`->Projects/Holocene,
-`flume`->Projects/Flume; add a row per approved project). First backfill:
+`flume`->Projects/Flume, `james-brennan`->Projects/james-brennan; add a row per
+approved project). First backfill:
 8 `bloodbank.project.artifact.created` events (6 greeninbetween, 2
 holocene), all projected to `Projects/<dir>/2026-10-16/`; Candystore
-ingests them (`bloodbank.evt.>`). Known capture gaps (Hermes tool inputs
-under `data.payload.tool_input`, Hermes cwd not the project, `reply_text`
-never present on real turn events, Bash/heredoc and Edit writes,
-`project.activity.recorded` reports, attribution by file rather than cwd)
-are NOT yet closed: today only Claude/opencode full-file `Write` calls inside
-a `_bmad-output/` tree (or carrying a delivery marker) are seen.
+ingests them (`bloodbank.evt.>`). Capture gaps still open: Hermes cwd was not the project until the
+hermes-agent session-cwd fix is running (events from before it hold),
+`reply_text` is never present on real turn events, Bash/heredoc and Edit
+writes, attribution by file rather than cwd. Closed since: `project.activity.recorded`
+reports (second durable, see Discovery) and Hermes `write_file` inputs at
+`data.payload.tool_input` (fallback in `discovery.tool_arguments`). Until the
+other gaps close, the writes seen are Claude/opencode/Hermes full-file
+writes inside a `_bmad-output/` tree (or carrying a delivery marker), plus
+activity reports.
 Two live-only bugs found at deploy (no-candidate events were nak'd and
 starved the consumer; a subdirectory cwd was held because git's relative
 common-dir was resolved against the toplevel) are fixed and tested. The
@@ -43,7 +47,7 @@ Payload carries **references, not bytes, not paths**:
   optional `render` twin (different digest; same logical artifact).
 - `origin`: `detected_by`, `basis` (`agent_tool_write` |
   `conversation_reply_mermaid` | `conversation_reply_delivered` |
-  `operator_resolution`), `qualification_reason`, `source_event
+  `project_activity_report` | `operator_resolution`), `qualification_reason`, `source_event
   {type,id,time}` — envelope `causationid == source_event.id` enforced —
   `session {producer,cli,thread_id,invocation_id}`, and `created_at` (the
   SOURCE event's time; the projector dates by this so backfill lands on the
@@ -78,6 +82,17 @@ no-absolute-path hygiene across all of `data`.
   zone>` is the bounded form (`DeliverPolicy.BY_START_TIME`; wins over
   `BACKFILL=1`). Like every delivery policy it applies ONLY when the durable
   is first created and is ignored (logged as `bound`) once it exists.
+- **Two durables, one process:** tool/turn events stay on
+  `bloodbank-artifact-sidecar` (filter subjects untouched). Activity reports
+  ride a SECOND durable, `bloodbank-artifact-sidecar-activity`
+  (`ARTIFACT_SIDECAR_ACTIVITY_DURABLE`, `""` disables), filtered to
+  `bloodbank.evt.project.activity.recorded`, with its own first-creation
+  delivery policy (`ARTIFACT_SIDECAR_ACTIVITY_BACKFILL[_SINCE]`, each falling
+  back to the primary setting, so the drop-in's `BACKFILL_SINCE` covers it).
+  Chosen over editing the live durable's filter subjects because a changed
+  filter does not backfill the new subject (the cursor is already past it)
+  and it puts the proven consumer at risk. Both consumers share one state db,
+  one registry and one outbox; outbox drains are serialized in-process.
 - **Enablement order matters:** with NEW delivery, enable the PROJECTOR's
   durable before artifact events start flowing (or accept skipping them);
   sidecar-first then projector requires the projector backfill opt-in.
@@ -133,7 +148,32 @@ no-absolute-path hygiene across all of `data`.
   native payload when present, so a Hermes reply carrying `MEDIA:` in its
   final message and a delivery marker captures end to end (covered by
   tests); without a marker nothing is read.
+- `project_activity_report`: a `bloodbank.project.activity.recorded` event
+  (the activity-report skill; `data.report.{title,raw,markdown,html}`). The
+  report names its own project, so there is NO cwd attribution: the slug in
+  `data.project.slug` is looked up in the pjangler registry (not enrolled =>
+  observable `skipped`, nothing persisted, no hold — a hold would also lose
+  the html twin). The report **markdown is the canonical artifact** and the
+  report's self-contained **html is the `artifact.render` twin** (projected as
+  `activity-<audience>-<window.end YYYYMMDDTHHMMZ>.md` and
+  `….render.html`); a report lacking markdown falls back to html, then to raw
+  text. **Identity** is project + audience + `window.start`
+  (`inline/activity/<audience>/<start>`): re-emitting the same window with
+  different bytes is revision+1 on one artifact id, a different window or
+  audience is a different artifact (a `cap_24h` window slides with the run
+  clock, so a re-run later is a different window; `previous_report` windows
+  start at the previous end and re-render onto the same id). Duplicate
+  detection compares the canonical markdown digest only: a re-render that
+  changes only the html is not a new revision. `generator.dry_run=true`
+  (nothing pushed to the portal — every report today) is recorded in the
+  qualification reason but does not disqualify. Consumed on its own
+  durable, see below.
 - `operator_resolution`: an operator mapped a held capture to a project.
+- Hermes write shape: `agent_tool_write` reads the tool inputs from
+  `data.arguments` and, when that is absent or empty, from
+  `data.payload.tool_input` (real Hermes `write_file` events before the
+  adapter promoted them carried only the latter). The delivery gate,
+  attribution and denylist apply unchanged.
 - There is no ambient repo-wide markdown/config sweep under any basis; a
   prompt merely mentioning a diagram never authorizes reading files — the
   output reference is a positive signal only together with the delivery
@@ -201,6 +241,8 @@ dbs chmod 0600.
 schemas/bloodbank/project/artifact.created.json     schema
 services/agent-hooks/core/validate.py               artifact entity + invariants
 services/agent-hooks/clients/hermes.py              native payload promotion (tool_input/result, markers)
+services/artifact-sidecar/testdata/                 REAL Candystore events (hermes write_file without
+                                                    arguments; james-brennan activity report)
 docs/event-naming.md                                §7 entity row, §11.1 bucket, §11.4 block
 docs/project-artifact-sidecar.md                    this document
 services/artifact-sidecar/artifact_lib.py           store, path safety, registry, git identity,
@@ -209,7 +251,7 @@ services/artifact-sidecar/discovery.py              adapters (structural, determ
                                                     delivery gate; delivered-file capture)
 services/artifact-sidecar/sidecar.py                state, pipeline, atomic outbox, holds
 services/artifact-sidecar/main.py                   runtime + CLI (status/hold-*/retry-outbox)
-services/artifact-sidecar/test_sidecar.py           120 adversarial + contract + e2e tests
+services/artifact-sidecar/test_sidecar.py           149 adversarial + contract + e2e tests
 services/artifact-sidecar/test_broker.py            isolated-broker runtime tests (docker nats)
 services/artifact-vault-projector/main.py           projector runtime (explicit mapping, holds)
 ops/smoketest/smoketest-project-artifact-contracts.py  mise task (chained)
@@ -226,8 +268,8 @@ ops/live/artifact-live-probe.py                     SYNTHETIC live integration p
 ## Test commands
 
 ```
-python3 services/artifact-sidecar/test_sidecar.py    # 120 tests, offline
-python3 services/artifact-sidecar/test_broker.py    # 4 tests, isolated docker nats
+python3 services/artifact-sidecar/test_sidecar.py    # 149 tests, offline
+python3 services/artifact-sidecar/test_broker.py    # 6 tests, isolated docker nats
 mise run smoketest:project-artifact-contracts       # same suite as mise task
 python3 ops/systemd/render-install.py --dry-run     # render + verify units, print only
 ```

@@ -2108,5 +2108,391 @@ class BackfillSinceTests(unittest.TestCase):
         self.assertEqual(c.ack_policy.value, "explicit")
 
 
+TESTDATA = HERE / "testdata"
+
+
+def real_hermes_write_no_arguments() -> dict:
+    """The REAL Hermes write_file event shape from Candystore (id 9c23e566,
+    2026-10-16): NO data.arguments, inputs at data.payload.tool_input, cwd
+    ~/.hermes. Wrapped into a bus envelope; `data` is verbatim."""
+    row = json.loads((TESTDATA / "hermes_write_file_no_arguments.real.json").read_text())
+    return {
+        "specversion": "1.0",
+        "subject": "bloodbank.evt.agent.tool.completed",
+        "datacontenttype": "application/json",
+        **row,
+    }
+
+
+def real_activity_recorded() -> dict:
+    """The REAL james-brennan external activity report (id d36da557,
+    2026-10-17) from Candystore, `data` verbatim, wrapped into its envelope."""
+    row = json.loads((TESTDATA / "activity_recorded_external.real.json").read_text())
+    return {
+        "specversion": "1.0",
+        "subject": "bloodbank.evt.project.activity.recorded",
+        "datacontenttype": "application/json",
+        "ordering_key": f"project:{row['data']['project']['slug']}",
+        "causationid": None,
+        **row,
+    }
+
+
+class HermesWriteShapeFallbackTests(unittest.TestCase):
+    """GAP 1: real Hermes write_file events carry the inputs at
+    data.payload.tool_input and NO data.arguments."""
+
+    def test_real_event_has_the_documented_shape(self):
+        env = real_hermes_write_no_arguments()
+        self.assertNotIn("arguments", env["data"])
+        self.assertIn("path", env["data"]["payload"]["tool_input"])
+        self.assertIn("content", env["data"]["payload"]["tool_input"])
+
+    def test_tool_arguments_prefers_arguments_then_native_tool_input(self):
+        native = {"payload": {"tool_input": {"path": "/a.md", "content": "x"}}}
+        self.assertEqual(discovery.tool_arguments(native), {"path": "/a.md", "content": "x"})
+        both = {"arguments": {"file_path": "/b.md", "content": "y"}, **native}
+        self.assertEqual(discovery.tool_arguments(both)["file_path"], "/b.md")
+        empty_args = {"arguments": {}, **native}
+        self.assertEqual(discovery.tool_arguments(empty_args)["path"], "/a.md")
+        self.assertIsNone(discovery.tool_arguments({"payload": {"tool_input": "no"}}))
+        self.assertIsNone(discovery.tool_arguments({}))
+
+    def test_real_event_is_seen_as_a_write_but_refused_without_a_signal(self):
+        # wd ~/.hermes, a .json under no producer output tree, no marker: the
+        # fallback now READS the write (so it is counted as 'skipped', not
+        # 'unsupported'), and the delivery gate still refuses it.
+        env = real_hermes_write_no_arguments()
+        self.assertIsNone(discovery.from_tool_completed(env))
+        self.assertTrue(discovery.write_with_content_but_refused(env))
+        self.assertFalse(discovery.write_like_but_unsupported(env))
+
+    def test_fallback_qualifies_when_attributable_with_a_real_signal(self):
+        h = Harness()
+        self.addCleanup(h.close)
+        repo = h.tmp / "repos" / "bb"
+        env = real_hermes_write_no_arguments()
+        path = repo / "_bmad_output" / "planning" / "mapping.md"
+        env["data"]["payload"]["tool_input"]["path"] = str(path)
+        env["data"]["working_directory"] = str(repo)
+        env["data"]["payload"]["cwd"] = str(repo)
+        [d] = h.sidecar.process(env)
+        self.assertEqual(d.kind, "enqueued", d.detail)
+        [event] = h.drain()
+        validate_envelope(event)
+        self.assertEqual(event["data"]["origin"]["basis"], "agent_tool_write")
+        self.assertEqual(event["data"]["origin"]["session"]["cli"], "hermes")
+        self.assertEqual(event["data"]["project"]["slug"], "bb")
+
+    def test_real_event_with_hermes_cwd_does_not_attribute(self):
+        # The honest outcome for the unfixed cwd (GAP 2): held/skipped, never
+        # guessed to a project.
+        h = Harness()
+        self.addCleanup(h.close)
+        env = real_hermes_write_no_arguments()
+        env["data"]["payload"]["tool_input"]["path"] = "/home/delorenj/.hermes/x/_bmad_output/a.md"
+        env["data"]["working_directory"] = "/home/delorenj/.hermes"
+        dispositions = h.sidecar.process(env)
+        self.assertTrue(all(d.kind in ("skipped", "held") for d in dispositions), dispositions)
+        self.assertEqual(h.drain(), [])
+
+    def test_neither_shape_is_unsupported_write(self):
+        env = real_hermes_write_no_arguments()
+        env["data"]["payload"].pop("tool_input")
+        self.assertIsNone(discovery.from_tool_completed(env))
+        self.assertTrue(discovery.write_like_but_unsupported(env))
+
+
+def _activity_world(test: unittest.TestCase, *, enroll_real_slug: bool = True) -> Harness:
+    h = Harness()
+    test.addCleanup(h.close)
+    if enroll_real_slug:
+        payload = registry_payload(h.tmp)
+        payload["projects"]["james-brennan"] = {
+            "name": "James Brennan",
+            "slug": "james-brennan",
+            "project_id": "james-brennan",
+            "repo_path": str(h.tmp / "repos" / "james-brennan"),
+            "status": "planned",
+        }
+        payload["__registry_status"]["james-brennan"] = {"status": "ok"}
+        (h.tmp / "repos" / "james-brennan").mkdir(parents=True)
+        h.sidecar.registry = ProjectRegistry.from_payload(payload)
+    return h
+
+
+class ActivityReportCaptureTests(unittest.TestCase):
+    """GAP 7: bloodbank.project.activity.recorded -> project artifact."""
+
+    def test_real_report_becomes_markdown_artifact_with_html_twin(self):
+        h = _activity_world(self)
+        env = real_activity_recorded()
+        [d] = h.sidecar.process(env)
+        self.assertEqual(d.kind, "enqueued", d.detail)
+        self.assertEqual(d.revision, 1)
+        [event] = h.drain()
+        validate_envelope(event)  # full schema + invariants incl. new basis rule
+        data = event["data"]
+        self.assertEqual(data["origin"]["basis"], "project_activity_report")
+        self.assertEqual(
+            data["origin"]["source_event"],
+            {"type": "bloodbank.project.activity.recorded", "id": env["id"], "time": env["time"]},
+        )
+        self.assertEqual(event["causationid"], env["id"])
+        self.assertEqual(data["origin"]["created_at"], env["time"])
+        self.assertEqual(data["project"], {"slug": "james-brennan", "name": "James Brennan"})
+        self.assertEqual(event["ordering_key"], "project:james-brennan")
+        art = data["artifact"]
+        self.assertEqual(art["media_type"], "text/markdown")
+        self.assertEqual(art["title"], "activity-external-20261017T0734Z.md")
+        self.assertEqual(art["render"]["media_type"], "text/html")
+        self.assertNotEqual(art["render"]["sha256"], art["sha256"])
+        self.assertIn("dry_run=true", data["origin"]["qualification_reason"])
+        # Bytes are the report's own, content-addressed in the store:
+        report = env["data"]["report"]
+        self.assertEqual(get_blob(h.store, art["content"]["ref"]), report["markdown"].encode())
+        self.assertEqual(get_blob(h.store, art["render"]["content"]["ref"]), report["html"].encode())
+        self.assertEqual(art["render"]["bytes"], len(report["html"].encode()))
+
+    def test_unenrolled_slug_is_skipped_not_held_or_persisted(self):
+        h = _activity_world(self, enroll_real_slug=False)
+        [d] = h.sidecar.process(real_activity_recorded())
+        self.assertEqual(d.kind, "skipped")
+        self.assertIn("not enrolled", d.detail)
+        self.assertEqual(h.state.holds(), [])
+        self.assertEqual(h.drain(), [])
+
+    def test_replay_is_duplicate_and_rerender_chains_a_revision(self):
+        h = _activity_world(self)
+        env = real_activity_recorded()
+        [d1] = h.sidecar.process(env)
+        # Same event replayed: ledger hit.
+        [again] = h.sidecar.process(env)
+        self.assertEqual(again.kind, "duplicate")
+        # Same window re-rendered (new event id, new markdown): revision 2,
+        # SAME artifact id.
+        rerender = json.loads(json.dumps(env))
+        rerender["id"] = str(uuid.uuid4())
+        rerender["time"] = "2026-10-17T08:10:00Z"
+        rerender["data"]["report"]["markdown"] += "\n\nCorrection: nothing else changed.\n"
+        [d2] = h.sidecar.process(rerender)
+        self.assertEqual(d2.kind, "enqueued", d2.detail)
+        self.assertEqual(d2.artifact_id, d1.artifact_id)
+        self.assertEqual(d2.revision, 2)
+        # Identical bytes under a new event id: no new revision.
+        same = json.loads(json.dumps(rerender))
+        same["id"] = str(uuid.uuid4())
+        [d3] = h.sidecar.process(same)
+        self.assertEqual(d3.kind, "duplicate")
+
+    def test_identity_is_project_audience_window(self):
+        h = _activity_world(self)
+        env = real_activity_recorded()
+        [base] = h.sidecar.process(env)
+        other_window = json.loads(json.dumps(env))
+        other_window["id"] = str(uuid.uuid4())
+        other_window["data"]["window"]["start"] = "2026-10-17T07:34:04Z"
+        other_window["data"]["window"]["end"] = "2026-10-18T07:34:04Z"
+        [w] = h.sidecar.process(other_window)
+        other_audience = json.loads(json.dumps(env))
+        other_audience["id"] = str(uuid.uuid4())
+        other_audience["data"]["audience"] = "internal"
+        other_audience["data"]["sources"] = {}
+        other_audience["data"]["tickets"] = []
+        [a] = h.sidecar.process(other_audience)
+        self.assertEqual(len({base.artifact_id, w.artifact_id, a.artifact_id}), 3)
+        self.assertEqual((w.revision, a.revision), (1, 1))
+
+    def test_html_and_raw_fallbacks_when_markdown_is_absent(self):
+        env = real_activity_recorded()
+        no_md = json.loads(json.dumps(env))
+        no_md["data"]["report"]["markdown"] = ""
+        [c] = discovery.from_activity_recorded(no_md)
+        self.assertEqual(c.capture.media_type, "text/html")
+        self.assertIsNone(c.capture.render)
+        raw_only = json.loads(json.dumps(no_md))
+        raw_only["data"]["report"]["html"] = ""
+        [c] = discovery.from_activity_recorded(raw_only)
+        self.assertEqual(c.capture.media_type, "text/plain")
+        nothing = json.loads(json.dumps(raw_only))
+        nothing["data"]["report"]["raw"] = ""
+        self.assertEqual(discovery.from_activity_recorded(nothing), [])
+
+    def test_malformed_report_events_yield_nothing(self):
+        env = real_activity_recorded()
+        for mutate in (
+            lambda e: e["data"].pop("project"),
+            lambda e: e["data"]["project"].update(slug="Bad Slug!"),
+            lambda e: e["data"].update(audience="public"),
+            lambda e: e["data"].pop("window"),
+            lambda e: e["data"].pop("report"),
+            lambda e: e.update(data="nope"),
+        ):
+            bad = json.loads(json.dumps(env))
+            mutate(bad)
+            self.assertEqual(discovery.from_activity_recorded(bad), [])
+
+    def test_activity_event_never_reads_working_directory(self):
+        # Attribution is by the event's own slug; a bogus cwd cannot move it.
+        h = _activity_world(self)
+        env = real_activity_recorded()
+        env["data"]["working_directory"] = str(h.tmp / "repos" / "bb")
+        [d] = h.sidecar.process(env)
+        [event] = h.drain()
+        self.assertEqual(event["data"]["project"]["slug"], "james-brennan")
+
+    def test_basis_and_source_type_are_bound_by_the_validator(self):
+        h = _activity_world(self)
+        h.sidecar.process(real_activity_recorded())
+        [event] = h.drain()
+        wrong_source = json.loads(json.dumps(event))
+        wrong_source["data"]["origin"]["source_event"]["type"] = "bloodbank.agent.tool.completed"
+        with self.assertRaises(ContractViolation):
+            validate_envelope(wrong_source)
+        wrong_basis = json.loads(json.dumps(event))
+        wrong_basis["data"]["origin"]["basis"] = "agent_tool_write"
+        with self.assertRaises(ContractViolation):
+            validate_envelope(wrong_basis)
+        # An operator resolution of a report-derived hold stays legal:
+        resolved = json.loads(json.dumps(event))
+        resolved["data"]["origin"]["basis"] = "operator_resolution"
+        validate_envelope(resolved)
+
+    def test_fixture_validates(self):
+        fixtures = json.loads((REPO / "ops" / "fixtures" / "project-contracts.v1.json").read_text())
+        payload = fixtures["bloodbank.project.artifact.created:project_activity_report"]
+        from core.envelope import build_envelope
+
+        env = build_envelope(
+            ce_type="bloodbank.project.artifact.created",
+            kind="event",
+            source="urn:33god:service:artifact-sidecar",
+            producer="artifact-sidecar",
+            service="artifact-sidecar",
+            actor={"type": "service", "agent_id": "bloodbank.service.artifact-sidecar",
+                   "cli": None, "provider": None, "model": None},
+            correlation_id=str(uuid.uuid4()),
+            causation_id=payload["origin"]["source_event"]["id"],
+            data=payload,
+            ordering_key=f"project:{payload['project']['slug']}",
+            validate=True,
+        )
+        self.assertEqual(env["data"]["origin"]["basis"], "project_activity_report")
+
+    def test_projector_writes_report_and_html_twin_to_mapped_vault(self):
+        h = _activity_world(self)
+        h.sidecar.process(real_activity_recorded())
+        [event] = h.drain()
+        vault = h.tmp / "vault"
+        writer = projector_main.VaultWriter(vault, {"james-brennan": "Projects/james-brennan"})
+        pstate = projector_main.ProjectorState(h.tmp / "proj.sqlite3")
+        self.addCleanup(pstate.close)
+        proj = projector_main.Projector(
+            state=pstate, writer=writer, store_root=h.store, tz="America/New_York"
+        )
+        result = proj.handle(event)
+        self.assertEqual(result["kind"], "projected", result)
+        folder = vault / "Projects" / "james-brennan" / "2026-10-17"
+        md = folder / "activity-external-20261017T0734Z.md"
+        html = folder / "activity-external-20261017T0734Z.render.html"
+        self.assertTrue(md.exists() and html.exists(), sorted(p.name for p in folder.iterdir()))
+        report = real_activity_recorded()["data"]["report"]
+        self.assertEqual(md.read_text(), report["markdown"])
+        self.assertEqual(html.read_text(), report["html"])
+
+
+class ActivityRuntimeTests(unittest.TestCase):
+    """Runtime wiring for the second durable (activity.recorded)."""
+
+    def _world(self):
+        import importlib.util
+
+        h = Harness()
+        self.addCleanup(h.close)
+        spec = importlib.util.spec_from_file_location(
+            "artifact_sidecar_main_activity", HERE / "main.py"
+        )
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return h, mod
+
+    def test_activity_subject_is_accepted_published_and_acked(self):
+        h, mod = self._world()
+        payload = registry_payload(h.tmp)
+        payload["projects"]["james-brennan"] = {
+            "name": "James Brennan", "slug": "james-brennan",
+            "project_id": "james-brennan",
+            "repo_path": str(h.tmp / "repos" / "james-brennan"), "status": "planned",
+        }
+        payload["__registry_status"]["james-brennan"] = {"status": "ok"}
+        (h.tmp / "repos" / "james-brennan").mkdir(parents=True)
+        h.sidecar.registry = ProjectRegistry.from_payload(payload)
+        runtime = mod.Runtime(h.sidecar)
+        runtime._js = FakeJS()
+        msg = FakeMsg("bloodbank.evt.project.activity.recorded", real_activity_recorded())
+        asyncio.run(runtime._handle(msg))
+        self.assertTrue(msg._acked)
+        [(subject, body, headers)] = runtime._js.published
+        self.assertEqual(subject, "bloodbank.evt.project.artifact.created")
+        self.assertEqual(json.loads(body)["data"]["origin"]["basis"], "project_activity_report")
+
+    def test_activity_subject_with_foreign_type_is_acked_unprocessed(self):
+        h, mod = self._world()
+        runtime = mod.Runtime(h.sidecar)
+        runtime._js = FakeJS()
+        env = real_activity_recorded()
+        env["type"] = "bloodbank.agent.tool.completed"
+        msg = FakeMsg("bloodbank.evt.project.activity.recorded", env)
+        asyncio.run(runtime._handle(msg))
+        self.assertTrue(msg._acked)
+        self.assertEqual(runtime._js.published, [])
+
+    def test_unenrolled_activity_report_is_acked_not_naked(self):
+        h, mod = self._world()
+        runtime = mod.Runtime(h.sidecar)
+        runtime._js = FakeJS()
+        msg = FakeMsg("bloodbank.evt.project.activity.recorded", real_activity_recorded())
+        asyncio.run(runtime._handle(msg))
+        self.assertTrue(msg._acked and not msg._naked)
+
+    def test_concurrent_drains_publish_each_row_once(self):
+        h, mod = self._world()
+        runtime = mod.Runtime(h.sidecar)
+        runtime._js = FakeJS()
+        env = tool_completed_envelope(
+            path=str(h.tmp / "repos" / "bb" / "docs" / "c.md"), content="c",
+            working_directory=str(h.tmp / "repos" / "bb"),
+        )
+        h.sidecar.process(env)
+
+        async def both():
+            return await asyncio.gather(runtime._drain_outbox(), runtime._drain_outbox())
+
+        results = asyncio.run(both())
+        self.assertEqual(len(runtime._js.published), 1)
+        self.assertEqual(sorted(results), [0, 1])
+
+    def test_activity_consumer_config_is_its_own_durable_and_subject(self):
+        _, mod = self._world()
+        from nats.js.api import DeliverPolicy
+
+        since = mod.parse_backfill_since("2026-10-16T18:17:21Z")
+        cfg = mod.build_consumer_config(
+            "d-activity", backfill_since=since, subjects=mod.ACTIVITY_SUBJECTS
+        )
+        self.assertEqual(cfg.filter_subject, "bloodbank.evt.project.activity.recorded")
+        self.assertFalse(cfg.filter_subjects)
+        self.assertEqual(cfg.deliver_policy, DeliverPolicy.BY_START_TIME)
+        # The primary durable's config is untouched (two filter subjects):
+        primary = mod.build_consumer_config("d")
+        self.assertEqual(
+            primary.filter_subjects,
+            ["bloodbank.evt.agent.tool.completed", "bloodbank.evt.conversation.turn.completed"],
+        )
+        self.assertNotIn("bloodbank.evt.project.activity.recorded", primary.filter_subjects)
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2, warnings="error")

@@ -2,7 +2,8 @@
 
 Consumes bloodbank.evt.agent.tool.completed and
 bloodbank.conversation.turn.completed from BLOODBANK_EVENTS with an
-explicit-ack durable consumer, captures qualifying artifact bytes into the
+explicit-ack durable consumer (plus bloodbank.evt.project.activity.recorded
+on a second durable, <durable>-activity),  captures qualifying artifact bytes into the
 content-addressed store, resolves the project through the canonical pjangler
 registry, validates and enqueues bloodbank.project.artifact.created events,
 and publishes them from the durable outbox through the REAL awaited
@@ -38,6 +39,11 @@ Environment:
   ARTIFACT_SIDECAR_REGISTRY_FILE optional JSON file snapshot of the registry
   ARTIFACT_SIDECAR_REGISTRY_REFRESH_S registry re-fetch period, default 300 (0 disables)
   ARTIFACT_SIDECAR_DURABLE      default bloodbank-artifact-sidecar
+  ARTIFACT_SIDECAR_ACTIVITY_DURABLE  default <durable>-activity; "" disables
+                                the activity-report consumer
+  ARTIFACT_SIDECAR_ACTIVITY_BACKFILL / _BACKFILL_SINCE  same semantics as the
+                                two below, for the activity durable only;
+                                each falls back to the primary setting.
   ARTIFACT_SIDECAR_BACKFILL     "1" => new durable created with DeliverPolicy.ALL
   ARTIFACT_SIDECAR_BACKFILL_SINCE RFC3339 timestamp (must carry a zone, e.g.
                                 2026-10-16T18:17:21Z) => new durable created
@@ -103,6 +109,11 @@ SOURCE_SUBJECTS = (
     "bloodbank.evt.agent.tool.completed",
     "bloodbank.evt.conversation.turn.completed",
 )
+# Activity reports ride a SECOND durable (own delivery policy and backfill
+# start). Changing the filter subjects of the live durable would not backfill
+# the new subject (the cursor is already past it) and risks the proven
+# consumer; a separate durable leaves it untouched.
+ACTIVITY_SUBJECTS = ("bloodbank.evt.project.activity.recorded",)
 
 # Disposition kinds that are durable terminal states for the source message:
 # the capture is committed to the store and its outcome is durably recorded
@@ -131,7 +142,11 @@ def parse_backfill_since(raw: str) -> datetime | None:
 
 
 def build_consumer_config(
-    durable: str, *, backfill: bool = False, backfill_since: datetime | None = None
+    durable: str,
+    *,
+    backfill: bool = False,
+    backfill_since: datetime | None = None,
+    subjects: tuple[str, ...] = SOURCE_SUBJECTS,
 ) -> ConsumerConfig:
     """Config for a NEW durable. since > backfill(ALL) > NEW."""
     kwargs: dict[str, Any] = {}
@@ -142,16 +157,25 @@ def build_consumer_config(
         policy = DeliverPolicy.ALL
     else:
         policy = DeliverPolicy.NEW
+    # One subject is a plain filter_subject; several use filter_subjects.
+    filter_kwargs: dict[str, Any] = (
+        {"filter_subject": subjects[0]} if len(subjects) == 1
+        else {"filter_subjects": list(subjects)}
+    )
     return ConsumerConfig(
         durable_name=durable,
-        description="Project artifact discovery sidecar (tool/turn source events)",
+        description=(
+            "Project artifact discovery sidecar ("
+            + ("activity report" if subjects == ACTIVITY_SUBJECTS else "tool/turn")
+            + " source events)"
+        ),
         deliver_policy=policy,
         ack_policy=AckPolicy.EXPLICIT,
         ack_wait=30,
         max_deliver=10,
-        filter_subjects=list(SOURCE_SUBJECTS),
         max_waiting=1,
         max_ack_pending=32,
+        **filter_kwargs,
         **kwargs,
     )
 
@@ -193,24 +217,24 @@ class Runtime:
         self.sidecar = sidecar
         self._nc: Any = None
         self._js: Any = None
+        self._sub: Any = None
+        self._activity_sub: Any = None
         self._stop = asyncio.Event()
+        # Two consumers share one outbox: drains are serialized so a row is
+        # never published twice concurrently (single-threaded flag, no Lock).
+        self._draining = False
+        self._drain_again = False
+        self._last_drain = time.monotonic()
+        self._last_refresh = time.monotonic()
 
-    async def connect(
+    async def _bind(
         self,
-        nats_url: str,
         durable: str,
+        subjects: tuple[str, ...],
         *,
-        backfill: bool = False,
-        backfill_since: datetime | None = None,
-    ) -> None:
-        self._nc = await nats.connect(
-            nats_url,
-            name=f"bloodbank-{durable}",
-            connect_timeout=5,
-            max_reconnect_attempts=-1,  # reconnect forever, like the router
-            reconnect_time_wait=2,
-        )
-        self._js = self._nc.jetstream()
+        backfill: bool,
+        backfill_since: datetime | None,
+    ) -> Any:
         try:
             await self._js.consumer_info(EVENTS_STREAM, durable)
             existing = True
@@ -222,10 +246,11 @@ class Runtime:
         config = None
         if not existing:
             config = build_consumer_config(
-                durable, backfill=backfill, backfill_since=backfill_since
+                durable, backfill=backfill, backfill_since=backfill_since,
+                subjects=subjects,
             )
-        self._sub = await self._js.pull_subscribe(
-            SOURCE_SUBJECTS[0],
+        sub = await self._js.pull_subscribe(
+            subjects[0],
             durable=durable,
             stream=EVENTS_STREAM,
             config=config,
@@ -241,6 +266,37 @@ class Runtime:
                 else "NEW" if not existing else "bound"
             ),
         )
+        return sub
+
+    async def connect(
+        self,
+        nats_url: str,
+        durable: str,
+        *,
+        backfill: bool = False,
+        backfill_since: datetime | None = None,
+        activity_durable: str | None = None,
+        activity_backfill: bool = False,
+        activity_backfill_since: datetime | None = None,
+    ) -> None:
+        self._nc = await nats.connect(
+            nats_url,
+            name=f"bloodbank-{durable}",
+            connect_timeout=5,
+            max_reconnect_attempts=-1,  # reconnect forever, like the router
+            reconnect_time_wait=2,
+        )
+        self._js = self._nc.jetstream()
+        self._sub = await self._bind(
+            durable, SOURCE_SUBJECTS, backfill=backfill, backfill_since=backfill_since
+        )
+        if activity_durable:
+            self._activity_sub = await self._bind(
+                activity_durable,
+                ACTIVITY_SUBJECTS,
+                backfill=activity_backfill,
+                backfill_since=activity_backfill_since,
+            )
 
     async def aclose(self) -> None:
         """Close the transport cleanly (SIGTERM path and tests)."""
@@ -268,6 +324,28 @@ class Runtime:
         log.debug("published %s -> seq %s", envelope["id"], getattr(ack, "seq", "?"))
 
     async def _drain_outbox(self) -> int:
+        """Serialized outbox drain (two consumers share one outbox).
+
+        A drain requested while one is running is not dropped: it sets a flag
+        and the running drain loops once more, so a row enqueued by the other
+        consumer mid-drain is still published promptly.
+        """
+        if self._draining:
+            self._drain_again = True
+            return 0
+        self._draining = True
+        published = 0
+        try:
+            while True:
+                self._drain_again = False
+                published += await self._drain_outbox_once()
+                if not self._drain_again:
+                    break
+        finally:
+            self._draining = False
+        return published
+
+    async def _drain_outbox_once(self) -> int:
         """Publish due outbox rows through JetStream; returns published count.
 
         Publication errors are recorded on the row (bounded attempts,
@@ -309,6 +387,7 @@ class Runtime:
         expected = {
             "bloodbank.evt.agent.tool.completed": "bloodbank.agent.tool.completed",
             "bloodbank.evt.conversation.turn.completed": "bloodbank.conversation.turn.completed",
+            "bloodbank.evt.project.activity.recorded": "bloodbank.project.activity.recorded",
         }.get(msg.subject)
         if expected and envelope.get("type") != expected:
             log.warning(
@@ -370,25 +449,30 @@ class Runtime:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._stop.set)
+        self._last_drain = time.monotonic()
+        self._last_refresh = time.monotonic()
+        subs = [s for s in (self._sub, self._activity_sub) if s is not None]
+        await asyncio.gather(*(self._consume(sub) for sub in subs))
+
+    async def _consume(self, sub: Any) -> None:
+        """Fetch/handle loop for one durable; idle duties are shared."""
         retry_period = float(_env("ARTIFACT_SIDECAR_OUTBOX_RETRY_S", "5"))
         refresh_period = float(_env("ARTIFACT_SIDECAR_REGISTRY_REFRESH_S", "300"))
-        last_drain = time.monotonic()
-        last_refresh = time.monotonic()
         while not self._stop.is_set():
             try:
-                msgs = await self._sub.fetch(batch=8, timeout=2)
+                msgs = await sub.fetch(batch=8, timeout=2)
             except TimeoutError:
                 # Idle timer: outbox retries must not depend on new traffic.
                 now = time.monotonic()
-                if now - last_drain >= retry_period:
+                if now - self._last_drain >= retry_period:
                     try:
                         await self._drain_outbox()
                     except Exception as exc:  # noqa: BLE001
                         log.warning("idle outbox drain failed: %s", exc)
-                    last_drain = now
-                if refresh_period > 0 and now - last_refresh >= refresh_period:
+                    self._last_drain = now
+                if refresh_period > 0 and now - self._last_refresh >= refresh_period:
                     await self._refresh_registry()
-                    last_refresh = now
+                    self._last_refresh = now
                 continue
             except Exception as exc:  # noqa: BLE001 - reconnect storms etc.
                 if self._stop.is_set():
@@ -396,7 +480,7 @@ class Runtime:
                 log.warning("fetch failed: %s: %s", type(exc).__name__, exc)
                 await asyncio.sleep(2)
                 continue
-            last_drain = time.monotonic()
+            self._last_drain = time.monotonic()
             for msg in msgs:
                 await self._handle(msg)
 
@@ -451,10 +535,30 @@ async def amain(args: argparse.Namespace) -> int:
         durable = _env("ARTIFACT_SIDECAR_DURABLE", "bloodbank-artifact-sidecar")
         backfill = _env("ARTIFACT_SIDECAR_BACKFILL", "") == "1"
         backfill_since = parse_backfill_since(_env("ARTIFACT_SIDECAR_BACKFILL_SINCE", ""))
+        # Activity-report durable: own name, own first-creation backfill. Its
+        # delivery env falls back to the primary durable's so one operator
+        # setting (the drop-in's BACKFILL_SINCE) covers both; set
+        # ARTIFACT_SIDECAR_ACTIVITY_DURABLE="" to disable the consumer.
+        activity_durable = _env("ARTIFACT_SIDECAR_ACTIVITY_DURABLE", f"{durable}-activity")
+        activity_backfill = (
+            _env("ARTIFACT_SIDECAR_ACTIVITY_BACKFILL", _env("ARTIFACT_SIDECAR_BACKFILL", "")) == "1"
+        )
+        activity_since_raw = _env("ARTIFACT_SIDECAR_ACTIVITY_BACKFILL_SINCE", "")
+        activity_backfill_since = (
+            parse_backfill_since(activity_since_raw)
+            if activity_since_raw.strip()
+            else backfill_since
+        )
         runtime = Runtime(sidecar)
-        log.info("connecting %s durable=%s subjects=%s", nats_url, durable, SOURCE_SUBJECTS)
+        log.info(
+            "connecting %s durable=%s subjects=%s activity_durable=%s",
+            nats_url, durable, SOURCE_SUBJECTS, activity_durable or "(disabled)",
+        )
         await runtime.connect(
-            nats_url, durable, backfill=backfill, backfill_since=backfill_since
+            nats_url, durable, backfill=backfill, backfill_since=backfill_since,
+            activity_durable=activity_durable or None,
+            activity_backfill=activity_backfill,
+            activity_backfill_since=activity_backfill_since,
         )
         # Crash catch-up: publish anything the outbox still holds through the
         # REAL transport (awaited JetStream publish, Nats-Msg-Id dedupe).

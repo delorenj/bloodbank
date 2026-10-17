@@ -1,0 +1,65 @@
+{
+ "actor": {
+  "agent_id": "bloodbank.skill.activity-report",
+  "cli": null,
+  "model": null,
+  "provider": null,
+  "type": "service"
+ },
+ "correlationid": "5969f627-64d9-47ed-a36f-44e9cb4b2ca4",
+ "data": {
+  "audience": "external",
+  "generator": {
+   "dry_run": true,
+   "model": "claude-opus-5",
+   "run_id": "5969f627-64d9-47ed-a36f-44e9cb4b2ca4",
+   "skill": "activity-report",
+   "skill_version": "0.1.3"
+  },
+  "project": {
+   "board_id": "a8a12be1-b3ab-44f4-ab24-abe8829aeb72",
+   "identifier": "JIMB",
+   "name": "James Brennan",
+   "repos": [
+    "james-brennan",
+    "client-portal"
+   ],
+   "slug": "james-brennan",
+   "workspace": "automaticai"
+  },
+  "report": {
+   "html": "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"color-scheme\" content=\"light dark\">\n<title>James Brennan \u00b7 App messages on your Calls screen and texted sign-in codes are built; a verdict for every recording is next</title>\n<style>\n/* activity-report: the one stylesheet, inlined into every rendered report.\n   Tokens from intelliforia team-update/references/design-system.md.\n   Light and dark via prefers-color-scheme; teal is the only accent; status\n   colour lives in the pills, never in body text; AA contrast for --ink on\n   --panel in both themes. No scripts, no external assets, no storage. */\n:root{\n  color-scheme:light dark;\n  --bg:#f5f7f9;--panel:#ffffff;--ink:#13212f;--muted:#586a7a;--line:#e1e7ed;\n  --accent:#0e7c86;--accent-ink:#0a5a62;--accent-bg:#e6f3f4;\n  --shipped:#2f9e5f;--review:#bd8317;--progress:#5877a8;--risk:#c0472f;\n  --shipped-bg:#e9f5ee;--review-bg:#f8f0dd;--progress-bg:#e9eef7;--risk-bg:#f8e9e5;\n  --radius:11px;\n  --shadow:0 1px 2px rgba(19,33,47,.05),0 6px 22px rgba(19,33,47,.06);\n  --sans:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;\n  --mono:ui-monospace,\"SF Mono\",\"JetBrains Mono\",Menlo,Consolas,monospace;\n}\n@media (prefers-color-scheme:dark){\n  :root{\n    --bg:#0c141d;--panel:#121d28;--ink:#e6edf4;--muted:#94a6b7;--line:#233543;\n    --accent:#3fd0dd;--accent-ink:#7fe3ec;--accent-bg:#12303a;\n    --shipped:#48c581;--review:#e0a83a;--progress:#82a0d2;--risk:#e56a50;\n    --shipped-bg:#143324;--review-bg:#3a2c10;--progress-bg:#1c2a44;--risk-bg:#3d1c14;\n    --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 22px rgba(0,0,0,.35);\n  }\n}\n*{box-sizing:border-box}\nhtml{background:var(--bg)}\nbody{margin:0;padding:32px 20px 48px;background:var(--bg);color:var(--ink);\n  font:15px/1.55 var(--sans);-webkit-text-size-adjust:100%}\n.wrap{max-width:760px;margin:0 auto}\n.masthead{margin:0 0 22px}\n.eyebrow{margin:0 0 6px;font:600 12px/1.4 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--accent-ink)}\nh1{margin:0 0 10px;font-size:28px;line-height:1.2;letter-spacing:-.01em;font-weight:800}\n.meta{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;color:var(--muted);font-size:13.5px}\n.pill{display:inline-block;padding:2px 10px;border-radius:999px;font:600 11.5px/1.7 var(--mono);\n  letter-spacing:.06em;text-transform:uppercase;border:1px solid transparent}\n.pill.external{color:var(--accent-ink);background:var(--accent-bg);border-color:var(--accent)}\n.pill.internal{color:var(--muted);background:var(--panel);border-color:var(--line)}\n.sec{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);\n  box-shadow:var(--shadow);padding:18px 22px;margin:0 0 14px}\n.sec h2{margin:0 0 12px;font-size:12.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;\n  color:var(--muted);display:flex;align-items:center;gap:12px}\n.sec h2::after{content:\"\";flex:1;height:1px;background:var(--line)}\n.sec p{margin:0 0 10px}\n.sec p:last-child,.sec ul:last-child,.sec ol:last-child,.sec dl:last-child,.sec .metrics:last-child{margin-bottom:0}\n.sec ul{margin:0 0 10px;padding-left:22px}\n.sec li{margin:0 0 6px}\n.sec li::marker{color:var(--accent)}\nstrong{font-weight:700;color:var(--ink)}\n.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 10px}\n.metric{padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}\n.metric b{display:block;font:700 24px/1.1 var(--mono);letter-spacing:-.02em;color:var(--ink)}\n.metric span{display:block;margin-top:4px;font:600 11px/1.4 var(--mono);letter-spacing:.08em;\n  text-transform:uppercase;color:var(--muted)}\ndl.kv{margin:0 0 10px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 18px}\ndl.kv dt{margin:0;font:600 11px/1.6 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);align-self:center}\ndl.kv dd{margin:0;justify-self:end;font:600 14px/1.6 var(--mono);font-variant-numeric:tabular-nums}\nol.timeline{list-style:none;margin:0 0 10px;padding:0;position:relative}\nol.timeline::before{content:\"\";position:absolute;top:8px;bottom:8px;left:56px;width:1px;background:var(--line)}\nol.timeline li{display:grid;grid-template-columns:48px 18px minmax(0,1fr);gap:0 8px;align-items:baseline;margin:0 0 8px}\nol.timeline .at{font:600 12px/1.6 var(--mono);letter-spacing:.04em;color:var(--muted);font-variant-numeric:tabular-nums}\nol.timeline .dot{position:relative;z-index:1;justify-self:center;top:-2px;width:8px;height:8px;border-radius:50%;\n  background:var(--accent);box-shadow:0 0 0 4px var(--panel)}\nol.timeline .what{font-size:14px;line-height:1.55}\n.foot{margin:26px 0 0;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font:12.5px/1.6 var(--mono)}\n@media (max-width:700px){\n  body{padding:20px 12px 36px}\n  h1{font-size:23px}\n  .sec{padding:14px 15px}\n  .metrics{grid-template-columns:1fr 1fr}\n  ol.timeline::before{left:48px}\n  ol.timeline li{grid-template-columns:40px 18px minmax(0,1fr)}\n}\n@media print{\n  html,body{background:#fff;color:#000}\n  body{padding:0;font-size:12pt}\n  .wrap{max-width:none}\n  .sec{box-shadow:none;border-color:#bbb;break-inside:avoid;page-break-inside:avoid}\n  .pill{border-color:#000;color:#000;background:none}\n  .metric{background:none;border-color:#bbb}\n  a{color:#000;text-decoration:none}\n}\n</style>\n</head>\n<body>\n<main class=\"wrap\">\n<header class=\"masthead\">\n<p class=\"eyebrow\">James Brennan \u00b7 Client update</p>\n<h1>App messages on your Calls screen and texted sign-in codes are built; a verdict for every recording is next</h1>\n<p class=\"meta\"><span class=\"pill external\">External</span><span>16 Oct 2026 03:34 to 17 Oct 2026 03:34 EDT</span><span>24h</span></p>\n</header>\n<section class=\"sec\">\n<p><strong>Messages from the technician app are built to show on your Calls screen as App calls, next to phone calls.</strong> That, texted sign-in codes and a sturdier path for app messages were finished and tested on Friday. We&#x27;ll confirm each one on the live system before calling it done.</p>\n</section>\n<section class=\"sec\">\n<h2>What the technician app gained</h2>\n<ul><li>A technician signs in with a code texted to their phone.</li><li>If an app message fails partway, it&#x27;s kept and finished later. It never claims a job report it didn&#x27;t save, and one that can&#x27;t be saved shows as failed, not stuck at &quot;sending&quot;.</li></ul>\n</section>\n<section class=\"sec\">\n<h2>The harder part: a verdict for every recording</h2>\n<p>Until now, a recording could only match the caller&#x27;s own jobs. Name another technician&#x27;s job and the system couldn&#x27;t see it; a recording with nothing to report left no trace. Now every recording from a technician&#x27;s phone becomes a Calls row with one assessment: kind of call, summary, place, matched job and chemicals mentioned. Another technician&#x27;s job is found and flagged as possibly misassigned. Our test phones never appear in your view.</p>\n<p>Each job still gets one approval card, and nothing reaches GorillaDesk until you approve it. Older calls will read &quot;Not assessed&quot;.</p>\n</section>\n<section class=\"sec\">\n<h2>Where it stands</h2>\n<p>It works on our local test system, against a single test job. Next: our automated checks, a rehearsal on our separate test system, then release.</p>\n</section>\n<footer class=\"foot\">Updated 17 Oct 2026</footer>\n</main>\n</body>\n</html>\n",
+   "markdown": "# App messages on your Calls screen and texted sign-in codes are built; a verdict for every recording is next\n\n**Messages from the technician app are built to show on your Calls screen as App calls, next to phone calls.** That, texted sign-in codes and a sturdier path for app messages were finished and tested on Friday. We'll confirm each one on the live system before calling it done.\n\n## What the technician app gained\n\n- A technician signs in with a code texted to their phone.\n- If an app message fails partway, it's kept and finished later. It never claims a job report it didn't save, and one that can't be saved shows as failed, not stuck at \"sending\".\n\n## The harder part: a verdict for every recording\n\nUntil now, a recording could only match the caller's own jobs. Name another technician's job and the system couldn't see it; a recording with nothing to report left no trace. Now every recording from a technician's phone becomes a Calls row with one assessment: kind of call, summary, place, matched job and chemicals mentioned. Another technician's job is found and flagged as possibly misassigned. Our test phones never appear in your view.\n\nEach job still gets one approval card, and nothing reaches GorillaDesk until you approve it. Older calls will read \"Not assessed\".\n\n## Where it stands\n\nIt works on our local test system, against a single test job. Next: our automated checks, a rehearsal on our separate test system, then release.\n",
+   "raw": "**Messages from the technician app are built to show on your Calls screen as App calls, next to phone calls.** That, texted sign-in codes and a sturdier path for app messages were finished and tested on Friday. We'll confirm each one on the live system before calling it done.\n\n## What the technician app gained\n- A technician signs in with a code texted to their phone.\n- If an app message fails partway, it's kept and finished later. It never claims a job report it didn't save, and one that can't be saved shows as failed, not stuck at \"sending\".\n\n## The harder part: a verdict for every recording\nUntil now, a recording could only match the caller's own jobs. Name another technician's job and the system couldn't see it; a recording with nothing to report left no trace. Now every recording from a technician's phone becomes a Calls row with one assessment: kind of call, summary, place, matched job and chemicals mentioned. Another technician's job is found and flagged as possibly misassigned. Our test phones never appear in your view.\n\nEach job still gets one approval card, and nothing reaches GorillaDesk until you approve it. Older calls will read \"Not assessed\".\n\n## Where it stands\nIt works on our local test system, against a single test job. Next: our automated checks, a rehearsal on our separate test system, then release.",
+   "title": "App messages on your Calls screen and texted sign-in codes are built; a verdict for every recording is next"
+  },
+  "schema_version": 1,
+  "tokens": {
+   "by_agent": {
+    "claude": {
+     "cache_read": 338725533,
+     "cache_write": 11044330,
+     "input": 2845,
+     "output": 1057179,
+     "total": 350829887
+    },
+    "codex": null,
+    "kimi": null
+   },
+   "total": 350829887
+  },
+  "window": {
+   "basis": "cap_24h",
+   "duration_seconds": 86400,
+   "end": "2026-10-17T07:34:04Z",
+   "previous_event_id": null,
+   "start": "2026-10-16T07:34:04Z"
+  }
+ },
+ "domain": "project",
+ "id": "d36da557-27fb-45b2-944d-3492ebe45108",
+ "producer": "activity-report",
+ "service": "activity-report",
+ "time": "2026-10-17T07:36:11Z",
+ "type": "bloodbank.project.activity.recorded"
+}

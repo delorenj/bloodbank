@@ -46,6 +46,12 @@ Supported bases (docs/event-naming.md §11.4, artifact):
                          never an inline string. No arbitrary remote fetch;
                          the .hermes cache is deliberately not readable.
 
+  project_activity_report  a bloodbank.project.activity.recorded event: the
+                         report markdown (canonical) + its self-contained HTML
+                         (render twin), attributed by the event's own
+                         data.project.slug (registry-checked), identified per
+                         project + audience + window.start.
+
   operator_resolution    an operator mapped a previously held capture to a
                          project (sidecar.publish_resolution path).
 
@@ -140,6 +146,28 @@ def _tool_family(tool_name: str) -> str:
     return re.sub(r"[\s*_+-]+", "", (tool_name or "").strip().lower())
 
 
+def tool_arguments(data: dict[str, Any]) -> dict[str, Any] | None:
+    """The tool call's input object, wherever the producer put it.
+
+    Claude Code / opencode / codex events carry it as `data.arguments`. Real
+    Hermes `write_file` events carried NO `data.arguments`; the inputs sit at
+    `data.payload.tool_input` (the native shell_hooks wire, kept verbatim by
+    the adapter). `data.arguments` wins when it is a non-empty object, so a
+    producer that promotes the inputs (bloodbank cc10ca6) is read as-is;
+    otherwise the native `payload.tool_input` is the fallback. Returns None
+    when neither is an object.
+    """
+    arguments = data.get("arguments")
+    if isinstance(arguments, dict) and arguments:
+        return arguments
+    payload = data.get("payload")
+    if isinstance(payload, dict):
+        native = payload.get("tool_input")
+        if isinstance(native, dict):
+            return native
+    return arguments if isinstance(arguments, dict) else None
+
+
 def explicit_delivery_marker(data: dict[str, Any]) -> bool:
     """True when the PRODUCER explicitly marked this event user-facing."""
     if data.get("delivered") or data.get("user_facing"):
@@ -217,7 +245,7 @@ def write_with_content_but_refused(envelope: dict[str, Any]) -> bool:
     tool = str(data.get("tool_name") or "")
     if _tool_family(tool) not in WRITE_TOOL_NAMES:
         return False
-    arguments = data.get("arguments")
+    arguments = tool_arguments(data)
     return bool(
         isinstance(arguments, dict)
         and any(isinstance(arguments.get(k), str) and arguments[k] for k in WRITE_PATH_ARGUMENTS)
@@ -237,7 +265,7 @@ def write_like_but_unsupported(envelope: dict[str, Any]) -> bool:
     tool = str(data.get("tool_name") or "")
     if _tool_family(tool) not in WRITE_TOOL_NAMES:
         return False
-    arguments = data.get("arguments")
+    arguments = tool_arguments(data)
     return not (
         isinstance(arguments, dict)
         and any(isinstance(arguments.get(k), str) and arguments[k] for k in WRITE_PATH_ARGUMENTS)
@@ -274,6 +302,10 @@ class Candidate:
     qualification_reason: str
     capture: Capture
     working_directory: str | None
+    # Set only by adapters whose SOURCE EVENT names its own project (the
+    # activity report). Resolution then goes through the registry by slug,
+    # never through a working directory.
+    project_slug: str | None = None
 
 
 def _refusal(reason: str) -> None:
@@ -322,7 +354,7 @@ def from_tool_completed(envelope: dict[str, Any]) -> Candidate | None:
     tool = str(data.get("tool_name") or "")
     if _tool_family(tool) not in WRITE_TOOL_NAMES:
         return None
-    arguments = data.get("arguments")
+    arguments = tool_arguments(data)
     if not isinstance(arguments, dict):
         return None
     path_value = next(
@@ -671,6 +703,127 @@ def _delivered_reply_candidate(
     )
 
 
+ACTIVITY_RECORDED_TYPE = "bloodbank.project.activity.recorded"
+_ACTIVITY_AUDIENCES = ("internal", "external")
+_SLUG_OK = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+
+
+def _compact_ts(value: str) -> str:
+    """20261016T073001Z from an RFC3339 timestamp; digits/letters only."""
+    return re.sub(r"[^0-9A-Za-z]", "", value.replace("-", "").replace(":", "").split(".")[0]) or "unknown"
+
+
+def _compact_minutes(value: str) -> str:
+    """20261016T0730Z (minute resolution, for the human-visible filename)."""
+    compact = _compact_ts(value)
+    return compact[:13] + "Z" if len(compact) >= 13 else compact
+
+
+def from_activity_recorded(envelope: dict[str, Any]) -> list[Candidate]:
+    """project_activity_report: one rendered activity report as an artifact.
+
+    The report event names its own project (`data.project.slug`) so there is
+    no working-directory attribution; the sidecar still requires the slug to
+    be enrolled in the pjangler registry.
+
+    Identity (stable per project + audience + window): the logical path is
+    `inline/activity/<audience>/<window.start>`, so the same window re-emitted
+    with different bytes chains a REVISION on one artifact id, while a
+    different window (different `window.start`) is a different artifact. With
+    `window.basis == previous_report` the start is the previous report's end,
+    which a re-render of the same window shares; a `cap_24h` window slides
+    with the run clock, so a re-run later is honestly a different window.
+
+    Form: the report markdown is the canonical bytes (the artifact an agent
+    or human reads) and the report's self-contained HTML is the `render` twin
+    (the durable artifact the schema names). A report that somehow lacks
+    markdown falls back to the HTML as canonical, then to the raw text.
+    `generator.dry_run` is recorded in the qualification reason but does not
+    disqualify: dry_run means "nothing was pushed to the portal", and the
+    vault copy is exactly what such a run is for.
+    """
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        return []
+    project = data.get("project")
+    slug = project.get("slug") if isinstance(project, dict) else None
+    if not isinstance(slug, str) or not _SLUG_OK.match(slug):
+        return []
+    audience = data.get("audience")
+    if audience not in _ACTIVITY_AUDIENCES:
+        return []
+    window = data.get("window")
+    start = window.get("start") if isinstance(window, dict) else None
+    end = window.get("end") if isinstance(window, dict) else None
+    if not isinstance(start, str) or not start or not isinstance(end, str) or not end:
+        return []
+    report = data.get("report")
+    if not isinstance(report, dict):
+        return []
+
+    def text(key: str) -> str | None:
+        value = report.get(key)
+        return value if isinstance(value, str) and value.strip() else None
+
+    markdown, html, raw = text("markdown"), text("html"), text("raw")
+    stem = f"activity-{audience}-{_compact_minutes(end)}"
+    if markdown is not None:
+        canonical = Capture(
+            title=f"{stem}.md",
+            logical_path="",  # set below with the shared logical path
+            media_type="text/markdown",
+            data=markdown.encode("utf-8"),
+        )
+        render_html = html
+        form = "markdown canonical" + (" + html render twin" if html else "")
+    elif html is not None:
+        canonical = Capture(title=f"{stem}.html", logical_path="", media_type="text/html",
+                            data=html.encode("utf-8"))
+        render_html = None
+        form = "html canonical (report carried no markdown)"
+    elif raw is not None:
+        canonical = Capture(title=f"{stem}.txt", logical_path="", media_type="text/plain",
+                            data=raw.encode("utf-8"))
+        render_html = None
+        form = "raw text canonical (report carried no markdown or html)"
+    else:
+        return []
+
+    logical = f"inline/activity/{audience}/{_compact_ts(start)}"
+    render = None
+    if render_html is not None:
+        render = Capture(
+            title=f"{stem}.render.html",
+            logical_path=logical,
+            media_type="text/html",
+            data=render_html.encode("utf-8"),
+        )
+    capture = Capture(
+        title=canonical.title,
+        logical_path=logical,
+        media_type=canonical.media_type,
+        data=canonical.data,
+        render=render,
+    )
+    generator = data.get("generator")
+    gen = generator if isinstance(generator, dict) else {}
+    dry = " dry_run=true (not portal-published)" if gen.get("dry_run") is True else ""
+    basis = window.get("basis") if isinstance(window.get("basis"), str) else "unknown"
+    return [
+        Candidate(
+            basis="project_activity_report",
+            qualification_reason=(
+                f"bloodbank.project.activity.recorded report for {slug}: audience {audience}, "
+                f"window {start}..{end} ({basis}); {form}; generator "
+                f"{gen.get('skill') or 'unknown'}{dry}"
+            )[:500],
+            capture=capture,
+            working_directory=None,
+            project_slug=slug,
+        )
+    ]
+
+
 def hold_record_from(
     envelope: dict[str, Any],
     candidate: Candidate,
@@ -705,10 +858,12 @@ __all__ = [
     "Capture",
     "WRITE_TOOL_NAMES",
     "explicit_delivery_marker",
+    "from_activity_recorded",
     "from_tool_completed",
     "from_turn_completed",
     "hold_record_from",
     "matches_producer_output",
     "operator_capture_roots",
+    "tool_arguments",
     "write_like_but_unsupported",
 ]

@@ -40,6 +40,7 @@ bytes from two sources are two holds, not one overwritten record.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -433,6 +434,20 @@ class Sidecar:
              NO enrolled project (a foreign nested repo), attribution is
              ambiguous and the capture is held, never guessed.
         """
+        if candidate.project_slug is not None:
+            # The source event names its own project (activity report): the
+            # registry is the enrollment authority, no cwd is involved.
+            entry = self.registry.entry_for_slug(candidate.project_slug)
+            if entry is None:
+                return None
+            repo_path = entry.get("repo_path")
+            return (
+                {
+                    "slug": candidate.project_slug,
+                    "name": str(entry.get("name") or candidate.project_slug)[:120],
+                },
+                Path(str(repo_path)) if repo_path else Path("/"),
+            )
         wd = candidate.working_directory
         if not wd:
             return None
@@ -527,6 +542,13 @@ class Sidecar:
                 dispositions.append(
                     Disposition(kind="error", detail=f"adapter failed: {type(exc).__name__}: {exc}")
                 )
+        elif ce_type == discovery.ACTIVITY_RECORDED_TYPE:
+            try:
+                candidates.extend(discovery.from_activity_recorded(envelope))
+            except Exception as exc:  # noqa: BLE001 - adapter blowup contained
+                dispositions.append(
+                    Disposition(kind="error", detail=f"adapter failed: {type(exc).__name__}: {exc}")
+                )
 
         for candidate in candidates:
             try:
@@ -556,6 +578,25 @@ class Sidecar:
     ) -> Disposition:
         if len(candidate.capture.data) > MAX_CAPTURE_BYTES:
             return Disposition(kind="skipped", detail="capture exceeds size bound")
+        if (
+            candidate.project_slug is not None
+            and self.registry.entry_for_slug(candidate.project_slug) is None
+        ):
+            # An activity report names its own project; a slug the pjangler
+            # registry does not enroll is not guessed or held (a hold would
+            # also drop the html twin). Observable, nothing persisted.
+            return Disposition(
+                kind="skipped",
+                detail=(
+                    f"project slug {candidate.project_slug!r} named by the source event "
+                    "is not enrolled in the pjangler registry; not persisted"
+                ),
+            )
+        render = candidate.capture.render
+        if render is not None and (
+            len(render.data) > MAX_CAPTURE_BYTES or render.data == candidate.capture.data
+        ):
+            render = None  # oversize, or not a distinct byte sequence: no twin
 
         # 0. Path hygiene BEFORE persistence: the denylist applies to inline
         #    logical paths too (.env, config/, secrets/, scratch/ … qualify
@@ -578,6 +619,8 @@ class Sidecar:
         #    local file read happens for capture.
         sha, _blob = put_blob(self.store_root, candidate.capture.data)
         ref = f"sha256:{sha}"
+        if render is not None:
+            put_blob(self.store_root, render.data)
 
         # 2. Resolve attribution from the registry; never guess.
         resolved = self.resolve_project(candidate)
@@ -696,6 +739,24 @@ class Sidecar:
         capture = candidate.capture
         source_data = source.get("data") or {}
         actor = source.get("actor") or {}
+        artifact_block: dict[str, Any] = {
+            "artifact_id": artifact_id,
+            "revision": revision,
+            "title": capture.title,
+            "media_type": capture.media_type,
+            "sha256": sha,
+            "bytes": len(capture.data),
+            "content": {"storage": "content-addressed", "ref": ref},
+        }
+        twin = capture.render
+        if twin is not None and twin.data != capture.data and len(twin.data) <= MAX_CAPTURE_BYTES:
+            twin_sha = hashlib.sha256(twin.data).hexdigest()
+            artifact_block["render"] = {
+                "media_type": twin.media_type,
+                "sha256": twin_sha,
+                "bytes": len(twin.data),
+                "content": {"storage": "content-addressed", "ref": f"sha256:{twin_sha}"},
+            }
         return build_envelope(
             ce_type=ARTIFACT_TYPE,
             kind="event",
@@ -714,15 +775,7 @@ class Sidecar:
             data={
                 "schema_version": 1,
                 "project": project,
-                "artifact": {
-                    "artifact_id": artifact_id,
-                    "revision": revision,
-                    "title": capture.title,
-                    "media_type": capture.media_type,
-                    "sha256": sha,
-                    "bytes": len(capture.data),
-                    "content": {"storage": "content-addressed", "ref": ref},
-                },
+                "artifact": artifact_block,
                 "origin": {
                     "detected_by": self.service_name,
                     "basis": candidate.basis,

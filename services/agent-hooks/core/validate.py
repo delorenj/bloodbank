@@ -437,6 +437,7 @@ PROJECT_ARTIFACT_BASES = frozenset(
         "agent_tool_write",
         "conversation_reply_mermaid",
         "conversation_reply_delivered",
+        "project_activity_report",
         "operator_resolution",
     }
 )
@@ -534,6 +535,20 @@ def _assert_project_artifact(envelope: dict, data: dict, slug: str) -> None:
     source_event = origin.get("source_event")
     if not isinstance(source_event, dict):
         raise ContractViolation("project data.origin.source_event must be an object")
+    # A report-derived artifact is only ever caused by the report event, and
+    # a report event only ever yields that basis (or an operator resolution).
+    basis = origin.get("basis")
+    from_report = source_event.get("type") == PROJECT_ACTIVITY_TYPE
+    if basis == "project_activity_report" and not from_report:
+        raise ContractViolation(
+            "project data.origin.basis 'project_activity_report' requires "
+            f"source_event.type {PROJECT_ACTIVITY_TYPE!r}"
+        )
+    if from_report and basis not in ("project_activity_report", "operator_resolution"):
+        raise ContractViolation(
+            f"project source_event.type {PROJECT_ACTIVITY_TYPE!r} requires basis "
+            "'project_activity_report' (or an operator_resolution)"
+        )
     if envelope.get("causationid") != source_event.get("id"):
         raise ContractViolation(
             "project envelope.causationid must equal "

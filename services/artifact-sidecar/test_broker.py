@@ -50,6 +50,7 @@ import nats  # noqa: E402
 from nats.js.api import StreamConfig, RetentionPolicy, StorageType, DeliverPolicy  # noqa: E402
 
 from test_sidecar import (  # noqa: E402
+    real_activity_recorded,
     registry_payload,
     tool_completed_envelope,
 )
@@ -516,6 +517,115 @@ class BrokerTests(unittest.TestCase):
         # events are all older than the boundary).
         self.assertEqual(first[1], 3)
         self.assertEqual(second, first)
+
+    def test_activity_durable_is_separate_bounded_and_publishes_artifact(self):
+        """The second durable: own name/filter, BY_START_TIME at the operator's
+        boundary, leaves the primary durable's subjects alone, and a report
+        flows broker -> sidecar -> artifact.created on the stream."""
+        w = self.world
+        tag = f"{self.port}-{uuid.uuid4().hex[:6]}"
+        durable = f"probe-act-{tag}"
+        activity_durable = f"{durable}-activity"
+
+        async def probe():
+            from datetime import datetime, timezone
+            from sidecar import Sidecar, SidecarState
+            from artifact_lib import ProjectRegistry, ensure_store_root
+            import importlib.util
+
+            nc = await nats.connect(w.url)
+            js = nc.jetstream()
+            subj = "bloodbank.evt.project.activity.recorded"
+            old = real_activity_recorded()
+            old["id"] = str(uuid.uuid4())
+            await js.publish(subj, json.dumps(old).encode())  # BEFORE the boundary
+            await asyncio.sleep(1.5)
+            boundary = datetime.now(timezone.utc)
+            await asyncio.sleep(0.5)
+            fresh = real_activity_recorded()
+            fresh["id"] = str(uuid.uuid4())
+            await js.publish(subj, json.dumps(fresh).encode())  # AFTER the boundary
+            tmp = Path(tempfile.mkdtemp(prefix="probe-act-"))
+            state = None
+            rt = None
+            try:
+                payload = registry_payload(tmp)
+                payload["projects"]["james-brennan"] = {
+                    "name": "James Brennan", "slug": "james-brennan",
+                    "project_id": "james-brennan",
+                    "repo_path": str(tmp / "repos" / "james-brennan"), "status": "planned",
+                }
+                payload["__registry_status"]["james-brennan"] = {"status": "ok"}
+                state = SidecarState(tmp / "s.db")
+                store = ensure_store_root(tmp / "store")
+                reg = ProjectRegistry.from_payload(payload)
+                spec = importlib.util.spec_from_file_location(
+                    "sidecar_main_act", REPO / "services" / "artifact-sidecar" / "main.py"
+                )
+                assert spec and spec.loader
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                rt = mod.Runtime(Sidecar(state=state, store_root=store, registry=reg))
+                await rt.connect(
+                    w.url, durable,
+                    activity_durable=activity_durable,
+                    activity_backfill_since=boundary,
+                )
+                a_info = await js.consumer_info("BLOODBANK_EVENTS", activity_durable)
+                p_info = await js.consumer_info("BLOODBANK_EVENTS", durable)
+                shape = (
+                    str(a_info.config.deliver_policy),
+                    a_info.config.filter_subject,
+                    a_info.num_pending,
+                    list(p_info.config.filter_subjects or []),
+                )
+                # Run the real loop until the artifact event is on the stream.
+                task = asyncio.create_task(rt.run())
+                watcher = await js.pull_subscribe(
+                    "bloodbank.evt.project.artifact.created", stream="BLOODBANK_EVENTS"
+                )
+                found = None
+                for _ in range(20):
+                    try:
+                        for m in await watcher.fetch(5, timeout=1):
+                            env = json.loads(m.data)
+                            if env["data"]["origin"]["source_event"]["id"] == fresh["id"]:
+                                found = env
+                            await m.ack()
+                    except Exception:  # noqa: BLE001 - fetch timeout
+                        pass
+                    if found:
+                        break
+                rt._stop.set()
+                await asyncio.wait_for(task, timeout=15)
+                return shape, found, old["id"], fresh["id"]
+            finally:
+                if rt is not None:
+                    await rt.aclose()
+                await nc.close()
+                if state is not None:
+                    state.close()
+                shutil.rmtree(tmp, ignore_errors=True)
+                try:
+                    nc2 = await nats.connect(w.url)
+                    for d in (durable, activity_durable):
+                        try:
+                            await nc2.jetstream().delete_consumer("BLOODBANK_EVENTS", d)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    await nc2.drain(); await nc2.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        shape, found, old_id, fresh_id = asyncio.run(probe())
+        self.assertEqual(shape[0].lower().rstrip(), DeliverPolicy.BY_START_TIME.value.lower())
+        self.assertEqual(shape[1], "bloodbank.evt.project.activity.recorded")
+        self.assertEqual(shape[2], 1)  # only the post-boundary report
+        self.assertNotIn("bloodbank.evt.project.activity.recorded", shape[3])
+        self.assertIsNotNone(found, "artifact.created never reached the stream")
+        self.assertEqual(found["data"]["origin"]["basis"], "project_activity_report")
+        self.assertEqual(found["data"]["project"]["slug"], "james-brennan")
+        self.assertNotEqual(found["data"]["origin"]["source_event"]["id"], old_id)
 
     def test_cleanup_deletes_only_own_consumers(self):
         w = self.world

@@ -636,9 +636,16 @@ present) has a different digest from the canonical form, and
 `envelope.causationid == data.origin.source_event.id` — the artifact fact is
 caused by the agent event whose bytes were captured. `data.origin.basis` is
 one of `agent_tool_write`, `conversation_reply_mermaid`,
-`conversation_reply_delivered`, `operator_resolution`; attribution always
+`conversation_reply_delivered`, `project_activity_report`,
+`operator_resolution`; attribution always
 comes from the canonical pjangler registry or an operator resolution of a
-held capture, never a guess. Qualification is strict: a write qualifies only
+held capture, never a guess. `project_activity_report` is the one basis whose
+project is read from the source event itself (a `project.activity.recorded`
+report names its own project, there is no working directory to attribute):
+`origin.source_event.type` must be `bloodbank.project.activity.recorded` (and
+that source type admits only this basis or `operator_resolution`), the
+canonical form is the report markdown and `artifact.render` is the report's
+self-contained HTML. Qualification is strict: a write qualifies only
 with the full structural shape (path + full inline content, user-facing
 media type, non-denied location) AND an explicit user-facing signal — a
 producer delivery marker or a project producer-output tree (`_bmad_output/`,

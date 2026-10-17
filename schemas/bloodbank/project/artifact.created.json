@@ -239,9 +239,10 @@
             "agent_tool_write",
             "conversation_reply_mermaid",
             "conversation_reply_delivered",
+            "project_activity_report",
             "operator_resolution"
           ],
-          "description": "agent_tool_write: an agent.tool.completed whose arguments carried a file path plus full inline content. conversation_reply_mermaid: a fenced mermaid block extracted from a conversation.turn.completed reply_text. conversation_reply_delivered: substantial reply text the producer explicitly marked user-facing/delivered (data.delivered/user_facing truthy, or non-empty data.deliverables). operator_resolution: attribution was ambiguous and an operator mapped a held capture to its project."
+          "description": "agent_tool_write: an agent.tool.completed whose arguments carried a file path plus full inline content. conversation_reply_mermaid: a fenced mermaid block extracted from a conversation.turn.completed reply_text. conversation_reply_delivered: substantial reply text the producer explicitly marked user-facing/delivered (data.delivered/user_facing truthy, or non-empty data.deliverables). project_activity_report: the rendered report of a bloodbank.project.activity.recorded event (markdown canonical, self-contained html as the render twin); the project comes from the event itself, never from a working directory, and source_event.type must be bloodbank.project.activity.recorded (checked by assert_project_invariants). operator_resolution: attribution was ambiguous and an operator mapped a held capture to its project."
         },
         "qualification_reason": {
           "$ref": "#/$defs/no_absolute_path",

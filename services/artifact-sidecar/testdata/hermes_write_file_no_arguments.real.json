@@ -1,0 +1,47 @@
+{
+ "actor": {
+  "agent_id": "bloodbank.agent.hermes",
+  "cli": "hermes",
+  "model": null,
+  "provider": null,
+  "type": "agent_cli"
+ },
+ "data": {
+  "hook": "post_tool_call",
+  "invocation_id": "20261016_153746_777c55",
+  "outcome": "success",
+  "payload": {
+   "cwd": "/home/delorenj/.hermes",
+   "extra": {
+    "api_request_id": "20261016_153746_777c55:sa-0-9b7c9c15:adcc9c20:api:99",
+    "duration_ms": 128,
+    "error_message": null,
+    "error_type": null,
+    "middleware_trace": [],
+    "result": "{\"bytes_written\": 696, \"dirs_created\": true, \"verified\": true, \"lint\": {\"status\": \"ok\", \"output\": \"\"}, \"resolved_path\": \"/home/delorenj/code/33GOD/bloodbank-artifact-sidecar/ops/systemd/artifact-vault-projector/vault-mapping.json\", \"files_modified\": [\"/home/delorenj/code/33GOD/bloodbank-artifact-sidecar/ops/systemd/artifact-vault-projector/vault-mapping.json\"]}",
+    "status": "ok",
+    "task_id": "sa-0-9b7c9c15",
+    "telemetry_schema_version": "hermes.observer.v1",
+    "tool_call_id": "call_19393f04f5a2404e9eaf984c",
+    "turn_id": "20261016_153746_777c55:sa-0-9b7c9c15:adcc9c20"
+   },
+   "hook_event_name": "post_tool_call",
+   "profile": "rererere",
+   "session_id": "20261016_153746_777c55",
+   "tool_input": {
+    "content": "{\n  \"$comment\": \"EXPLICIT vault mapping for the artifact projector: pjangler project slug -> vault directory RELATIVE to ARTIFACT_VAULT_ROOT. This is the only place a slug becomes a directory; unmapped slugs are held, never guessed. 'bb' maps to the canonical Projects/Bloodbank named by DeLoDocs/AGENTS.md (NOT the historical Projects/33GOD/BloodBank, which stays untouched). A project's lifecycle status (planned/active) is irrelevant here; the sidecar already gates on registry index health. Add one row per project the operator has approved for vault projection. Copy to ~/.config/bloodbank/artifact-vault-mapping.json and edit before enabling the projector.\",\n  \"bb\": \"Projects/Bloodbank\"\n}\n",
+    "path": "/home/delorenj/code/33GOD/bloodbank-artifact-sidecar/ops/systemd/artifact-vault-projector/vault-mapping.json"
+   },
+   "tool_name": "write_file"
+  },
+  "tool_call_id": "call_19393f04f5a2404e9eaf984c",
+  "tool_name": "write_file",
+  "working_directory": "/home/delorenj/.hermes"
+ },
+ "domain": "agent",
+ "id": "9c23e566-53f3-4602-a41c-93fd828b6e51",
+ "producer": "hermes-agent:rererere",
+ "service": "hermes-hooks",
+ "time": "2026-10-16T20:08:04.386000Z",
+ "type": "bloodbank.agent.tool.completed"
+}

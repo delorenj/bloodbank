@@ -28,9 +28,10 @@ never guesses a project.
 
 | basis | real producer shape | status |
 |---|---|---|
-| `agent_tool_write` | Claude Code `Write` publishes `arguments.file_path` + full `arguments.content` (verified live in Candystore, 2026-10-16) | works; text media only — binary extensions (png/pdf/…) NEVER qualify from inline strings (no fabricated binaries); denied locations (.env/config/secrets/scratch) refused before persistence |
+| `agent_tool_write` | Claude Code `Write` publishes `arguments.file_path` + full `arguments.content` (verified live in Candystore, 2026-10-16); Hermes `write_file` publishes `arguments.{path,content}` or, in older events, only `payload.tool_input.{path,content}` (read as a fallback) | works; text media only — binary extensions (png/pdf/…) NEVER qualify from inline strings (no fabricated binaries); denied locations (.env/config/secrets/scratch) refused before persistence |
 | `conversation_reply_mermaid` | fenced mermaid blocks in `conversation.turn.completed` `data.reply_text` | implemented + tested; identity is thread-scoped and digest-named (no project-wide merge); **live producers currently publish reply_text empty** — inert until a producer populates it |
 | `conversation_reply_delivered` | reply text with explicit producer marker `data.delivered`/`user_facing` truthy or non-empty `deliverables` | implemented + tested, **inert**: no producer sets the markers today. Producer change needed (services/agent-hooks/clients/hermes.py `shape_data` for turn.completed): set `delivered: true` when the native payload marks the reply a deliverable |
+| `project_activity_report` | `bloodbank.project.activity.recorded` (activity-report skill): `data.project.slug` + `data.report.{markdown,html}`; own durable `bloodbank-artifact-sidecar-activity` | works (live on the real james-brennan reports); markdown canonical + html render twin; identity project+audience+window.start; slug must be enrolled in the pjangler registry |
 | `operator_resolution` | operator maps a held capture to a project via `--hold-resolve` | works |
 
 Unsupported, reported not widened (live observations, 1000-event sample):
