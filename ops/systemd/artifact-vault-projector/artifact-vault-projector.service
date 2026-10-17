@@ -1,0 +1,42 @@
+# artifact-vault-projector systemd --user unit TEMPLATE.
+#
+# NOT INSTALLED by the repo. The parent operator reviews, then:
+#   cp artifact-vault-projector.service ~/.config/systemd/user/bloodbank-artifact-vault-projector.service
+#   cp vault-mapping.json ~/.config/bloodbank/artifact-vault-mapping.json   # EDIT FIRST
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now bloodbank-artifact-vault-projector
+# Disable: systemctl --user disable --now bloodbank-artifact-vault-projector
+#
+# The mapping file is the ONLY place a project slug becomes a vault
+# directory. Unmapped slugs are durable holds (--holds), never guessed into
+# shadow directories. The canonical root is the DeLoDocs vault; the ~/d
+# symlink may be used only after the parent canonicalizes it.
+#
+# Interpreter deps: python3.11+ and nats-py (same as the sidecar unit).
+#
+# DELIVERY POLICY: a NEW durable is created with DeliverPolicy.NEW. Enable
+# this unit BEFORE the sidecar starts publishing artifact events, or accept
+# skipping pre-enable events; one-time backfill is the explicit
+# ARTIFACT_VAULT_BACKFILL=1 opt-in (uncomment, start once, remove).
+[Unit]
+Description=Bloodbank project artifact vault projector
+Documentation=file://%h/code/33GOD/bloodbank/docs/project-artifact-sidecar.md
+After=network-online.target nats.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/33GOD/bloodbank/services/artifact-vault-projector
+Environment=ARTIFACT_VAULT_NATS_URL=nats://127.0.0.1:4222
+Environment=ARTIFACT_VAULT_ROOT=%h/code/DeLoDocs
+Environment=ARTIFACT_VAULT_MAPPING=%h/.config/bloodbank/artifact-vault-mapping.json
+Environment=ARTIFACT_VAULT_STORE=%h/.local/state/artifact-sidecar/store
+Environment=ARTIFACT_VAULT_TZ=America/New_York
+# Environment=ARTIFACT_VAULT_BACKFILL=1
+Environment=LOG_LEVEL=INFO
+ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/artifact-vault-projector/main.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

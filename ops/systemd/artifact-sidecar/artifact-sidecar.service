@@ -1,0 +1,40 @@
+# artifact-sidecar systemd --user unit TEMPLATE.
+#
+# NOT INSTALLED by the repo. The parent operator reviews, then:
+#   cp artifact-sidecar.service ~/.config/systemd/user/bloodbank-artifact-sidecar.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now bloodbank-artifact-sidecar
+# Disable: systemctl --user disable --now bloodbank-artifact-sidecar
+#
+# Interpreter deps (verify in the unit user's environment BEFORE enabling):
+#   python3 --version          # 3.11+ (zoneinfo)
+#   python3 -c "import nats"   # nats-py
+#   python3 -m pip install --user nats-py   # if missing
+#
+# First-start delivery policy: a NEW durable is created with DeliverPolicy.NEW
+# (no seven-day replay). To backfill over retained history at FIRST start
+# only, uncomment ARTIFACT_SIDECAR_BACKFILL=1 below, start once, then remove
+# it again. Enabling the projector durable BEFORE artifact events flow is the
+# recommended order (see docs/project-artifact-sidecar.md).
+[Unit]
+Description=Bloodbank project artifact discovery sidecar
+Documentation=file://%h/code/33GOD/bloodbank/docs/project-artifact-sidecar.md
+After=network-online.target nats.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/33GOD/bloodbank/services/artifact-sidecar
+Environment=ARTIFACT_SIDECAR_NATS_URL=nats://127.0.0.1:4222
+Environment=ARTIFACT_SIDECAR_REGISTRY_URL=http://127.0.0.1:8764/v1/registry
+Environment=ARTIFACT_SIDECAR_REGISTRY_REFRESH_S=300
+Environment=ARTIFACT_SIDECAR_STATE_DIR=%h/.local/state/artifact-sidecar
+Environment=ARTIFACT_SIDECAR_OUTBOX_RETRY_S=5
+# Environment=ARTIFACT_SIDECAR_BACKFILL=1
+Environment=LOG_LEVEL=INFO
+ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/artifact-sidecar/main.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
