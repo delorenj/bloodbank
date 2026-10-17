@@ -333,8 +333,13 @@ class Runtime:
         # deterministic validation failure is poison (ack, loudly logged,
         # never publishable); anything else NAKs for redelivery with the
         # bytes/holds preserved.
+        # NO dispositions == the event produced no candidate at all (a Bash
+        # call, a reply with nothing to capture, ...): terminally
+        # unqualified, nothing durable to wait for. It MUST be acked: nak'ing
+        # it redelivers the (vast majority) non-artifact traffic until
+        # max_deliver and starves the consumer at max_ack_pending.
         kinds = {d.kind for d in dispositions}
-        if kinds and kinds <= _TERMINAL_KINDS:
+        if kinds <= _TERMINAL_KINDS:
             try:
                 await self._drain_outbox()
             except Exception:  # noqa: BLE001 - drain errors don't uncommit the capture

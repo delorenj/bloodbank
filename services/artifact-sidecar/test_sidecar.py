@@ -1942,6 +1942,22 @@ class FakeTransportTests(unittest.TestCase):
         self.assertEqual(headers.get("Nats-Msg-Id"), published_env["id"])
         self.assertEqual(published_env["causationid"], env["id"])
 
+    def test_event_with_no_candidate_is_acked_not_naked(self):
+        # Regression (found deploying live): ~93% of tool traffic yields NO
+        # disposition. It must ack, or the consumer redelivers it until
+        # max_deliver and stalls at max_ack_pending.
+        h, mod = self._world()
+        runtime = mod.Runtime(h.sidecar)
+        runtime._js = FakeJS()
+        env = tool_completed_envelope(
+            path="/x", content="y", working_directory=str(h.tmp / "repos" / "bb")
+        )
+        env["data"]["tool_name"] = "Bash"
+        msg = FakeMsg("bloodbank.evt.agent.tool.completed", env)
+        asyncio.run(runtime._handle(msg))
+        self.assertTrue(msg._acked)
+        self.assertFalse(msg._naked)
+
     def test_transport_outage_naks_and_outbox_retries_then_publishes(self):
         h, mod = self._world()
         runtime = mod.Runtime(h.sidecar)
