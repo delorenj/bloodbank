@@ -1619,6 +1619,30 @@ class ProjectorTests(unittest.TestCase):
         self.assertEqual(result2["kind"], "projected", result2)
         self.assertTrue((vault / "Projects" / "Bloodbank" / "2026-10-16" / "note.md").exists())
 
+    def test_hold_resolve_map_cli_projects_held_envelope(self):
+        h = self._world()
+        vault = h.tmp / "vault"
+        mapping_file = h.tmp / "mapping.json"
+        mapping_file.write_text(json.dumps({"other": "Projects/Other"}))
+        state_db = h.tmp / "projector.sqlite3"
+        proj = self._projector(h, {"other": "Projects/Other"}, vault)
+        proj.state = projector_main.ProjectorState(state_db)
+        self.assertEqual(proj.handle(self._artifact_event(h))["kind"], "held")
+        proj.state.close()
+        import argparse
+        args = argparse.Namespace(
+            status=False, plan=False, holds=False, all=False, once=False,
+            hold_resolve_map=["bb", "Projects/Bloodbank"],
+            mapping=str(mapping_file), vault_root=str(vault),
+        )
+        env = {"ARTIFACT_VAULT_STATE_DB": str(state_db), "ARTIFACT_VAULT_STORE": str(h.store)}
+        with unittest.mock.patch.dict(os.environ, env):
+            rc = asyncio.run(projector_main.amain(args))
+        self.assertEqual(rc, 0)
+        self.assertTrue((vault / "Projects" / "Bloodbank" / "2026-10-16" / "note.md").exists())
+        with projector_main.ProjectorState(state_db) as st:
+            self.assertEqual(st.holds(), [])
+
     def test_malformed_envelope_deadlettered_before_writes(self):
         h = self._world()
         vault = h.tmp / "vault"

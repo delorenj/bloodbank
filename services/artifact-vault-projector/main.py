@@ -773,12 +773,18 @@ async def amain(args: argparse.Namespace) -> int:
             mapping_path.parent.mkdir(parents=True, exist_ok=True)
             mapping_path.write_text(json.dumps(current, indent=2) + "\n")
             writer.mapping = load_mapping(str(mapping_path))
-            resolved = 0
+            # The slug lives at data.project.slug; resolving a hold also
+            # projects its preserved envelope (marking it alone left the
+            # artifact out of the vault forever — the durable already acked it).
+            resolved, projected = 0, []
             for hold in state.holds():
-                if hold["kind"] == "unmapped" and json.loads(hold.get("envelope") or "{}").get("slug") == slug:
+                envelope = state.hold_envelope(hold["hold_id"]) or {}
+                held_slug = ((envelope.get("data") or {}).get("project") or {}).get("slug")
+                if hold["kind"] == "unmapped" and held_slug == slug:
                     state.resolve_hold(hold["hold_id"], {"mapped_to": vault_dir})
                     resolved += 1
-            print(json.dumps({"mapping_file": str(mapping_path), "resolved_holds": resolved}))
+                    projected.append(projector.handle(envelope))
+            print(json.dumps({"mapping_file": str(mapping_path), "resolved_holds": resolved, "projections": projected}))
             return 0
         if args.status:
             holds = state.holds()
