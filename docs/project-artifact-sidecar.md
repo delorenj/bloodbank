@@ -1,10 +1,30 @@
 # Project Artifact Sidecar — Design
 
-**Status:** implemented in this worktree; NOT activated. Parent operator owns
-runtime activation (systemd templates provided), vault mapping review, and
-live publication. The `ops/live/artifact-live-probe.py` script is a
-**synthetic** integration check (clearly labeled); it does NOT verify the
-real agent-hooks publishing path — that is the parent's separate check.
+**Status:** live (deployed 2026-10-17). Two `systemd --user` units run from
+the canonical checkout: `bloodbank-artifact-vault-projector.service`
+(enabled first) and `bloodbank-artifact-sidecar.service`, rendered by
+`ops/systemd/render-install.py --install`. The sidecar unit has a drop-in
+(`~/.config/systemd/user/bloodbank-artifact-sidecar.service.d/env.conf`) with
+`ARTIFACT_SIDECAR_CAPTURE_ROOTS=%h/code` and
+`ARTIFACT_SIDECAR_BACKFILL_SINCE=2026-10-16T18:17:21Z` (the moment the
+sidecar was requested; applied once, when the durable was created). The
+vault mapping lives in `~/.config/bloodbank/artifact-vault-mapping.json`
+(`bb`->Projects/Bloodbank, `33god`->Projects/33GOD,
+`greeninbetween`->Projects/green-in-between, `holocene`->Projects/Holocene,
+`flume`->Projects/Flume; add a row per approved project). First backfill:
+8 `bloodbank.project.artifact.created` events (6 greeninbetween, 2
+holocene), all projected to `Projects/<dir>/2026-10-16/`; Candystore
+ingests them (`bloodbank.evt.>`). Known capture gaps (Hermes tool inputs
+under `data.payload.tool_input`, Hermes cwd not the project, `reply_text`
+never present on real turn events, Bash/heredoc and Edit writes,
+`project.activity.recorded` reports, attribution by file rather than cwd)
+are NOT yet closed: today only Claude/opencode full-file `Write` calls inside
+a `_bmad-output/` tree (or carrying a delivery marker) are seen.
+Two live-only bugs found at deploy (no-candidate events were nak'd and
+starved the consumer; a subdirectory cwd was held because git's relative
+common-dir was resolved against the toplevel) are fixed and tested. The
+`ops/live/artifact-live-probe.py` script is a **synthetic** integration
+check.
 
 ## Contract
 
