@@ -21,7 +21,7 @@ from core.session import (
     git_status_word,
 )
 
-from .base import ClientAdapter
+from .base import ClientAdapter, last_assistant_text_from_transcript, reply_fields
 
 _CLAUDE_STATE_DIR = Path.home() / ".claude"
 
@@ -121,10 +121,18 @@ class ClaudeAdapter(ClientAdapter):
             }
 
         if ce_type == "bloodbank.conversation.turn.completed":
-            return {"thread_id": session.session_id,
+            data = {"thread_id": session.session_id,
                     "turn_id": self.native_turn_id(payload) or session.current_turn_id,
                     "outcome": "failed" if payload.get("error") else "completed",
                     "working_directory": cwd}
+            # The assistant's final reply. Claude Code's Stop payload carries
+            # it as last_assistant_message; older builds only point at the
+            # transcript, so tail-read that (bounded, fail-open).
+            reply = payload.get("last_assistant_message")
+            if not isinstance(reply, str) or not reply.strip():
+                reply = last_assistant_text_from_transcript(payload.get("transcript_path"))
+            data.update(reply_fields(reply))
+            return data
 
         if ce_type == "bloodbank.agent.tool.requested":
             tool_name = str(payload.get("tool_name", "unknown"))

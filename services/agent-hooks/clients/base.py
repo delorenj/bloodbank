@@ -21,6 +21,18 @@ from typing import Any
 from core.session import SessionState, _now_iso
 
 MAX_STDIN_BYTES = 64 * 1024
+# A Stop/turn-end payload carries the agent's whole final reply. The CLI hands
+# it to bb-hook (cap 1 MiB) and the hub re-serializes it with ensure_ascii, so
+# the publisher must read well past 64 KiB or the JSON is cut mid-string,
+# fails to parse and the event loses its session id as well as the reply.
+MAX_TURN_PAYLOAD_BYTES = 4 * 1024 * 1024
+# reply_text bound on bloodbank.conversation.turn.completed (the schema sets
+# none; this keeps the CloudEvent well under the 1 MiB NATS/Dapr limits). The
+# artifact sidecar scans at most 200k chars, so 128 KiB loses no fence a
+# normal reply carries. Longer replies keep their head and set reply_truncated.
+REPLY_TEXT_MAX_BYTES = 128 * 1024
+# Transcript fallback: only ever read this much from the END of the file.
+TRANSCRIPT_TAIL_BYTES = 512 * 1024
 STDIN_READ_TIMEOUT = 0.5
 MAX_DIAGNOSTIC_BYTES = 512
 
@@ -76,6 +88,79 @@ def read_stdin_text(
         chunks.append(chunk)
         size += len(chunk)
     return b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def reply_fields(text: Any, *, max_bytes: int = REPLY_TEXT_MAX_BYTES) -> dict[str, Any]:
+    """The reply_text / reply_length (/ reply_truncated) keys for turn.completed.
+
+    ``reply_length`` is the ORIGINAL UTF-8 byte length (same meaning as the
+    hermes adapter). Returns ``{}`` for a missing or blank reply so an empty
+    string never masquerades as a captured reply.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return {}
+    encoded = text.encode("utf-8", errors="replace")
+    out: dict[str, Any] = {"reply_length": len(encoded)}
+    if len(encoded) > max_bytes:
+        out["reply_text"] = encoded[:max_bytes].decode("utf-8", errors="ignore")
+        out["reply_truncated"] = True
+    else:
+        out["reply_text"] = text
+    return out
+
+
+def last_assistant_text_from_transcript(
+    path: Any, *, tail_bytes: int = TRANSCRIPT_TAIL_BYTES
+) -> str | None:
+    """Final assistant text of a Claude Code JSONL transcript, tail-read only.
+
+    Used when the Stop payload lacks ``last_assistant_message`` (older Claude
+    Code). Reads at most ``tail_bytes`` from the end, never the whole file,
+    and returns None on any problem -- a hook must fail open.
+    """
+    try:
+        if not isinstance(path, str) or not path.endswith(".jsonl"):
+            return None
+        p = Path(path)
+        if not p.is_file():
+            return None
+        size = p.stat().st_size
+        with p.open("rb") as fh:
+            fh.seek(max(0, size - tail_bytes))
+            chunk = fh.read(tail_bytes)
+        lines = chunk.splitlines()
+        if size > tail_bytes and lines:
+            lines = lines[1:]  # first line is probably cut mid-record
+        parts: list[str] = []
+        for raw in reversed(lines):
+            try:
+                rec = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            kind = rec.get("type")
+            if kind == "assistant":
+                msg = rec.get("message")
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if isinstance(content, str):
+                    texts = [content]
+                elif isinstance(content, list):
+                    texts = [b.get("text") for b in content
+                             if isinstance(b, dict) and b.get("type") == "text"
+                             and isinstance(b.get("text"), str)]
+                else:
+                    texts = []
+                parts[:0] = [t for t in texts if t.strip()]
+            elif kind in ("user", "system"):
+                if parts:
+                    break  # the turn's trailing assistant text is complete
+                if kind == "user":
+                    break  # nothing after the last user record: no reply
+        text = "\n\n".join(parts).strip()
+        return text or None
+    except Exception:
+        return None
 
 
 def bounded_scalar(value: Any) -> str | int | float | bool | None:
@@ -160,7 +245,7 @@ class ClientAdapter:
         """Read the hook payload (stdin by default; subclasses may extend)."""
         if sys.stdin.isatty():
             return {}
-        raw = read_stdin_text()
+        raw = read_stdin_text(max_bytes=MAX_TURN_PAYLOAD_BYTES)
         if not raw.strip():
             return {}
         try:
