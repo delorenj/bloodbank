@@ -91,6 +91,24 @@ class HermesNativeWireTest(unittest.TestCase):
         self.assertEqual(data["arguments"], args)
         self.assertEqual(data["working_directory"], PROJECT)
 
+    def test_turn_started_reads_user_message(self):
+        prompt = "Run the nightly infrastructure health check."
+        data = _shape("bloodbank.conversation.turn.started", {
+            "hook_event_name": "pre_llm_call",
+            "session_id": "s1",
+            "cwd": PROJECT,
+            "profile": "infra-pm",
+            "extra": {
+                "is_first_turn": True,
+                "model": "claude-opus-4-7",
+                "user_message": prompt,
+            },
+        })
+        self.assertEqual(data["prompt_text"], prompt)
+        self.assertEqual(data["user_message"], prompt)
+        self.assertEqual(data["prompt_length"], len(prompt.encode()))
+        self.assertEqual(data["working_directory"], PROJECT)
+
 
 if __name__ == "__main__":
     unittest.main()

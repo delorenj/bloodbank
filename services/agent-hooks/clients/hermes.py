@@ -121,10 +121,20 @@ class HermesAdapter(ClientAdapter):
         if ce_type == "bloodbank.conversation.turn.started":
             # Extract the user prompt so subscribers (compressors, sidecars,
             # roll-up summarizers) can read what was actually said without
-            # hitting Hindsight. The payload carries it in extra.prompt or
-            # extra.user_input depending on the Hermes version.
+            # hitting Hindsight. Hermes' pre_llm_call hook carries it as
+            # `user_message` (under `extra`), while older / operator payloads
+            # use `prompt` or `user_input`.
             prompt_text = str(
-                _value(flat, "prompt", "user_input", "user_prompt", "message", "content") or ""
+                _value(
+                    flat,
+                    "user_message",
+                    "prompt",
+                    "user_input",
+                    "user_prompt",
+                    "message",
+                    "content",
+                )
+                or ""
             )
             data_out = {
                 "thread_id": correlation,

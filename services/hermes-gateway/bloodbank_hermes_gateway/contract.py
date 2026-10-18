@@ -453,7 +453,7 @@ def started_events(invocation: Invocation) -> tuple[dict[str, Any], dict[str, An
         data={
             "thread_id": invocation.thread_id,
             "turn_id": invocation.turn_id,
-            "prompt_text": None,
+            "prompt_text": invocation.prompt,
         },
     )
     started = lifecycle_event(
