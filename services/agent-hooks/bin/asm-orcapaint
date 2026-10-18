@@ -1,0 +1,369 @@
+#!/usr/bin/env python3
+"""asm-orcapaint -- paint agent state and ticket lanes onto Orca worktree cards.
+
+A SURFACE, like asm-tabpaint: it reads truth that already lives elsewhere and
+writes it onto Orca's board, so the Mac and the phone show what the zellij tab
+bar shows. Orca is never a source of truth and nothing here writes back.
+
+  asm:live / asm:a:{scope}  --cwd-->  deepest worktree  --> worst agent per card
+  asm:transitions ──SUBSCRIBE──► repaint now
+  Candystore bloodbank.repo.task.*  --ticket_key-->  lane  --> board column
+  px show <KEY>                    (fallback for tickets with no recent event)
+
+A worktree is bound to a ticket by its branch name (`INT-349-signature-...`,
+`feat/int-273-...`); only prefixes that are real board identifiers in the
+pjangler registry count, so `utf-8` never becomes a ticket.
+
+WHAT IT OWNS ON A CARD
+  workspaceStatus  only on ticket-bound worktrees. Main checkouts aren't tickets.
+  comment          only when it is empty or starts with MARK. A comment you type
+                   yourself in Orca is never overwritten.
+
+Agent states collapse coarsely (anything busy is "working") so the card only
+changes when the meaning does: Orca persists every write and syncs it to every
+paired client.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import signal as signalmod
+import socket
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+import uuid
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.resp import Connection, RedisError  # noqa: E402
+
+URL = (os.environ.get("ASM_REDIS_URL") or os.environ.get("TOOLING_REDIS_URL")
+       or os.environ.get("REDIS_URL") or "redis://127.0.0.1:6379")
+ORCA_RUNTIME = os.environ.get("ORCA_RUNTIME_METADATA",
+                              os.path.expanduser("~/.config/orca/orca-runtime.json"))
+CANDYSTORE = os.environ.get("CANDYSTORE_URL", "http://127.0.0.1:8683").rstrip("/")
+PX = os.environ.get("PX_BIN", "px")
+PJ = os.environ.get("PJ_BIN", "pj")
+
+MARK = "▸ "
+TASK_TYPES = ("bloodbank.repo.task.updated", "bloodbank.repo.task.created")
+
+# ASM state -> (word, rank, glyph). idle/unknown/gone paint nothing: a card
+# should only speak when something is happening or someone is waiting.
+COARSE = {
+    "starting": ("working", 1, "🟢"), "working": ("working", 1, "🟢"),
+    "tool_running": ("working", 1, "🟢"), "delegating": ("working", 1, "🟢"),
+    "stale": ("stale", 2, "🔴"), "failed": ("failed", 2, "🔴"),
+    "awaiting_human": ("needs you", 3, "🔔"),
+}
+
+# Plane state groups (tp_band) -> Orca board columns. backlog is deliberately
+# absent: a backlog ticket with a worktree keeps whatever column it has.
+BAND = {"unstarted": "todo", "started": "in-progress",
+        "in_review": "in-review", "completed": "completed"}
+# Plane files review-ish lanes under the `started` group, so the lane NAME has
+# to promote them; it is checked before the band.
+REVIEW = re.compile(r"review|\bqa\b|testing|documentation|approval|verif", re.I)
+DONE = re.compile(r"done|complete|cancel|closed|merged|shipped", re.I)
+BACKLOG = re.compile(r"backlog|icebox|triage", re.I)
+TODO = re.compile(r"\btodo\b|to do|\bready\b|unstarted|planned", re.I)
+
+TICKET = re.compile(r"(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9]{1,11})-(\d+)(?!\d)")
+
+
+def log(msg: str) -> None:
+    print(f"asm-orcapaint: {msg}", file=sys.stderr, flush=True)
+
+
+def column(phase: str | None, band: str | None) -> str | None:
+    if phase and REVIEW.search(phase):
+        return "in-review"
+    if band:
+        return BAND.get(band)
+    if not phase or BACKLOG.search(phase):
+        return None
+    if DONE.search(phase):
+        return "completed"
+    if TODO.search(phase):
+        return "todo"
+    return "in-progress"
+
+
+class Lanes:
+    """ticket key -> (lane name, band, title), newest event wins."""
+
+    def __init__(self) -> None:
+        self.by_key: dict[str, tuple[str, str | None, str | None, str]] = {}
+        self.seeded = False
+        self.px_misses: dict[str, float] = {}
+
+    def _events(self, etype: str, offset: int, limit: int = 200) -> list[dict]:
+        q = urllib.parse.urlencode({"type": etype, "limit": limit, "offset": offset})
+        with urllib.request.urlopen(f"{CANDYSTORE}/events?{q}", timeout=10) as r:
+            return json.load(r).get("events") or []
+
+    def _take(self, events: list[dict]) -> None:
+        for e in events:
+            d = e.get("data") or {}
+            key, at = d.get("ticket_key"), e.get("time") or ""
+            if not key or not d.get("phase"):
+                continue
+            cur = self.by_key.get(key)
+            if cur is None or at > cur[3]:
+                self.by_key[key] = (d["phase"], d.get("tp_band"), d.get("title"), at)
+
+    def poll(self) -> None:
+        # Seed deep once, then only the newest page: Plane moves are human-paced,
+        # nowhere near 200 per poll interval.
+        pages = int(os.environ.get("ORCAPAINT_SEED_PAGES", "10")) if not self.seeded else 1
+        try:
+            for etype in TASK_TYPES:
+                for page in range(pages):
+                    events = self._events(etype, page * 200)
+                    self._take(events)
+                    if len(events) < 200:
+                        break
+            self.seeded = True
+        except (OSError, ValueError) as exc:
+            log(f"candystore poll failed: {exc!r}")
+
+    def get(self, key: str, cwd: str) -> tuple[str, str | None, str | None] | None:
+        hit = self.by_key.get(key)
+        if hit:
+            return hit[:3]
+        if time.monotonic() < self.px_misses.get(key, 0):
+            return None
+        # No event in the window: ask the board itself. px resolves the board
+        # binding from the repo, which is why it runs inside the worktree.
+        try:
+            res = subprocess.run([PX, "show", key, "--json"], cwd=cwd, capture_output=True,
+                                 text=True, timeout=20)
+            t = (json.loads(res.stdout) or {}).get("ticket") or {}
+        except (OSError, subprocess.SubprocessError, ValueError):
+            t = {}
+        if t.get("lane"):
+            self.by_key[key] = (t["lane"], None, t.get("name"), "")
+            return self.by_key[key][:3]
+        self.px_misses[key] = time.monotonic() + 600
+        return None
+
+
+class Painter:
+    def __init__(self) -> None:
+        self.tick = float(os.environ.get("ORCAPAINT_TICK", "2"))
+        self.lane_every = float(os.environ.get("ORCAPAINT_LANE_EVERY", "30"))
+        self.worktree_every = float(os.environ.get("ORCAPAINT_WORKTREE_EVERY", "60"))
+        self.lanes = Lanes()
+        self.boards: set[str] = set()
+        self.cards: list[dict] = []
+        self.dry_run = False
+        self.running = True
+
+    # -- sources --------------------------------------------------------------
+    def orca(self, method: str, params: dict) -> dict | None:
+        """One call on the local Orca runtime, over the socket the CLI uses.
+
+        Direct rather than through `orca-ide`: the CLI drops an empty --comment
+        (so a card could never be cleared) and costs a node start per write.
+        """
+        try:
+            with open(ORCA_RUNTIME) as f:
+                meta = json.load(f)
+            endpoint = next(t["endpoint"] for t in meta["transports"] if t["kind"] == "unix")
+            env = {"id": str(uuid.uuid4()), "authToken": meta["authToken"],
+                   "method": method, "params": params}
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                s.settimeout(20)
+                s.connect(endpoint)
+                s.sendall((json.dumps(env) + "\n").encode())
+                buf = b""
+                while b"\n" not in buf:
+                    chunk = s.recv(65536)
+                    if not chunk:
+                        break
+                    buf += chunk
+            out = json.loads(buf.split(b"\n", 1)[0])
+        except (OSError, ValueError, KeyError, StopIteration):
+            return None
+        return out.get("result") if out.get("ok") else None
+
+    def refresh_cards(self) -> None:
+        res = self.orca("worktree.ps", {"limit": 1000})
+        if res is None:
+            log("orca worktree ps failed; keeping the previous card list")
+            return
+        cards = []
+        for w in res.get("worktrees") or []:
+            if not w.get("path") or w.get("isArchived"):
+                continue
+            cards.append({
+                "path": os.path.realpath(w["path"]),
+                "selector": f"path:{w['path']}",
+                "branch": (w.get("branch") or "").removeprefix("refs/heads/"),
+                "main": bool(w.get("isMainWorktree")),
+                "comment": w.get("comment") or "",
+                "status": w.get("workspaceStatus"),
+            })
+        self.cards = cards
+
+    def refresh_boards(self) -> None:
+        try:
+            res = subprocess.run([PJ, "list", "--json"],
+                                 capture_output=True, text=True, timeout=30)
+            projects = (json.loads(res.stdout) or {}).get("projects") or {}
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return
+        ids = {(p.get("ticket_provider") or {}).get("identifier") or "" for p in projects.values()}
+        ids.discard("")
+        if ids:
+            self.boards = {i.upper() for i in ids}
+
+    def ticket(self, branch: str) -> str | None:
+        for m in TICKET.finditer(branch):
+            prefix = m.group(1).upper()
+            if prefix in self.boards:
+                return f"{prefix}-{m.group(2)}"
+        return None
+
+    def agents(self, conn: Connection) -> dict[str, list[tuple[int, str]]]:
+        """card path -> [(rank, label)] for every non-idle agent inside it."""
+        paths = sorted((c["path"] for c in self.cards), key=len, reverse=True)
+        out: dict[str, list[tuple[int, str]]] = {}
+        for scope in conn.command("ZRANGE", "asm:live", "0", "-1") or []:
+            raw = conn.command("HGETALL", f"asm:a:{scope}")
+            if not raw:
+                continue
+            h = {raw[i]: raw[i + 1] for i in range(0, len(raw), 2)}
+            coarse = COARSE.get(h.get("state", ""))
+            cwd = h.get("cwd") or ""
+            if coarse is None or not cwd:
+                continue
+            cwd = os.path.realpath(cwd)
+            # Deepest card wins: an agent in holocene/.worktrees/x belongs to
+            # that worktree's card, not to holocene's or 33GOD's.
+            home = next((p for p in paths if cwd == p or cwd.startswith(p + "/")), None)
+            if home is None:
+                continue
+            word, rank, glyph = coarse
+            out.setdefault(home, []).append((rank, f"{glyph} {h.get('cli') or 'agent'} {word}"))
+        return out
+
+    # -- paint ----------------------------------------------------------------
+    def desired(self, card: dict, agents: list[tuple[int, str]] | None) -> tuple[str, str | None]:
+        parts, status = [], None
+        key = None if card["main"] else self.ticket(card["branch"])
+        if key:
+            lane = self.lanes.get(key, card["path"])
+            if lane:
+                phase, band, _title = lane
+                status = column(phase, band)
+                parts.append(f"{key} {phase}")
+            else:
+                parts.append(key)
+        if agents:
+            agents = sorted(agents, reverse=True)
+            more = f" +{len(agents) - 1}" if len(agents) > 1 else ""
+            parts.append(agents[0][1] + more)
+        return (MARK + " · ".join(parts)) if parts else "", status
+
+    def paint(self, conn: Connection | None) -> None:
+        agents = self.agents(conn) if conn is not None else {}
+        for card in self.cards:
+            comment, status = self.desired(card, agents.get(card["path"]))
+            update = {}
+            # Never touch a comment typed by a human.
+            owned = card["comment"] == "" or card["comment"].startswith(MARK)
+            if owned and comment != card["comment"]:
+                update["comment"] = comment
+            if status and status != card["status"]:
+                update["workspaceStatus"] = status
+            if not update:
+                continue
+            if self.dry_run:
+                print(f"{card['path']}: {update}")
+                continue
+            if self.orca("worktree.set", {"worktree": card["selector"], **update}) is None:
+                log(f"worktree.set failed for {card['path']} {update}")
+                continue
+            if "comment" in update:
+                card["comment"] = comment
+            if status:
+                card["status"] = status
+
+    # -- loop -----------------------------------------------------------------
+    def run(self) -> int:
+        log(f"up: redis={URL} candystore={CANDYSTORE} orca={ORCA_RUNTIME}")
+        conn = sub = None
+        next_cards = next_lanes = next_boards = 0.0
+        dirty = True
+        while self.running:
+            now = time.monotonic()
+            try:
+                if conn is None:
+                    conn = Connection(URL, timeout=5.0)
+                if sub is None:
+                    sub = Connection(URL, timeout=self.tick)
+                    sub.command("SUBSCRIBE", "asm:transitions")
+                if now >= next_boards:
+                    self.refresh_boards()
+                    next_boards = now + 600
+                if now >= next_cards:
+                    self.refresh_cards()
+                    next_cards, dirty = now + self.worktree_every, True
+                if now >= next_lanes:
+                    self.lanes.poll()
+                    next_lanes, dirty = now + self.lane_every, True
+                if dirty:
+                    self.paint(conn)
+                    dirty = False
+                try:
+                    while True:
+                        sub.read_push()   # drain: one repaint covers a burst
+                        dirty = True
+                except (socket.timeout, TimeoutError):
+                    pass
+            except (RedisError, OSError, ConnectionError) as exc:
+                log(f"{exc!r}; reconnecting")
+                for c in (conn, sub):
+                    if c is not None:
+                        c.close()
+                conn = sub = None
+                time.sleep(1.0)
+
+        # Don't leave cards claiming an agent is working after the painter that
+        # would have cleared it is gone. Lanes stay: they're still true.
+        self.paint(None)
+        for c in (conn, sub):
+            if c is not None:
+                c.close()
+        log("stopped")
+        return 0
+
+
+def main() -> int:
+    painter = Painter()
+    # --once: one paint and exit.  --dry-run: print the writes instead.
+    painter.dry_run = "--dry-run" in sys.argv
+    if "--once" in sys.argv or painter.dry_run:
+        painter.refresh_boards()
+        painter.refresh_cards()
+        painter.lanes.poll()
+        with Connection(URL, timeout=5.0) as conn:
+            painter.paint(conn)
+        return 0
+
+    def stop(_s, _f):
+        painter.running = False
+
+    signalmod.signal(signalmod.SIGTERM, stop)
+    signalmod.signal(signalmod.SIGINT, stop)
+    return painter.run()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

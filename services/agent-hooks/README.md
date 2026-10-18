@@ -28,7 +28,8 @@ agent-hooks/
 │   └── resp.py           # length-aware RESP2 client
 ├── bin/
 │   ├── asmctl            # look at the state machine
-│   └── asm-tabpaint      # paint it onto the zellij tab bar
+│   ├── asm-tabpaint      # paint it onto the zellij tab bar
+│   └── asm-orcapaint     # …and onto Orca's worktree cards
 ├── claude/
 │   ├── publish.py            # entry point for Claude Code hooks
 │   ├── settings.hooks.json   # GENERATED — merge into ~/.claude/settings.json
@@ -433,6 +434,10 @@ may not decide.
 
 - `bin/asmctl` — `ls`, `watch`, `tail`, `log`, `agents`, `who`
 - `bin/asm-tabpaint` — the zellij tab bar (`ops/systemd/asm-tabpaint.service`)
+- `bin/asm-orcapaint` — Orca worktree cards on the Mac/phone: worst agent per
+  worktree (by `cwd`) in the card comment, plus the ticket's Plane lane as the
+  board column, read from Candystore `bloodbank.repo.task.*`
+  (`ops/systemd/asm-orcapaint.service`). Never acks, never writes back.
 
 The one signal a surface originates is `ack`: arriving at a pane answers the
 question that raised `awaiting_human`, so the bell stops on sight rather than at
