@@ -2124,3 +2124,10 @@ def test_journal_gains_a_nullable_failure_code_column_without_losing_rows(tmp_pa
     store = ExecutionStateStore(path)
     row = store.get("old")
     assert row is not None and row.failure_code is None and row.lane == "interactive"
+
+
+def test_bloodbank_turns_never_auto_voice(tmp_path):
+    """voice.auto_tts is a fleet-wide default for human chats; a Bloodbank command turn must never synthesize."""
+    adapter = make_adapter(tmp_path)
+    adapter._auto_tts_default = True  # what the gateway syncs from voice.auto_tts at startup
+    assert adapter._should_auto_tts_for_chat("a9ffc5c2-memo-thread") is False

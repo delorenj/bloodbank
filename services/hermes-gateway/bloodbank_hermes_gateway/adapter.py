@@ -1089,6 +1089,18 @@ class BloodbankAdapter(BasePlatformAdapter):
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
         return {"name": str(chat_id), "type": "dm"}
 
+    def _should_auto_tts_for_chat(self, chat_id: str) -> bool:
+        """Never auto-voice a Bloodbank turn.
+
+        A Bloodbank command turn is not a conversation with a listener: this adapter has no send_voice, so the
+        gateway's global voice.auto_tts synthesized a reply, failed to deliver it ("send_voice fallback") and threw
+        it away, on every command turn (~557 discarded syntheses; +3.9 s before invocation.completed on every
+        voice memo, whose audio the Holocene inbox-watcher then synthesized again). Whoever consumes the turn owns
+        its audio. Same class as the a2a skip in hermes-agent run_voice.py (#90103).
+        """
+        del chat_id
+        return False
+
 
 def check_requirements() -> bool:
     try:
