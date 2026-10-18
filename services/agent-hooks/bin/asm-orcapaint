@@ -27,11 +27,13 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import signal as signalmod
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -64,8 +66,8 @@ COARSE = {
 
 # Plane state groups (tp_band) -> Orca board columns. backlog is deliberately
 # absent: a backlog ticket with a worktree keeps whatever column it has.
-BAND = {"unstarted": "todo", "started": "in-progress",
-        "in_review": "in-review", "completed": "completed"}
+BAND = {"unstarted": "todo", "started": "in-progress", "in_review": "in-review",
+        "completed": "completed", "cancelled": "completed", "canceled": "completed"}
 # Plane files review-ish lanes under the `started` group, so the lane NAME has
 # to promote them; it is checked before the band.
 REVIEW = re.compile(r"review|\bqa\b|testing|documentation|approval|verif", re.I)
@@ -73,7 +75,10 @@ DONE = re.compile(r"done|complete|cancel|closed|merged|shipped", re.I)
 BACKLOG = re.compile(r"backlog|icebox|triage", re.I)
 TODO = re.compile(r"\btodo\b|to do|\bready\b|unstarted|planned", re.I)
 
-TICKET = re.compile(r"(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9]{1,11})-(\d+)(?!\d)")
+# The key must open the branch or a `/` segment and end at a delimiter, so
+# `INT-349-sig` and `feat/int-273-x` bind but `feature/code-2fa-login` doesn't
+# (CODE, DOCS, IS, PX are all real board identifiers).
+TICKET = re.compile(r"(?:^|/)([A-Za-z][A-Za-z0-9]{1,11})-(\d+)(?=$|[-_./])")
 
 
 def log(msg: str) -> None:
@@ -83,8 +88,10 @@ def log(msg: str) -> None:
 def column(phase: str | None, band: str | None) -> str | None:
     if phase and REVIEW.search(phase):
         return "in-review"
-    if band:
-        return BAND.get(band)
+    if band == "backlog":
+        return None
+    if band in BAND:
+        return BAND[band]
     if not phase or BACKLOG.search(phase):
         return None
     if DONE.search(phase):
@@ -95,36 +102,56 @@ def column(phase: str | None, band: str | None) -> str | None:
 
 
 class Lanes:
-    """ticket key -> (lane name, band, title), newest event wins."""
+    """ticket key -> (lane name, band, title), newest event wins.
+
+    Candystore first; tickets with no event in the window are looked up with
+    `px show` on a background thread, so a hung board never stalls the paint
+    loop (or the shutdown cleanup, which must finish inside TimeoutStopSec).
+    """
 
     def __init__(self) -> None:
         self.by_key: dict[str, tuple[str, str | None, str | None, str]] = {}
         self.seeded = False
-        self.px_misses: dict[str, float] = {}
+        self.px_next: dict[str, float] = {}
+        self.queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self.queued: set[str] = set()
+        self.lock = threading.Lock()
+        self.resolved = threading.Event()   # a px answer landed: repaint
+        threading.Thread(target=self._px_worker, daemon=True).start()
 
-    def _events(self, etype: str, offset: int, limit: int = 200) -> list[dict]:
-        q = urllib.parse.urlencode({"type": etype, "limit": limit, "offset": offset})
+    def _events(self, etype: str, offset: int, since: str | None) -> list[dict]:
+        params = {"type": etype, "limit": 200, "offset": offset}
+        if since:
+            # /events invents a 24h floor when `from` is absent.
+            params["from"] = since
+        q = urllib.parse.urlencode(params)
         with urllib.request.urlopen(f"{CANDYSTORE}/events?{q}", timeout=10) as r:
             return json.load(r).get("events") or []
 
     def _take(self, events: list[dict]) -> None:
-        for e in events:
-            d = e.get("data") or {}
-            key, at = d.get("ticket_key"), e.get("time") or ""
-            if not key or not d.get("phase"):
-                continue
-            cur = self.by_key.get(key)
-            if cur is None or at > cur[3]:
-                self.by_key[key] = (d["phase"], d.get("tp_band"), d.get("title"), at)
+        with self.lock:
+            for e in events:
+                d = e.get("data") or {}
+                key, at = d.get("ticket_key"), e.get("time") or ""
+                if not key or not d.get("phase"):
+                    continue
+                cur = self.by_key.get(key)
+                if cur is None or at > cur[3]:
+                    self.by_key[key] = (d["phase"], d.get("tp_band"), d.get("title"), at)
 
     def poll(self) -> None:
         # Seed deep once, then only the newest page: Plane moves are human-paced,
         # nowhere near 200 per poll interval.
-        pages = int(os.environ.get("ORCAPAINT_SEED_PAGES", "10")) if not self.seeded else 1
+        if self.seeded:
+            pages, since = 1, None
+        else:
+            pages = int(os.environ.get("ORCAPAINT_SEED_PAGES", "20"))
+            days = int(os.environ.get("ORCAPAINT_SEED_DAYS", "60"))
+            since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - days * 86400))
         try:
             for etype in TASK_TYPES:
                 for page in range(pages):
-                    events = self._events(etype, page * 200)
+                    events = self._events(etype, page * 200, since)
                     self._take(events)
                     if len(events) < 200:
                         break
@@ -132,25 +159,41 @@ class Lanes:
         except (OSError, ValueError) as exc:
             log(f"candystore poll failed: {exc!r}")
 
-    def get(self, key: str, cwd: str) -> tuple[str, str | None, str | None] | None:
-        hit = self.by_key.get(key)
-        if hit:
-            return hit[:3]
-        if time.monotonic() < self.px_misses.get(key, 0):
-            return None
-        # No event in the window: ask the board itself. px resolves the board
-        # binding from the repo, which is why it runs inside the worktree.
-        try:
-            res = subprocess.run([PX, "show", key, "--json"], cwd=cwd, capture_output=True,
-                                 text=True, timeout=20)
-            t = (json.loads(res.stdout) or {}).get("ticket") or {}
-        except (OSError, subprocess.SubprocessError, ValueError):
-            t = {}
-        if t.get("lane"):
-            self.by_key[key] = (t["lane"], None, t.get("name"), "")
-            return self.by_key[key][:3]
-        self.px_misses[key] = time.monotonic() + 600
-        return None
+    def _px_worker(self) -> None:
+        while True:
+            key, cwd = self.queue.get()
+            try:
+                res = subprocess.run([PX, "show", key, "--json"], cwd=cwd, capture_output=True,
+                                     text=True, timeout=15)
+                t = (json.loads(res.stdout) or {}).get("ticket") or {}
+            except (OSError, subprocess.SubprocessError, ValueError):
+                t = {}
+            lane = t.get("lane")
+            with self.lock:
+                cur = self.by_key.get(key)
+                # at="" marks a px answer, so any real event supersedes it, and
+                # a px answer never overwrites a real event.
+                if lane and (cur is None or cur[3] == ""):
+                    self.by_key[key] = (lane, None, t.get("name"), "")
+                # Re-verify px answers hourly, misses every 10 minutes.
+                self.px_next[key] = time.monotonic() + (3600 if lane else 600)
+                self.queued.discard(key)
+            if lane:
+                self.resolved.set()
+
+    def get(self, key: str, cwd: str, lookup: bool = True) -> tuple[str, str | None, str | None] | None:
+        with self.lock:
+            hit = self.by_key.get(key)
+            stale_px = hit is not None and hit[3] == ""
+            due = time.monotonic() >= self.px_next.get(key, 0)
+            if lookup and due and (hit is None or stale_px) and key not in self.queued:
+                self.queued.add(key)
+                self.queue.put((key, cwd))
+        return hit[:3] if hit else None
+
+    def pending(self, key: str) -> bool:
+        with self.lock:
+            return key in self.queued
 
 
 class Painter:
@@ -159,7 +202,7 @@ class Painter:
         self.lane_every = float(os.environ.get("ORCAPAINT_LANE_EVERY", "30"))
         self.worktree_every = float(os.environ.get("ORCAPAINT_WORKTREE_EVERY", "60"))
         self.lanes = Lanes()
-        self.boards: set[str] = set()
+        self.boards: dict[str, str] = {}   # board identifier -> provider type
         self.cards: list[dict] = []
         self.dry_run = False
         self.running = True
@@ -211,17 +254,22 @@ class Painter:
             })
         self.cards = cards
 
-    def refresh_boards(self) -> None:
+    def refresh_boards(self) -> bool:
         try:
             res = subprocess.run([PJ, "list", "--json"],
                                  capture_output=True, text=True, timeout=30)
             projects = (json.loads(res.stdout) or {}).get("projects") or {}
         except (OSError, subprocess.SubprocessError, ValueError):
-            return
-        ids = {(p.get("ticket_provider") or {}).get("identifier") or "" for p in projects.values()}
-        ids.discard("")
-        if ids:
-            self.boards = {i.upper() for i in ids}
+            return False
+        providers = {}
+        for p in projects.values():
+            tp = p.get("ticket_provider") or {}
+            if tp.get("identifier"):
+                providers[tp["identifier"].upper()] = tp.get("type") or ""
+        if not providers:
+            return False
+        self.boards = providers
+        return True
 
     def ticket(self, branch: str) -> str | None:
         for m in TICKET.finditer(branch):
@@ -254,11 +302,23 @@ class Painter:
         return out
 
     # -- paint ----------------------------------------------------------------
-    def desired(self, card: dict, agents: list[tuple[int, str]] | None) -> tuple[str, str | None]:
+    def desired(self, card: dict, agents: list[tuple[int, str]] | None,
+                lookup: bool) -> tuple[str, str | None] | None:
+        """(comment, column) for a card, or None when it can't be known yet."""
+        if not card["main"] and not self.boards:
+            # Without the board list a ticket worktree looks unbound, and
+            # painting that would wipe its lane. Leave it until pj answers.
+            return None
         parts, status = [], None
         key = None if card["main"] else self.ticket(card["branch"])
         if key:
-            lane = self.lanes.get(key, card["path"])
+            # px only reads Plane; a Trello-bound key would miss forever.
+            plane = self.boards.get(key.split("-")[0]) == "plane"
+            lane = self.lanes.get(key, card["path"], lookup=lookup and plane)
+            if lane is None and self.lanes.pending(key):
+                # Don't strip a known lane off the card while px is still
+                # answering; that would flap the comment on every restart.
+                return None
             if lane:
                 phase, band, _title = lane
                 status = column(phase, band)
@@ -271,19 +331,35 @@ class Painter:
             parts.append(agents[0][1] + more)
         return (MARK + " · ".join(parts)) if parts else "", status
 
-    def paint(self, conn: Connection | None) -> None:
+    @staticmethod
+    def owned(comment: str) -> bool:
+        return comment == "" or comment.startswith(MARK)
+
+    def paint(self, conn: Connection | None, lookup: bool = True) -> None:
         agents = self.agents(conn) if conn is not None else {}
         for card in self.cards:
-            comment, status = self.desired(card, agents.get(card["path"]))
+            want = self.desired(card, agents.get(card["path"]), lookup)
+            if want is None:
+                continue
+            comment, status = want
             update = {}
-            # Never touch a comment typed by a human.
-            owned = card["comment"] == "" or card["comment"].startswith(MARK)
-            if owned and comment != card["comment"]:
+            if self.owned(card["comment"]) and comment != card["comment"]:
                 update["comment"] = comment
             if status and status != card["status"]:
                 update["workspaceStatus"] = status
             if not update:
                 continue
+            if "comment" in update and not self.dry_run:
+                # The card cache is up to a minute old. Re-read right before
+                # writing so a comment typed in Orca since then is never
+                # overwritten.
+                live = self.orca("worktree.show", {"worktree": card["selector"]})
+                live_comment = ((live or {}).get("worktree") or {}).get("comment") or ""
+                if live is None or not self.owned(live_comment):
+                    card["comment"] = live_comment
+                    update.pop("comment")
+                    if not update:
+                        continue
             if self.dry_run:
                 print(f"{card['path']}: {update}")
                 continue
@@ -310,14 +386,20 @@ class Painter:
                     sub = Connection(URL, timeout=self.tick)
                     sub.command("SUBSCRIBE", "asm:transitions")
                 if now >= next_boards:
-                    self.refresh_boards()
-                    next_boards = now + 600
+                    ok = self.refresh_boards()
+                    if not ok:
+                        log("pj list failed; ticket cards wait for it")
+                    next_boards = now + (600 if ok else 15)
+                    dirty = dirty or ok
                 if now >= next_cards:
                     self.refresh_cards()
                     next_cards, dirty = now + self.worktree_every, True
                 if now >= next_lanes:
                     self.lanes.poll()
                     next_lanes, dirty = now + self.lane_every, True
+                if self.lanes.resolved.is_set():
+                    self.lanes.resolved.clear()
+                    dirty = True
                 if dirty:
                     self.paint(conn)
                     dirty = False
@@ -336,8 +418,9 @@ class Painter:
                 time.sleep(1.0)
 
         # Don't leave cards claiming an agent is working after the painter that
-        # would have cleared it is gone. Lanes stay: they're still true.
-        self.paint(None)
+        # would have cleared it is gone. Lanes stay: they're still true. No px
+        # lookups here: this has to finish inside TimeoutStopSec.
+        self.paint(None, lookup=False)
         for c in (conn, sub):
             if c is not None:
                 c.close()
@@ -355,6 +438,13 @@ def main() -> int:
         painter.lanes.poll()
         with Connection(URL, timeout=5.0) as conn:
             painter.paint(conn)
+            # px lookups run on the worker thread; give them a moment, then
+            # paint again with whatever they found.
+            deadline = time.monotonic() + 30
+            while painter.lanes.queued and time.monotonic() < deadline:
+                time.sleep(0.5)
+            if painter.lanes.resolved.is_set():
+                painter.paint(conn, lookup=False)
         return 0
 
     def stop(_s, _f):
