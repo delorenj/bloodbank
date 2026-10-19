@@ -350,6 +350,7 @@ Segment 4 of `type` MUST be one of:
 | `file`             | `audio`, `curator`       | An on-disk artifact observed by a watcher — an audio inbox file, or a file arriving in a curated directory. |
 | `transcription`    | `audio`, `telephony`     | A speech-to-text job over a single audio file, or over a call recording or voicemail. |
 | `memo`             | `audio`                  | A short voice prompt captured on a device (Holocene Auto / Agent Pad) and routed to an agent. One memo is one journey: `uploaded` -> `received` -> `transcribed` -> `dispatched` -> `replied` -> `played` (the device reports playback), or `failed` at any stage. Every stage fact and the agent invocation command share `correlationid = data.memo_id`. |
+| `earshot`          | `audio`                  | A sound file dropped in an Earshot bucket channel, as the phone plays it. One drop is one journey: `detected` -> `started` -> `ended`, or `failed` (could not play) or `skipped` (the phone saw it too late and did not play it). `data.phase` carries the device's own word (`finished`, `missed`). `correlationid = data.event_id`, `ordering_key = earshot:<event_id>`. |
 | `approval_request` | `approval` (reserved)    | Human approval prompt issued.                               |
 | `worktree`         | `workspace` (reserved)   | Git worktree lifecycle.                                     |
 | `branch`           | `workspace` (reserved)   | Git branch state changes.                                   |
@@ -539,6 +540,7 @@ usage:<usage_id>
 allowance:<provider>:<account_id>:<window>
 file:<sha256(file_path)|file_id>
 memo:<memo_id>                   # audio.memo.*: every stage of one voice memo journey
+earshot:<event_id>               # audio.earshot.*: one dropped sound file, event_id = uuid5(NAMESPACE_URL, "s3://earshot/" + key)
 sync:<run_id>                    # finance: one tiller sync run
 account:<account_id>             # finance: per-account transaction/paycheck order
 transaction:<txn_id>

@@ -75,6 +75,8 @@ ALLOWED_ENTITIES = frozenset({
     "approval_request",
     "worktree", "branch", "diff",
     "file", "transcription", "memo",
+    # audio: one dropped sound file as the phone hears it (earshot channel player); phases detected/started/ended/failed/skipped
+    "earshot",
     "mission", "checkpoint", "gate", "roadmap", "status",
     "sync", "account", "transaction", "subscription", "zombie_charge", "paycheck", "projection",
     "clock", "report", "journal", "incident",
