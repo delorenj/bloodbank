@@ -526,3 +526,38 @@ def test_turn_timeout_failed_fact_validates_and_cannot_override_owned_fields(
     assert data["invocation_id"] == valid_command["command_id"]
     assert data["lane"] == "interactive"
     assert turn["data"]["outcome"] == "failed"
+
+
+def test_progress_event_validates_and_echoes_the_command(valid_command, repo_root):
+    import sys
+
+    from bloodbank_hermes_gateway.contract import (
+        PROGRESS_TEXT_MAX_CHARS,
+        progress_event,
+        progress_text,
+    )
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    valid_command["data"]["context"] = {"memo_id": "m-1"}
+    for lane in ("batch", "interactive"):
+        invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", lane)
+        text, cut = progress_text("  Checking the board.  ")
+        event = progress_event(invocation, seq=3, text=text, truncated=cut, elapsed_seconds=12.345)
+        validate_envelope(event)
+        assert event["type"] == "bloodbank.agent.invocation.progressed"
+        assert event["subject"] == "bloodbank.evt.agent.invocation.progressed"
+        assert event["correlationid"] == valid_command["correlationid"]
+        assert event["causationid"] == started_events(invocation)[1]["id"]
+        assert event["ordering_key"] == f"turn:{invocation.turn_id}"
+        d = event["data"]
+        assert (d["seq"], d["text"], d["text_truncated"], d["elapsed_seconds"], d["lane"]) == (
+            3, "Checking the board.", False, 12.3, lane)
+        assert d["command_id"] == valid_command["command_id"]
+        assert d["context"] == {"memo_id": "m-1"}
+
+    assert progress_text("   ") == (None, False)
+    assert progress_text(None) == (None, False)
+    long, cut = progress_text("x" * 2000)
+    assert cut is True and len(long) == PROGRESS_TEXT_MAX_CHARS

@@ -322,9 +322,53 @@ The plugin publishes only existing canonical events:
 
 - `bloodbank.conversation.turn.started`
 - `bloodbank.agent.invocation.started`
+- `bloodbank.agent.invocation.progressed` (0..n, see "Progress: interim assistant messages")
 - `bloodbank.agent.invocation.completed`
 - `bloodbank.agent.invocation.failed`
 - `bloodbank.conversation.turn.completed`
+
+## Progress: interim assistant messages
+
+A long turn is mostly real work (10-25 tool rounds for a voice memo). What the
+model writes next to its tool calls ("Checking the board first.") is the only
+honest account of that work while a human waits, so the gateway publishes each
+one as `bloodbank.agent.invocation.progressed`:
+
+- correlationid = the command's; causationid = the turn's `invocation.started`;
+  ordering key `turn:<turn_id>`; a random event id (progress is never journaled
+  or replayed, and a re-run must not be deduplicated against the first run).
+- `data`: `seq` (1..n per command), `text` (the message, trimmed, at most 500
+  characters, `text_truncated` says whether it was cut), `elapsed_seconds`
+  (since dispatch to Hermes), `command_id`, `target_agent_id`, `lane`,
+  `profile_name`, `invocation_id`, `thread_id`, `turn_id`, and the command's
+  `context` echoed (a voice memo's carries `memo_id`).
+- Every non-blank interim message is published; nothing is throttled at the
+  source. Consumers throttle (the Holocene inbox watcher speaks at most one per
+  30 s per memo).
+- Never for the final reply (that stays on the completion path and is read
+  from the Hermes session), never for a blank message, never after the turn
+  is finalizing, never for a chat or anchor this adapter is not running.
+
+How the messages are told apart, from Hermes' side of `send()`: Hermes marks
+every mid-turn send with `metadata["_interim_send"] = True`, and its stream
+consumer anchors assistant commentary to the triggering message
+(`metadata["reply_to_message_id"]` = the MessageEvent id = our command id).
+Status notices (the "still working" heartbeat, background-review notes,
+warnings) are interim but unanchored, tool-progress bubbles and the final reply
+carry no interim marker. The adapter declares `SUPPORTS_MESSAGE_EDITING = False`
+(it cannot edit anything; `send()` delivers nothing): Hermes then skips token
+streaming for Bloodbank turns, so a commentary arrives as ONE whole anchored
+send instead of a streamed first chunk plus an unanchored tail. This needs
+`display.interim_assistant_messages` on (it is, in `~/.hermes/config.yaml`).
+An interim send on a live command's chat that has no anchor is logged at INFO
+(`interim send without a command anchor ignored`): if progress facts stop
+appearing after a Hermes update, that line says why. A publish failure is
+logged and never fails the send or the turn.
+
+```bash
+curl -s 'http://127.0.0.1:8683/events?correlationid=<id>&type=bloodbank.agent.invocation.progressed&limit=50'
+journalctl --user -u hermes-gateway.service | grep 'Bloodbank progress published'
+```
 
 ## Hermes API assumptions
 
