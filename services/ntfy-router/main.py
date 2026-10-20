@@ -256,6 +256,15 @@ def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+MEMO_FAILED = "bloodbank.audio.memo.failed"
+
+
+def is_deliberate_cancel(event_type: str, data: dict[str, Any]) -> bool:
+    """`mise run memo:cancel` publishes audio.memo.failed stage=cancelled; the
+    operator asked for it, so it is not a failure worth a priority-5 push."""
+    return event_type == MEMO_FAILED and "cancelled" in (data.get("stage"), data.get("error_code"))
+
+
 def topic_for(event_type: str) -> str:
     """Dynamically route to a topic matching <domain>-<entity>, or fallback to NTFY_TOPIC."""
     parts = event_type.split(".")
@@ -692,6 +701,10 @@ class NtfyRouter:
             log.info("digested: %s", event_type)
             return "digested"
         data = _dict(envelope.get("data"))
+        if is_deliberate_cancel(event_type, data):
+            self.muted[event_type] += 1
+            self.stats["muted"] += 1
+            return "muted"
         if self._already_announced(event_type, data):
             self.stats["duplicate"] += 1
             log.info("duplicate: %s", event_type)

@@ -120,6 +120,21 @@ class MemoContract(unittest.TestCase):
             except validate.ValidationUnavailable:
                 self.skipTest("jsonschema is not installed")
 
+    def test_a_deliberate_cancel_is_a_legal_failed_stage(self):
+        for after in (False, True):
+            try:
+                validate.validate_envelope(envelope("failed", stage="cancelled", error_code="cancelled",
+                                                    retryable=False, after_dispatch=after))
+            except validate.ValidationUnavailable:
+                self.skipTest("jsonschema is not installed")
+
+    def test_after_dispatch_must_be_a_boolean(self):
+        try:
+            with self.assertRaises(validate.ContractError):
+                validate.validate_envelope(envelope("failed", stage="cancelled", retryable=False, after_dispatch="yes"))
+        except validate.ValidationUnavailable:
+            self.skipTest("jsonschema is not installed")
+
     def test_played_needs_a_phase(self):
         bad = envelope("played")
         del bad["data"]["phase"]

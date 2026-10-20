@@ -193,6 +193,19 @@ class DispositionTest(unittest.TestCase):
             self.assertEqual(policy.classify(f"bloodbank.audio.memo.{a}"), "mute", a)
         self.assertEqual(policy.classify("bloodbank.audio.memo.failed"), "route")
 
+    def test_a_deliberate_memo_cancel_never_pages_but_a_real_failure_still_does(self):
+        router, ntfy, _ = make(policy=main.Policy.from_env({}))
+        cancel = dict(memo_id="m", s3_key="k", target_agent_id="a", stage="cancelled", error_code="cancelled",
+                      error_message="cancelled", retryable=False, after_dispatch=True)
+        self.assertEqual(run(router.handle(env("bloodbank.audio.memo.failed", **cancel), "s")), "muted")
+        by_code = dict(cancel, stage="agent_reply")
+        self.assertEqual(run(router.handle(env("bloodbank.audio.memo.failed", **by_code), "s")), "muted")
+        self.assertEqual(ntfy.posts, [])
+        self.assertEqual(router.stats["muted"], 2)
+        real = dict(cancel, stage="agent_reply", error_code="turn_timeout", retryable=True)
+        self.assertEqual(run(router.handle(env("bloodbank.audio.memo.failed", **real), "s")), "routed")
+        self.assertEqual(len(ntfy.posts), 1)
+
     def test_muted_and_digested_events_never_post(self):
         router, ntfy, _ = make()
         for _ in range(500):

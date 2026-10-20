@@ -53,16 +53,17 @@
             "agent_reply",
             "tts",
             "reply_upload",
-            "playback"
+            "playback",
+            "cancelled"
           ],
-          "description": "Pipeline stage that failed. agent = the gateway turn failed or was rejected; agent_reply = no reply text arrived (error_code timeout: the watcher gave up waiting; no_reply_text: empty; turn_timeout: the gateway stopped the agent's turn at its per-turn wall clock). record = the device could not capture audio (mic unavailable, empty capture); s3_key is the key the memo would have had. upload = the PUT never completed (short body, retries exhausted on the device). playback = the Agent Pad could not play the spoken reply (autoplay blocked, decode or network error); for this stage s3_key is the reply object and the failure is always retryable."
+          "description": "Pipeline stage that failed. agent = the gateway turn failed or was rejected; agent_reply = no reply text arrived (error_code timeout: the watcher gave up waiting; no_reply_text: empty; turn_timeout: the gateway stopped the agent's turn at its per-turn wall clock). record = the device could not capture audio (mic unavailable, empty capture); s3_key is the key the memo would have had. upload = the PUT never completed (short body, retries exhausted on the device). playback = the Agent Pad could not play the spoken reply (autoplay blocked, decode or network error); for this stage s3_key is the reply object and the failure is always retryable. cancelled = the operator ended the memo on purpose (`mise run memo:cancel`); it is not an error: error_code is cancelled, retryable is false (only an explicit `memo:retry` revives it), error_message says where it stopped, and after_dispatch says whether the command had already been published. Consumers should not page for it."
         },
         "error_code": {
           "type": [
             "string",
             "null"
           ],
-          "description": "Short machine-readable code. For stage record: silent_capture = the pad measured the whole recording under -60 dBFS (see capture) and held it back, nothing was uploaded. For stage transcribe: silent_audio = the recording is digital silence or near it (audio_max_dbfs below the watcher's threshold, default -60 dBFS), so the microphone delivered no sound and no transcription was run; empty_transcript = the audio was audible (see audio_max_dbfs) but no words were recognised; garbage_transcript = a typical Whisper hallucination on noise; too_short; undecodable_audio; timeout."
+          "description": "Short machine-readable code. For stage record: silent_capture = the pad measured the whole recording under -60 dBFS (see capture) and held it back, nothing was uploaded. For stage cancelled: cancelled. For stage transcribe: silent_audio = the recording is digital silence or near it (audio_max_dbfs below the watcher's threshold, default -60 dBFS), so the microphone delivered no sound and no transcription was run; empty_transcript = the audio was audible (see audio_max_dbfs) but no words were recognised; garbage_transcript = a typical Whisper hallucination on noise; too_short; undecodable_audio; timeout."
         },
         "audio_max_dbfs": {
           "type": [
@@ -136,6 +137,10 @@
         "retryable": {
           "type": "boolean",
           "description": "True when the watcher will retry the stage; false when the journey ended here."
+        },
+        "after_dispatch": {
+          "type": ["boolean", "null"],
+          "description": "stage cancelled only: true when the agent command had already been published when the memo was cancelled, so the agent may still run and only its reply is dropped (not spoken, not mirrored; command_id is then set); false when nothing was ever sent to the agent."
         },
         "attempt": {
           "type": [
