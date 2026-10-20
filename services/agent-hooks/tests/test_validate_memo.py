@@ -40,6 +40,13 @@ PAYLOADS = {
                  "progress_s3_key": f"progress/2026/10/15/{MEMO_ID}-3.ogg",
                  "spoken_text": "Holocene PM: checking the board.", "elapsed_seconds": 41.5,
                  "tts_seconds": 2.1, "tts_engine": "voxcpm", "voice": "rick", "audio_bytes": 18031},
+    # the first sentence-chunk of a long reply went up before the full file
+    "voiced": {**BASE, "command_id": str(uuid.uuid4()), "chunk": 1, "chunks": 3,
+               "reply_s3_key": "replies/2026/10/15/201612Z-holocene-pm-" + MEMO_ID + ".ogg",
+               "chunk_s3_key": "replies/2026/10/15/201612Z-holocene-pm-" + MEMO_ID + "-c01of03.opus",
+               "spoken_text": "Holocene PM. The board has three tickets.", "spoken_chars": 41, "tts_seconds": 2.7,
+               "tts_engine": "voxcpm", "voice": "rick", "audio_bytes": 15145, "since_reply_seconds": 3.1,
+               "since_agent_done_seconds": 3.4, "late": False},
     # the car's speech arbiter started the instant acknowledgement
     "notified": {"memo_id": MEMO_ID, "s3_key": KEY, "target_agent_id": "holocene-pm", "utterance": "ack",
                  "decision": "started", "reason": None, "utterance_id": "u-1", "device_at": "2026-10-15T20:15:00.4Z",
