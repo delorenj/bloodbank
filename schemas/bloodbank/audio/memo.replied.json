@@ -134,6 +134,18 @@
           ],
           "description": "Seconds from memo received to reply uploaded.",
           "minimum": 0
+        },
+        "earshot_skipped": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "car_spoke",
+            "car_live",
+            null
+          ],
+          "description": "Why the reply was NOT mirrored to the Earshot phone channel: car_spoke (the car that sent the memo already started speaking it) or car_live (that car's push stream was open, it speaks the reply itself). A paired phone plays through the car's speakers. Null when mirrored (or the mirror is off)."
         }
       },
       "required": [
