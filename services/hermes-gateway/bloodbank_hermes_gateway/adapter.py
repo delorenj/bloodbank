@@ -40,6 +40,8 @@ from .contract import (
     RegistryInvalid,
     RouteInvalid,
     decode_command,
+    progress_event,
+    progress_text,
     started_events,
     terminal_events,
 )
@@ -188,6 +190,10 @@ class PendingInvocation:
     # (Hermes' processing-complete hook or the turn timeout); the other path
     # then stands down, so a late completion can never double-publish.
     finalizing: bool = False
+    # Monotonic dispatch time (the turn's clock) and the last progress seq
+    # published for this command (agent.invocation.progressed, 1..n).
+    dispatched_at: float | None = None
+    progress_seq: int = 0
 
 
 class BloodbankAdapter(BasePlatformAdapter):
@@ -202,6 +208,14 @@ class BloodbankAdapter(BasePlatformAdapter):
     supports_async_delivery = False
     interactive_resume = False
     allow_update_command = False
+    # Nothing this adapter "sends" can be edited (send() delivers nothing).
+    # Declaring it makes Hermes skip token streaming for Bloodbank turns: an
+    # editing platform gets the reply streamed as a first chunk plus edits,
+    # and a mid-turn commentary as that chunk plus an unanchored tail flush.
+    # Without editing, every interim assistant message arrives as ONE whole
+    # send() carrying `_interim_send` and the command id as its reply anchor,
+    # which is what agent.invocation.progressed is built from.
+    SUPPORTS_MESSAGE_EDITING = False
 
     # Flat names predate lanes and always address the batch lane.
     durable_name = _batch_attr("durable")
@@ -739,6 +753,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                     # The wall clock starts at dispatch, not at claim: time spent
                     # waiting for a same-thread predecessor is not the turn's.
                     dispatched_at = time.monotonic()
+                    record.dispatched_at = dispatched_at
                     await super().handle_message(event)
                     await self._await_turn(record, lane, dispatched_at)
             finally:
@@ -1083,8 +1098,95 @@ class BloodbankAdapter(BasePlatformAdapter):
         reply_to: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> SendResult:
-        del chat_id, content, reply_to, metadata
+        """Deliver nothing: a command turn's consumer reads the reply from the
+        Hermes session and owns its audio.
+
+        One kind of send is observed on the way through: an interim assistant
+        message of a command turn this adapter is running is published as
+        ``bloodbank.agent.invocation.progressed`` (what the agent says it is
+        doing while a human waits). Observability never fails the turn: any
+        error is logged and the send still succeeds."""
+
+        del reply_to
+        try:
+            await self._publish_progress(chat_id, content, metadata)
+        except Exception as exc:
+            logger.warning(
+                "Bloodbank progress publication failed error_type=%s",
+                type(exc).__name__,
+            )
         return SendResult(success=True, message_id=str(uuid.uuid4()))
+
+    def _progress_record(
+        self, chat_id: str, metadata: dict[str, Any] | None
+    ) -> PendingInvocation | None:
+        """The running command whose interim assistant message this send is, or None.
+
+        Hermes marks every mid-turn send with ``_interim_send``; its stream
+        consumer additionally anchors assistant commentary to the triggering
+        message (``reply_to_message_id`` = the MessageEvent id = our command
+        id). Status notices (the "still working" heartbeat, background-review
+        notes, warnings) carry no anchor, a final reply carries no interim
+        marker, and a chat or anchor this adapter is not running is somebody
+        else's: all of them are ignored."""
+
+        if not isinstance(metadata, dict) or metadata.get("_interim_send") is not True:
+            return None
+        anchor = metadata.get("reply_to_message_id")
+        record = self._records.get(str(anchor)) if anchor else None
+        if record is None:
+            if any(r.invocation.thread_id == str(chat_id) for r in self._records.values()):
+                # A live command turn's chat, but no anchor: a status notice, or a
+                # Hermes change that stopped anchoring commentary (then no progress
+                # facts appear at all, and this line says why).
+                logger.info(
+                    "Bloodbank interim send without a command anchor ignored chat_id=%s",
+                    chat_id,
+                )
+            return None
+        if (
+            record.invocation.thread_id != str(chat_id)
+            or record.event is None
+            or record.finalizing
+            or record.completion.done()
+        ):
+            return None
+        return record
+
+    async def _publish_progress(
+        self, chat_id: str, content: Any, metadata: dict[str, Any] | None
+    ) -> None:
+        record = self._progress_record(chat_id, metadata)
+        if record is None:
+            return
+        text, truncated = progress_text(content)
+        if text is None or self._js is None:
+            return
+        record.progress_seq += 1
+        elapsed = (
+            time.monotonic() - record.dispatched_at
+            if record.dispatched_at is not None
+            else None
+        )
+        invocation = record.invocation
+        event = progress_event(
+            invocation,
+            seq=record.progress_seq,
+            text=text,
+            truncated=truncated,
+            elapsed_seconds=elapsed,
+        )
+        await self._publish_many((event,))
+        logger.info(
+            "Bloodbank progress published lane=%s profile=%s command_id=%s seq=%d "
+            "chars=%d elapsed=%.1fs",
+            invocation.lane,
+            invocation.profile,
+            invocation.invocation_id,
+            record.progress_seq,
+            len(text),
+            elapsed or 0.0,
+        )
 
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
         return {"name": str(chat_id), "type": "dm"}

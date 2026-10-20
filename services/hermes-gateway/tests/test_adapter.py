@@ -2131,3 +2131,183 @@ def test_bloodbank_turns_never_auto_voice(tmp_path):
     adapter = make_adapter(tmp_path)
     adapter._auto_tts_default = True  # what the gateway syncs from voice.auto_tts at startup
     assert adapter._should_auto_tts_for_chat("a9ffc5c2-memo-thread") is False
+
+
+# -- agent.invocation.progressed: interim assistant messages of a running command turn
+
+
+def _interim(command_id):
+    """Metadata Hermes' stream consumer puts on a completed commentary send (_send_commentary)."""
+    return {"reply_to_message_id": command_id, "_interim_send": True}
+
+
+def _progressed(adapter):
+    return [e for e in adapter._js.events if e["type"] == "bloodbank.agent.invocation.progressed"]
+
+
+def test_adapter_declares_no_message_editing():
+    """Hermes streams tokens only to editing adapters; without editing, a commentary arrives as one anchored send."""
+    assert BloodbankAdapter.SUPPORTS_MESSAGE_EDITING is False
+
+
+@pytest.mark.asyncio
+async def test_interim_messages_of_a_running_turn_become_progress_facts(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    command_id = valid_command["command_id"]
+    thread = valid_command["data"]["thread_id"]
+    valid_command["data"]["context"] = {"memo_id": "m-1", "reason": "voice-inbox"}
+    sent = []
+
+    async def handler(event):
+        sent.append(await adapter.send(thread, "  Checking the date with a shell command.  ", metadata=_interim(command_id)))
+        sent.append(await adapter.send(thread, "It is Tuesday; writing the answer.", metadata=_interim(command_id)))
+        return "It is Tuesday."
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+
+    assert message.acked == 1
+    assert all(r.success for r in sent)
+    assert [e["type"] for e in adapter._js.events] == [
+        "bloodbank.conversation.turn.started",
+        "bloodbank.agent.invocation.started",
+        "bloodbank.agent.invocation.progressed",
+        "bloodbank.agent.invocation.progressed",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed",
+    ]
+    first, second = _progressed(adapter)
+    started = adapter._js.events[1]
+    for seq, event in ((1, first), (2, second)):
+        assert event["subject"] == "bloodbank.evt.agent.invocation.progressed"
+        assert event["correlationid"] == valid_command["correlationid"]
+        assert event["causationid"] == started["id"]
+        d = event["data"]
+        assert d["seq"] == seq
+        assert d["command_id"] == command_id
+        assert d["target_agent_id"] == "bloodbank-pm"
+        assert d["lane"] == "batch"
+        assert d["context"] == {"memo_id": "m-1", "reason": "voice-inbox"}
+        assert d["elapsed_seconds"] >= 0
+        assert d["text_truncated"] is False
+    assert first["data"]["text"] == "Checking the date with a shell command."
+    assert second["data"]["text"] == "It is Tuesday; writing the answer."
+    assert first["id"] != second["id"]
+
+
+@pytest.mark.asyncio
+async def test_final_reply_status_notices_and_blank_text_publish_no_progress(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    command_id = valid_command["command_id"]
+    thread = valid_command["data"]["thread_id"]
+
+    async def handler(event):
+        await adapter.send(thread, "   \n ", metadata=_interim(command_id))  # blank commentary
+        await adapter.send(thread, None, metadata=_interim(command_id))  # not text at all
+        # the "still working" heartbeat and background-review notes: interim, but not anchored to the command
+        await adapter.send(thread, "⏳ Still working (5 min)", metadata={"_interim_send": True})
+        # a tool-progress bubble: neither interim nor anchored
+        await adapter.send(thread, "💻 date", metadata=None)
+        # another command's anchor on this chat
+        await adapter.send(thread, "not ours", metadata=_interim(str(uuid.uuid4())))
+        return "The final answer."  # the conftest gateway delivers it with a plain send (no metadata)
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+
+    assert message.acked == 1
+    assert _progressed(adapter) == []
+    assert [e["type"] for e in adapter._js.events][-2:] == [
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_send_for_an_unknown_chat_or_after_the_turn_never_crashes_or_publishes(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    command_id = valid_command["command_id"]
+    thread = valid_command["data"]["thread_id"]
+
+    # nothing running at all: not our chat
+    result = await adapter.send("somebody-else", "hello", metadata=_interim(command_id))
+    assert result.success is True
+    assert (await adapter.send("somebody-else", "hello")).success is True
+    assert (await adapter.send("somebody-else", "hello", metadata="not a mapping")).success is True
+
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result="done"))
+    await adapter._handle_broker_message(FakeMessage(valid_command))
+    # the turn is over: a late commentary for it is not progress
+    assert (await adapter.send(thread, "late commentary", metadata=_interim(command_id))).success is True
+    assert _progressed(adapter) == []
+
+
+@pytest.mark.asyncio
+async def test_a_progress_publish_failure_never_fails_the_send_or_the_turn(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    command_id = valid_command["command_id"]
+    thread = valid_command["data"]["thread_id"]
+    real_publish = adapter._js.publish
+
+    async def flaky(subject, payload, **kwargs):
+        if subject.endswith(".progressed"):
+            raise RuntimeError("stream unavailable")
+        return await real_publish(subject, payload, **kwargs)
+
+    adapter._js.publish = flaky
+    results = []
+
+    async def handler(event):
+        results.append(await adapter.send(thread, "Looking it up.", metadata=_interim(command_id)))
+        results.append(await adapter.send(thread, "Still looking.", metadata=_interim(command_id)))
+        return "done"
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    assert [r.success for r in results] == [True, True]
+    assert message.acked == 1
+    assert adapter._js.events[-2]["type"] == "bloodbank.agent.invocation.completed"
+
+
+@pytest.mark.asyncio
+async def test_progress_text_is_cut_to_500_characters_and_marked(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    command_id = valid_command["command_id"]
+    thread = valid_command["data"]["thread_id"]
+
+    async def handler(event):
+        await adapter.send(thread, "word " * 300, metadata=_interim(command_id))
+        return "done"
+
+    adapter.set_message_handler(handler)
+    await adapter._handle_broker_message(FakeMessage(valid_command))
+    (event,) = _progressed(adapter)
+    assert len(event["data"]["text"]) <= 500
+    assert event["data"]["text"].endswith("…")
+    assert event["data"]["text_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_progress_seq_is_per_command_and_lane_is_stamped(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    thread = valid_command["data"]["thread_id"]
+
+    async def handler(event):
+        await adapter.send(thread, "step", metadata=_interim(event.message_id))
+        return "done"
+
+    adapter.set_message_handler(handler)
+    await adapter._handle_broker_message(FakeMessage(valid_command))
+    second = json.loads(json.dumps(valid_command))
+    second["id"] = str(uuid.uuid4())
+    second["command_id"] = str(uuid.uuid4())
+    second["idempotency_key"] = f"agent.invocation.start:turn:{second['command_id']}"
+    await adapter._handle_broker_message(FakeMessage(second))
+    events = _progressed(adapter)
+    assert [(e["data"]["command_id"], e["data"]["seq"]) for e in events] == [
+        (valid_command["command_id"], 1),
+        (second["command_id"], 1),
+    ]

@@ -63,6 +63,10 @@ INVOCATION_FAILED = "bloodbank.agent.invocation.failed"
 # expired and the gateway stopped the Hermes turn.
 TURN_TIMEOUT_CODE = "turn_timeout"
 TURN_COMPLETED = "bloodbank.conversation.turn.completed"
+# One interim assistant message ("I'll check the board first.") of a running
+# command turn: what the agent said it is doing, while the human waits.
+INVOCATION_PROGRESSED = "bloodbank.agent.invocation.progressed"
+PROGRESS_TEXT_MAX_CHARS = 500
 
 _UUID_NAMESPACE = uuid.UUID("633de934-f359-50f8-978f-3ef4ebbdac69")
 _RFC3339 = re.compile(
@@ -469,6 +473,59 @@ def started_events(invocation: Invocation) -> tuple[dict[str, Any], dict[str, An
         },
     )
     return turn, started
+
+
+def progress_text(raw: Any) -> tuple[str | None, bool]:
+    """(text, truncated) for a progress fact: trimmed, at most
+    PROGRESS_TEXT_MAX_CHARS characters (an ellipsis marks a cut), None for
+    anything that is not a non-blank string."""
+
+    if not isinstance(raw, str):
+        return None, False
+    text = raw.strip()
+    if not text:
+        return None, False
+    if len(text) <= PROGRESS_TEXT_MAX_CHARS:
+        return text, False
+    return text[: PROGRESS_TEXT_MAX_CHARS - 1].rstrip() + "…", True
+
+
+def progress_event(
+    invocation: Invocation,
+    *,
+    seq: int,
+    text: str,
+    truncated: bool = False,
+    elapsed_seconds: float | None = None,
+) -> dict[str, Any]:
+    """bloodbank.agent.invocation.progressed for one interim message.
+
+    The id is random, not derived: progress is never journaled or replayed,
+    and a re-run of the same command (redelivery after a restart) must not be
+    deduplicated against the first run's progress inside the stream's
+    duplicate window."""
+
+    event = lifecycle_event(
+        invocation,
+        INVOCATION_PROGRESSED,
+        causation_id=invocation.event_id(INVOCATION_STARTED),
+        data={
+            "invocation_id": invocation.invocation_id,
+            "thread_id": invocation.thread_id,
+            "turn_id": invocation.turn_id,
+            "seq": seq,
+            "text": text,
+            "text_truncated": truncated,
+            "elapsed_seconds": (
+                round(max(0.0, elapsed_seconds), 1)
+                if elapsed_seconds is not None
+                else None
+            ),
+            **_command_context(invocation),
+        },
+    )
+    event["id"] = str(uuid.uuid4())
+    return event
 
 
 def terminal_events(

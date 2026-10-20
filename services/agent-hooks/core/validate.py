@@ -102,6 +102,9 @@ EVENT_ACTIONS = frozenset({
     "skipped", "annotated", "notified",
     # audio.memo journey stages (voice memo -> transcript -> agent command -> spoken reply)
     "uploaded", "transcribed", "dispatched", "replied", "played",
+    # agent.invocation.progressed: a running turn said what it is doing (one interim assistant message);
+    # audio.memo.narrated: one of those spoken aloud for the car while the memo's turn still runs
+    "progressed", "narrated",
 })
 
 COMMAND_ACTIONS = frozenset({

@@ -104,9 +104,13 @@ SLOP_TOPIC = "slop"
 # audio.memo.* progress facts (uploaded/received/transcribed/dispatched/replied/played) are the
 # voice pipeline's own trace: about 8 per memo, readable in Holocene /voice and `memo:trace`.
 # Pushing each one to a phone was the pre-2026-10-15 behaviour; only audio.memo.failed pages.
+# agent.invocation.progressed (every interim assistant message of a turn), audio.memo.narrated (a
+# progress update spoken in the car) and audio.memo.notified (the car's speech-arbiter decisions) are
+# that same trace at a finer grain, several per turn: a phone push for each would buzz while driving.
 DEFAULT_MUTE = ("bloodbank.agent.hook.updated,bloodbank.system.hook.updated,"
                 "bloodbank.audio.memo.uploaded,bloodbank.audio.memo.received,bloodbank.audio.memo.transcribed,"
-                "bloodbank.audio.memo.dispatched,bloodbank.audio.memo.replied,bloodbank.audio.memo.played")
+                "bloodbank.audio.memo.dispatched,bloodbank.audio.memo.replied,bloodbank.audio.memo.played,"
+                "bloodbank.agent.invocation.progressed,bloodbank.audio.memo.narrated,bloodbank.audio.memo.notified")
 DEFAULT_DIGEST = "bloodbank.agent.tool.*"
 # Deploys, slop alerts, telephony, carrier texts and audio: rare, and wanted the moment they happen.
 DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed"

@@ -35,6 +35,15 @@ PAYLOADS = {
                "reply_s3_key": "replies/2026/10/15/201612Z-holocene-pm-" + MEMO_ID + ".ogg", "reply_age_ms": 4100},
     "failed": {**BASE, "stage": "agent_reply", "error_code": "timeout",
                "error_message": "no reply after 600s", "retryable": False, "attempt": 1},
+    # the watcher spoke a progress update for the car while the agent still works
+    "narrated": {**BASE, "command_id": str(uuid.uuid4()), "seq": 3, "narration": 1,
+                 "progress_s3_key": f"progress/2026/10/15/{MEMO_ID}-3.ogg",
+                 "spoken_text": "Holocene PM: checking the board.", "elapsed_seconds": 41.5,
+                 "tts_seconds": 2.1, "tts_engine": "voxcpm", "voice": "rick", "audio_bytes": 18031},
+    # the car's speech arbiter started the instant acknowledgement
+    "notified": {"memo_id": MEMO_ID, "s3_key": KEY, "target_agent_id": "holocene-pm", "utterance": "ack",
+                 "decision": "started", "reason": None, "utterance_id": "u-1", "device_at": "2026-10-15T20:15:00.4Z",
+                 "since_stop_ms": 420, "recording": False, "client_user_agent": "HoloceneAuto/0.9.0"},
 }
 
 
