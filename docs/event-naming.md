@@ -349,7 +349,7 @@ Segment 4 of `type` MUST be one of:
 | `skill`            | `repo`                   | Repo-scoped agent skill mutation from an automated tuning cycle; repo slug and skill name live in data. |
 | `file`             | `audio`, `curator`       | An on-disk artifact observed by a watcher — an audio inbox file, or a file arriving in a curated directory. |
 | `transcription`    | `audio`, `telephony`     | A speech-to-text job over a single audio file, or over a call recording or voicemail. |
-| `memo`             | `audio`                  | A short voice prompt captured on a device (Holocene Auto / Agent Pad) and routed to an agent. One memo is one journey: `uploaded` -> `received` -> `transcribed` -> `dispatched` -> `replied` -> `played` (the device reports playback), or `failed` at any stage. While the agent works, `narrated` (0..n: the watcher spoke a progress update for the car) and `notified` (0..n: the car's speech arbiter queued, started, ended, deferred, dropped or interrupted an acknowledgement, heard-echo, progress update or reply) annotate the journey. Every stage fact and the agent invocation command share `correlationid = data.memo_id`. |
+| `memo`             | `audio`                  | A short voice prompt captured on a device (Holocene Auto / Agent Pad) and routed to an agent. One memo is one journey: `uploaded` -> `received` -> `transcribed` -> `dispatched` -> `replied` -> `played` (the device reports playback), or `failed` at any stage. While the agent works, `narrated` (0..n: the watcher spoke a progress update for the car) and `notified` (0..n: the car's speech arbiter queued, started, ended, deferred, dropped or interrupted an acknowledgement, heard-echo, progress update or reply) annotate the journey; before a long reply's `replied`, `voiced` (1..n: one sentence-chunk of the reply rendered and uploaded as `replies/...-<memo_id>-c<ii>of<nn>.opus`, so the car starts speaking while the rest renders; `replied` still names the full file). Every stage fact and the agent invocation command share `correlationid = data.memo_id`. |
 | `earshot`          | `audio`                  | A sound file dropped in an Earshot bucket channel, as the phone plays it. One drop is one journey: `detected` -> `started` -> `ended`, or `failed` (could not play) or `skipped` (the phone saw it too late and did not play it). `data.phase` carries the device's own word (`finished`, `missed`). `correlationid = data.event_id`, `ordering_key = earshot:<event_id>`. |
 | `approval_request` | `approval` (reserved)    | Human approval prompt issued.                               |
 | `worktree`         | `workspace` (reserved)   | Git worktree lifecycle.                                     |
@@ -428,7 +428,8 @@ journey stages: a voice memo that is uploaded, transcribed, dispatched to an age
 answered aloud, and played back on the device), `progressed` (`agent.invocation.progressed`:
 a running turn said what it is doing, one interim assistant message), `narrated`
 (`audio.memo.narrated`: one such progress line spoken aloud for the car while the memo's
-turn still runs).
+turn still runs), `voiced` (`audio.memo.voiced`: one sentence-chunk of the reply rendered and
+uploaded, so the car starts speaking before the whole reply is rendered).
 
 ### 8.2 Command actions (imperative present)
 

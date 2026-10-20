@@ -105,6 +105,8 @@ EVENT_ACTIONS = frozenset({
     # agent.invocation.progressed: a running turn said what it is doing (one interim assistant message);
     # audio.memo.narrated: one of those spoken aloud for the car while the memo's turn still runs
     "progressed", "narrated",
+    # audio.memo.voiced: one sentence-chunk of the reply rendered and uploaded for the car before the full file
+    "voiced",
 })
 
 COMMAND_ACTIONS = frozenset({
