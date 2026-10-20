@@ -361,9 +361,19 @@ streaming for Bloodbank turns, so a commentary arrives as ONE whole anchored
 send instead of a streamed first chunk plus an unanchored tail. This needs
 `display.interim_assistant_messages` on (it is, in `~/.hermes/config.yaml`).
 An interim send on a live command's chat that has no anchor is logged at INFO
-(`interim send without a command anchor ignored`): if progress facts stop
-appearing after a Hermes update, that line says why. A publish failure is
-logged and never fails the send or the turn.
+(`interim send without a command anchor ignored`; the host gateway logs at
+WARNING, so raise `bloodbank_hermes_gateway` to INFO to see it): if progress
+facts stop appearing after a Hermes update, that line says why. A publish
+failure is logged at WARNING and never fails the send or the turn.
+
+Whether a turn has any progress at all is up to the model: a tool call with no
+text next to it is not a message. Measured 2026-10-20 on the last three days of
+memo turns, 0-4 of 8-18 tool rounds carried text, so the Holocene watcher's
+voice-memo prompt asks for one short sentence before each tool call. Proof run
+(holocene-pm, interactive, "before each tool call, write one short sentence...
+check the date, then count the files in /tmp"): `progressed` seq 1 at 12.8 s
+("I'll check the current date with the shell."), seq 2 at 20.4 s, then
+`completed`.
 
 ```bash
 curl -s 'http://127.0.0.1:8683/events?correlationid=<id>&type=bloodbank.agent.invocation.progressed&limit=50'
