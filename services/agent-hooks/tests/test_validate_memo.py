@@ -130,7 +130,7 @@ class MemoContract(unittest.TestCase):
 
     def test_after_dispatch_must_be_a_boolean(self):
         try:
-            with self.assertRaises(validate.ContractError):
+            with self.assertRaises(validate.EnvelopeInvalid):
                 validate.validate_envelope(envelope("failed", stage="cancelled", retryable=False, after_dispatch="yes"))
         except validate.ValidationUnavailable:
             self.skipTest("jsonschema is not installed")
