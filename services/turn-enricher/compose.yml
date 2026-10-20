@@ -1,0 +1,49 @@
+# turn-enricher — standalone compose (issue #271)
+#
+# Joins the existing bloodbank-network, subscribes to
+# `bloodbank.evt.conversation.turn.completed`, and republishes each
+# substantive turn as `bloodbank.conversation.turn.annotated` after running
+# it through the Jev signal gate (OpenRouter typesafe/jev-1.13) and the
+# Clairic typed extractor (Cloudflare Workers AI @cf/cloudflare/clairic).
+# Enrich once at the source; every downstream consumer reads typed facts off
+# the bus.
+#
+# Secrets come from .env.op at the repo root (op://DeLoSecrets refs, resolved
+# by `op inject`); never commit resolved values. Refuse-to-start when any of
+# the three is empty — a missing key is a silent 401 storm, not a degraded
+# mode.
+#
+# Bring up (from the repo root):
+#   op run --env-file=.env.op -- \
+#     docker compose -f services/turn-enricher/compose.yml up -d --build
+#
+# Tear down:
+#   docker compose -f compose.yml down   (from this directory)
+
+name: bloodbank-turn-enricher
+
+networks:
+  bloodbank-network:
+    external: true
+
+services:
+  turn-enricher:
+    build:
+      # Context is the repo's services/ so the Dockerfile can COPY
+      # agent-hooks/core (the envelope builder) next to main.py.
+      context: ..
+      dockerfile: turn-enricher/Dockerfile
+    container_name: bloodbank-turn-enricher
+    environment:
+      NATS_URL: "nats://nats:4222"
+      SUBJECT_FILTER: "${BLOODBANK_TURN_ENRICHER_SUBJECT:-bloodbank.evt.conversation.turn.completed}"
+      PUBLISH_SUBJECT: "${BLOODBANK_TURN_ENRICHER_PUBLISH_SUBJECT:-bloodbank.evt.conversation.turn.annotated}"
+      JEV_URL: "${BLOODBANK_TURN_ENRICHER_JEV_URL:-https://openrouter.ai/api/alpha/decisions}"
+      JEV_MODEL: "${BLOODBANK_TURN_ENRICHER_JEV_MODEL:-typesafe/jev-1.13}"
+      JEV_API_KEY: "${JEV_API_KEY:-}"
+      CF_API_KEY: "${CF_API_KEY:-}"
+      CF_ACCOUNT_ID: "${CF_ACCOUNT_ID:-}"
+      LOG_LEVEL: "${BLOODBANK_TURN_ENRICHER_LOG_LEVEL:-INFO}"
+    networks:
+      - bloodbank-network
+    restart: unless-stopped
