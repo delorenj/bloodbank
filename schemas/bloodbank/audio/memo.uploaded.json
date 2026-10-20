@@ -108,6 +108,25 @@
             "rms_dbfs"
           ],
           "additionalProperties": true
+        },
+        "device_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The uploading pad's device id (random, kept by the pad; X-Holocene-Device). With device_host it tells the inbox watcher which car sent the memo, so the reply's Earshot phone copy can be left out while that car is live."
+        },
+        "device_host": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "car",
+            "browser",
+            null
+          ],
+          "description": "Where the pad runs: car (the Holocene Auto app) or browser (X-Holocene-Host)."
         }
       },
       "required": [
