@@ -1096,10 +1096,10 @@ Timeline (UTC; Hermes local-time log lines converted):
 | 02:51:07.36 | `Bloodbank gateway connected` both lanes. The same second: both user prompts re-appear in their holocene-pm sessions (02:51:07) |
 | 02:51:08.09 | both consumers `num_waiting 1`: both lanes pulling |
 | 02:51:13 | both sessions issue the `sleep` tool call again |
+| 02:54:28.6 | `gateway_state running` (the other profiles have finished starting) |
 | 02:54:34 / 02:55:14 | `sleep 200` and `sleep 240` return `exit_code 0` (201 s and 241 s later) |
 | 02:54:36.44 | command 2 `completed/success`; reply `retry test 2 done` (17 chars) |
 | 02:55:16.19 | command 1 `completed/success`; reply `retry test done` (15 chars) |
-| 02:54:28.6 | `gateway_state running` (the other profiles have finished starting) |
 
 **Total time from the reload to both Bloodbank lanes pulling: 297 s (4 min
 57 s).** The pieces:
