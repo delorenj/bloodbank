@@ -76,7 +76,7 @@
             "string",
             "null"
           ],
-          "description": "Why the lane differs from the configured one, or why a probe failed. interactive_consumer_not_pulling: the watcher fell back to batch because batch was pulling and interactive was not. gateway_not_pulling_queued_on_interactive: neither lane had a puller (gateway down or restarting), so the command was queued on the interactive lane, which drains first on reconnect. Null on the normal path."
+          "description": "Why the lane differs from the configured one, or why a probe failed. interactive_consumer_not_pulling: the watcher fell back to batch because batch was pulling and interactive was not. gateway_not_pulling_queued_on_interactive: neither lane had a puller (gateway down or restarting), so the command was queued on the interactive lane, which drains first on reconnect. gateway_draining_queued_on_interactive: hermes-gateway was draining for a restart (its gateway_state.json said so), so nothing pulled on purpose; the command was queued on the interactive lane, which the new process fetches first. Null on the normal path."
         },
         "thread_id": {
           "type": [
