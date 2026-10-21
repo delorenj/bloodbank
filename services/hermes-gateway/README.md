@@ -298,6 +298,8 @@ failure_code='turn_timeout'"`, or `mise run memo:trace` for a voice memo.
   even if its route is later re-enabled.
 - A turn that exceeds its lane's wall clock is stopped and closed as
   `outcome = failure`, `failure_code = turn_timeout` (see "Per-turn wall clock").
+- A turn Hermes did not run is never closed as success (see "Gateway restarts
+  and refused turns").
 - The command's correlation, causation, command, idempotency, target, thread,
   and turn identifiers are carried into schema-conformant lifecycle events,
   together with the delivery `lane`.
@@ -326,6 +328,73 @@ The plugin publishes only existing canonical events:
 - `bloodbank.agent.invocation.completed`
 - `bloodbank.agent.invocation.failed`
 - `bloodbank.conversation.turn.completed`
+
+## Gateway restarts and refused turns
+
+`systemctl --user reload hermes-gateway.service` (SIGUSR1) and every planned
+stop make Hermes drain: the process keeps its adapters connected, waits up to
+`restart_after_turn_timeout` (1800 s by default) for in-flight turns, then
+gives stragglers `restart_drain_timeout` (60 s here) before interrupting them.
+Meanwhile Hermes answers every new message with "⏳ Gateway is restarting and
+is not accepting new work right now." through `send()` and reports the turn as
+SUCCESS. Before this section existed the plugin journaled that as a completed
+command, published `agent.invocation.completed` and acked it: the command was
+lost while every consumer believed it ran (two voice memos on 2026-10-20, a
+dozen ticket groomings on 2026-10-19, 2026-10-11 and 2026-10-10).
+
+The plugin reads the runner's `_restart_requested`, `_draining` and
+`_external_drain_active` flags (`adapter.gateway_runner`) and:
+
+- **Stops fetching** on every lane while any flag is set. Nothing is pulled,
+  so commands stay queued in JetStream and no `max_deliver` budget is spent
+  however long the drain lasts; the next process fetches them first. One
+  WARNING per lane says `stopped fetching`, one INFO says `resumed fetching`.
+- **Checks again right before dispatch** (once before the journal row is
+  marked started, once after the started facts are published). A command
+  fetched just before the drain is NAKed with the lane's `nak_delay`, its row
+  left `pending`/`started` (both dispatch again on redelivery) and nothing
+  terminal published.
+- **Reads the turn's final reply** (the first non-interim send anchored to the
+  command id). When it is one of Hermes' refusal notices, rendered with
+  Hermes' own catalog (`agent.i18n.t`, English copies as fallback;
+  `bloodbank_hermes_gateway/refusals.py`):
+  - *not run, retried* (NAK, row stays dispatchable, no completed fact):
+    `gateway.busy.drain_rejected_new_work`, `drain_rejected`, `drain_queued`,
+    `draining_maintenance`, `gateway.errors.interrupted_before_start`,
+    `previous_turn_cleanup`, `history_unavailable`, and the
+    `max_concurrent_sessions` refusal ("Hermes is at the active session limit");
+  - *explicit failure* (`agent.invocation.failed`, acked):
+    `error_code = hermes_refused` for `gateway.busy.another_turn_running` (the
+    30 min turn-lease wait timed out; a retry would wait again) and
+    `gateway.unknown_command` (the prompt began with an unknown `/command`);
+    `error_code = hermes_turn_error` for the error notices Hermes returns in
+    place of an answer (`generic_failed_with_hint`: rate limit, usage limit,
+    expired sign-in, quota, overload, rejected request; `rate_limited`,
+    `usage_limit_resets`, `provider_kept_failing`, `no_credentials`,
+    `auth_failed`, `unreachable`, `connection_interrupted`, `no_response`).
+    Both carry `data.refusal` = the notice key.
+- **Checks admission**: Hermes stamps `event._gateway_accepted`; an event its
+  ingress drops (unresolved profile route, an internal event while the session
+  slot holds a pending message) gets no processing-complete hook, so the batch
+  lane used to wait on it forever. It is now NAKed as not run.
+- **Never drops on the last delivery**: when a command Hermes did not run is on
+  its last JetStream delivery (`num_delivered >= max_deliver`) a NAK would lose
+  it silently, so it is closed instead as `error_code = hermes_refused` with
+  `data.refusal` = `gateway_restarting` / `gateway_shutting_down` /
+  `gateway_external_drain` / `not_accepted` / the notice key.
+
+Refusal paths that cannot reach a Bloodbank command: pairing/authorization and
+the emergency stop (`hermes pause`) skip internal events, as does Hermes'
+external-drain gate (the plugin pauses on `_external_drain_active` itself). A
+known slash command at the start of a prompt (`/new`, `/status`) is executed
+by Hermes and still reports success; no production prompt starts with `/`.
+Not detectable from the reply: a runner that believes the session is already
+running (leaked state after an unconfirmed turn-timeout stop) steers or queues
+the prompt into that turn and returns nothing.
+
+Find refused commands: `journalctl --user -u hermes-gateway | grep 'not run by
+Hermes'`, or `sqlite3 ~/.hermes/bloodbank-hermes-gateway-state.sqlite3 "select
+command_id, failure_code from executions where failure_code like 'hermes_%'"`.
 
 ## Progress: interim assistant messages
 

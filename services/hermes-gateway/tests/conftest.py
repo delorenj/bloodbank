@@ -68,8 +68,12 @@ class BasePlatformAdapter:
     # active-session guard and cancels that task, and
     # cancel_session_processing().  ``stop_ineffective`` models a turn stuck in
     # a thread that ignores both (the adapter must then say the stop was not
-    # confirmed).
+    # confirmed); ``drop_inbound`` models an event Hermes' ingress drops
+    # without admitting it.
     stop_ineffective = False
+    drop_inbound = False
+    # Set by the Hermes runner when it wires the adapter (drain flags live there).
+    gateway_runner = None
 
     def _event_session_key(self, event):
         return f"{event.source.profile}:{event.source.chat_id}"
@@ -90,10 +94,16 @@ class BasePlatformAdapter:
         await asyncio.gather(task, return_exceptions=True)
 
     async def handle_message(self, event):
+        # Hermes stamps every inbound event with whether it was admitted (a
+        # processing task started or it was queued for one); a dropped event
+        # gets no processing-complete hook at all.
+        event._gateway_accepted = False
         key = self._event_session_key(event)
         if event.text.strip() == "/stop":
             self.stop_events.append(event)
             await self.cancel_session_processing(key)
+            return
+        if self.drop_inbound:
             return
 
         async def run():
@@ -101,7 +111,11 @@ class BasePlatformAdapter:
             try:
                 response = await self._message_handler(event)
                 if response:
-                    result = await self.send(event.source.chat_id, response)
+                    # The final text is anchored to the triggering message, as
+                    # Hermes' _reply_anchor_for_event does for this platform.
+                    result = await self.send(
+                        event.source.chat_id, response, reply_to=event.message_id
+                    )
                     if not result.success:
                         outcome = ProcessingOutcome.FAILURE
             except asyncio.CancelledError:
@@ -119,6 +133,7 @@ class BasePlatformAdapter:
         self._active_sessions[key] = task
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+        event._gateway_accepted = True
 
     async def cancel_background_tasks(self):
         tasks = list(self._background_tasks)

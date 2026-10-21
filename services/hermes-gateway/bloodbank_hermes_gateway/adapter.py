@@ -46,10 +46,32 @@ from .contract import (
     terminal_events,
 )
 from .execution_state import ExecutionRecord, ExecutionStateStore, envelope_digest
+from .refusals import NOT_RUN, HermesNotice, NoticeClassifier
 
 logger = logging.getLogger(__name__)
 ROUTE_REJECTION_REASON = "route_policy_invalid_before_dispatch"
 ROUTE_REJECTION_MESSAGE = "Hermes route became ineligible before dispatch"
+# Failed-fact reasons when Hermes did not run a command as asked (see refusals.py):
+# refused = no turn ran (closed only once no delivery is left, or when a retry
+# cannot help); turn_error = a turn ran and Hermes ended it with an error notice.
+HERMES_REFUSED_CODE = "hermes_refused"
+HERMES_TURN_ERROR_CODE = "hermes_turn_error"
+# How often a lane paused by a Hermes drain re-reads the runner's state.
+DRAIN_POLL_SECONDS = 1.0
+_NOT_ACCEPTING_TEXT = {
+    "restarting": "restarting (draining in-flight turns)",
+    "shutting_down": "shutting down (draining in-flight turns)",
+    "external_drain": "draining for a maintenance action",
+}
+
+
+class TurnNotRun(Exception):
+    """Hermes did not run the command's turn: retry it, never close it as done."""
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
+        self.detail = detail
 
 
 def _bounded_int(
@@ -194,6 +216,9 @@ class PendingInvocation:
     # published for this command (agent.invocation.progressed, 1..n).
     dispatched_at: float | None = None
     progress_seq: int = 0
+    # First chunk of the turn's final reply (the non-interim send anchored to
+    # the command id): how a Hermes refusal notice is told from an answer.
+    final_reply: str | None = None
 
 
 class BloodbankAdapter(BasePlatformAdapter):
@@ -324,6 +349,10 @@ class BloodbankAdapter(BasePlatformAdapter):
         self._execution_claim_lock = asyncio.Lock()
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self._conversation_lock_refs: dict[str, int] = {}
+        self.drain_poll_seconds = DRAIN_POLL_SECONDS
+        self._notices = NoticeClassifier()
+        # lane name -> why it stopped fetching (logged once per pause).
+        self._paused_lanes: dict[str, str] = {}
 
     @staticmethod
     def _interactive_lane(raw: Any) -> LaneRuntime | None:
@@ -554,9 +583,67 @@ class BloodbankAdapter(BasePlatformAdapter):
                 )
                 await asyncio.sleep(1.0)
 
-    async def _consume_once(self, lane: LaneRuntime) -> None:
-        """One fetch cycle: wait for a free slot, pull, start a task per command."""
+    def _gateway_not_accepting(self) -> str | None:
+        """Why the Hermes runner refuses new turns right now, or None when it takes them.
 
+        A reload/restart (SIGUSR1) or shutdown keeps every adapter connected while
+        Hermes drains in-flight turns (up to restart_after_turn_timeout, 30 min by
+        default) and answers each new message with a "not accepting new work"
+        notice that the base adapter reports as a successful turn. An external
+        drain (.drain_request.json) refuses new turns the same way."""
+
+        runner = getattr(self, "gateway_runner", None)
+        if runner is None:
+            return None
+        if getattr(runner, "_restart_requested", False) is True:
+            return "restarting"
+        if getattr(runner, "_draining", False) is True:
+            return "shutting_down"
+        if getattr(runner, "_external_drain_active", False) is True:
+            return "external_drain"
+        return None
+
+    def _refuse_if_not_accepting(self) -> None:
+        reason = self._gateway_not_accepting()
+        if reason is not None:
+            raise TurnNotRun(
+                f"gateway_{reason}",
+                f"Hermes gateway is {_NOT_ACCEPTING_TEXT[reason]}; not dispatched",
+            )
+
+    def _pause_lane(self, lane: LaneRuntime, reason: str) -> None:
+        if self._paused_lanes.get(lane.name) == reason:
+            return
+        self._paused_lanes[lane.name] = reason
+        logger.warning(
+            "Bloodbank lane=%s stopped fetching: Hermes gateway is %s and refuses "
+            "new turns; commands stay queued on durable %s and run when the "
+            "gateway is back",
+            lane.name,
+            _NOT_ACCEPTING_TEXT[reason],
+            lane.durable,
+        )
+
+    def _resume_lane(self, lane: LaneRuntime) -> None:
+        if self._paused_lanes.pop(lane.name, None) is not None:
+            logger.info(
+                "Bloodbank lane=%s resumed fetching: Hermes accepts new turns again",
+                lane.name,
+            )
+
+    async def _consume_once(self, lane: LaneRuntime) -> None:
+        """One fetch cycle: wait for a free slot, pull, start a task per command.
+
+        While Hermes refuses new turns the lane does not pull at all: commands
+        stay in JetStream (no delivery, so no max_deliver budget is spent however
+        long the drain lasts) and the next process fetches them."""
+
+        reason = self._gateway_not_accepting()
+        if reason is not None:
+            self._pause_lane(lane, reason)
+            await asyncio.sleep(self.drain_poll_seconds)
+            return
+        self._resume_lane(lane)
         capacity = lane.max_inflight - len(lane.inflight)
         if capacity <= 0:
             await asyncio.wait(lane.inflight, return_when=asyncio.FIRST_COMPLETED)
@@ -705,6 +792,10 @@ class BloodbankAdapter(BasePlatformAdapter):
             )
             try:
                 async with lock:
+                    # A drain that began after this command was fetched (or while
+                    # it waited for a same-thread predecessor): publish nothing and
+                    # keep the journal row dispatchable, so the next process runs it.
+                    self._refuse_if_not_accepting()
                     await self._assert_dispatch_route(invocation)
                     if persisted.state == "pending":
                         persisted = await asyncio.to_thread(
@@ -749,12 +840,24 @@ class BloodbankAdapter(BasePlatformAdapter):
                     # claimed or restarted pending command must not execute on
                     # a route disabled while lifecycle publication was in flight.
                     await self._assert_dispatch_route(invocation)
+                    # Last look before the hand-off (no await from here on): a
+                    # drain that began while the started facts were published.
+                    self._refuse_if_not_accepting()
                     record.event = event
                     # The wall clock starts at dispatch, not at claim: time spent
                     # waiting for a same-thread predecessor is not the turn's.
                     dispatched_at = time.monotonic()
                     record.dispatched_at = dispatched_at
                     await super().handle_message(event)
+                    # Hermes records whether it admitted the event (a task was
+                    # started or it was queued for one). Unadmitted, no turn and
+                    # no processing-complete hook will ever come for it.
+                    if getattr(event, "_gateway_accepted", True) is not True:
+                        record.finalizing = True
+                        raise TurnNotRun(
+                            "not_accepted",
+                            "Hermes did not admit the turn (dropped at adapter ingress)",
+                        )
                     await self._await_turn(record, lane, dispatched_at)
             finally:
                 remaining = self._conversation_lock_refs.get(lock_key, 1) - 1
@@ -765,6 +868,10 @@ class BloodbankAdapter(BasePlatformAdapter):
                     self._conversation_lock_refs[lock_key] = remaining
 
             await message.ack()
+        except TurnNotRun as exc:
+            await self._not_run(
+                message, lane, record, exc, replay_started=not started_publish_complete
+            )
         except RouteInvalid as exc:
             if record is not None and persisted is not None:
                 try:
@@ -823,6 +930,110 @@ class BloodbankAdapter(BasePlatformAdapter):
                 f"target_agent_id {invocation.target_agent_id!r} changed profile "
                 "after durable claim"
             )
+
+    @staticmethod
+    def _last_delivery(message: Any, lane: LaneRuntime) -> bool:
+        """True when JetStream will not deliver ``message`` again after a NAK."""
+
+        try:
+            delivered = message.metadata.num_delivered
+        except Exception:
+            return False
+        return (
+            isinstance(delivered, int)
+            and not isinstance(delivered, bool)
+            and delivered >= lane.max_deliver
+        )
+
+    async def _not_run(
+        self,
+        message: Any,
+        lane: LaneRuntime,
+        record: PendingInvocation | None,
+        exc: TurnNotRun,
+        *,
+        replay_started: bool = True,
+    ) -> None:
+        """Hermes did not run the turn: NAK it for a later delivery, journal untouched.
+
+        No completed fact is published and the journal row stays pending or
+        started (both are dispatched again on redelivery). Only when this was the
+        last delivery JetStream will make is the command closed as an explicit
+        failure instead: a NAK there would drop it without any terminal fact."""
+
+        command_id = record.invocation.invocation_id if record is not None else None
+        profile = record.invocation.profile if record is not None else None
+        if record is not None and self._last_delivery(message, lane):
+            logger.warning(
+                "Bloodbank command not run by Hermes lane=%s profile=%s command_id=%s "
+                "reason=%s: %s; no deliveries left, closing it as failed",
+                lane.name,
+                profile,
+                command_id,
+                exc.reason,
+                exc.detail,
+            )
+            try:
+                await self._close_not_run(record, exc, replay_started=replay_started)
+            except Exception as close_error:
+                logger.error(
+                    "Bloodbank not-run closure could not be completed error_type=%s",
+                    type(close_error).__name__,
+                )
+                await message.nak(delay=lane.nak_delay)
+                return
+            await message.ack()
+            return
+        logger.warning(
+            "Bloodbank command not run by Hermes lane=%s profile=%s command_id=%s "
+            "reason=%s: %s; NAK, it runs on a later delivery",
+            lane.name,
+            profile,
+            command_id,
+            exc.reason,
+            exc.detail,
+        )
+        await message.nak(delay=lane.nak_delay)
+
+    async def _close_not_run(
+        self, record: PendingInvocation, exc: TurnNotRun, *, replay_started: bool
+    ) -> None:
+        """Close a command Hermes never ran as failed, started facts first.
+
+        The started facts are published when this attempt has not published
+        them already (a pending row never did; an earlier attempt may have
+        stopped between the two); each carries its deterministic Nats-Msg-Id."""
+
+        invocation = record.invocation
+        before = await asyncio.to_thread(
+            self.execution_state.get, invocation.invocation_id
+        )
+        persisted = await asyncio.to_thread(
+            self.execution_state.mark_started,
+            command_id=invocation.invocation_id,
+            digest=record.envelope_digest,
+        )
+        if replay_started or before is None or before.state == "pending":
+            await self._publish_many(persisted.started_events)
+        events = terminal_events(
+            invocation,
+            outcome="failure",
+            failure_code=HERMES_REFUSED_CODE,
+            failure_message=(
+                f"Hermes did not run the turn ({exc.detail}) and the command has "
+                "no deliveries left"
+            ),
+            failure_data={"refusal": exc.reason},
+        )
+        await asyncio.to_thread(
+            self.execution_state.mark_completed,
+            command_id=invocation.invocation_id,
+            digest=record.envelope_digest,
+            outcome="failure",
+            terminal_events=events,
+            failure_code=HERMES_REFUSED_CODE,
+        )
+        await self._publish_many(events)
 
     async def _persist_and_publish_route_rejection(
         self,
@@ -1075,14 +1286,53 @@ class BloodbankAdapter(BasePlatformAdapter):
             if result in {"cancelled", "canceled"}
             else "failure"
         )
+        # Hermes reports a turn it refused (draining, busy, an error notice in
+        # place of an answer) as SUCCESS: its notice is the "reply". Read it.
+        notice = (
+            self._notices.classify(record.final_reply)
+            if terminal_outcome == "success"
+            else None
+        )
+        if notice is not None and notice.disposition == NOT_RUN:
+            record.completion.set_exception(
+                TurnNotRun(
+                    notice.key,
+                    f"Hermes answered with its {notice.key} notice instead of running "
+                    "the turn",
+                )
+            )
+            # Retrieved here: the dispatching task re-raises it into the NAK path.
+            record.completion.exception()
+            return
+        failure_code = failure_message = failure_data = None
+        if notice is not None:
+            terminal_outcome = "failure"
+            failure_code, failure_message, failure_data = self._notice_failure(
+                notice, record.final_reply
+            )
+            logger.warning(
+                "Bloodbank turn closed as failed lane=%s profile=%s command_id=%s: "
+                "Hermes replied with its %s notice",
+                record.invocation.lane,
+                record.invocation.profile,
+                record.invocation.invocation_id,
+                notice.key,
+            )
         try:
-            events = terminal_events(record.invocation, outcome=terminal_outcome)
+            events = terminal_events(
+                record.invocation,
+                outcome=terminal_outcome,
+                failure_code=failure_code,
+                failure_message=failure_message,
+                failure_data=failure_data,
+            )
             await asyncio.to_thread(
                 self.execution_state.mark_completed,
                 command_id=record.invocation.invocation_id,
                 digest=record.envelope_digest,
                 outcome=terminal_outcome,
                 terminal_events=events,
+                failure_code=failure_code,
             )
             await self._publish_many(events)
         except Exception as exc:
@@ -1090,6 +1340,23 @@ class BloodbankAdapter(BasePlatformAdapter):
             raise
         else:
             record.completion.set_result(None)
+
+    @staticmethod
+    def _notice_failure(
+        notice: HermesNotice, reply: str | None
+    ) -> tuple[str, str, dict[str, Any]]:
+        """failure_code, failure_message and failure_data for a Hermes error notice."""
+
+        text = " ".join(str(reply or "").split())
+        if len(text) > 300:
+            text = text[:299] + "…"
+        if notice.key.startswith("gateway.errors."):
+            code = HERMES_TURN_ERROR_CODE
+            what = "Hermes ended the turn with an error notice instead of an answer"
+        else:
+            code = HERMES_REFUSED_CODE
+            what = "Hermes refused the turn"
+        return code, f"{what} ({notice.key}): {text}", {"refusal": notice.key}
 
     async def send(
         self,
@@ -1101,13 +1368,21 @@ class BloodbankAdapter(BasePlatformAdapter):
         """Deliver nothing: a command turn's consumer reads the reply from the
         Hermes session and owns its audio.
 
-        One kind of send is observed on the way through: an interim assistant
+        Two kinds of send are observed on the way through: an interim assistant
         message of a command turn this adapter is running is published as
         ``bloodbank.agent.invocation.progressed`` (what the agent says it is
-        doing while a human waits). Observability never fails the turn: any
-        error is logged and the send still succeeds."""
+        doing while a human waits), and the first chunk of a turn's final reply
+        is kept so a Hermes refusal notice is not mistaken for an answer.
+        Observability never fails the turn: any error is logged and the send
+        still succeeds."""
 
-        del reply_to
+        try:
+            self._note_final_reply(chat_id, content, reply_to, metadata)
+        except Exception as exc:
+            logger.warning(
+                "Bloodbank final reply bookkeeping failed error_type=%s",
+                type(exc).__name__,
+            )
         try:
             await self._publish_progress(chat_id, content, metadata)
         except Exception as exc:
@@ -1116,6 +1391,33 @@ class BloodbankAdapter(BasePlatformAdapter):
                 type(exc).__name__,
             )
         return SendResult(success=True, message_id=str(uuid.uuid4()))
+
+    def _note_final_reply(
+        self,
+        chat_id: str,
+        content: Any,
+        reply_to: str | None,
+        metadata: dict[str, Any] | None,
+    ) -> None:
+        """Keep the first non-interim send anchored to a running command.
+
+        Hermes delivers a turn's final text with ``reply_to`` = the triggering
+        MessageEvent id (our command id); status notices and shutdown warnings
+        carry no anchor and an interim message carries ``_interim_send``."""
+
+        if isinstance(metadata, dict) and metadata.get("_interim_send") is True:
+            return
+        record = self._records.get(str(reply_to)) if reply_to else None
+        if (
+            record is None
+            or record.invocation.thread_id != str(chat_id)
+            or record.event is None
+            or record.completion.done()
+            or record.final_reply is not None
+            or not isinstance(content, str)
+        ):
+            return
+        record.final_reply = content
 
     def _progress_record(
         self, chat_id: str, metadata: dict[str, Any] | None

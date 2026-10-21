@@ -561,3 +561,33 @@ def test_progress_event_validates_and_echoes_the_command(valid_command, repo_roo
     assert progress_text(None) == (None, False)
     long, cut = progress_text("x" * 2000)
     assert cut is True and len(long) == PROGRESS_TEXT_MAX_CHARS
+
+
+@pytest.mark.parametrize(
+    ("code", "refusal"),
+    [
+        ("hermes_refused", "gateway_restarting"),
+        ("hermes_refused", "gateway.busy.another_turn_running"),
+        ("hermes_turn_error", "gateway.errors.generic_failed_with_hint"),
+    ],
+)
+def test_hermes_refusal_failed_fact_validates(valid_command, repo_root, code, refusal):
+    import sys
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    for lane in ("batch", "interactive"):
+        invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", lane)
+        failed, turn = terminal_events(
+            invocation,
+            outcome="failure",
+            failure_code=code,
+            failure_message=f"Hermes refused the turn ({refusal})",
+            failure_data={"refusal": refusal, "error_code": "attacker"},
+        )
+        for event in (failed, turn):
+            validate_envelope(event)
+        assert failed["data"]["error_code"] == code
+        assert failed["data"]["refusal"] == refusal
+        assert turn["data"]["outcome"] == "failed"

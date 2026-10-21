@@ -2311,3 +2311,430 @@ async def test_progress_seq_is_per_command_and_lane_is_stamped(tmp_path, valid_c
         (valid_command["command_id"], 1),
         (second["command_id"], 1),
     ]
+
+
+# --- Hermes drains and refusals ---------------------------------------------
+#
+# While Hermes drains for a reload/restart it keeps the adapter connected and
+# answers every new message with "Gateway is restarting and is not accepting new
+# work right now." through send(), reported as a SUCCESS turn. None of that may
+# close a command: the lanes stop pulling, and anything already in hand is NAKed
+# with its journal row left dispatchable.
+
+DRAIN_REFUSAL = "⏳ Gateway is restarting and is not accepting new work right now."
+SHUTDOWN_REFUSAL = "⏳ Gateway is shutting down and is not accepting new work right now."
+RUNNER_FLAGS = {
+    "restart": "_restart_requested",
+    "draining": "_draining",
+    "external": "_external_drain_active",
+}
+
+
+def make_runner(**on):
+    flags = {attr: bool(on.get(name)) for name, attr in RUNNER_FLAGS.items()}
+    return SimpleNamespace(_running=True, **flags)
+
+
+class JsMessage(FakeMessage):
+    """A FakeMessage with JetStream delivery metadata and recorded NAK delays."""
+
+    def __init__(self, envelope, *, delivered=1):
+        super().__init__(envelope)
+        self.metadata = SimpleNamespace(num_delivered=delivered)
+        self.nak_delays = []
+
+    async def nak(self, delay=None):
+        self.nak_delays.append(delay)
+        self.nacked += 1
+
+
+def terminal_types(adapter, command):
+    return [
+        t
+        for t in lifecycle_types(adapter, command)
+        if t in ("bloodbank.agent.invocation.completed", "bloodbank.agent.invocation.failed")
+    ]
+
+
+def lane_and_command(adapter, valid_command, name):
+    if name == "batch":
+        return lane(adapter, "batch"), valid_command
+    return lane(adapter, "interactive"), as_interactive(valid_command)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", sorted(RUNNER_FLAGS))
+async def test_no_lane_fetches_while_hermes_refuses_new_turns_and_both_resume_after(
+    tmp_path, flag, caplog
+):
+    caplog.set_level("INFO", logger="bloodbank_hermes_gateway.adapter")
+    adapter = make_lane_adapter(tmp_path)
+    adapter.drain_poll_seconds = 0.001
+    runner = make_runner(**{flag: True})
+    adapter.gateway_runner = runner
+    fetches = []
+
+    class Subscription:
+        def __init__(self, name):
+            self.name = name
+
+        async def fetch(self, *_args, **_kwargs):
+            fetches.append(self.name)
+            return []
+
+    for item in adapter.lanes:
+        item.subscription = Subscription(item.name)
+
+    for _ in range(25):
+        for item in adapter.lanes:
+            await adapter._consume_once(item)
+    assert fetches == []
+    paused = [r for r in caplog.records if "stopped fetching" in r.getMessage()]
+    assert len(paused) == 2  # once per lane, not once per poll
+
+    setattr(runner, RUNNER_FLAGS[flag], False)
+    for item in adapter.lanes:
+        await adapter._consume_once(item)
+    assert sorted(fetches) == ["batch", "interactive"]
+    assert any("resumed fetching" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_thirty_minute_drain_spends_no_delivery_and_the_command_runs_after(
+    tmp_path, valid_command
+):
+    """The broker only counts a delivery when a lane pulls; a paused lane never does."""
+
+    adapter = make_adapter(tmp_path)
+    adapter.drain_poll_seconds = 0.001
+    adapter.fetch_timeout_seconds = 0.005
+    runner = make_runner(restart=True)
+    adapter.gateway_runner = runner
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result="done"))
+    queued = [JsMessage(valid_command, delivered=0)]
+    delivered = []
+
+    class Broker:
+        async def fetch(self, *_args, timeout=None, **_kwargs):
+            if not queued:
+                await asyncio.sleep(timeout or 0)
+                raise TimeoutError
+            message = queued.pop(0)
+            message.metadata.num_delivered += 1
+            delivered.append(message)
+            return [message]
+
+    adapter._subscription = Broker()
+    adapter._running = True
+    loop = asyncio.create_task(adapter._consume_loop())
+    try:
+        # hundreds of poll cycles of "drain": still nothing delivered
+        await asyncio.sleep(0.3)
+        assert delivered == []
+        runner._restart_requested = False
+        for _ in range(500):
+            if delivered and delivered[0].acked:
+                break
+            await asyncio.sleep(0.005)
+    finally:
+        adapter._running = False
+        loop.cancel()
+        await asyncio.gather(loop, return_exceptions=True)
+    (message,) = delivered
+    assert message.metadata.num_delivered == 1
+    assert message.acked == 1 and message.nacked == 0
+    assert terminal_types(adapter, valid_command) == ["bloodbank.agent.invocation.completed"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane_name", ["batch", "interactive"])
+async def test_a_command_fetched_just_before_the_drain_is_nakked_and_runs_after(
+    tmp_path, valid_command, lane_name
+):
+    adapter = make_lane_adapter(tmp_path)
+    lane_runtime, command = lane_and_command(adapter, valid_command, lane_name)
+    adapter.gateway_runner = make_runner(restart=True)
+    calls = []
+
+    async def handler(event):
+        calls.append(event.message_id)
+        return "done"
+
+    adapter.set_message_handler(handler)
+    message = JsMessage(command)
+    await adapter._handle_broker_message(message, lane_runtime)
+
+    assert calls == []
+    assert (message.acked, message.nacked, message.termed) == (0, 1, 0)
+    assert message.nak_delays == [lane_runtime.nak_delay]
+    # nothing published (not even started) and the row is still dispatchable
+    assert adapter._js.events == []
+    assert adapter.execution_state.get(command["command_id"]).state == "pending"
+
+    adapter.gateway_runner = make_runner()  # the new process
+    again = JsMessage(command, delivered=2)
+    await adapter._handle_broker_message(again, lane_runtime)
+    assert calls == [command["command_id"]]
+    assert again.acked == 1 and again.nacked == 0
+    assert terminal_types(adapter, command) == ["bloodbank.agent.invocation.completed"]
+
+
+@pytest.mark.asyncio
+async def test_a_drain_that_starts_while_started_facts_publish_is_never_dispatched(
+    tmp_path, valid_command
+):
+    adapter = make_adapter(tmp_path)
+    runner = make_runner()
+    adapter.gateway_runner = runner
+    real_publish = adapter._js.publish
+
+    async def publish(subject, payload, **kwargs):
+        await real_publish(subject, payload, **kwargs)
+        runner._draining = True  # SIGUSR1 lands mid-publication
+
+    adapter._js.publish = publish
+    calls = []
+    adapter.set_message_handler(lambda event: calls.append(event) or asyncio.sleep(0, result="x"))
+    message = JsMessage(valid_command)
+    await adapter._handle_broker_message(message)
+
+    assert calls == []
+    assert message.nacked == 1 and message.acked == 0
+    assert terminal_types(adapter, valid_command) == []
+    # started may have escaped; the row says so and stays dispatchable
+    assert adapter.execution_state.get(valid_command["command_id"]).state == "started"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane_name", ["batch", "interactive"])
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        DRAIN_REFUSAL,
+        SHUTDOWN_REFUSAL,
+        "⏳ Gateway is restarting and is not accepting another turn right now.",
+        "⏳ Gateway restarting — queued for the next turn after it comes back.",
+        "Hermes is at the active session limit (8/8). Try again when another session finishes.",
+        "⚠️ This session's history is temporarily unavailable, so this message was not "
+        "processed. Ask the operator to inspect state.db, then resend after it is healthy.",
+    ],
+)
+async def test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery(
+    tmp_path, valid_command, lane_name, refusal
+):
+    adapter = make_lane_adapter(tmp_path)
+    lane_runtime, command = lane_and_command(adapter, valid_command, lane_name)
+    runner = make_runner()
+    adapter.gateway_runner = runner
+    calls = []
+
+    async def handler(event):
+        calls.append(event.message_id)
+        if len(calls) == 1:
+            # the drain begins after the adapter's last look: Hermes refuses
+            runner._restart_requested = True
+            return refusal
+        return "The real answer."
+
+    adapter.set_message_handler(handler)
+    message = JsMessage(command)
+    await asyncio.wait_for(adapter._handle_broker_message(message, lane_runtime), 2)
+
+    assert (message.acked, message.nacked, message.termed) == (0, 1, 0)
+    assert terminal_types(adapter, command) == []
+    assert not any(e["type"].endswith(".turn.completed") for e in adapter._js.events)
+    row = adapter.execution_state.get(command["command_id"])
+    assert row.state == "started" and row.outcome is None
+    assert adapter._records == {}
+
+    runner._restart_requested = False
+    again = JsMessage(command, delivered=2)
+    await asyncio.wait_for(adapter._handle_broker_message(again, lane_runtime), 2)
+    assert len(calls) == 2
+    assert again.acked == 1
+    assert terminal_types(adapter, command) == ["bloodbank.agent.invocation.completed"]
+    assert adapter.execution_state.get(command["command_id"]).outcome == "success"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "code", "key"),
+    [
+        (
+            "⚠️ Something went wrong and I couldn't finish this reply. You are being "
+            "rate-limited. Please wait a moment and try again.\nUse /retry to try again, or "
+            "/new to start a fresh conversation. Technical details are in the gateway log "
+            "(`hermes logs`).\n\nThis turn did not complete. Some actions may already have "
+            "run; verify their effects before resending.",
+            "hermes_turn_error",
+            "gateway.errors.generic_failed_with_hint",
+        ),
+        (
+            "⏱️ The AI model service is rate-limiting requests. Wait a moment, then use /retry.",
+            "hermes_turn_error",
+            "gateway.errors.rate_limited",
+        ),
+        (
+            "⏳ Another turn is still running on this session. To protect the transcript, this "
+            "message was not processed. Wait for the active turn to finish, then resend it.",
+            "hermes_refused",
+            "gateway.busy.another_turn_running",
+        ),
+        (
+            "Unknown command `/frobnicate`. Type /commands to see what's available, or resend "
+            "without the leading slash to send as a regular message.",
+            "hermes_refused",
+            "gateway.unknown_command",
+        ),
+    ],
+)
+async def test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure(
+    tmp_path, valid_command, reply, code, key
+):
+    adapter = make_adapter(tmp_path)
+    adapter.gateway_runner = make_runner()
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result=reply))
+    message = JsMessage(valid_command)
+    await adapter._handle_broker_message(message)
+
+    assert (message.acked, message.nacked) == (1, 0)
+    assert terminal_types(adapter, valid_command) == ["bloodbank.agent.invocation.failed"]
+    data = failed_fact(adapter, valid_command)["data"]
+    assert data["error_code"] == code
+    assert data["refusal"] == key
+    assert key in data["error_message"]
+    turn = [e for e in adapter._js.events if e["type"].endswith(".turn.completed")]
+    assert turn[-1]["data"]["outcome"] == "failed"
+    row = adapter.execution_state.get(valid_command["command_id"])
+    assert (row.state, row.outcome, row.failure_code) == ("completed", "failure", code)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("when", ["before_dispatch", "refused_by_hermes", "not_admitted"])
+async def test_on_its_last_delivery_a_command_hermes_did_not_run_is_closed_as_failed(
+    tmp_path, valid_command, when
+):
+    """A NAK on the last delivery would drop the command with no terminal fact at all."""
+
+    adapter = make_adapter(tmp_path)
+    runner = make_runner(restart=when == "before_dispatch")
+    adapter.gateway_runner = runner
+    adapter.drop_inbound = when == "not_admitted"
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result=DRAIN_REFUSAL))
+    message = JsMessage(valid_command, delivered=adapter.max_deliver)
+    await asyncio.wait_for(adapter._handle_broker_message(message), 2)
+
+    assert (message.acked, message.nacked) == (1, 0)
+    assert lifecycle_types(adapter, valid_command) == [
+        "bloodbank.conversation.turn.started",
+        "bloodbank.agent.invocation.started",
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed",
+    ]
+    data = failed_fact(adapter, valid_command)["data"]
+    assert data["error_code"] == "hermes_refused"
+    assert data["refusal"] == {
+        "before_dispatch": "gateway_restarting",
+        "refused_by_hermes": "gateway.busy.drain_rejected_new_work",
+        "not_admitted": "not_accepted",
+    }[when]
+    assert "no deliveries left" in data["error_message"]
+    row = adapter.execution_state.get(valid_command["command_id"])
+    assert (row.state, row.outcome, row.failure_code) == ("completed", "failure", "hermes_refused")
+
+
+@pytest.mark.asyncio
+async def test_an_event_hermes_does_not_admit_is_nakked_instead_of_waiting_forever(
+    tmp_path, valid_command
+):
+    adapter = make_adapter(tmp_path)  # batch: no wall clock, it used to hang here
+    adapter.drop_inbound = True
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result="done"))
+    message = JsMessage(valid_command)
+    await asyncio.wait_for(adapter._handle_broker_message(message), 1)
+    assert (message.acked, message.nacked) == (0, 1)
+    assert terminal_types(adapter, valid_command) == []
+    assert adapter.execution_state.get(valid_command["command_id"]).state == "started"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "done",
+        # a real answer that talks about a drain is still an answer
+        "I checked: earlier the gateway said it is restarting and is not accepting new "
+        "work right now, but it is back.",
+        "Gateway status: running.",
+    ],
+)
+async def test_normal_turns_are_unaffected_by_the_refusal_checks(tmp_path, valid_command, answer):
+    adapter = make_adapter(tmp_path)
+    adapter.gateway_runner = make_runner()
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result=answer))
+    message = JsMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    assert (message.acked, message.nacked) == (1, 0)
+    assert terminal_types(adapter, valid_command) == ["bloodbank.agent.invocation.completed"]
+    assert adapter.execution_state.get(valid_command["command_id"]).outcome == "success"
+
+
+@pytest.mark.asyncio
+async def test_a_turn_already_running_when_the_drain_begins_still_completes(
+    tmp_path, valid_command
+):
+    """Draining waits for in-flight turns; their real answers close them as success."""
+
+    adapter = make_adapter(tmp_path)
+    runner = make_runner()
+    adapter.gateway_runner = runner
+    running = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(_event):
+        running.set()
+        await release.wait()
+        return "Finished the grooming."
+
+    adapter.set_message_handler(handler)
+    message = JsMessage(valid_command)
+    task = asyncio.create_task(adapter._handle_broker_message(message))
+    await asyncio.wait_for(running.wait(), 1)
+    runner._restart_requested = runner._draining = True
+    # Hermes warns active chats about the shutdown with an unanchored send
+    await adapter.send(valid_command["data"]["thread_id"], DRAIN_REFUSAL)
+    release.set()
+    await asyncio.wait_for(task, 1)
+    assert (message.acked, message.nacked) == (1, 0)
+    assert terminal_types(adapter, valid_command) == ["bloodbank.agent.invocation.completed"]
+
+
+def test_notices_are_read_from_hermes_catalog_when_it_is_importable():
+    from bloodbank_hermes_gateway.refusals import FAILED, NOT_RUN, NoticeClassifier
+
+    catalog = {
+        "gateway.busy.action_restarting": "wird neu gestartet",
+        "gateway.busy.action_shutting_down": "fährt herunter",
+        "gateway.busy.drain_rejected_new_work": "⏳ Gateway {action} und nimmt gerade keine neue Arbeit an.",
+    }
+
+    def translate(key, lang=None, **kwargs):
+        if lang == "en":
+            return key  # catalog miss: Hermes returns the bare key
+        value = catalog.get(key, key)
+        return value.format(**kwargs) if kwargs and value != key else value
+
+    notices = NoticeClassifier(translate)
+    german = notices.classify("⏳ Gateway wird neu gestartet und nimmt gerade keine neue Arbeit an.")
+    assert german is not None and german.key == "gateway.busy.drain_rejected_new_work"
+    assert german.disposition == NOT_RUN
+    # the English copy still matches when the catalog misses a key
+    assert notices.classify(DRAIN_REFUSAL).disposition == NOT_RUN
+    unknown = (
+        "Unknown command `/x`. Type /commands to see what's available, or resend without "
+        "the leading slash to send as a regular message."
+    )
+    assert notices.classify(unknown).disposition == FAILED
+    assert notices.classify("Unknown command `/x`.") is None
+    for answer in (None, "", "   ", "done", 42, "⏳", "Gateway is restarting"):
+        assert notices.classify(answer) is None
