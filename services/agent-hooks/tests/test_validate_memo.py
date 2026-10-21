@@ -160,6 +160,22 @@ class MemoContract(unittest.TestCase):
         except validate.ValidationUnavailable:
             self.skipTest("jsonschema is not installed")
 
+    def test_a_reply_spoken_as_one_file_is_voiced_as_chunk_1_of_1(self):
+        """A reply too short to chunk publishes voiced once, with the reply file as its chunk, so a consumer knows from when
+        the car could speak it (the replied fact waits for the phone-or-car decision)."""
+        rkey = PAYLOADS["voiced"]["reply_s3_key"]
+        one = envelope("voiced", chunk=1, chunks=1, chunk_s3_key=rkey)
+        validate.assert_contract(one)
+        try:
+            validate.validate_envelope(one)
+            for bad in (0, -1):
+                with self.assertRaises(validate.EnvelopeInvalid):
+                    validate.validate_envelope(envelope("voiced", chunk=1, chunks=bad))
+            with self.assertRaises(validate.EnvelopeInvalid):
+                validate.validate_envelope(envelope("voiced", chunk=0, chunks=1))
+        except validate.ValidationUnavailable:
+            self.skipTest("jsonschema is not installed")
+
     def test_memo_id_is_deterministic_per_key(self):
         again = str(uuid.uuid5(uuid.NAMESPACE_URL, "s3://holocene-auto/" + KEY))
         self.assertEqual(MEMO_ID, again)
