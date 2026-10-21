@@ -744,3 +744,128 @@ second restart was needed because the proof used `data.deadline_seconds`.
   `memo:trace` ended `STOPPED AT agent finished: turn timeout - agent turn timed out after 300.1s
   on interactive lane (limit 300s)`, and `GET /api/modules/voice/memos/<id>` reports stage label
   `Agent turn timed out after 300s`.
+
+## 8. Reload drain
+
+### 8.1 Behaviour
+
+`systemctl --user reload hermes-gateway.service` sends SIGUSR1. Hermes sets
+`_restart_requested`, writes `gateway_state: "draining"`, and waits for in-flight
+turns (up to `restart_after_turn_timeout`, 1800 s by default) before it exits 75
+and systemd relaunches it. During that wait Hermes answers every new message
+with "Gateway is restarting and is not accepting new work right now" and
+reports the turn as SUCCESS. Before `e02c7cf` the adapter journaled that as
+`completed/success`, published `agent.invocation.completed` and acked it, so
+the command was lost (29 rows in the journal closed `success` in under 1 s
+from 2026-10-10 to 2026-10-20, plus a few slower ones going back to 2026-10-01).
+
+Since `e02c7cf` (`adapter.py`, `refusals.py`):
+
+- While `_restart_requested`, `_draining` or `_external_drain_active` is set,
+  neither lane fetches. Commands stay in JetStream with no delivery, so a drain
+  of any length spends none of `max_deliver`. Each lane logs one WARNING
+  `Bloodbank lane=<lane> stopped fetching: ...` when it pauses.
+- A command fetched before the flag flipped is NAKed with a delay just before
+  dispatch. Its journal row stays dispatchable and nothing terminal is
+  published.
+- A turn whose first final reply is a Hermes refusal notice is not success:
+  drain and busy refusals NAK as not run, and error notices close as
+  `hermes_refused` / `hermes_turn_error`.
+- In-flight turns keep running and close normally during the drain.
+
+### 8.2 Live proof (2026-10-21)
+
+Three harmless commands to `holocene-pm`, each with its own thread, emitted with
+`bin/bb-emit --strict --print-ids --kind command` (actor `drain-proof`). Before
+starting, both consumers were at `ack_pending 0`, `active_agents 0`,
+`gateway_state running`.
+
+| # | lane | command_id | thread_id | prompt |
+| --- | --- | --- | --- | --- |
+| 1 | interactive (`invoke`) | `facaedd1-5937-41e5-a8b5-b6a338860f13` | `drain-proof-20261021-1-5c2f6960` | "Drain test 1: run the shell command sleep 80, then reply with the single line 'drain test 1 done'. Take no other action." |
+| 2 | interactive (`invoke`) | `06290f62-958c-4d0a-9410-e85392e8f23c` | `drain-proof-20261021-2-377cacda` | "Drain test 2: reply with the single line 'drain test 2 done'. Take no other action." |
+| 3 | batch (`start`) | `bbc2ba6f-fcf9-4418-be6a-2b053274f1c5` | `drain-proof-20261021-3-121c2245` | "Drain test 3: reply with the single line 'drain test 3 done'. Take no other action." |
+
+Correlation ids: 1 `5c2f6960-caea-448b-84f9-fe06020f5c9f`, 2
+`377cacda-facd-4cbc-9267-769cb1fab23f`, 3 `121c2245-e3c7-4e9c-bdf6-c9c66c010aa8`.
+
+Timeline (UTC). Hermes logs are local time (EDT, UTC-4) and are converted here.
+
+| time | event |
+| --- | --- |
+| 01:00:12.20 | command 1 emitted |
+| 01:00:12.27 | command 1 journal row `started`, interactive `ack_pending 1` |
+| 01:00:19 | holocene-pm calls `terminal` with `sleep 80` (foreground) |
+| 01:00:32.22 | `systemctl --user reload hermes-gateway.service` |
+| 01:00:32.25 | `SIGUSR1 received ... drain active turns, exit, supervisor relaunches`; `Restart deferred: waiting on 1 active work unit(s) ... 1800s remaining` |
+| 01:00:32.76 | `gateway_state.json`: `draining`, `restart_requested true` |
+| 01:00:32.84 | `Bloodbank lane=batch stopped fetching: Hermes gateway is restarting (draining in-flight turns) ...` |
+| 01:00:33.24 | same for `lane=interactive` |
+| 01:00:35 | both consumers `num_waiting 0` (the last pull request expired, no new one was issued) |
+| 01:00:40.26 | command 2 emitted (interactive) |
+| 01:00:40.30 | command 3 emitted (batch) |
+| 01:00:44 to 01:01:53 | bloodbank still connected, gateway draining: interactive `waiting 0, pending 1, ack_pending 1` (command 1), batch `waiting 0, pending 1, ack_pending 0`. No journal row for 2 or 3. Candystore has no fact for correlation 2 or 3. |
+| 01:01:40 | `sleep 80` returns exit 0 |
+| 01:01:42 | holocene-pm replies "drain test 1 done" |
+| 01:01:42.86 | Hermes: `Stopping gateway for restart...` |
+| 01:01:43.02 | command 1 journal `completed/success` (90.75 s), `agent.invocation.completed` published, acked (interactive `ack_pending 0` by 01:01:49) |
+| 01:01:53.18 | `bloodbank disconnected` |
+| 01:02:19 | old process exits, systemd `Scheduled restart job` |
+| 01:02:24 | new process (pid 898594) started |
+| 01:03:32.57 | `Bloodbank gateway connected lane=batch` / `lane=interactive` |
+| 01:03:32.64 | command 2 journal row `started` (65 ms after connect) |
+| 01:03:33.17 | command 3 journal row `started` |
+| 01:03:39.35 | command 2 `completed/success` (6.71 s) |
+| 01:03:41.98 | command 3 `completed/success` (8.81 s) |
+| 01:06:51 | `Gateway running with 18 platform(s)` (the other profiles finish starting) |
+
+Proof points:
+
+- **Neither lane pulled during the drain.** Both consumers sat at `num_waiting 0`
+  with commands 2 and 3 in `num_pending` for the whole drain, while the
+  Bloodbank platform was still connected. The adapter logged no NAK and no
+  "not run" line: the commands were never fetched.
+- **No false closure.** No journal row existed for 2 or 3 until the new process,
+  and Candystore shows no `agent.invocation.*` fact for either before 01:03:32.
+  Each has exactly one `invocation.started` and one `invocation.completed`, both
+  from the new process.
+- **The in-flight turn finished during the drain.** The command 1 Hermes session
+  holds the `sleep 80` tool call (exit 0) and the reply "drain test 1 done". The
+  journal row closed `success` at 90.75 s and was acked before the adapter
+  disconnected. Hermes began `Stopping gateway for restart` 0.16 s before the
+  adapter journaled it, and the adapter disconnected 10 s later.
+- **Commands 2 and 3 ran for real after the restart.** The holocene-pm
+  `state.db` sessions for their threads hold the user prompt and the assistant
+  replies "drain test 2 done" (01:03:39.15) and "drain test 3 done"
+  (01:03:41.89). These are real agent turns of 6.7 s and 8.8 s, not a notice
+  answered in 0.1 s.
+- **One delivery each.** Interactive `delivered.consumer_seq` went 70 -> 71
+  (command 1) -> 72 (command 2), and batch went 813 -> 814 (command 3).
+  `num_redelivered` stayed 0 on both consumers throughout, so no `max_deliver`
+  budget was spent.
+- **After the restart** both lanes were at `num_waiting 1`, `ack_pending 0`;
+  `gateway_state` `running`; bloodbank `connected` (pid 898594).
+
+Holocene during the drain (01:01:02):
+
+- `memo_common.gateway_liveness_text` (what `memo:trace` prints):
+  `interactive: gateway restarting (draining), memo queued; it runs when the gateway is back (waiting on 2 in-flight turns), 1/2 in flight finishing; consumer bloodbank-hermes-gateway-interactive: waiting=0 pending=1 ack_pending=1`
+  and `batch: gateway restarting (draining), memo queued; it runs when the gateway is back (waiting on 2 in-flight turns); consumer bloodbank-hermes-gateway: waiting=0 pending=1 ack_pending=0`.
+- `gateway_lanes_text`: `interactive: gateway restarting (draining), 1/2 in flight, 1 queued | batch: gateway restarting (draining), 0/4 in flight, 1 queued`.
+- The watcher heartbeat and `GET /api/modules/voice/memos` `.watcher.lanes`
+  report `draining: true` with that `gateway` sentence on both lanes. Batch shows
+  `pulling: false`, but because of the drain flag the banner reads "restarting",
+  not "NOBODY PULLING".
+- "2 in-flight turns" is Hermes' `active_agents`: command 1 plus an external cron
+  job (`777c511a009c`) that Hermes listed as restart-safe and excluded from the
+  wait.
+
+Cost of this reload for queued work: commands emitted at 01:00:40 started at
+01:03:32 (2 min 52 s). That breaks down as 62 s waiting for command 1, about
+37 s old-process shutdown, 5 s `RestartSec`, and 68 s for the new process to
+reach the Bloodbank adapter. The Bloodbank lanes run about 3 min 20 s before the
+whole gateway reports `running`.
+
+Sampler and raw log: `/tmp/claude-drainproof/observe.py`, `observe.log` (one
+JSON line per change, consumers, gateway state, journal rows and Candystore fact
+types).
