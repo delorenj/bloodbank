@@ -32,7 +32,7 @@
             "string",
             "null"
           ],
-          "description": "Machine reason. The Hermes gateway uses processing_failed, processing_cancelled, route_policy_invalid_before_dispatch, turn_timeout (the lane's per-turn wall clock expired and the gateway stopped the turn; see elapsed_seconds, timeout_seconds, timeout_source and turn_stopped), hermes_refused (Hermes did not run the turn: it refused it with a notice a retry cannot fix, or kept refusing it until the command had no deliveries left; see refusal) and hermes_turn_error (a turn ran and Hermes ended it with an error notice such as a provider rate limit instead of an answer; see refusal)."
+          "description": "Machine reason. The Hermes gateway uses processing_failed, processing_cancelled, route_policy_invalid_before_dispatch, turn_timeout (the lane's per-turn wall clock expired and the gateway stopped the turn; see elapsed_seconds, timeout_seconds, timeout_source and turn_stopped), hermes_refused (Hermes did not run the turn: it refused it with a notice a retry cannot fix, or kept refusing it until the command had no deliveries left; see refusal), hermes_turn_error (a turn ran and Hermes ended it with an error notice such as a provider rate limit instead of an answer; see refusal) and interrupted_by_shutdown (the turn was still running when Hermes' stop drain ran out and Hermes cut it off or cancelled it at adapter teardown: it did not finish and partial work may have run; see interrupted_by and elapsed_seconds)."
         },
         "error_message": {
           "type": [
@@ -65,7 +65,7 @@
             "number",
             "null"
           ],
-          "description": "turn_timeout only: seconds between dispatching the turn to Hermes and stopping it."
+          "description": "turn_timeout and interrupted_by_shutdown only: seconds between dispatching the turn to Hermes and stopping it (turn_timeout) or Hermes cutting it off (interrupted_by_shutdown)."
         },
         "timeout_seconds": {
           "type": [
@@ -98,7 +98,19 @@
             "string",
             "null"
           ],
-          "description": "hermes_refused and hermes_turn_error only: what Hermes answered instead of running the turn. A Hermes i18n notice key (gateway.busy.another_turn_running, gateway.unknown_command, gateway.busy.drain_rejected_new_work, gateway.errors.generic_failed_with_hint, ...), or the gateway's own reason: gateway_restarting / gateway_shutting_down / gateway_external_drain (Hermes was draining when the command came up for dispatch) and not_accepted (Hermes' ingress dropped the event without admitting it)."
+          "description": "hermes_refused and hermes_turn_error only: what Hermes answered instead of running the turn. A Hermes i18n notice key (gateway.busy.another_turn_running, gateway.busy.drain_queued, gateway.unknown_command, gateway.busy.drain_rejected_new_work, any gateway.errors.* key such as gateway.errors.generic_failed_with_hint or gateway.errors.context_overflow, ...), agent.operation_interrupted (the agent loop's own 'Operation interrupted ...' line was the whole reply), or the gateway's own reason: gateway_restarting / gateway_shutting_down / gateway_external_drain (Hermes was draining when the command came up for dispatch), not_accepted (Hermes' ingress dropped the event without admitting it) and not_accepted_slash_command (the prompt began with / and Hermes ran it inline as a slash command instead of an agent turn)."
+        },
+        "interrupted_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "gateway_restart",
+            "gateway_shutdown",
+            null
+          ],
+          "description": "interrupted_by_shutdown only: gateway_restart when Hermes was restarting (reload or restart request), gateway_shutdown when it was stopping."
         }
       },
       "required": [

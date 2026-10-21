@@ -773,6 +773,22 @@ Since `e02c7cf` (`adapter.py`, `refusals.py`):
   `hermes_refused` / `hermes_turn_error`.
 - In-flight turns keep running and close normally during the drain.
 
+Since the follow-up review fix (see the gateway README, "Turns the stop drain
+cuts off"):
+
+- A turn still running when the stop drain runs out (`restart_drain_timeout`,
+  or a reload whose 30 min wait outlasted it) is hard-interrupted by Hermes and
+  used to close as `success` with its partial text (POOL-12/13/14 on
+  2026-10-11, NAVI-41 on 2026-10-19, skillex-pm's 2 h 16 min repair turn on
+  2026-10-20) or as `cancelled` (HOLOC-13 grooming on 2026-10-11). The plugin
+  wraps the runner's `_interrupt_running_agents` and closes such a turn as
+  `interrupted_by_shutdown` (`data.interrupted_by`, `data.elapsed_seconds`), or
+  NAKs it for the next process with `shutdown_interrupt: retry` on that lane.
+- Every `gateway.errors.*` notice in Hermes' catalog is classified (not just a
+  hand-picked list); a not-run notice must be the whole reply, so an answer
+  that opens with the same words is never re-run; `drain_queued` (Hermes kept
+  its own copy) closes as `hermes_refused` instead of a NAK.
+
 ### 8.2 Live proof (2026-10-21)
 
 Three harmless commands to `holocene-pm`, each with its own thread, emitted with

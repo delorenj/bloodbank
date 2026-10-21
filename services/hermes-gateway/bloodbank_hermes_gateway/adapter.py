@@ -9,6 +9,7 @@ import math
 import os
 import time
 import uuid
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -46,7 +47,7 @@ from .contract import (
     terminal_events,
 )
 from .execution_state import ExecutionRecord, ExecutionStateStore, envelope_digest
-from .refusals import NOT_RUN, HermesNotice, NoticeClassifier
+from .refusals import NOT_RUN, HermesNotice, NoticeClassifier, is_interrupt_text
 
 logger = logging.getLogger(__name__)
 ROUTE_REJECTION_REASON = "route_policy_invalid_before_dispatch"
@@ -56,8 +57,23 @@ ROUTE_REJECTION_MESSAGE = "Hermes route became ineligible before dispatch"
 # cannot help); turn_error = a turn ran and Hermes ended it with an error notice.
 HERMES_REFUSED_CODE = "hermes_refused"
 HERMES_TURN_ERROR_CODE = "hermes_turn_error"
-# How often a lane paused by a Hermes drain re-reads the runner's state.
+# A turn still running when Hermes' stop() drain ran out (restart_drain_timeout,
+# or restart_after_turn_timeout on a reload) was hard-interrupted (or cancelled
+# at adapter teardown) and reported as an ordinary reply: it did not finish.
+INTERRUPTED_BY_SHUTDOWN_CODE = "interrupted_by_shutdown"
+# What a lane does with such a turn: fail = close it as interrupted_by_shutdown
+# (partial work may have run; nothing runs twice); retry = NAK it so the next
+# process re-dispatches the same thread (its Hermes session keeps the partial
+# transcript, but tool side effects of the cut-off attempt can repeat).
+SHUTDOWN_INTERRUPT_MODES = ("fail", "retry")
+# Refusal key for the agent loop's "Operation interrupted ..." text in place of an answer.
+OPERATION_INTERRUPTED_REFUSAL = "agent.operation_interrupted"
+# How often a lane paused by a Hermes drain re-reads the runner's state, and how
+# often a pause that is still on is logged again (a leaked drain marker shows up).
 DRAIN_POLL_SECONDS = 1.0
+PAUSE_REMIND_SECONDS = 600.0
+# The runner attribute holding the adapters told about its shutdown interrupts.
+_RUNNER_WATCHERS = "_bloodbank_gateway_interrupt_watchers"
 _NOT_ACCEPTING_TEXT = {
     "restarting": "restarting (draining in-flight turns)",
     "shutting_down": "shutting down (draining in-flight turns)",
@@ -66,12 +82,27 @@ _NOT_ACCEPTING_TEXT = {
 
 
 class TurnNotRun(Exception):
-    """Hermes did not run the command's turn: retry it, never close it as done."""
+    """Hermes did not run the command's turn as asked: never close it as done.
 
-    def __init__(self, reason: str, detail: str) -> None:
+    ``retryable`` (the default) NAKs it for a later delivery; otherwise, or on
+    the last delivery, it is closed as an explicit failure with ``code``."""
+
+    def __init__(
+        self,
+        reason: str,
+        detail: str,
+        *,
+        code: str = HERMES_REFUSED_CODE,
+        retryable: bool = True,
+        data: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(detail)
         self.reason = reason
         self.detail = detail
+        self.code = code
+        self.retryable = retryable
+        # failed-fact fields when it is closed; default {"refusal": reason}.
+        self.data = data
 
 
 def _bounded_int(
@@ -164,6 +195,20 @@ def _strict_bool(
     return value
 
 
+def _choice(
+    extra: dict[str, Any],
+    key: str,
+    default: str,
+    choices: tuple[str, ...],
+    *,
+    prefix: str = "bloodbank.extra",
+) -> str:
+    value = extra.get(key, default)
+    if value not in choices:
+        raise ValueError(f"{prefix}.{key} must be one of {', '.join(choices)}")
+    return value
+
+
 @dataclass
 class LaneRuntime:
     """One delivery lane: its durable consumer, bounds and live tasks.
@@ -181,6 +226,8 @@ class LaneRuntime:
     nak_delay: float
     # Wall-clock budget for one Hermes turn on this lane; None = unlimited.
     turn_timeout: float | None = None
+    # fail | retry: a turn Hermes' shutdown interrupted (SHUTDOWN_INTERRUPT_MODES).
+    shutdown_interrupt: str = "fail"
     subscription: Any = None
     task: asyncio.Task[None] | None = None
     inflight: set[asyncio.Task[None]] = field(default_factory=set)
@@ -219,6 +266,9 @@ class PendingInvocation:
     # First chunk of the turn's final reply (the non-interim send anchored to
     # the command id): how a Hermes refusal notice is told from an answer.
     final_reply: str | None = None
+    # "restart" / "shutdown" once Hermes' stop() hard-interrupted this turn
+    # because its drain ran out: whatever the turn reports next is not an answer.
+    shutdown_interrupt: str | None = None
 
 
 class BloodbankAdapter(BasePlatformAdapter):
@@ -297,6 +347,9 @@ class BloodbankAdapter(BasePlatformAdapter):
             # Batch turns (ticket grooming, delegation) are legitimately long:
             # no wall clock unless the operator opts in.
             turn_timeout=_turn_timeout(extra, None),
+            shutdown_interrupt=_choice(
+                extra, "shutdown_interrupt", "fail", SHUTDOWN_INTERRUPT_MODES
+            ),
         )
         self._lanes: list[LaneRuntime] = [self._batch]
         interactive = self._interactive_lane(extra.get("interactive"))
@@ -350,9 +403,10 @@ class BloodbankAdapter(BasePlatformAdapter):
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self._conversation_lock_refs: dict[str, int] = {}
         self.drain_poll_seconds = DRAIN_POLL_SECONDS
+        self.pause_remind_seconds = PAUSE_REMIND_SECONDS
         self._notices = NoticeClassifier()
-        # lane name -> why it stopped fetching (logged once per pause).
-        self._paused_lanes: dict[str, str] = {}
+        # lane name -> (why it stopped fetching, monotonic pause start, last logged).
+        self._paused_lanes: dict[str, tuple[str, float, float]] = {}
 
     @staticmethod
     def _interactive_lane(raw: Any) -> LaneRuntime | None:
@@ -392,6 +446,9 @@ class BloodbankAdapter(BasePlatformAdapter):
             ),
             turn_timeout=_turn_timeout(
                 raw, DEFAULT_INTERACTIVE_TURN_TIMEOUT_SECONDS, prefix=prefix
+            ),
+            shutdown_interrupt=_choice(
+                raw, "shutdown_interrupt", "fail", SHUTDOWN_INTERRUPT_MODES, prefix=prefix
             ),
         )
 
@@ -612,9 +669,24 @@ class BloodbankAdapter(BasePlatformAdapter):
             )
 
     def _pause_lane(self, lane: LaneRuntime, reason: str) -> None:
-        if self._paused_lanes.get(lane.name) == reason:
+        now = time.monotonic()
+        paused = self._paused_lanes.get(lane.name)
+        if paused is not None and paused[0] == reason:
+            if now - paused[2] < self.pause_remind_seconds:
+                return
+            # Still paused: say so again, so a drain that never ends (a leaked
+            # .drain_request.json, a wedged restart wait) is visible in the log.
+            self._paused_lanes[lane.name] = (reason, paused[1], now)
+            logger.warning(
+                "Bloodbank lane=%s still not fetching after %.0fs: Hermes gateway is "
+                "%s; commands stay queued on durable %s",
+                lane.name,
+                now - paused[1],
+                _NOT_ACCEPTING_TEXT[reason],
+                lane.durable,
+            )
             return
-        self._paused_lanes[lane.name] = reason
+        self._paused_lanes[lane.name] = (reason, now, now)
         logger.warning(
             "Bloodbank lane=%s stopped fetching: Hermes gateway is %s and refuses "
             "new turns; commands stay queued on durable %s and run when the "
@@ -629,6 +701,82 @@ class BloodbankAdapter(BasePlatformAdapter):
             logger.info(
                 "Bloodbank lane=%s resumed fetching: Hermes accepts new turns again",
                 lane.name,
+            )
+
+    def _runner_stopping(self) -> bool:
+        """Hermes' stop() has begun (it clears ``_running`` before its drain)."""
+
+        runner = getattr(self, "gateway_runner", None)
+        return runner is not None and getattr(runner, "_running", True) is False
+
+    def _shutdown_kind(self) -> str:
+        runner = getattr(self, "gateway_runner", None)
+        restart = runner is not None and getattr(runner, "_restart_requested", False) is True
+        return "restart" if restart else "shutdown"
+
+    def _watch_runner_interrupts(self) -> None:
+        """Learn which command turns Hermes' stop() hard-interrupts.
+
+        When the stop drain (restart_drain_timeout, after a reload's
+        restart_after_turn_timeout wait) runs out, Hermes calls the runner's
+        ``_interrupt_running_agents`` once (and again at the end of its settle
+        window). An interrupted turn then returns its partial text, or
+        "Operation interrupted ...", as a normal reply that the base adapter
+        reports as SUCCESS. The runner offers no hook for this, so the plugin
+        wraps that one method (once per runner, every adapter on it notified).
+        Missing method = no wrap; the reply/cancel heuristics still apply."""
+
+        runner = getattr(self, "gateway_runner", None)
+        if runner is None:
+            return
+        watchers = getattr(runner, _RUNNER_WATCHERS, None)
+        if watchers is None:
+            original = getattr(runner, "_interrupt_running_agents", None)
+            if not callable(original):
+                return
+            watchers = weakref.WeakSet()
+
+            def interrupting(reason: Any = None, *args: Any, **kwargs: Any) -> Any:
+                for adapter in list(watchers):
+                    try:
+                        adapter._note_shutdown_interrupt(runner)
+                    except Exception as exc:
+                        logger.error(
+                            "Bloodbank shutdown-interrupt bookkeeping failed error_type=%s",
+                            type(exc).__name__,
+                        )
+                return original(reason, *args, **kwargs)
+
+            try:
+                runner._interrupt_running_agents = interrupting
+                setattr(runner, _RUNNER_WATCHERS, watchers)
+            except Exception:
+                return
+        watchers.add(self)
+
+    def _note_shutdown_interrupt(self, runner: Any) -> None:
+        """Mark every dispatched command whose Hermes session is being interrupted."""
+
+        running = getattr(runner, "_running_agents", None)
+        sessions = set(running) if isinstance(running, dict) else None
+        kind = self._shutdown_kind()
+        for record in list(self._records.values()):
+            if record.event is None or record.completion.done():
+                continue
+            if record.shutdown_interrupt is not None:
+                continue
+            key = self._session_key(record.event)
+            if sessions is not None and key is not None and key not in sessions:
+                continue  # finished in Hermes already; its completion is on its way
+            record.shutdown_interrupt = kind
+            logger.warning(
+                "Bloodbank turn interrupted by Hermes %s lane=%s profile=%s "
+                "command_id=%s after %.1fs: the stop drain ran out before it finished",
+                kind,
+                record.invocation.lane,
+                record.invocation.profile,
+                record.invocation.invocation_id,
+                time.monotonic() - (record.dispatched_at or time.monotonic()),
             )
 
     async def _consume_once(self, lane: LaneRuntime) -> None:
@@ -843,6 +991,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                     # Last look before the hand-off (no await from here on): a
                     # drain that began while the started facts were published.
                     self._refuse_if_not_accepting()
+                    self._watch_runner_interrupts()
                     record.event = event
                     # The wall clock starts at dispatch, not at claim: time spent
                     # waiting for a same-thread predecessor is not the turn's.
@@ -854,6 +1003,16 @@ class BloodbankAdapter(BasePlatformAdapter):
                     # no processing-complete hook will ever come for it.
                     if getattr(event, "_gateway_accepted", True) is not True:
                         record.finalizing = True
+                        if invocation.prompt.lstrip().startswith("/"):
+                            # A bypass slash command (/stop, /new, /approve, ...)
+                            # on a busy session runs inline without admission: it
+                            # may have acted, so a redelivery must not repeat it.
+                            raise TurnNotRun(
+                                "not_accepted_slash_command",
+                                "Hermes handled the prompt as a slash command inline "
+                                "instead of starting an agent turn",
+                                retryable=False,
+                            )
                         raise TurnNotRun(
                             "not_accepted",
                             "Hermes did not admit the turn (dropped at adapter ingress)",
@@ -963,18 +1122,22 @@ class BloodbankAdapter(BasePlatformAdapter):
 
         command_id = record.invocation.invocation_id if record is not None else None
         profile = record.invocation.profile if record is not None else None
-        if record is not None and self._last_delivery(message, lane):
+        last = self._last_delivery(message, lane)
+        if record is not None and (last or not exc.retryable):
             logger.warning(
                 "Bloodbank command not run by Hermes lane=%s profile=%s command_id=%s "
-                "reason=%s: %s; no deliveries left, closing it as failed",
+                "reason=%s: %s; %s, closing it as failed",
                 lane.name,
                 profile,
                 command_id,
                 exc.reason,
                 exc.detail,
+                "a retry cannot help" if not exc.retryable else "no deliveries left",
             )
             try:
-                await self._close_not_run(record, exc, replay_started=replay_started)
+                await self._close_not_run(
+                    record, exc, replay_started=replay_started, last=last and exc.retryable
+                )
             except Exception as close_error:
                 logger.error(
                     "Bloodbank not-run closure could not be completed error_type=%s",
@@ -996,9 +1159,14 @@ class BloodbankAdapter(BasePlatformAdapter):
         await message.nak(delay=lane.nak_delay)
 
     async def _close_not_run(
-        self, record: PendingInvocation, exc: TurnNotRun, *, replay_started: bool
+        self,
+        record: PendingInvocation,
+        exc: TurnNotRun,
+        *,
+        replay_started: bool,
+        last: bool = True,
     ) -> None:
-        """Close a command Hermes never ran as failed, started facts first.
+        """Close a command Hermes did not run as asked as failed, started facts first.
 
         The started facts are published when this attempt has not published
         them already (a pending row never did; an earlier attempt may have
@@ -1018,12 +1186,16 @@ class BloodbankAdapter(BasePlatformAdapter):
         events = terminal_events(
             invocation,
             outcome="failure",
-            failure_code=HERMES_REFUSED_CODE,
+            failure_code=exc.code,
             failure_message=(
-                f"Hermes did not run the turn ({exc.detail}) and the command has "
-                "no deliveries left"
+                (
+                    exc.detail
+                    if exc.code == INTERRUPTED_BY_SHUTDOWN_CODE
+                    else f"Hermes did not run the turn ({exc.detail})"
+                )
+                + ("; the command has no deliveries left" if last else "")
             ),
-            failure_data={"refusal": exc.reason},
+            failure_data=exc.data or {"refusal": exc.reason},
         )
         await asyncio.to_thread(
             self.execution_state.mark_completed,
@@ -1031,7 +1203,7 @@ class BloodbankAdapter(BasePlatformAdapter):
             digest=record.envelope_digest,
             outcome="failure",
             terminal_events=events,
-            failure_code=HERMES_REFUSED_CODE,
+            failure_code=exc.code,
         )
         await self._publish_many(events)
 
@@ -1286,13 +1458,49 @@ class BloodbankAdapter(BasePlatformAdapter):
             if result in {"cancelled", "canceled"}
             else "failure"
         )
-        # Hermes reports a turn it refused (draining, busy, an error notice in
-        # place of an answer) as SUCCESS: its notice is the "reply". Read it.
-        notice = (
-            self._notices.classify(record.final_reply)
-            if terminal_outcome == "success"
-            else None
-        )
+        # A turn Hermes' stop() cut off reports its partial text (or nothing, or
+        # a cancellation at adapter teardown) like a finished one: not an answer.
+        interrupted = self._shutdown_interruption(record, terminal_outcome)
+        if interrupted is not None:
+            not_run = self._interrupted_not_run(record, interrupted, terminal_outcome)
+            lane = self._lane_named(record.invocation.lane)
+            if lane.shutdown_interrupt == "retry":
+                logger.warning(
+                    "Bloodbank turn cut off by Hermes %s lane=%s profile=%s "
+                    "command_id=%s: NAK, the next process re-dispatches the same thread",
+                    interrupted,
+                    record.invocation.lane,
+                    record.invocation.profile,
+                    record.invocation.invocation_id,
+                )
+                record.completion.set_exception(not_run)
+                record.completion.exception()
+                return
+            notice = None
+            terminal_outcome = "failure"
+            failure_code, failure_message, failure_data = (
+                not_run.code,
+                not_run.detail,
+                not_run.data,
+            )
+            logger.warning(
+                "Bloodbank turn closed as %s lane=%s profile=%s command_id=%s "
+                "(Hermes reported %s)",
+                INTERRUPTED_BY_SHUTDOWN_CODE,
+                record.invocation.lane,
+                record.invocation.profile,
+                record.invocation.invocation_id,
+                result,
+            )
+        else:
+            # Hermes reports a turn it refused (draining, busy, an error notice in
+            # place of an answer) as SUCCESS: its notice is the "reply". Read it.
+            notice = (
+                self._notices.classify(record.final_reply)
+                if terminal_outcome == "success"
+                else None
+            )
+            failure_code = failure_message = failure_data = None
         if notice is not None and notice.disposition == NOT_RUN:
             record.completion.set_exception(
                 TurnNotRun(
@@ -1304,7 +1512,6 @@ class BloodbankAdapter(BasePlatformAdapter):
             # Retrieved here: the dispatching task re-raises it into the NAK path.
             record.completion.exception()
             return
-        failure_code = failure_message = failure_data = None
         if notice is not None:
             terminal_outcome = "failure"
             failure_code, failure_message, failure_data = self._notice_failure(
@@ -1317,6 +1524,15 @@ class BloodbankAdapter(BasePlatformAdapter):
                 record.invocation.profile,
                 record.invocation.invocation_id,
                 notice.key,
+            )
+        elif terminal_outcome == "success" and is_interrupt_text(record.final_reply):
+            # The agent loop abandoned the turn on an interrupt (Hermes' own
+            # inactivity stop, say) and its "Operation interrupted ..." line is the
+            # whole reply: the work did not finish.
+            terminal_outcome = "failure"
+            failure_code, failure_message, failure_data = self._notice_failure(
+                HermesNotice(OPERATION_INTERRUPTED_REFUSAL, "failed"),
+                record.final_reply,
             )
         try:
             events = terminal_events(
@@ -1341,6 +1557,56 @@ class BloodbankAdapter(BasePlatformAdapter):
         else:
             record.completion.set_result(None)
 
+    def _lane_named(self, name: str | None) -> LaneRuntime:
+        for lane in self._lanes:
+            if lane.name == name:
+                return lane
+        return self._batch
+
+    def _shutdown_interruption(
+        self, record: PendingInvocation, outcome: str
+    ) -> str | None:
+        """Why Hermes' stop() cut this turn off ("restart" / "shutdown"), or None.
+
+        Primary signal: the runner's shutdown interrupt named this turn's session
+        (``_watch_runner_interrupts``). Fallback while stop() is under way (the
+        runner cleared ``_running``): a turn cancelled at adapter teardown, or
+        one whose whole reply is the agent's "Operation interrupted ..." line. A
+        turn that simply finished inside the drain window is neither."""
+
+        if record.shutdown_interrupt is not None:
+            return record.shutdown_interrupt
+        if not self._runner_stopping():
+            return None
+        if outcome == "cancelled" or (
+            outcome == "success" and is_interrupt_text(record.final_reply)
+        ):
+            return self._shutdown_kind()
+        return None
+
+    @staticmethod
+    def _interrupted_not_run(
+        record: PendingInvocation, kind: str, outcome: str
+    ) -> TurnNotRun:
+        elapsed = (
+            time.monotonic() - record.dispatched_at
+            if record.dispatched_at is not None
+            else None
+        )
+        what = "restarting" if kind == "restart" else "shutting down"
+        after = f" after {_seconds(elapsed)}s" if elapsed is not None else ""
+        data: dict[str, Any] = {"interrupted_by": f"gateway_{kind}"}
+        if elapsed is not None:
+            data["elapsed_seconds"] = round(elapsed, 1)
+        return TurnNotRun(
+            f"gateway_{kind}",
+            f"Hermes was {what} and interrupted the turn{after} before it finished "
+            f"(its stop drain ran out; Hermes reported {outcome}); partial work may "
+            "have run",
+            code=INTERRUPTED_BY_SHUTDOWN_CODE,
+            data=data,
+        )
+
     @staticmethod
     def _notice_failure(
         notice: HermesNotice, reply: str | None
@@ -1350,7 +1616,7 @@ class BloodbankAdapter(BasePlatformAdapter):
         text = " ".join(str(reply or "").split())
         if len(text) > 300:
             text = text[:299] + "…"
-        if notice.key.startswith("gateway.errors."):
+        if notice.key.startswith("gateway.errors.") or notice.key == OPERATION_INTERRUPTED_REFUSAL:
             code = HERMES_TURN_ERROR_CODE
             what = "Hermes ended the turn with an error notice instead of an answer"
         else:

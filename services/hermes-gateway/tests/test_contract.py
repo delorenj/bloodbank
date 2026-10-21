@@ -591,3 +591,33 @@ def test_hermes_refusal_failed_fact_validates(valid_command, repo_root, code, re
         assert failed["data"]["error_code"] == code
         assert failed["data"]["refusal"] == refusal
         assert turn["data"]["outcome"] == "failed"
+
+
+@pytest.mark.parametrize("kind", ["gateway_restart", "gateway_shutdown"])
+def test_interrupted_by_shutdown_failed_fact_validates(valid_command, repo_root, kind):
+    import json
+    import sys
+
+    jsonschema = pytest.importorskip("jsonschema")
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    schema = json.loads(
+        (repo_root / "schemas/bloodbank/agent/invocation.failed.json").read_text(encoding="utf-8")
+    )
+    for lane in ("batch", "interactive"):
+        invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", lane)
+        failed, turn = terminal_events(
+            invocation,
+            outcome="failure",
+            failure_code="interrupted_by_shutdown",
+            failure_message="Hermes was restarting and interrupted the turn after 61.8s",
+            failure_data={"interrupted_by": kind, "elapsed_seconds": 61.8},
+        )
+        for event in (failed, turn):
+            validate_envelope(event)
+        jsonschema.validate(failed["data"], schema["properties"]["data"])
+        assert failed["data"]["interrupted_by"] == kind
+    bad = dict(failed["data"], interrupted_by="gateway_hiccup")
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(bad, schema["properties"]["data"])

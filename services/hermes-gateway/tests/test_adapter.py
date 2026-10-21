@@ -2513,8 +2513,9 @@ async def test_a_drain_that_starts_while_started_facts_publish_is_never_dispatch
         DRAIN_REFUSAL,
         SHUTDOWN_REFUSAL,
         "⏳ Gateway is restarting and is not accepting another turn right now.",
-        "⏳ Gateway restarting — queued for the next turn after it comes back.",
         "Hermes is at the active session limit (8/8). Try again when another session finishes.",
+        # a runtime footer after the whole notice is still the notice
+        DRAIN_REFUSAL + "\n\n`gpt-5 · 0.1s`",
         "⚠️ This session's history is temporarily unavailable, so this message was not "
         "processed. Ask the operator to inspect state.db, then resend after it is healthy.",
     ],
@@ -2585,6 +2586,65 @@ async def test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery(
             "without the leading slash to send as a regular message.",
             "hermes_refused",
             "gateway.unknown_command",
+        ),
+        (
+            # only sent with busy_input_mode queue/steer: Hermes kept its own copy,
+            # so a NAK would run the command twice
+            "⏳ Gateway restarting — queued for the next turn after it comes back.",
+            "hermes_refused",
+            "gateway.busy.drain_queued",
+        ),
+        # the gateway.errors.* notices the first catalog missed
+        (
+            "⚠️ Session storage was temporarily unavailable, so this turn was stopped to "
+            "protect your conversation history. Your message should already be saved — "
+            "please send it again.",
+            "hermes_turn_error",
+            "gateway.errors.session_storage_unavailable",
+        ),
+        (
+            "⚠️ Session storage was temporarily unavailable, so this turn was stopped to "
+            "protect your conversation history. Please check available disk space, then "
+            "send your message again.",
+            "hermes_turn_error",
+            "gateway.errors.session_storage_unavailable_disk",
+        ),
+        (
+            "⚠️ This conversation has grown too long for me to read all at once. Use "
+            "/compress to shorten the history, or /new to start a fresh conversation.",
+            "hermes_turn_error",
+            "gateway.errors.context_overflow",
+        ),
+        (
+            "⚠️ I had to stop before finishing: Response truncated due to output length "
+            "limit. Use /retry to try again, or /compress if this conversation has grown "
+            "very long.",
+            "hermes_turn_error",
+            "gateway.errors.stopped_before_finishing",
+        ),
+        (
+            "⚠️ The AI model service rejected this request. Try rephrasing your message, "
+            "or use /model to switch models.",
+            "hermes_turn_error",
+            "gateway.errors.bad_request",
+        ),
+        (
+            "⚠️ Hermes could not reach the AI model service (no further detail from the "
+            "SDK). Use /retry to try again; if it persists, run `hermes doctor` on the host.",
+            "hermes_turn_error",
+            "gateway.errors.connection_unknown",
+        ),
+        (
+            "⚠️ The model returned only a silence marker for a message that needed a "
+            "reply. Try again or rephrase.",
+            "hermes_turn_error",
+            "gateway.errors.unexpected_silence",
+        ),
+        (
+            # the agent loop's own abandonment line (Hermes' inactivity stop, say)
+            "Operation interrupted: waiting for model response (12.3s elapsed).",
+            "hermes_turn_error",
+            "agent.operation_interrupted",
         ),
     ],
 )
@@ -2666,6 +2726,13 @@ async def test_an_event_hermes_does_not_admit_is_nakked_instead_of_waiting_forev
         "I checked: earlier the gateway said it is restarting and is not accepting new "
         "work right now, but it is back.",
         "Gateway status: running.",
+        # opens with a NOT_RUN notice's words, then answers: an answer, never a retry
+        "Hermes is at the active session limit (8/8) is what the board said an hour ago. "
+        "Since then the queue drained and I groomed POOL-12: acceptance criteria added, "
+        "estimate set to 3, and the dependency on POOL-9 recorded. " * 2,
+        "⚠️ Your message wasn't processed (the previous turn was still being cleaned up). "
+        "Please send it again. — that is what Hermes told me last time; this time I "
+        "finished the job and here is the full summary of what changed on the board " * 3,
     ],
 )
 async def test_normal_turns_are_unaffected_by_the_refusal_checks(tmp_path, valid_command, answer):
@@ -2712,23 +2779,22 @@ async def test_a_turn_already_running_when_the_drain_begins_still_completes(
 def test_notices_are_read_from_hermes_catalog_when_it_is_importable():
     from bloodbank_hermes_gateway.refusals import FAILED, NOT_RUN, NoticeClassifier
 
-    catalog = {
+    german = {
         "gateway.busy.action_restarting": "wird neu gestartet",
         "gateway.busy.action_shutting_down": "fährt herunter",
         "gateway.busy.drain_rejected_new_work": "⏳ Gateway {action} und nimmt gerade keine neue Arbeit an.",
+        # a gateway.errors key the gateway has never heard of is still a failure
+        "gateway.errors.brand_new_failure": "⚠️ Der Dienst hat etwas völlig Neues falsch gemacht.",
+        "gateway.errors.hint_brand_new": " Ein Hinweis, der nie allein gesendet wird.",
     }
-
-    def translate(key, lang=None, **kwargs):
-        if lang == "en":
-            return key  # catalog miss: Hermes returns the bare key
-        value = catalog.get(key, key)
-        return value.format(**kwargs) if kwargs and value != key else value
-
-    notices = NoticeClassifier(translate)
-    german = notices.classify("⏳ Gateway wird neu gestartet und nimmt gerade keine neue Arbeit an.")
-    assert german is not None and german.key == "gateway.busy.drain_rejected_new_work"
-    assert german.disposition == NOT_RUN
-    # the English copy still matches when the catalog misses a key
+    notices = NoticeClassifier([german])
+    found = notices.classify("⏳ Gateway wird neu gestartet und nimmt gerade keine neue Arbeit an.")
+    assert found is not None and found.key == "gateway.busy.drain_rejected_new_work"
+    assert found.disposition == NOT_RUN
+    new = notices.classify("⚠️ Der Dienst hat etwas völlig Neues falsch gemacht.")
+    assert new is not None and (new.key, new.disposition) == ("gateway.errors.brand_new_failure", FAILED)
+    assert notices.classify(" Ein Hinweis, der nie allein gesendet wird.") is None
+    # the English copy still matches when the catalog lacks a key
     assert notices.classify(DRAIN_REFUSAL).disposition == NOT_RUN
     unknown = (
         "Unknown command `/x`. Type /commands to see what's available, or resend without "
@@ -2738,3 +2804,359 @@ def test_notices_are_read_from_hermes_catalog_when_it_is_importable():
     assert notices.classify("Unknown command `/x`.") is None
     for answer in (None, "", "   ", "done", 42, "⏳", "Gateway is restarting"):
         assert notices.classify(answer) is None
+    # catalog lookups that blow up fall back to the English copies
+    def broken():
+        raise RuntimeError("no catalog")
+
+    assert NoticeClassifier(broken).classify(DRAIN_REFUSAL).disposition == NOT_RUN
+
+
+def _hermes_locale():
+    """Hermes' bundled English catalog, flattened, when a Hermes checkout is on this host."""
+
+    import os
+    from pathlib import Path
+
+    yaml = pytest.importorskip("yaml")
+    root = Path(os.environ.get("HERMES_AGENT_DIR", Path.home() / ".hermes/hermes-agent"))
+    path = root / "locales" / "en.yaml"
+    if not path.is_file():
+        pytest.skip(f"no Hermes catalog at {path}")
+    flat = {}
+
+    def walk(node, prefix):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                walk(value, f"{prefix}.{key}" if prefix else str(key))
+        elif isinstance(node, str):
+            flat[prefix] = node
+
+    walk(yaml.safe_load(path.read_text(encoding="utf-8")), "")
+    return flat
+
+
+def test_every_hermes_error_notice_is_classified_never_success():
+    """A gateway.errors.* key that falls through would close its command as success."""
+
+    from string import Formatter
+
+    from bloodbank_hermes_gateway.refusals import (
+        NOT_RUN_ERRORS,
+        NoticeClassifier,
+        disposition_for,
+        is_fragment_key,
+    )
+
+    catalog = _hermes_locale()
+    keys = [k for k in catalog if k.startswith("gateway.errors.") and not is_fragment_key(k)]
+    assert len(keys) >= 20
+    notices = NoticeClassifier([catalog])
+    for key in keys:
+        template = catalog[key]
+        fields = {f for _l, f, _s, _c in Formatter().parse(template) if f}
+        reply = template.format(**{f: " (detail)" for f in fields})
+        found = notices.classify(reply)
+        assert found is not None, key
+        assert found.key == key, (key, found.key)
+        assert found.disposition == disposition_for(key)
+    assert NOT_RUN_ERRORS <= set(keys)
+    # the fragments really are fragments, not replies
+    assert {"gateway.errors.processing_incomplete", "gateway.errors.hint_quota"} <= {
+        k for k in catalog if is_fragment_key(k)
+    }
+
+
+# --- Turns Hermes' stop() cuts off -------------------------------------------
+#
+# When the stop drain runs out (restart_drain_timeout on SIGTERM, or after a
+# reload's restart_after_turn_timeout wait) Hermes hard-interrupts every turn
+# still running through the runner's _interrupt_running_agents. The turn then
+# returns its partial text (or "Operation interrupted ...", or nothing) and the
+# base adapter reports SUCCESS; a turn still alive at adapter teardown is
+# CANCELLED. Neither finished, so neither may close as success (or cancelled).
+
+
+def stopping_runner(adapter, *, restart=True):
+    """A runner with an interruptible agent registry, as Hermes wires it."""
+
+    runner = make_runner()
+    runner._running_agents = {}
+    runner.interrupts = []
+    runner._interrupt_running_agents = lambda reason: runner.interrupts.append(reason)
+    adapter.gateway_runner = runner
+
+    def begin_stop():
+        runner._running = False
+        runner._draining = True
+        runner._restart_requested = restart
+
+    runner.begin_stop = begin_stop
+    return runner
+
+
+async def _running_turn(adapter, command, lane_runtime=None, reply="partial"):
+    running = asyncio.Event()
+    release = asyncio.Event()
+    calls = []
+
+    async def handler(event):
+        calls.append(event.message_id)
+        if len(calls) == 1:
+            running.set()
+            await release.wait()
+            return reply
+        return "The real answer."
+
+    adapter.set_message_handler(handler)
+    message = JsMessage(command)
+    task = asyncio.create_task(adapter._handle_broker_message(message, lane_runtime))
+    await asyncio.wait_for(running.wait(), 1)
+    return message, task, release, calls
+
+
+def _session_of(adapter, command):
+    record = adapter._records[command["command_id"]]
+    return adapter._session_key(record.event)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restart", [True, False])
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "I groomed the acceptance criteria and was about to set",
+        "Operation interrupted: waiting for model response (61.8s elapsed).",
+        None,  # an interrupted run that did work and stays silent
+    ],
+)
+async def test_a_turn_the_stop_drain_cut_off_closes_as_interrupted_never_success(
+    tmp_path, valid_command, reply, restart
+):
+    adapter = make_adapter(tmp_path)
+    runner = stopping_runner(adapter, restart=restart)
+    message, task, release, _calls = await _running_turn(adapter, valid_command, reply=reply)
+
+    runner.begin_stop()
+    runner._running_agents[_session_of(adapter, valid_command)] = object()
+    runner._interrupt_running_agents("Gateway restarting" if restart else "Gateway shutting down")
+    # the wrapper forwards to Hermes' own interrupt
+    assert runner.interrupts == ["Gateway restarting" if restart else "Gateway shutting down"]
+    release.set()
+    await asyncio.wait_for(task, 1)
+
+    assert (message.acked, message.nacked) == (1, 0)
+    assert terminal_types(adapter, valid_command) == ["bloodbank.agent.invocation.failed"]
+    data = failed_fact(adapter, valid_command)["data"]
+    kind = "restart" if restart else "shutdown"
+    assert data["error_code"] == "interrupted_by_shutdown"
+    assert data["interrupted_by"] == f"gateway_{kind}"
+    assert data["elapsed_seconds"] >= 0
+    assert ("restarting" if restart else "shutting down") in data["error_message"]
+    assert "partial work may have run" in data["error_message"]
+    row = adapter.execution_state.get(valid_command["command_id"])
+    assert (row.state, row.outcome, row.failure_code) == (
+        "completed",
+        "failure",
+        "interrupted_by_shutdown",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_turn_cancelled_at_adapter_teardown_during_stop_is_interrupted_not_cancelled(
+    tmp_path, valid_command
+):
+    adapter = make_adapter(tmp_path)
+    runner = make_runner()  # no interrupt hook at all: the fallback alone decides
+    adapter.gateway_runner = runner
+    message, task, _release, _calls = await _running_turn(adapter, valid_command)
+
+    runner._running = False
+    runner._draining = runner._restart_requested = True
+    await adapter.cancel_background_tasks()  # Hermes' adapter teardown
+    await asyncio.wait_for(task, 1)
+
+    assert (message.acked, message.nacked) == (1, 0)
+    data = failed_fact(adapter, valid_command)["data"]
+    assert data["error_code"] == "interrupted_by_shutdown"
+    assert "Hermes reported cancelled" in data["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_an_interrupted_line_after_stop_began_is_interrupted_without_the_hook(
+    tmp_path, valid_command
+):
+    adapter = make_adapter(tmp_path)
+    runner = make_runner()
+    adapter.gateway_runner = runner
+    message, task, release, _calls = await _running_turn(
+        adapter, valid_command, reply="Operation interrupted: waiting for model response (3.0s elapsed)."
+    )
+    runner._running = False
+    runner._draining = True
+    release.set()
+    await asyncio.wait_for(task, 1)
+    data = failed_fact(adapter, valid_command)["data"]
+    assert (data["error_code"], data["interrupted_by"]) == ("interrupted_by_shutdown", "gateway_shutdown")
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_finished_inside_the_stop_drain_is_still_success(
+    tmp_path, valid_command
+):
+    """The live proof's command 1: its answer landed 0.16 s after stop() began."""
+
+    adapter = make_adapter(tmp_path)
+    runner = stopping_runner(adapter)
+    message, task, release, _calls = await _running_turn(
+        adapter, valid_command, reply="drain test 1 done"
+    )
+    runner.begin_stop()  # _running False, but nothing is interrupted
+    release.set()
+    await asyncio.wait_for(task, 1)
+    assert (message.acked, message.nacked) == (1, 0)
+    assert terminal_types(adapter, valid_command) == ["bloodbank.agent.invocation.completed"]
+    assert adapter.execution_state.get(valid_command["command_id"]).outcome == "success"
+
+
+@pytest.mark.asyncio
+async def test_the_interrupt_only_marks_turns_hermes_is_still_running(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    runner = stopping_runner(adapter)
+    message, task, release, _calls = await _running_turn(
+        adapter, valid_command, reply="Groomed: criteria, estimate, dependency."
+    )
+    runner.begin_stop()
+    # another session timed out the drain; this one already finished in Hermes
+    runner._running_agents["someone-else:thread-9"] = object()
+    runner._interrupt_running_agents("Gateway restarting")
+    release.set()
+    await asyncio.wait_for(task, 1)
+    assert terminal_types(adapter, valid_command) == ["bloodbank.agent.invocation.completed"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane_name", ["batch", "interactive"])
+async def test_retry_mode_naks_a_cut_off_turn_and_the_next_process_reruns_its_thread(
+    tmp_path, valid_command, lane_name
+):
+    adapter = make_lane_adapter(tmp_path)
+    lane_runtime, command = lane_and_command(adapter, valid_command, lane_name)
+    lane_runtime.shutdown_interrupt = "retry"
+    runner = stopping_runner(adapter)
+    message, task, release, calls = await _running_turn(adapter, command, lane_runtime)
+
+    runner.begin_stop()
+    runner._running_agents[_session_of(adapter, command)] = object()
+    runner._interrupt_running_agents("Gateway restarting")
+    release.set()
+    await asyncio.wait_for(task, 1)
+
+    assert (message.acked, message.nacked) == (0, 1)
+    assert message.nak_delays == [lane_runtime.nak_delay]
+    assert terminal_types(adapter, command) == []
+    row = adapter.execution_state.get(command["command_id"])
+    assert row.state == "started" and row.outcome is None
+
+    # the new process: same command, same thread, runs for real
+    adapter.gateway_runner = stopping_runner(adapter)
+    again = JsMessage(command, delivered=2)
+    await asyncio.wait_for(adapter._handle_broker_message(again, lane_runtime), 2)
+    assert calls == [command["command_id"]] * 2
+    assert again.acked == 1
+    assert terminal_types(adapter, command) == ["bloodbank.agent.invocation.completed"]
+
+
+@pytest.mark.asyncio
+async def test_retry_mode_on_the_last_delivery_closes_as_interrupted(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    adapter._batch.shutdown_interrupt = "retry"
+    runner = stopping_runner(adapter)
+    running = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(_event):
+        running.set()
+        await release.wait()
+        return "partial"
+
+    adapter.set_message_handler(handler)
+    message = JsMessage(valid_command, delivered=adapter.max_deliver)
+    task = asyncio.create_task(adapter._handle_broker_message(message))
+    await asyncio.wait_for(running.wait(), 1)
+    runner.begin_stop()
+    runner._running_agents[_session_of(adapter, valid_command)] = object()
+    runner._interrupt_running_agents("Gateway restarting")
+    release.set()
+    await asyncio.wait_for(task, 1)
+    assert (message.acked, message.nacked) == (1, 0)
+    data = failed_fact(adapter, valid_command)["data"]
+    assert data["error_code"] == "interrupted_by_shutdown"
+    assert data["interrupted_by"] == "gateway_restart"
+    assert "no deliveries left" in data["error_message"]
+
+
+def test_the_runner_interrupt_is_wrapped_once_for_every_adapter(tmp_path):
+    first = make_adapter(tmp_path / "a")
+    second = make_adapter(tmp_path / "b")
+    runner = make_runner()
+    runner.interrupts = []
+    runner._interrupt_running_agents = lambda reason: runner.interrupts.append(reason)
+    first.gateway_runner = second.gateway_runner = runner
+    first._watch_runner_interrupts()
+    wrapped = runner._interrupt_running_agents
+    second._watch_runner_interrupts()
+    first._watch_runner_interrupts()
+    assert runner._interrupt_running_agents is wrapped
+    runner._interrupt_running_agents("Gateway shutting down")
+    assert runner.interrupts == ["Gateway shutting down"]
+    # a runner without the method is left alone
+    bare = make_runner()
+    first.gateway_runner = bare
+    first._watch_runner_interrupts()
+    assert not hasattr(bare, "_interrupt_running_agents")
+
+
+def test_shutdown_interrupt_mode_is_strict(tmp_path):
+    adapter = make_lane_adapter(tmp_path)
+    assert {item.shutdown_interrupt for item in adapter.lanes} == {"fail"}
+    adapter.config.extra["shutdown_interrupt"] = "retry"
+    adapter.config.extra["interactive"]["shutdown_interrupt"] = "retry"
+    built = BloodbankAdapter(adapter.config)
+    assert {item.shutdown_interrupt for item in built.lanes} == {"retry"}
+    for bad in ("nak", True, None):
+        adapter.config.extra["shutdown_interrupt"] = bad
+        with pytest.raises(ValueError, match="shutdown_interrupt"):
+            BloodbankAdapter(adapter.config)
+
+
+@pytest.mark.asyncio
+async def test_an_unadmitted_slash_prompt_is_closed_not_redelivered(tmp_path, valid_command):
+    """A bypass slash command runs inline on a busy session: a redelivery would repeat it."""
+
+    command = json.loads(json.dumps(valid_command))
+    command["data"]["prompt"] = "/new"
+    adapter = make_adapter(tmp_path)
+    adapter.drop_inbound = True
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result="done"))
+    message = JsMessage(command)  # first delivery: plenty left
+    await asyncio.wait_for(adapter._handle_broker_message(message), 1)
+    assert (message.acked, message.nacked) == (1, 0)
+    data = failed_fact(adapter, command)["data"]
+    assert (data["error_code"], data["refusal"]) == ("hermes_refused", "not_accepted_slash_command")
+    assert "no deliveries left" not in data["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_a_pause_that_lasts_is_logged_again(tmp_path, caplog):
+    caplog.set_level("INFO", logger="bloodbank_hermes_gateway.adapter")
+    adapter = make_adapter(tmp_path)
+    adapter.drain_poll_seconds = 0.001
+    adapter.pause_remind_seconds = 0.02
+    adapter.gateway_runner = make_runner(external=True)
+    for _ in range(3):
+        await adapter._consume_once(adapter._batch)
+    await asyncio.sleep(0.03)
+    await adapter._consume_once(adapter._batch)
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum("stopped fetching" in m for m in messages) == 1
+    assert sum("still not fetching" in m and "maintenance" in m for m in messages) == 1
