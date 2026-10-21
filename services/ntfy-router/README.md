@@ -164,13 +164,21 @@ for topics the upstream gate forwards).
 
 ## Run
 
-From this directory, with the token in the environment of that one command:
+The token is the committed `op://` reference in `.env.op`. `./render-env.sh`
+resolves it into the gitignored `.env`, which compose loads by itself, so no
+token is needed in the shell:
 
 ```bash
-BLOODBANK_NTFY_ROUTER_NTFY_TOKEN="$(op read 'op://DeLoSecrets/ntfy Access Token/credential')" \
-  docker compose -f compose.yml up -d --build
+./render-env.sh            # first time, or after rotating the token
+docker compose up -d --build   # also: --force-recreate, or a host reboot
 docker logs bloodbank-ntfy-router 2>&1 | grep -m1 'routed:'
 ```
+
+`docker-stack-ntfy-router.service` (`~/docker/systemd`, enabled) re-renders `.env`
+and runs `compose up -d` at boot. With an empty token the router logs an ERROR
+every `NTFY_TOKEN_WAIT_SECONDS` (60) and waits instead of exiting, so it never
+crash-loops; core NATS has no replay, so events during that wait are missed
+either way.
 
 ## Test
 

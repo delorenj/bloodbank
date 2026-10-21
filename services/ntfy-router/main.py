@@ -897,17 +897,25 @@ async def run() -> None:
         loop.add_signal_handler(sig, stop.set)
 
     # ntfy runs auth-default-access=deny-all, so an absent token is not a
-    # degraded mode -- it is a silent total outage. The compose file supplies
-    # this as ${BLOODBANK_NTFY_ROUTER_NTFY_TOKEN:-}, which resolves to the empty
-    # string in any shell that does not export it. On 2026-08-28 a redeploy
-    # from a shell without the variable produced 346 consecutive 403s over ~4
-    # minutes with nothing in the logs to say why. Refuse to start instead.
+    # degraded mode -- it is a silent total outage (2026-08-28: 346 consecutive
+    # 403s with nothing in the logs). Exiting made `restart: unless-stopped`
+    # crash-loop the container (2026-10-21: ~35 s of dropped pushes), so wait
+    # instead: stay up, say so at ERROR every NTFY_TOKEN_WAIT_SECONDS, and exit
+    # cleanly on SIGTERM. Compose supplies the token from the rendered .env
+    # (render-env.sh); restarting the container after fixing it resumes routing.
     if not NTFY_TOKEN:
-        raise SystemExit(
-            "NTFY_TOKEN is empty. ntfy denies unauthenticated publishes, so every "
-            "route would 403 silently. Supply BLOODBANK_NTFY_ROUTER_NTFY_TOKEN "
-            "(op://DeLoSecrets/ntfy Access Token/credential) before starting."
-        )
+        wait = _env_float("NTFY_TOKEN_WAIT_SECONDS", 60)
+        while not stop.is_set():
+            log.error(
+                "NTFY_TOKEN is empty: ntfy denies unauthenticated publishes, so nothing "
+                "is routed. Run services/ntfy-router/render-env.sh, then "
+                "`docker compose up -d --force-recreate`. Waiting, not crash-looping."
+            )
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=wait)
+            except asyncio.TimeoutError:
+                pass
+        return
 
     async with httpx.AsyncClient(timeout=5.0) as http_client:
         router = NtfyRouter(

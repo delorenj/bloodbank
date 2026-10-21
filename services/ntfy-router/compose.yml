@@ -11,16 +11,19 @@
 # retired `bloodbank.evt.v1.>` wildcard would have matched nothing that is
 # published today.
 # Independent of the broader bloodbank compose lifecycle.
-# NTFY_TOKEN is required now that ntfy is auth-default-access=deny-all; supply it
-# via BLOODBANK_NTFY_ROUTER_NTFY_TOKEN in the environment of the one compose
-# command (never commit the token).
+# NTFY_TOKEN is required now that ntfy is auth-default-access=deny-all. It comes
+# from the committed op:// reference in .env.op, rendered by ./render-env.sh into
+# the gitignored .env that compose loads by itself, so a bare
+# `docker compose up -d --force-recreate` just works (never commit the token).
+# docker-stack-ntfy-router.service (~/docker/systemd) renders it and brings the
+# router up at boot.
 #
 # Bring up (from this directory):
-#   BLOODBANK_NTFY_ROUTER_NTFY_TOKEN="$(op read 'op://DeLoSecrets/ntfy Access Token/credential')" \
-#     docker compose -f compose.yml up -d --build
+#   ./render-env.sh        # only first time, or after rotating the token
+#   docker compose up -d --build
 #
 # Tear down:
-#   docker compose -f compose.yml down
+#   docker compose down
 
 name: bloodbank-ntfy-router
 
