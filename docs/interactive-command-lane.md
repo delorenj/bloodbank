@@ -885,3 +885,145 @@ whole gateway reports `running`.
 Sampler and raw log: `/tmp/claude-drainproof/observe.py`, `observe.log` (one
 JSON line per change, consumers, gateway state, journal rows and Candystore fact
 types).
+
+### 8.3 Live proof, second run (2026-10-21, plugin `5853150`, Holocene `dcbcfa9`)
+
+The same three prompts, re-run against the follow-up fix: the stop-drain wrap
+around `_interrupt_running_agents` (`5853150`) and the Holocene wording for
+restarting, stopping, maintenance and starting (`dcbcfa9`). The plugin is the
+bloodbank checkout (`~/.hermes/plugins/bloodbank-platform` is a symlink), clean
+at `5853150`. Before starting (02:07:45), both consumers were at `ack_pending 0`
+and `num_waiting 1`, `active_agents 0`, `gateway_state running` (pid 2180084,
+started 01:55:51 on that code). Emitted with `bin/bb-emit --strict --print-ids
+--kind command --actor-type operator --actor-id drain-proof`.
+
+This run adds two checks to 8.2:
+
+- A turn that ends inside the stop window must keep its `success`. The new
+  wrap must not mark it `interrupted_by_shutdown`.
+- The wording Holocene shows between the old and new process, and while the new
+  process starts.
+
+| # | lane | command_id | thread_id | correlation |
+| --- | --- | --- | --- | --- |
+| 1 | interactive (`invoke`) | `978c9425-d032-46a1-b14e-b52ebdcf560e` | `drain-proof2-20261021-1-7b49d577` | `7b49d577-0052-44f8-8bc2-6019866191e3` |
+| 2 | interactive (`invoke`) | `369fca44-af3c-4dad-b765-01dd5994ccae` | `drain-proof2-20261021-2-59525076` | `59525076-d04d-4136-90fc-0b4d5291fdc9` |
+| 3 | batch (`start`) | `c5662f18-4faf-4679-ae25-df2eca3606d5` | `drain-proof2-20261021-3-57975d64` | `57975d64-3932-433e-8c72-4a69b111ae17` |
+
+The prompts match 8.2: command 1 asks for `sleep 80`, then "drain test 1 done".
+Commands 2 and 3 ask for "drain test N done" only.
+
+Timeline (UTC; Hermes local-time log lines converted):
+
+| time | event |
+| --- | --- |
+| 02:07:48.85 | command 1 emitted |
+| 02:07:48.87 | command 1 journal row `started`; `invocation.started` published |
+| 02:07:56.84 | holocene-pm calls `terminal` with `sleep 80` (foreground, timeout 120) |
+| 02:08:22.03 | `systemctl --user reload hermes-gateway.service`. Hermes logs `SIGUSR1 received ...` and `Restart deferred: waiting on 1 active work unit(s) ... 1800s remaining` (command 1's session, 33.1 s in, `current_tool: terminal`) |
+| 02:08:22.05 | `gateway_state.json`: `draining`, `restart_requested true`, `active_agents 1` |
+| 02:08:22.90 | `Bloodbank lane=batch stopped fetching: ...` and `lane=interactive stopped fetching: ...` (same millisecond) |
+| 02:08:24.09 | both consumers at `num_waiting 0` (interactive `ack_pending 1` is command 1) |
+| 02:08:24.13 | command 2 emitted (interactive) |
+| 02:08:24.19 | command 3 emitted (batch); both consumers now `waiting 0, pending 1` |
+| 02:08:24 to 02:11:08 | Neither consumer pulls (`num_waiting 0`) and commands 2 and 3 stay in `num_pending`. There is no journal row and no Candystore fact for either. The old process stayed connected to Bloodbank until 02:09:30. |
+| 02:09:17.25 | `sleep 80` returns exit 0 |
+| 02:09:19.41 | holocene-pm replies "drain test 1 done" |
+| 02:09:19.88 | `Restart deferred wait complete — active work drained; proceeding to stop()` |
+| 02:09:19.96 | `Stopping gateway for restart...`; `[Bloodbank] Sending response (17 chars)` to thread 1 |
+| 02:09:20.12 | command 1 journal `completed/success` (91.25 s); `agent.invocation.completed` published; acked (interactive `ack_pending 0` by 02:09:24.7) |
+| 02:09:27.30 | `Shutdown phase: drain done ... timed_out=False, active_at_start=0`: nothing left for `_interrupt_running_agents` |
+| 02:09:30.89 | `bloodbank disconnected` |
+| 02:09:53.68 | `Gateway stopped (total teardown 33.72s)`; `gateway_state.json`: `stopped`, `restart_requested true` |
+| 02:10:01 | systemd `Scheduled restart job`; new process pid 2505566 (by 02:10:12 `gateway_state.json` carries the new pid, still `stopped`, `restart_requested true`) |
+| 02:11:04.56 | `Starting Hermes Gateway...`; by 02:11:06.8 the new process writes `starting` with `restart_requested true` |
+| 02:11:08.39 | `Bloodbank gateway connected lane=batch` and `lane=interactive` |
+| 02:11:08.49 | command 3 journal row created (`pending`, then `started`), 100 ms after connect |
+| 02:11:09.33 | command 2 journal row `started` |
+| 02:11:14.85 | command 3 `completed/success` (6.36 s) |
+| 02:11:15.04 | command 2 `completed/success` (5.71 s) |
+| 02:14:28.59 | `gateway_state running`, `restart_requested false` (the other profiles have finished starting) |
+
+Proof points:
+
+- **Neither lane pulled during the drain.** Both consumers stayed at
+  `num_waiting 0`, with commands 2 and 3 in `num_pending`, from 02:08:24 until
+  the new process connected at 02:11:08. The adapter logged no NAK and no "not
+  run" line. Between 22:08 and 22:15 local, Hermes sent only three Bloodbank
+  responses, all 17 characters long: command 1 during the drain, then commands
+  2 and 3 in the new process. No 64- or 67-character "not accepting new work"
+  notice was sent.
+- **No false closure.** The journal had no row for 2 or 3 until 02:11:08, and
+  Candystore had no fact for their correlations until 02:11:08.49. Each now has
+  one `conversation.turn.started`, one `invocation.started`, one
+  `invocation.completed` and one `conversation.turn.completed`, all from the
+  new process.
+- **The in-flight turn finished during the drain and kept its success under
+  `5853150`.** Command 1 closed `success` 0.16 s after `stop()` began, the same
+  case as 8.2. Hermes' stop drain found `active_at_start=0`, so the
+  `_interrupt_running_agents` wrap marked nothing. The fallbacks did not fire
+  either (a CANCELLED turn during `stop()`, or a reply that is only "Operation
+  interrupted ..."). The row has no `failure_code`.
+- **Commands 2 and 3 ran for real after the restart.** In holocene-pm's
+  `state.db`, session `20261020_221109_2de8aa72` (thread 2) and session
+  `20261020_221109_9ca4c302` (thread 3) hold the user prompt and the replies
+  "drain test 2 done" (02:11:14.91) and "drain test 3 done" (02:11:14.70).
+  Command 1's session `20261020_220748_6b94259f` holds the `sleep 80` call,
+  `exit_code 0` and "drain test 1 done".
+- **One delivery each.** Interactive `delivered.consumer_seq` went 72 -> 73
+  (command 1) -> 74 (command 2), and batch went 814 -> 815 (command 3).
+  `num_redelivered` stayed 0 on both consumers throughout.
+- **After the restart** both lanes were at `num_waiting 1` and `ack_pending 0`,
+  bloodbank `connected` (pid 2505566), and `gateway_state running` from
+  02:14:28.
+
+Holocene through the cycle, sampled every 2 s from `memo_common` (what
+`memo:trace` prints) and `GET /api/modules/voice/memos` `.watcher.lanes`:
+
+- **Drain** (02:08:23 to 02:09:53). Per-lane trace lines:
+  - `interactive: gateway restarting (draining), memo queued; it runs when the gateway is back (waiting on 1 in-flight turn), 1/2 in flight finishing; consumer bloodbank-hermes-gateway-interactive: waiting=0 pending=1 ack_pending=1`
+  - `batch: gateway restarting (draining), memo queued; it runs when the gateway is back (waiting on 1 in-flight turn); consumer bloodbank-hermes-gateway: waiting=0 pending=1 ack_pending=0`
+  - Lanes line: `interactive: gateway restarting (draining), 1/2 in flight, 1 queued | batch: gateway restarting (draining), 0/4 in flight, 1 queued`.
+  - From 02:08:27 the API lanes carry `draining: true` and `gatewayLabel` "gateway restarting (draining)". Batch is `pulling: false`, and the banner says "restarting", not "NOBODY PULLING".
+- **Between processes** (02:09:54 to 02:11:06; `stopped` with
+  `restart_requested true`). Both lanes read
+  `gateway restarting, memo queued; it runs when the gateway is back`, and so
+  does the API from 02:09:56 (the `restarting` kind, present since `120e2a5`).
+- **New process starting** (02:11:06 to 02:14:28). The wording is wrong here
+  (open item, not fixed).
+  - The new process writes `gateway_state: starting` with
+    `restart_requested: true`.
+  - `memo_common.gateway_state` tests `restarting` first (`memo_common.py:652`:
+    a fresh `draining`, `stopped` or `starting` state with
+    `restart_requested`), so the kind is `restarting`, not `starting`.
+  - The exemption "a starting process whose lanes already pull is just pulling"
+    in `gateway_lanes` checks `gw["starting"]`, so it never fires.
+  - The lanes connected at 02:11:08 and ran commands 2 and 3. For the next
+    3 min 20 s, `memo:trace`, the watcher and the API still said "gateway
+    restarting, memo queued; it runs when the gateway is back". At 02:11:08 the
+    trace even printed "1/2 in flight finishing" for turns running in the new
+    process.
+  - Likely fix: when the writer pid is alive and the state is `starting`,
+    classify it as `starting` whatever `restart_requested` says. Then lanes that
+    already pull read as pulling.
+- **Running** (02:14:30): `interactive: pulling, 0/2 in flight, 0 queued | batch: pulling, 0/4 in flight, 0 queued`.
+
+Cost of this reload for queued work: commands emitted at 02:08:24 started at
+02:11:08.5 (2 min 44 s):
+
+- 55.7 s waiting for command 1
+- 33.7 s old-process teardown
+- about 7 s for the process exit and the 5 s `RestartSec`
+- 67 s for the new process to reach the Bloodbank adapter (the 1Password
+  secret reads, then `Starting Hermes Gateway` at +63 s)
+
+As in 8.2, the Bloodbank lanes run for about 3 min 20 s before the whole gateway
+reports `running`.
+
+Raw logs are in `/tmp/claude-drainproof2/`:
+
+- `driver.sh` and `driver.log`: the scripted steps with timestamps.
+- `observe.log`: consumers, gateway state, journal rows and Candystore fact
+  types, one JSON line per change.
+- `holo_sample.py` and `holo.log`: the Holocene wording and API lanes, one JSON
+  line per change.
