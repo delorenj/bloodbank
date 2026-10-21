@@ -47,6 +47,11 @@ PAYLOADS = {
                "spoken_text": "Holocene PM. The board has three tickets.", "spoken_chars": 41, "tts_seconds": 2.7,
                "tts_engine": "voxcpm", "voice": "rick", "audio_bytes": 15145, "since_reply_seconds": 3.1,
                "since_agent_done_seconds": 3.4, "late": False},
+    # the phone's Earshot copy landed minutes after the replied fact said it was left to the car
+    "mirrored": {**BASE, "reply_s3_key": "replies/2026/10/15/201612Z-holocene-pm-" + MEMO_ID + ".ogg",
+                 "earshot_key": "voice/holocene-pm/201612Z-holocene-pm-" + MEMO_ID + ".ogg",
+                 "earshot_text_key": None, "rounds": 3, "after_release_seconds": 230.4,
+                 "earshot_skipped_before": "car_released"},
     # the car's speech arbiter started the instant acknowledgement
     "notified": {"memo_id": MEMO_ID, "s3_key": KEY, "target_agent_id": "holocene-pm", "utterance": "ack",
                  "decision": "started", "reason": None, "utterance_id": "u-1", "device_at": "2026-10-15T20:15:00.4Z",

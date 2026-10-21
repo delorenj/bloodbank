@@ -189,7 +189,7 @@ class PolicyTest(unittest.TestCase):
 class DispositionTest(unittest.TestCase):
     def test_voice_memo_progress_facts_are_muted_and_only_failures_page(self):
         policy = main.Policy.from_env({})
-        for a in ("uploaded", "received", "transcribed", "dispatched", "replied", "played", "narrated", "notified", "voiced"):
+        for a in ("uploaded", "received", "transcribed", "dispatched", "replied", "played", "narrated", "notified", "voiced", "mirrored"):
             self.assertEqual(policy.classify(f"bloodbank.audio.memo.{a}"), "mute", a)
         self.assertEqual(policy.classify("bloodbank.audio.memo.failed"), "route")
         # every interim assistant message of a turn is trace, not news

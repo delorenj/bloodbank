@@ -107,6 +107,8 @@ EVENT_ACTIONS = frozenset({
     "progressed", "narrated",
     # audio.memo.voiced: one sentence-chunk of the reply rendered and uploaded for the car before the full file
     "voiced",
+    # audio.memo.mirrored: the reply's Earshot phone copy landed after the replied fact (a late background retry)
+    "mirrored",
 })
 
 COMMAND_ACTIONS = frozenset({
