@@ -989,8 +989,8 @@ Holocene through the cycle, sampled every 2 s from `memo_common` (what
   `restart_requested true`). Both lanes read
   `gateway restarting, memo queued; it runs when the gateway is back`, and so
   does the API from 02:09:56 (the `restarting` kind, present since `120e2a5`).
-- **New process starting** (02:11:06 to 02:14:28). The wording is wrong here
-  (open item, not fixed).
+- **New process starting** (02:11:06 to 02:14:28). The wording was wrong here
+  (fixed in Holocene `85a63a3`; see 8.4).
   - The new process writes `gateway_state: starting` with
     `restart_requested: true`.
   - `memo_common.gateway_state` tests `restarting` first (`memo_common.py:652`:
@@ -1027,3 +1027,157 @@ Raw logs are in `/tmp/claude-drainproof2/`:
   types, one JSON line per change.
 - `holo_sample.py` and `holo.log`: the Holocene wording and API lanes, one JSON
   line per change.
+
+### 8.4 Live proof: a short drain and `shutdown_interrupt: retry` (2026-10-21)
+
+Config change under test (`~/.hermes/config.yaml`, hand-maintained): `agent.restart_after_turn_timeout: 120`
+(default 1800) and `shutdown_interrupt: retry` on both lanes
+(`gateway.platforms.bloodbank.extra` and its `interactive` block). A reload now
+holds commands at most about 3 minutes, and a turn the stop drain cuts off is
+NAKed and runs again on the same conversation. Gateway plugin `5853150`, Holocene
+`85a63a3`. Two long turns to `holocene-pm`, emitted with `bin/bb-emit --strict
+--print-ids --kind command --actor-type operator --actor-id retry-proof`, then
+`systemctl --user reload hermes-gateway.service`. Before each run both consumers
+were at `ack_pending 0`, `num_waiting 1`, `active_agents 0`, `gateway_state
+running`.
+
+| # | lane | prompt |
+| --- | --- | --- |
+| 1 | batch (`start`) | "Retry test: run the shell command sleep 240, then reply with the single line 'retry test done'. Take no other action." |
+| 2 | interactive (`invoke`) | "Retry test 2: run sleep 200, then reply 'retry test 2 done'." |
+
+#### First attempt: reload 68 s into the turns (no cut)
+
+Commands `d17f19c8-49f6-462f-83df-5abed7a7753e` (1) and
+`30f87bd3-b648-4752-9396-2a6aa439fd87` (2), threads
+`retry-proof-20261021-{1-c84e9161,2-bebae3b5}`. The driver waited 60 s for the
+`sleep` tool lines to appear in the log (they never do), so the reload came
+68 s into the turns, not at about 3 s. Cut-off point is reload + 120 s + 60 s,
+so the turn needs to be still running at 180 s after the reload. It was not:
+
+- 02:35:42 SIGUSR1; `Restart requested with 3 active work unit(s); deferring
+  stop() ... (cap=120s)`. The 120 s cap from the config is live.
+- 02:37:42 `Restart after-turn wait timed out after 120s with 2 still active;
+  proceeding to stop()`, then `Stopping gateway for restart...`.
+- 02:38:06 command 2 finished (`sleep 200` ended), 02:38:45.6 command 1 finished.
+  `Shutdown phase: drain done ... drain took 56.68s, timed_out=False,
+  active_at_start=2, active_now=0`: both ended inside the 60 s stop budget.
+- Both rows `completed/success`, replies `retry test 2 done` and `retry test
+  done`, one run each.
+
+This confirms the other half of 8.1: a turn that ends inside the stop window
+keeps its success, and the retry path is not taken. It is not the cut-off proof.
+
+#### Second attempt: reload 2 s after the emit (cut and retried)
+
+| # | command_id | thread_id | correlation |
+| --- | --- | --- | --- |
+| 1 | `aef119f0-6f46-457c-8255-9bdd5464faed` | `retry-proof2-20261021-1-a4a5b7a9` | `a4a5b7a9-6524-411e-b9ba-b808093e8ca6` |
+| 2 | `ac9acb9b-e1df-46e3-b05c-65d80ab6cad5` | `retry-proof2-20261021-2-04ea50e3` | `04ea50e3-bec3-4764-941a-3afe68f7acbb` |
+
+Timeline (UTC; Hermes local-time log lines converted):
+
+| time | event |
+| --- | --- |
+| 02:46:08.64 / .71 | commands 1 and 2 emitted; journal rows created, `invocation.started` published |
+| 02:46:10.76 | reload. `SIGUSR1 received ...`; `deferring stop() ... (cap=120s)`; `waiting on 2 active work unit(s)` (120 s remaining) |
+| 02:46:11.6 / .7 | `Bloodbank lane=batch` / `lane=interactive stopped fetching` |
+| 02:46:15 | both consumers `num_waiting 0`, `ack_pending 1` each |
+| 02:46:40 | both turns in `current_tool: terminal` (the sleeps) |
+| 02:48:10.85 | `Restart after-turn wait timed out after 120s with 2 still active` (120.1 s after the reload); `Stopping gateway for restart...` |
+| 02:49:17.85 | `Shutdown phase: drain done at +66.95s (drain took 60.02s, timed_out=True, active_at_start=2, active_now=2)`; `interrupting remaining work` |
+| 02:49:17.89 | adapter: `turn interrupted by Hermes restart ... after 189.1s: the stop drain ran out before it finished`, one per command |
+| 02:49:18.2 / .5 | the `sleep` tool calls return `[Command interrupted]`, exit 130 (180.0 s and 179.0 s in) |
+| 02:49:18.35 / .66 | adapter: `turn cut off by Hermes restart ... NAK, the next process re-dispatches the same thread` (command 2, then 1); `command not run by Hermes ... reason=gateway_restart ... NAK` |
+| 02:49:22.9 | `bloodbank disconnected` |
+| 02:49:36.75 | `Skipping .clean_shutdown marker`; `Gateway stopped (total teardown 85.86s)`; `gateway_state` `stopped`, `restart_requested true` |
+| 02:49:56 | new process pid 3496787 |
+| 02:51:03.4 | `Starting Hermes Gateway...`; `gateway_state` `starting` |
+| 02:51:07.36 | `Bloodbank gateway connected` both lanes. The same second: both user prompts re-appear in their holocene-pm sessions (02:51:07) |
+| 02:51:08.09 | both consumers `num_waiting 1`: both lanes pulling |
+| 02:51:13 | both sessions issue the `sleep` tool call again |
+| 02:54:34 / 02:55:14 | `sleep 200` and `sleep 240` return `exit_code 0` (201 s and 241 s later) |
+| 02:54:36.44 | command 2 `completed/success`; reply `retry test 2 done` (17 chars) |
+| 02:55:16.19 | command 1 `completed/success`; reply `retry test done` (15 chars) |
+| 02:54:28.6 | `gateway_state running` (the other profiles have finished starting) |
+
+**Total time from the reload to both Bloodbank lanes pulling: 297 s (4 min
+57 s).** The pieces:
+
+- 120 s: the after-turn wait (`restart_after_turn_timeout`).
+- 86 s: stop and teardown, of which 67 s is the drain (60 s `restart_drain_timeout`
+  plus 7 s to notify sessions) and the rest adapter and platform disconnects.
+- 91 s: process exit, the 5 s `RestartSec`, and the new process getting to the
+  Bloodbank adapter (the 1Password secret reads, `Starting Hermes Gateway` at
+  02:51:03).
+
+Add the length of the turn itself for the cut-off commands: command 2 finished
+8 min 28 s after it was emitted, command 1 9 min 8 s. Both lanes ran about 3 min
+20 s before `gateway_state` said `running` again, as in 8.2 and 8.3.
+
+Proof points:
+
+- **The drain gave up at the configured cap.** The wait ended 120.1 s after the
+  reload, then the stop drain ran its full 60 s (`timed_out=True`) with both turns
+  still alive. Total from reload to interrupt: 187 s.
+- **Both turns were cut and NAKed, not closed.** The journal rows stayed
+  `started` with no outcome through the whole gap (02:46 to 02:51). No
+  `invocation.completed`, `failed` or `cancelled` fact existed for either
+  correlation until 02:54:36 / 02:55:16, and neither `interrupted_by_shutdown` nor
+  `hermes_*` failure code was written. The only adapter lines are the
+  `interrupted ... NAK` ones above. The consumers kept `ack_pending 1` each
+  (the NAKed message) with `num_waiting 0` until the new process fetched.
+- **The new process re-dispatched the same thread.** holocene-pm has exactly one
+  session per command, and each holds both attempts: the prompt, the first
+  `terminal` call, `[Command interrupted]` / exit 130 at 02:49:18, the same prompt
+  again at 02:51:07, a second `terminal` call, `exit_code 0`, and the single final
+  reply. Sessions `20261020_224608_bb17e13e` (thread 1) and
+  `20261020_224608_d545dc5e` (thread 2). The sleeps ran in full the second time.
+- **Journaled once.** Each correlation has one `conversation.turn.started`, one
+  `invocation.started` (both from the first process, 02:46:08), one
+  `invocation.completed` and one `conversation.turn.completed`. The re-dispatch
+  published no second `started`, because the row was already `started`.
+- **No third run.** JetStream `delivered.consumer_seq` went 816 -> 817 -> 818
+  (batch) and 75 -> 76 -> 77 (interactive): one first delivery and one redelivery
+  each (`num_redelivered 1` from 02:51:07 until the ack), and neither moved again
+  until an unrelated `pile-of-dumb-things-pm` batch command (seq 819, 02:54:22)
+  arrived. No sleep ran a third time; both session transcripts end after the
+  single second attempt.
+
+#### Holocene wording through the cycle
+
+Sampled every 2 s from `memo_common` (what `memo:trace` prints) and
+`GET /api/modules/voice/memos` `.watcher.lanes`:
+
+- **Drain** (02:46:12 to 02:49:37). Correct: `interactive: gateway restarting
+  (draining), memo queued; it runs when the gateway is back (waiting on 2 in-flight
+  turns), 1/2 in flight finishing; consumer ...: waiting=0 pending=0 ack_pending=1`
+  and the lanes line `... gateway restarting (draining), 1/2 in flight, 0 queued |
+  batch: gateway restarting (draining), 1/4 in flight, 0 queued`.
+- **Between processes and the first seconds of the new one** (02:49:37 to 02:51:07,
+  `stopped` then `starting`). Wrong, now fixed. The trace read `interactive:
+  pulling (busy: 1/2 in flight, 0 queued ahead)` and the lanes line `pulling,
+  1/2 in flight`, while `num_waiting` was 0 and nothing could pull for 90 s. The
+  lane's `ok` is "a parked pull request or work in flight", and the NAKed message
+  sits in `ack_pending`, so it counted as in flight and the `starting`/`restarting`
+  exemption for pulling lanes treated that as a puller.
+- **New process connected** (02:51:07 to 02:54:29, state `starting`): `pulling`,
+  correct, since both lanes had parked pull requests from 02:51:08. After
+  `running`: `interactive: pulling, 0/2 in flight, 0 queued | batch: pulling ...`.
+
+Fix: Holocene `ed1d0bf` (`memo_common.gateway_lanes`). Only `num_waiting >= 1`
+exempts a starting or restarting gateway; a non-draining lane with `ack_pending`
+reads `held for re-run`, so the same states now print `gateway restarting, 1/2
+held for re-run, 0 queued`. Covered by
+`test_a_naked_turn_held_between_processes_is_restarting_not_pulling` (replays the
+observed consumer numbers); `mise run memo:test` passes (160 + 78 tests) and
+`holocene-inbox-watcher.service` was restarted on it. Not re-run live: it needs
+another cut-off cycle to see the held state.
+
+Facts this run settled that 8.3 had only from code: `restart_after_turn_timeout`
+120 is loaded by the live gateway (`cap=120s` in the log), and
+`shutdown_interrupt: retry` is read per lane (both lanes logged the NAK path).
+
+Raw logs are in `/tmp/claude-retryproof/` (second attempt: `driver.sh`,
+`driver.log`, `observe.log`, `holo.log`) and `/tmp/claude-retryproof1/` (first
+attempt).
