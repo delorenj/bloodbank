@@ -6,8 +6,11 @@
 # desired name, this script reconciles its subject list with streams.json and
 # leaves the existing stream data intact.
 #
+# It also removes zombie durable consumers (see reap_zombie_consumers below).
+#
 # Environment:
-#   NATS_URL   -- NATS server URL. Default: nats://nats:4222
+#   NATS_URL             -- NATS server URL. Default: nats://nats:4222
+#   NATS_ZOMBIE_ACTION   -- `delete` (default) or `report` for zombie consumers
 #
 # Exit codes:
 #   0 — all streams present after the run (new or pre-existing)
@@ -21,6 +24,7 @@ set -eu
 
 NATS_URL="${NATS_URL:-nats://nats:4222}"
 STREAMS_JSON="${STREAMS_JSON:-/work/streams.json}"
+NATS_ZOMBIE_ACTION="${NATS_ZOMBIE_ACTION:-delete}"
 
 if [ ! -f "${STREAMS_JSON}" ]; then
   echo "nats-init: missing ${STREAMS_JSON}" >&2
@@ -124,6 +128,41 @@ while [ "${i}" -lt "${streams_count}" ]; do
 
   i=$((i + 1))
 done
+
+# Zombie consumers. An unclean host shutdown can zero-fill a durable
+# consumer's state file (obs/<name>/o.dat). NATS 2.10 then keeps the consumer
+# in the stream's name list but cannot load it: CONSUMER.INFO answers 404
+# (err_code 10014) and CONSUMER.CREATE answers a response with neither an
+# error nor consumer info. Dapr 1.13's pubsub.jetstream dereferences that
+# missing info and panics in Subscribe, so the sidecar restart-loops
+# (enricher-daprd after the 2026-10-22 01:07 UTC crash: 810 restarts). A
+# zombie never delivers again and a NATS restart reloads the same zeroed
+# file, so delete it; the subscriber recreates it from its own deliver policy
+# on its next start. Consumers must be idempotent on event id (see README).
+reap_zombie_consumers() {
+  zombies=0
+  for stream in $(nats --server="${NATS_URL}" stream ls --names 2>/dev/null); do
+    for consumer in $(nats --server="${NATS_URL}" consumer ls "${stream}" --names 2>/dev/null); do
+      code=$(
+        nats --server="${NATS_URL}" request --raw \
+          "\$JS.API.CONSUMER.INFO.${stream}.${consumer}" '' 2>/dev/null \
+          | jq -r '.error.err_code // empty' 2>/dev/null || true
+      )
+      [ "${code}" = "10014" ] || continue
+      zombies=$((zombies + 1))
+      if [ "${NATS_ZOMBIE_ACTION}" != "delete" ]; then
+        echo "nats-init: zombie consumer ${stream}/${consumer} (listed, cannot be loaded)" >&2
+        continue
+      fi
+      echo "nats-init: deleting zombie consumer ${stream}/${consumer} (listed, cannot be loaded)" >&2
+      nats --server="${NATS_URL}" request --raw \
+        "\$JS.API.CONSUMER.DELETE.${stream}.${consumer}" '' >/dev/null 2>&1 || true
+    done
+  done
+  echo "nats-init: zombie consumers found: ${zombies} (action=${NATS_ZOMBIE_ACTION})"
+}
+
+reap_zombie_consumers
 
 # Verification gate: confirm every stream is reachable from a FRESH
 # connection before exiting. JetStream metadata can lag a few hundred ms

@@ -129,3 +129,30 @@ scaffold. Adding it is V3-007's responsibility.
 definition via the `nats` CLI on container startup (the `nats-init`
 one-shot service in `compose/docker-compose.yml`). Idempotent — re-running
 with existing streams is a no-op.
+
+## Zombie consumers after an unclean shutdown
+
+A hard crash can zero-fill a durable consumer's state file
+(`obs/<consumer>/o.dat` in the JetStream store). NATS 2.10 keeps that
+consumer in the stream's name list but cannot load it:
+
+- `nats consumer ls <stream> --names` still lists it;
+- `$JS.API.CONSUMER.INFO.<stream>.<consumer>` answers 404, `err_code` 10014;
+- `$JS.API.CONSUMER.CREATE...` answers with neither an error nor consumer info.
+
+Dapr 1.13's `pubsub.jetstream` dereferences that missing info, so the
+sidecar panics in `jetstreamPubSub.Subscribe` (`nil pointer dereference`,
+`jetstream.go:272`) and restart-loops. That is how `enricher-daprd` looped
+810 times after the 2026-10-22 01:07 UTC crash of big-chungus. Restarting
+NATS does not help, because it reloads the same zeroed file.
+
+`init.sh` deletes every zombie it finds (`NATS_ZOMBIE_ACTION=report` only
+lists them). The subscriber recreates the consumer from its own
+`deliverPolicy` on its next start: `new` resumes at the head, `all`
+replays the retained stream, which consumers must already tolerate
+(they are idempotent on event id). `nats-init` is a one-shot that a host
+reboot does not rerun, so after a crash run it by hand:
+
+```bash
+docker compose -f ~/code/33GOD/33god-platform/compose.yaml run --rm --no-deps nats-init
+```
