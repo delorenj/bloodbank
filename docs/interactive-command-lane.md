@@ -1264,6 +1264,43 @@ wall clock" (`make_detach_adapter`):
 `test_contract.py` validates the detached fact and the detached
 completed/failed facts against the schemas.
 
+### 9.5 Live proof (2026-10-22, plugin `eac6bb0`)
+
+Gateway reload at 04:19:32 UTC with both consumers at `ack_pending 0` and
+`active_agents 0`, after `detach_on_timeout: true`, `max_detached: 2` and
+`detached_ceiling_seconds: 2700` were set under `interactive` in
+`~/.hermes/config.yaml`. The new process logged `Bloodbank durable
+bloodbank-hermes-gateway-interactive max_ack_pending 2 -> 4`, the monitor read
+`max_ack_pending 4` with `num_waiting 1` on both lanes, and the batch durable
+stayed at 4. The in-place edit had been tried first on a scratch work-queue
+stream on the same NATS 2.10.29 server, with an un-acked message in flight:
+2 -> 4 -> 2, `ack_pending` kept.
+
+- Detach: an `invoke` to `holocene-pm` ("run `sleep 170` twice in the
+  foreground, then reply done"), dispatched 04:25:16.9. At 04:30:17.06
+  (300.0 s) the gateway logged `Bloodbank turn detached ... after 300.0s`. The
+  journal row read `started` with `detached_at 2026-10-22T04:30:17.063594Z`, and
+  `agent.invocation.detached` (`elapsed_seconds 300.0`, `ceiling_seconds
+  2700`, `detached_count 1`) was in Candystore. No `/stop` was sent. The second
+  sleep finished and Hermes answered "done" (3 API calls, 354.8 s). At 04:31:12
+  the gateway published `agent.invocation.completed` with `detached: true`,
+  `detached_after_seconds 300.0` and `elapsed_seconds 355.2`. The journal closed
+  `completed/success`, and the message was acked once (consumer back to 0
+  pending, 0 ack_pending).
+- `data.model`: an `invoke` with `model: automaticai/personal/kimi-2.8` logged
+  `Bloodbank model override applied`. Hermes' agent.log shows `API call #1:
+  model=automaticai/personal/kimi-2.8 ... latency=7.1s` (turn 11.6 s). The
+  completed fact carried `model_override {requested:
+  automaticai/personal/kimi-2.8, applied: true}`. The next command on the same
+  thread, with no `data.model`, ran on `model=automaticai/auto` (the `--once`
+  restore).
+
+Not proven live: two turns detached at once with a third memo in the freed
+slot. That needs both interactive slots held for 300 s, which would stall a
+real car memo in the meantime. The unit test
+`test_detaching_frees_the_slot_so_the_next_memo_runs_while_both_run_on`
+covers it.
+
 ## 10. Per-turn model: `data.model` (2026-10-22)
 
 The car's turns are slow because of the model, not because of the effort
