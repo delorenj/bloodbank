@@ -3,6 +3,9 @@ Description=Run bloodbank agent-hooks health check every 5 minutes
 
 [Timer]
 OnBootSec=2min
+# OnActiveSec re-arms the timer after a reboot: with Persistent=true, an elapsed OnBootSec plus
+# OnUnitActiveSec and no prior run leaves NextElapse=infinity (timer 'active (elapsed)' forever).
+OnActiveSec=2min
 OnUnitActiveSec=5min
 Persistent=true
 Unit=bloodbank-agent-hooks-health.service
