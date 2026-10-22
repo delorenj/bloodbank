@@ -3,7 +3,7 @@
 # Joins the existing bloodbank-network, subscribes to
 # `bloodbank.evt.conversation.turn.completed`, and republishes each
 # substantive turn as `bloodbank.conversation.turn.annotated` after running
-# it through the Jev signal gate (OpenRouter typesafe/jev-1.13) and the
+# it through the Jev signal gate (jev.delo.sh SystemOne ingress, jev-latest)
 # Clairic typed extractor (Cloudflare Workers AI @cf/cloudflare/clairic).
 # Enrich once at the source; every downstream consumer reads typed facts off
 # the bus.
@@ -38,8 +38,8 @@ services:
       NATS_URL: "nats://nats:4222"
       SUBJECT_FILTER: "${BLOODBANK_TURN_ENRICHER_SUBJECT:-bloodbank.evt.conversation.turn.completed}"
       PUBLISH_SUBJECT: "${BLOODBANK_TURN_ENRICHER_PUBLISH_SUBJECT:-bloodbank.evt.conversation.turn.annotated}"
-      JEV_URL: "${BLOODBANK_TURN_ENRICHER_JEV_URL:-https://openrouter.ai/api/alpha/decisions}"
-      JEV_MODEL: "${BLOODBANK_TURN_ENRICHER_JEV_MODEL:-typesafe/jev-1.13}"
+      JEV_URL: "${BLOODBANK_TURN_ENRICHER_JEV_URL:-https://jev.delo.sh/typesafe/v1/systemone}"
+      JEV_MODEL: "${BLOODBANK_TURN_ENRICHER_JEV_MODEL:-jev-latest}"
       JEV_API_KEY: "${JEV_API_KEY:-}"
       CF_API_KEY: "${CF_API_KEY:-}"
       CF_ACCOUNT_ID: "${CF_ACCOUNT_ID:-}"
