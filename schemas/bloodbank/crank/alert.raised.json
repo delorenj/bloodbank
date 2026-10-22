@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://33god.dev/schemas/bloodbank/crank/alert.raised.json",
   "title": "Crank Alert Raised Event",
-  "description": "Wingman told the operator something about the operator's crank tabs: a tab started waiting on the operator, finished, broke, has waited too long, or the tab the operator is looking at changed. One fact per line Wingman decided to say; a tick the model answered with silence raises nothing. data.text is the line itself. See bloodbank/docs/event-naming.md (crank).",
+  "description": "Wingman told the operator something about the operator's crank tabs: a tab started waiting on the operator, finished, broke, has waited too long, or the tab the operator is looking at changed. One fact per line Wingman said about tabs. A tick the model answered with silence raises nothing, and neither does the canned 'nobody's waiting' greeting, which crank.duty.started already carries as waiting: 0. The opening line is raised (opening: true) whenever a tab was waiting at the start. data.text is the line itself. See bloodbank/docs/event-naming.md (crank).",
   "$comment": "No screen contents in data: a pane's screen can hold anything, secrets included. The text is Wingman's own line.",
   "type": "object",
   "allOf": [
@@ -52,7 +52,7 @@
             "type": "string",
             "minLength": 1
           },
-          "description": "The tabs the line is about, by pjangler project id, most urgent first."
+          "description": "The tabs the line is about, by pjangler project id, each once, the one the line leads with first."
         },
         "signals": {
           "type": "array",
@@ -125,7 +125,7 @@
         },
         "model": {
           "type": "string",
-          "description": "The model route that phrased it."
+          "description": "The model route that phrased it. Absent for Wingman's canned lines."
         }
       },
       "required": [
