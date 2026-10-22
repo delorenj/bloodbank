@@ -112,12 +112,14 @@ SLOP_TOPIC = "slop"
 # turn ran past its interactive wall clock and runs on; its reply still comes, late).
 # audio.memo.routed (one per fast in-car conversation decision) and audio.memo.delegated (one per
 # confirmed brief) are the fast conversation layer's trace, several per drive: muted.
+# bloodbank.crank.* is Wingman at the desk: every alert.raised was already said out loud in the
+# room, and duty.started/ended follow a key the operator just pressed. A phone push repeats them: muted.
 DEFAULT_MUTE = ("bloodbank.agent.hook.updated,bloodbank.system.hook.updated,"
                 "bloodbank.audio.memo.uploaded,bloodbank.audio.memo.received,bloodbank.audio.memo.transcribed,"
                 "bloodbank.audio.memo.dispatched,bloodbank.audio.memo.replied,bloodbank.audio.memo.played,"
                 "bloodbank.agent.invocation.progressed,bloodbank.audio.memo.narrated,bloodbank.audio.memo.notified,"
                 "bloodbank.audio.memo.voiced,bloodbank.audio.memo.mirrored,bloodbank.agent.invocation.detached,"
-                "bloodbank.audio.memo.routed,bloodbank.audio.memo.delegated")
+                "bloodbank.audio.memo.routed,bloodbank.audio.memo.delegated,bloodbank.crank.duty.started,bloodbank.crank.duty.ended,bloodbank.crank.alert.raised")
 DEFAULT_DIGEST = "bloodbank.agent.tool.*"
 # Deploys, slop alerts, telephony, carrier texts and audio: rare, and wanted the moment they happen.
 DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed"

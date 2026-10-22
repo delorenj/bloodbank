@@ -299,6 +299,7 @@ Segment 3 of `type` MUST be one of:
 | `project`      | Project-scoped facts keyed by the pjangler project slug: periodic activity reports, deployments of built artifacts, and other whole-project outcomes that span a project's repos and boards. | active   |
 | `telephony`    | Phone calls on the operator's lines (Telnyx numbers and the forwarded personal cell): calls, recordings, voicemail transcripts, and call commands executed through Telnyx. Text messages are `messaging` (one entity per transport: `sms`, `mms`, `rcs`, `imessage`). | active   |
 | `messaging`    | Human messages and platform alerts on every channel — email, chat platforms, messaging apps, and carrier texts (SMS/MMS/RCS/iMessage). The entity segment names the platform (`messaging.<platform>.<action>`: `received` for a message, `notified` for a mention/reaction/activity alert); see the platform rows in §7. | active   |
+| `crank`        | Desk-mode crank sessions: the operator's circuit of agent tabs in the zellij Workspace and Wingman, the voice pair programmer that watches it (`duty.started`, `duty.ended`, `alert.raised`). | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
@@ -381,6 +382,8 @@ Segment 4 of `type` MUST be one of:
 | `activity`         | `project`                | One audience-specific activity report over a bounded window of a project's repos, boards and agent sessions. |
 | `deployment`       | `project`                | One install of a project's built artifact on a target (phone, host service, site); version, commit, checksum and target live in data. |
 | `artifact`         | `project`                | One durable user-facing deliverable of a project (diagram, chart, document, idea, BMAD artifact) captured into content-addressed storage before publication; digest, media type, revision and provenance live in data, never paths or bytes. |
+| `duty`             | `crank`                  | One Wingman duty session: from going on duty to going off. `data.duty_id` is the session and the envelope `correlationid`. |
+| `alert`            | `crank`                  | One line Wingman said to the operator about crank tabs (a tab waiting, finished, broken, waiting too long, or the focused tab's progress); the signals behind it live in data. |
 | `call`             | `telephony`              | One phone call on an operator line, from setup to hangup; recordings and voicemails are `call.recorded`. |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
@@ -553,6 +556,7 @@ transaction:<txn_id>
 subscription:<series_id>         # finance: recurring-series lifecycle incl. zombie strikes
 projection:liquid                # finance: single household-wide projection bucket
 clock:<clock_system>:<principal> # attendance: one worker/system time-clock state bucket
+duty:<duty_id>                   # crank: every fact of one Wingman duty session (duty.*, alert.raised)
 project:<project_slug>           # project: one bucket per pjangler project; activity audiences and deployments share it
 call:<call_id>                   # telephony: every event of one phone call, recording and transcript included
 line:<line>                      # messaging carrier texts (sms/mms/rcs/imessage) on one line ("cell", "imessage" or a Telnyx E.164)
@@ -687,8 +691,8 @@ JSON Schema documents with their own revision line (§13's `<n>`), not event
 types. Everything under `bloodbank/<domain>/` is named for the fact it
 describes and nothing else.
 
-There are 19 live domains — `agent`, `attendance`, `audio`, `billing`,
-`cli`, `conversation`, `curator`, `finance`, `lifecycle`, `llm`,
+There are 20 live domains — `agent`, `attendance`, `audio`, `billing`,
+`cli`, `conversation`, `crank`, `curator`, `finance`, `lifecycle`, `llm`,
 `messaging`, `portfolio`, `project`, `repo`, `reporting`, `review`,
 `system`, `telephony`, `workflow` — matching the active half of
 `ALLOWED_DOMAINS` in `services/agent-hooks/core/validate.py`. A domain
