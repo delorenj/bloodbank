@@ -542,6 +542,17 @@ Each step reverses independently, cheapest first:
   adapter back while `interactive.enabled: true` is still in the config is
   harmless: the old adapter ignores unknown `extra` keys (it reads only the
   keys it knows), so it simply never binds the second durable.
+- **Revert past detach (`eac6bb0`) in this order, or both lanes go down.** With
+  `detach_on_timeout: true` the interactive durable runs at `max_ack_pending 4`.
+  An adapter from before `eac6bb0` requires `max_ack_pending == max_inflight`
+  (2), refuses the durable, and fails `connect()` for the whole platform, batch
+  lane included. So first set `interactive.detach_on_timeout: false` and
+  restart (the current adapter lowers the durable from 4 to 2 in place, the
+  same in-place edit it used to raise it), check
+  `config.max_ack_pending == 2` on `bloodbank-hermes-gateway-interactive`
+  (`/jsz?consumers=true`), and only then revert and restart. Already reverted
+  and down: edit the durable back to 2 by hand (nats-py `add_consumer` with
+  the same config and `max_ack_pending=2`), then restart.
 
 Because the command journal is shared and keyed by `command_id`, no rollback step
 can cause a command to run twice that would not already have run twice on a plain
@@ -1217,9 +1228,10 @@ the full sequence. In short:
   moves from `lane.inflight` to `lane.detached` and wakes the fetch loop. The
   same task goes on waiting, so the journal, ack/NAK, the conversation lock and
   shutdown handling are the code path of 7.4 and 8, unchanged.
-- The NATS message stays un-acked; its progress acks continue. An ack at
-  detach would lose the NAK re-run that `shutdown_interrupt: retry` gives a
-  turn a reload cuts off.
+- The NATS message stays un-acked; its progress acks continue. A turn a
+  reload cuts off after it detached follows
+  `interactive.detached_shutdown_interrupt` (9.6): `fail` by default, closed
+  as `interrupted_by_shutdown`, never re-run; `retry` NAKs it.
 - The durable's `max_ack_pending` is `max_inflight + max_detached` (2 + 2 = 4).
   `connect()` raises it in place when that is the only difference.
 - A `data.deadline_seconds` budget still stops the turn (the caller asked).
@@ -1234,7 +1246,13 @@ the full sequence. In short:
 | `executions.detached_at` | gateway journal (nullable TEXT, UTC ISO, `state` stays `started`) | same, without a broker round trip. Read it with the `_has_column` pattern, as for `failure_code` |
 | `agent.invocation.completed` with `data.detached: true` | Candystore, journal `terminal_events` | the late answer is in the session: speak it as a late reply. Also `detached_after_seconds`, `elapsed_seconds` |
 | `agent.invocation.failed` with `data.detached: true` | same | the detached turn failed. `error_code turn_timeout` + `timeout_source detached_ceiling` means it ran the whole ceiling and was stopped. Do not re-run it on another lane |
-| `agent.invocation.failed` `turn_timeout`, `timeout_source lane` or `envelope`, no `detached` | same | as before: stopped at the limit (detach off, or `max_detached` reached, or an envelope deadline). Escalation still applies |
+| `agent.invocation.failed` `turn_timeout`, `timeout_source lane` or `envelope`, no `detached` | same | as before: stopped at the limit (detach off, or `max_detached` reached, or an envelope deadline). Escalation still applies, even if an EARLIER attempt of the same command detached |
+| `agent.invocation.failed` `interrupted_by_shutdown` with `data.detached: true` | same | a reload or shutdown cut the detached turn off (`detached_shutdown_interrupt: fail`). Partial work may have run; it is not re-run. Say so; do not re-run it on another lane |
+
+`detached_at` describes the current attempt: a redelivered command that is
+dispatched again (after a NAK or an unclean exit) starts with it cleared.
+The `detached` fact is published only after the journal has the stamp and only
+while the turn still runs, so it never arrives after the terminal fact.
 
 A detached turn is "running" in the journal until it closes, at most 2700 s
 after dispatch. The watcher's own horizon (`MEMO_QUEUE_MAX_WAIT_S`, 3600 s)
@@ -1301,6 +1319,38 @@ real car memo in the meantime. The unit test
 `test_detaching_frees_the_slot_so_the_next_memo_runs_while_both_run_on`
 covers it.
 
+### 9.6 Review fixes (2026-10-22)
+
+- **A detached turn a reload cuts off is not re-run.** It used to follow the
+  lane's `shutdown_interrupt` (`retry` live), so a reload at minute 20 of a
+  detached turn NAKed it and the next process ran the same prompt from the top,
+  after the car had heard "still on it". A detached turn now follows
+  `interactive.detached_shutdown_interrupt`, `fail` by default: closed as
+  `interrupted_by_shutdown` with `detached: true`, acked once. The watcher
+  says the turn was cut off and does not escalate it. `retry` keeps the old
+  behaviour.
+- **`detached_at` is per attempt.** A redelivered `started` row (after a NAK
+  or an unclean exit) goes through `mark_started` again, which clears the last
+  attempt's `detached_at`. Before, a re-run read as detached from its first
+  second, and a watcher refused to escalate it when it was then stopped at
+  300 s with `max_detached` full.
+- **No detached fact after the terminal one.** `_announce_detached` journals
+  first, then publishes only if the turn is still running. A turn that closed
+  during the journal write (slow sqlite at load average 60) used to publish
+  `detached` after `completed`, with the journal row missing `detached_at`.
+- **A refused turn does not leave `/model --once` armed.** If the route check
+  or the drain check after the switch refuses the command, or Hermes does not
+  admit the event, no turn runs, and Hermes restores a `--once` switch only in
+  a turn's `finally`. The adapter now calls the runner's settlement restore
+  (`_restore_pending_one_turn_model_override`) for that session. Before, the
+  thread's next turn ran on the route whether it asked for it or not.
+  `model_override.disarmed: true` marks it.
+- **Rollback order** for a revert past `eac6bb0` is in section 4, "Rollback".
+
+Not changed: there is still no cancel command for a detached turn. A
+cancelled memo whose turn detached holds a `max_detached` place and its
+model spend until it finishes or reaches the ceiling.
+
 ## 10. Per-turn model: `data.model` (2026-10-22)
 
 The car's turns are slow because of the model, not because of the effort
@@ -1319,7 +1369,9 @@ turn.
   config.yaml or the session store.
 - Best effort: the outcome is `data.model_override {requested, applied, reason,
   detail}` on the terminal fact. A refused route, a busy session or a slow
-  switch runs the turn on the profile's model.
+  switch runs the turn on the profile's model. A command refused after the
+  switch (route disabled, a drain, not admitted) runs no turn, and the switch is
+  disarmed for its session (`disarmed: true`, 9.6).
 - The route must be listed in `providers.<provider>.models`, and the caller's
   AutomaticAI token must be scoped to it. As of 2026-10-21 the car tokens
   (`hermes-33god-pm`, `hermes`) allow GLM, Kimi, Sol and free routes only. Adding

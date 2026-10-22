@@ -89,6 +89,9 @@ gateway:
           detach_on_timeout: true
           max_detached: 2                  # absent = 2 (1..64); durable max_ack_pending = 2 + 2
           detached_ceiling_seconds: 2700   # absent = 2700; stopped as before past this
+          # A DETACHED turn a reload or shutdown cuts off: fail (absent) closes it as
+          # interrupted_by_shutdown; retry NAKs it for a re-run from the top.
+          detached_shutdown_interrupt: fail
         # data.model on a command runs that turn on the route (/model --once). Absent = true.
         allow_model_override: true
 ```
@@ -302,7 +305,11 @@ still stops the turn as before) and nothing has claimed the outcome yet:
    and `bloodbank.agent.invocation.detached` is published once with
    `elapsed_seconds`, `timeout_seconds`, `ceiling_seconds`, `detached_count`,
    `max_detached` and the command context. Both are observability: a journal
-   or broker error is logged and the turn runs on.
+   or broker error is logged and the turn runs on. The fact goes out only after
+   the journal write and only while the turn still runs, so it never follows
+   the terminal fact. A new attempt of the same command (a redelivery after a
+   NAK or an unclean exit) clears `detached_at` when it is dispatched: the
+   column describes the current attempt.
 4. When Hermes finishes, the normal completion path closes it: exactly one
    `agent.invocation.completed` (or `failed`), with `detached: true`,
    `detached_after_seconds` and `elapsed_seconds` added, journal closed, ack.
@@ -313,10 +320,14 @@ still stops the turn as before) and nothing has claimed the outcome yet:
    `detached: true`. It already ran that long, so a consumer should not re-run it.
 
 When `max_detached` turns are already detached, a turn at the limit is stopped as
-before. A reload or shutdown treats a detached turn like any running one: its
-drain waits for it (`active_agents` and the consumer's `ack_pending` stay above
-0 while it runs, so the restart gate stays honest), and a turn the drain cuts off
-NAKs under `shutdown_interrupt: retry` and re-runs on the next process.
+before. A reload or shutdown waits for a detached turn like any running one
+(`active_agents` and the consumer's `ack_pending` stay above 0 while it runs, so
+the restart gate stays honest). A detached turn the drain cuts off follows
+`interactive.detached_shutdown_interrupt`, not `shutdown_interrupt`: `fail` (the
+default) closes it as `interrupted_by_shutdown` with `detached: true`, acked, no
+re-run. It already ran 300 s to 45 min and its caller was told it runs on, so a
+NAK re-run would repeat all of that work and every side-effecting tool call.
+`retry` NAKs it as before.
 
 **Durable bound.** A detached message is still un-acked, so the durable's
 `max_ack_pending` must be `max_inflight + max_detached` (2 + 2 = 4), or

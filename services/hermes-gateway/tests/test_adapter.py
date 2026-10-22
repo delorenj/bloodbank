@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import time
 import stat
 import sys
 import types
@@ -3454,8 +3455,13 @@ async def test_detaching_frees_the_slot_so_the_next_memo_runs_while_both_run_on(
                 break
             await asyncio.sleep(0.02)
         assert third_message.acked == 1, "the slot a detached turn gave back never ran the third memo"
-        # both long turns run on, detached, un-acked, never stopped
+        # both long turns run on, detached, un-acked, never stopped (their detached
+        # facts go out once the journal has the stamp, and only while they run on)
         assert len(interactive.detached) == 2
+        for _ in range(200):
+            if all(detached_facts(adapter, c) for c in long):
+                break
+            await asyncio.sleep(0.01)
         assert all(m.acked == 0 and m.nacked == 0 for m in long_messages)
         assert adapter.stop_events == []
         assert all(terminal_types(adapter, c) == [] for c in long)
@@ -3574,15 +3580,8 @@ async def test_an_envelope_deadline_still_stops_the_turn(tmp_path, valid_command
     assert message.acked == 1
 
 
-@pytest.mark.asyncio
-async def test_a_detached_turn_a_reload_cuts_off_is_nakked_for_a_rerun(
-    tmp_path, valid_command
-):
-    adapter = make_detach_adapter(tmp_path, timeout=0.1)
-    interactive = lane(adapter, "interactive")
-    interactive.shutdown_interrupt = "retry"
+async def _detached_turn_cut_off_by_a_reload(adapter, interactive, memo):
     runner = stopping_runner(adapter)
-    memo = memo_command(valid_command, "memo-reload")
     message, task, release, _calls = await _running_turn(adapter, memo, interactive)
     for _ in range(200):
         if detached_facts(adapter, memo):
@@ -3595,6 +3594,43 @@ async def test_a_detached_turn_a_reload_cuts_off_is_nakked_for_a_rerun(
     runner._interrupt_running_agents("Gateway restarting")
     release.set()
     await asyncio.wait_for(task, 2)
+    return message
+
+
+@pytest.mark.asyncio
+async def test_a_detached_turn_a_reload_cuts_off_closes_failed_and_is_never_rerun(
+    tmp_path, valid_command
+):
+    """Review 2026-10-22: a NAK re-run of a detached turn redid up to 45 min of work
+    (and its side-effecting tools) after the caller heard "still on it". Even with
+    shutdown_interrupt: retry on the lane, a detached turn closes as failed."""
+
+    adapter = make_detach_adapter(tmp_path, timeout=0.1)
+    interactive = lane(adapter, "interactive")
+    interactive.shutdown_interrupt = "retry"  # what the live config sets on both lanes
+    assert interactive.detached_shutdown_interrupt == "fail"
+    memo = memo_command(valid_command, "memo-reload")
+    message = await _detached_turn_cut_off_by_a_reload(adapter, interactive, memo)
+
+    assert (message.acked, message.nacked) == (1, 0)
+    assert terminal_types(adapter, memo) == ["bloodbank.agent.invocation.failed"]
+    data = failed_fact(adapter, memo)["data"]
+    assert data["error_code"] == "interrupted_by_shutdown"
+    assert data["detached"] is True and data["detached_after_seconds"] >= 0.1
+    row = adapter.execution_state.get(memo["command_id"])
+    assert (row.state, row.outcome, row.failure_code) == ("completed", "failure", "interrupted_by_shutdown")
+    assert interactive.detached == set()
+
+
+@pytest.mark.asyncio
+async def test_a_detached_turn_a_reload_cuts_off_is_nakked_when_configured_to_retry(
+    tmp_path, valid_command
+):
+    adapter = make_detach_adapter(tmp_path, timeout=0.1)
+    interactive = lane(adapter, "interactive")
+    interactive.detached_shutdown_interrupt = "retry"
+    memo = memo_command(valid_command, "memo-reload")
+    message = await _detached_turn_cut_off_by_a_reload(adapter, interactive, memo)
 
     # no terminal fact, journal still dispatchable: the next process re-runs it
     assert (message.acked, message.nacked) == (0, 1)
@@ -3602,6 +3638,85 @@ async def test_a_detached_turn_a_reload_cuts_off_is_nakked_for_a_rerun(
     row = adapter.execution_state.get(memo["command_id"])
     assert row.state == "started" and row.detached_at is not None
     assert interactive.detached == set()
+
+    # the re-run is a new attempt: it starts with no detached_at of its own
+    adapter.gateway_runner = make_runner()  # the next process: accepting again
+    adapter._js.events.clear()
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result="done"))
+    again = JsMessage(memo, delivered=2)
+    seen = []
+    real_mark_started = adapter.execution_state.mark_started
+
+    def spy(**kwargs):
+        record = real_mark_started(**kwargs)
+        seen.append(record.detached_at)
+        return record
+
+    adapter.execution_state.mark_started = spy
+    await asyncio.wait_for(adapter._handle_broker_message(again, interactive), 2)
+    assert seen == [None]
+    assert again.acked == 1
+    assert "detached" not in completed_fact(adapter, memo)["data"]
+
+
+def test_detached_shutdown_interrupt_is_strict(tmp_path):
+    adapter = make_adapter(tmp_path)
+    adapter.config.extra["interactive"] = {"enabled": True, "detach_on_timeout": True}
+    assert lane(BloodbankAdapter(adapter.config), "interactive").detached_shutdown_interrupt == "fail"
+    adapter.config.extra["interactive"]["detached_shutdown_interrupt"] = "retry"
+    assert lane(BloodbankAdapter(adapter.config), "interactive").detached_shutdown_interrupt == "retry"
+    adapter.config.extra["interactive"]["detached_shutdown_interrupt"] = "nak"
+    with pytest.raises(ValueError, match="detached_shutdown_interrupt"):
+        BloodbankAdapter(adapter.config)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_closes_while_its_detach_is_journaled_publishes_no_detached_fact(
+    tmp_path, valid_command, monkeypatch
+):
+    """Review 2026-10-22: the detached fact went out AFTER the completed one (a slow
+    journal write at load), and the journal never got detached_at."""
+
+    adapter = make_detach_adapter(tmp_path, timeout=0.1)
+    interactive = lane(adapter, "interactive")
+    finish = asyncio.Event()
+    real_mark_detached = adapter.execution_state.mark_detached
+    loop = asyncio.get_running_loop()
+
+    def slow_mark_detached(**kwargs):
+        loop.call_soon_threadsafe(finish.set)  # the turn ends during the journal write
+        time.sleep(0.2)
+        return real_mark_detached(**kwargs)
+
+    monkeypatch.setattr(adapter.execution_state, "mark_detached", slow_mark_detached)
+
+    async def handler(_event):
+        await finish.wait()
+        return "done"
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-race")
+    message = FakeMessage(memo)
+    await asyncio.wait_for(adapter._handle_broker_message(message, interactive), 3)
+
+    types_seen = [e["type"] for e in adapter._js.events if e["data"]["command_id"] == memo["command_id"]]
+    assert "bloodbank.agent.invocation.detached" not in types_seen
+    assert terminal_types(adapter, memo) == ["bloodbank.agent.invocation.completed"]
+    assert completed_fact(adapter, memo)["data"]["detached"] is True
+    assert message.acked == 1
+
+
+def test_a_new_attempt_of_a_started_command_clears_the_last_attempts_detached_at(tmp_path):
+    store = ExecutionStateStore(tmp_path / "state.sqlite3")
+    store.claim_pending(command_id="c1", digest="d", profile="p", started_events=())
+    store.mark_started(command_id="c1", digest="d")
+    assert store.mark_detached(command_id="c1", digest="d").detached_at is not None
+    # a redelivery after a NAK or an unclean exit: dispatched again
+    again = store.mark_started(command_id="c1", digest="d")
+    assert again.state == "started" and again.detached_at is None
+    assert store.get("c1").detached_at is None
+    # and an attempt that detaches stamps its own time
+    assert store.mark_detached(command_id="c1", digest="d").detached_at is not None
 
 
 @pytest.mark.asyncio
@@ -3839,6 +3954,73 @@ async def test_the_runner_view_decides_whether_the_model_was_applied(tmp_path, v
     second["command_id"] = str(uuid.uuid4())
     await adapter._handle_broker_message(FakeMessage(second))
     assert completed_fact(adapter, second)["data"]["model_override"]["applied"] is True
+
+
+def _disarming_runner(adapter):
+    """A runner whose settlement restore drops the session's armed --once switch."""
+
+    runner = make_runner()
+    runner.restored = []
+    runner._session_key_for_source = lambda source: f"{source.profile}:{source.chat_id}"
+
+    def restore(session_key):
+        runner.restored.append(session_key)
+        adapter.session_models.pop(session_key, None)
+
+    runner._restore_pending_one_turn_model_override = restore
+    adapter.gateway_runner = runner
+    return runner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["drain", "route"])
+async def test_a_turn_refused_after_its_model_switch_does_not_leave_the_switch_armed(
+    tmp_path, valid_command, refusal
+):
+    """Review 2026-10-22: /model --once is restored only in a turn's finally. A
+    command refused after the switch ran no turn, so the switch stayed armed and
+    the thread's next turn ran on the route without asking for it."""
+
+    adapter = make_adapter(tmp_path)
+    runner = _disarming_runner(adapter)
+    seen = []
+
+    async def handler(event):
+        seen.append(getattr(event, "turn_model", None))
+        return "done"
+
+    adapter.set_message_handler(handler)
+    command = json.loads(json.dumps(valid_command))
+    command["data"]["model"] = "automaticai/auto/fast"
+    real_apply = adapter._apply_turn_model
+
+    async def apply_then_refuse(invocation, source):
+        outcome = await real_apply(invocation, source)
+        assert adapter.session_models, "the switch is armed for the next turn"
+        if refusal == "drain":
+            runner._draining = True  # an external drain begins during the switch
+        else:
+            adapter.profile_resolver.resolve = lambda _target: "someone-else"
+        return outcome
+
+    adapter._apply_turn_model = apply_then_refuse
+    message = FakeMessage(command)
+    await adapter._handle_broker_message(message)
+
+    assert seen == []  # no turn ran
+    assert adapter.session_models == {}, "the --once switch is disarmed"
+    assert runner.restored == [f"bloodbank-pm:{command['data']['thread_id']}"]
+    assert message.acked == 0  # NAKed (drain) or terminated (route), never done
+    assert message.nacked + message.termed == 1
+
+    # the thread's next turn, with no data.model, runs on the profile's model
+    runner._draining = False
+    adapter.profile_resolver.resolve = lambda _target: "bloodbank-pm"
+    adapter._apply_turn_model = real_apply
+    nxt = json.loads(json.dumps(valid_command))
+    nxt["command_id"] = str(uuid.uuid4())
+    await adapter._handle_broker_message(FakeMessage(nxt))
+    assert seen == [None]
 
 
 def test_data_model_is_validated_at_the_boundary(valid_command):

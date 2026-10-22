@@ -249,6 +249,11 @@ class LaneRuntime:
     detach_on_timeout: bool = False
     max_detached: int = 0
     detached_ceiling: float | None = None
+    # fail | retry for a turn that was DETACHED when Hermes' shutdown cut it off.
+    # fail by default: it already ran past the wall clock (up to the ceiling), the
+    # caller was told it runs on, and a NAK re-run would repeat all of that work
+    # and every side-effecting tool call from the top.
+    detached_shutdown_interrupt: str = "fail"
     subscription: Any = None
     task: asyncio.Task[None] | None = None
     inflight: set[asyncio.Task[None]] = field(default_factory=set)
@@ -513,6 +518,13 @@ class BloodbankAdapter(BasePlatformAdapter):
             detach_on_timeout=detach,
             max_detached=max_detached if detach else 0,
             detached_ceiling=ceiling if detach else None,
+            detached_shutdown_interrupt=_choice(
+                raw,
+                "detached_shutdown_interrupt",
+                "fail",
+                SHUTDOWN_INTERRUPT_MODES,
+                prefix=prefix,
+            ),
         )
 
     @property
@@ -1069,7 +1081,11 @@ class BloodbankAdapter(BasePlatformAdapter):
                     # keep the journal row dispatchable, so the next process runs it.
                     self._refuse_if_not_accepting()
                     await self._assert_dispatch_route(invocation)
-                    if persisted.state == "pending":
+                    if persisted.state in {"pending", "started"}:
+                        # A 'started' row here is a new attempt (a redelivery after
+                        # a NAK or an unclean exit): mark_started clears the last
+                        # attempt's detached_at, so the journal never reports a
+                        # re-run as detached from its first second.
                         persisted = await asyncio.to_thread(
                             self.execution_state.mark_started,
                             command_id=invocation.invocation_id,
@@ -1113,39 +1129,45 @@ class BloodbankAdapter(BasePlatformAdapter):
                     record.model_override = await self._apply_turn_model(
                         invocation, source
                     )
-                    # Re-read the registry after all pre-dispatch awaits. A
-                    # claimed or restarted pending command must not execute on
-                    # a route disabled while lifecycle publication was in flight.
-                    await self._assert_dispatch_route(invocation)
-                    # Last look before the hand-off (no await from here on): a
-                    # drain that began while the started facts were published.
-                    self._refuse_if_not_accepting()
-                    self._watch_runner_interrupts()
-                    record.event = event
-                    # The wall clock starts at dispatch, not at claim: time spent
-                    # waiting for a same-thread predecessor is not the turn's.
-                    dispatched_at = time.monotonic()
-                    record.dispatched_at = dispatched_at
-                    await super().handle_message(event)
-                    # Hermes records whether it admitted the event (a task was
-                    # started or it was queued for one). Unadmitted, no turn and
-                    # no processing-complete hook will ever come for it.
-                    if getattr(event, "_gateway_accepted", True) is not True:
-                        record.finalizing = True
-                        if invocation.prompt.lstrip().startswith("/"):
-                            # A bypass slash command (/stop, /new, /approve, ...)
-                            # on a busy session runs inline without admission: it
-                            # may have acted, so a redelivery must not repeat it.
+                    try:
+                        # Re-read the registry after all pre-dispatch awaits. A
+                        # claimed or restarted pending command must not execute on
+                        # a route disabled while lifecycle publication was in flight.
+                        await self._assert_dispatch_route(invocation)
+                        # Last look before the hand-off (no await from here on): a
+                        # drain that began while the started facts were published.
+                        self._refuse_if_not_accepting()
+                        self._watch_runner_interrupts()
+                        record.event = event
+                        # The wall clock starts at dispatch, not at claim: time spent
+                        # waiting for a same-thread predecessor is not the turn's.
+                        dispatched_at = time.monotonic()
+                        record.dispatched_at = dispatched_at
+                        await super().handle_message(event)
+                        # Hermes records whether it admitted the event (a task was
+                        # started or it was queued for one). Unadmitted, no turn and
+                        # no processing-complete hook will ever come for it.
+                        if getattr(event, "_gateway_accepted", True) is not True:
+                            record.finalizing = True
+                            if invocation.prompt.lstrip().startswith("/"):
+                                # A bypass slash command (/stop, /new, /approve, ...)
+                                # on a busy session runs inline without admission: it
+                                # may have acted, so a redelivery must not repeat it.
+                                raise TurnNotRun(
+                                    "not_accepted_slash_command",
+                                    "Hermes handled the prompt as a slash command inline "
+                                    "instead of starting an agent turn",
+                                    retryable=False,
+                                )
                             raise TurnNotRun(
-                                "not_accepted_slash_command",
-                                "Hermes handled the prompt as a slash command inline "
-                                "instead of starting an agent turn",
-                                retryable=False,
+                                "not_accepted",
+                                "Hermes did not admit the turn (dropped at adapter ingress)",
                             )
-                        raise TurnNotRun(
-                            "not_accepted",
-                            "Hermes did not admit the turn (dropped at adapter ingress)",
-                        )
+                    except BaseException:
+                        # No turn will run (route gone, a drain, not admitted): the
+                        # --once switch must not stay armed for the thread's next turn.
+                        self._disarm_turn_model(record, source)
+                        raise
                     await self._await_turn(record, lane, dispatched_at)
             finally:
                 remaining = self._conversation_lock_refs.get(lock_key, 1) - 1
@@ -1315,6 +1337,39 @@ class BloodbankAdapter(BasePlatformAdapter):
         model = str(override.get("model") or "")
         # Hermes may store the route as given or without its provider prefix.
         return bool(model) and (route == model or route.endswith("/" + model) or model.endswith(route))
+
+    def _disarm_turn_model(self, record: PendingInvocation, source: Any) -> None:
+        """Undo this command's ``/model <route> --once`` when its turn will not run.
+
+        Hermes restores a --once switch only in an agent turn's finally. A command
+        refused after the switch (its route disabled, a drain, not admitted) runs
+        no turn, so without this the switch stays armed and the thread's NEXT turn
+        runs on the route, asked for or not. The runner's own settlement restore
+        is used (a no-op when nothing is armed); best effort."""
+
+        override = record.model_override
+        if not override or override.get("reason") in {"disabled", "session_busy"}:
+            return  # nothing was sent to Hermes
+        runner = getattr(self, "gateway_runner", None)
+        restore = getattr(runner, "_restore_pending_one_turn_model_override", None)
+        to_key = getattr(runner, "_session_key_for_source", None)
+        if not callable(restore) or not callable(to_key):
+            return
+        try:
+            restore(to_key(source))
+        except Exception as exc:
+            logger.warning(
+                "Bloodbank model override not disarmed command_id=%s error_type=%s",
+                record.invocation.invocation_id,
+                type(exc).__name__,
+            )
+            return
+        override["disarmed"] = True
+        logger.info(
+            "Bloodbank model override disarmed command_id=%s model=%s: the turn did not run",
+            record.invocation.invocation_id,
+            override.get("requested"),
+        )
 
     async def _assert_dispatch_route(self, invocation: Invocation) -> None:
         resolved_profile = await asyncio.to_thread(
@@ -1663,11 +1718,24 @@ class BloodbankAdapter(BasePlatformAdapter):
                 digest=record.envelope_digest,
             )
         except Exception as exc:
-            logger.error(
-                "Bloodbank detached journal write failed command_id=%s error_type=%s",
-                invocation.invocation_id,
-                type(exc).__name__,
-            )
+            if self._closing(record):
+                # The turn finished during the journal hop: its row is final, so
+                # there is nothing to stamp (the terminal fact says detached).
+                logger.info(
+                    "Bloodbank detached turn closed before its detach was journaled "
+                    "command_id=%s",
+                    invocation.invocation_id,
+                )
+            else:
+                logger.error(
+                    "Bloodbank detached journal write failed command_id=%s error_type=%s",
+                    invocation.invocation_id,
+                    type(exc).__name__,
+                )
+        if self._closing(record):
+            # Never publish the non-terminal detached fact after (or alongside) the
+            # terminal one: a reader of the bus would see "runs on" after "done".
+            return
         try:
             await self._publish_many(
                 (
@@ -1688,6 +1756,12 @@ class BloodbankAdapter(BasePlatformAdapter):
                 invocation.invocation_id,
                 type(exc).__name__,
             )
+
+    @staticmethod
+    def _closing(record: PendingInvocation) -> bool:
+        """The turn's outcome is claimed (being closed, or closed)."""
+
+        return record.finalizing or record.completion.done()
 
     @staticmethod
     def _detached_after(record: PendingInvocation) -> float | None:
@@ -1864,7 +1938,15 @@ class BloodbankAdapter(BasePlatformAdapter):
         if interrupted is not None:
             not_run = self._interrupted_not_run(record, interrupted, terminal_outcome)
             lane = self._lane_named(record.invocation.lane)
-            if lane.shutdown_interrupt == "retry":
+            # A detached turn has its own setting: it ran past the wall clock (up
+            # to the ceiling) and its caller was told it runs on, so a NAK re-run
+            # would redo all of it from the top (detached_shutdown_interrupt).
+            mode = (
+                lane.detached_shutdown_interrupt
+                if record.detached_at is not None
+                else lane.shutdown_interrupt
+            )
+            if mode == "retry":
                 logger.warning(
                     "Bloodbank turn cut off by Hermes %s lane=%s profile=%s "
                     "command_id=%s: NAK, the next process re-dispatches the same thread",

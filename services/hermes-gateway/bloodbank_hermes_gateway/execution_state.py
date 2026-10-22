@@ -334,7 +334,12 @@ class ExecutionStateStore:
         return record
 
     def mark_started(self, *, command_id: str, digest: str) -> ExecutionRecord:
-        """Record that started-event publication may begin before publishing."""
+        """Record that started-event publication may begin before publishing.
+
+        On a row that is already 'started' this is a new attempt of the same
+        command (a NAK or an unclean exit cut the last one off): the last
+        attempt's ``detached_at`` is cleared, since it says nothing about this
+        one."""
 
         now = _now()
         with self._connect() as db:
@@ -349,8 +354,19 @@ class ExecutionStateStore:
                 db.rollback()
                 raise
             if current.state == "started":
+                if current.detached_at is None:
+                    db.commit()
+                    return current
+                db.execute(
+                    """UPDATE executions SET detached_at = NULL, updated_at = ?
+                       WHERE command_id = ? AND state = 'started'""",
+                    (now, command_id),
+                )
+                record = self._select(db, command_id)
                 db.commit()
-                return current
+                if record is None:
+                    raise RuntimeError("execution journal lost a started command")
+                return record
             if current.state != "pending":
                 db.rollback()
                 raise RuntimeError("finalized execution journal state is immutable")
