@@ -60,6 +60,10 @@ class ExecutionRecord:
     # when the lane's per-turn wall clock expired; None for ordinary outcomes
     # and for rows written before the column existed.
     failure_code: str | None = None
+    # UTC time a turn of this command outlived its lane's wall clock and
+    # detached (gave its slot back and ran on); None when it never detached and
+    # for rows written before the column existed.
+    detached_at: str | None = None
 
 
 class ExecutionStateStore:
@@ -95,7 +99,7 @@ class ExecutionStateStore:
                 else:
                     # Additive and nullable: older rows read back as NULL, and an
                     # older gateway ignores columns it does not select.
-                    for column in ("lane", "failure_code"):
+                    for column in ("lane", "failure_code", "detached_at"):
                         if column not in columns:
                             db.execute(
                                 f"ALTER TABLE executions ADD COLUMN {column} TEXT"
@@ -123,6 +127,7 @@ class ExecutionStateStore:
                 rejected_at TEXT,
                 lane TEXT,
                 failure_code TEXT,
+                detached_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 CHECK (
@@ -265,6 +270,7 @@ class ExecutionStateStore:
             rejected_at=str(row[8]) if row[8] is not None else None,
             lane=str(row[9]) if row[9] is not None else None,
             failure_code=str(row[10]) if row[10] is not None else None,
+            detached_at=str(row[11]) if row[11] is not None else None,
         )
 
     @classmethod
@@ -272,7 +278,7 @@ class ExecutionStateStore:
         row = db.execute(
             """SELECT command_id, envelope_digest, profile, state, outcome,
                       started_events, terminal_events, rejection_reason, rejected_at,
-                      lane, failure_code
+                      lane, failure_code, detached_at
                FROM executions WHERE command_id = ?""",
             (command_id,),
         ).fetchone()
@@ -357,6 +363,40 @@ class ExecutionStateStore:
             db.commit()
         if record is None or record.state != "started":
             raise RuntimeError("execution journal failed to persist started command")
+        return record
+
+    def mark_detached(self, *, command_id: str, digest: str) -> ExecutionRecord:
+        """Stamp ``detached_at`` on a started command whose turn runs on past its
+        lane's wall clock. The row stays 'started' (still dispatchable on a
+        redelivery); the first stamp is kept if an attempt detaches again."""
+
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None:
+                db.rollback()
+                raise RuntimeError("execution journal has no started command to detach")
+            try:
+                self._require_digest(current, digest)
+            except RuntimeError:
+                db.rollback()
+                raise
+            if current.state != "started":
+                db.rollback()
+                raise RuntimeError("only a started execution can detach")
+            if current.detached_at is not None:
+                db.commit()
+                return current
+            db.execute(
+                """UPDATE executions SET detached_at = ?, updated_at = ?
+                   WHERE command_id = ? AND state = 'started'""",
+                (now, now, command_id),
+            )
+            record = self._select(db, command_id)
+            db.commit()
+        if record is None or record.detached_at is None:
+            raise RuntimeError("execution journal failed to persist detached command")
         return record
 
     def mark_completed(

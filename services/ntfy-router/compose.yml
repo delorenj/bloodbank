@@ -51,7 +51,7 @@ services:
       NTFY_TOKEN: "${BLOODBANK_NTFY_ROUTER_NTFY_TOKEN:-}"
       MAX_BODY_CHARS: "${BLOODBANK_NTFY_ROUTER_MAX_BODY_CHARS:-400}"
       # `-` not `:-`: an explicitly empty value turns the list off.
-      NTFY_ROUTER_MUTE_TYPES: "${BLOODBANK_NTFY_ROUTER_MUTE_TYPES-bloodbank.agent.hook.updated,bloodbank.system.hook.updated,bloodbank.audio.memo.uploaded,bloodbank.audio.memo.received,bloodbank.audio.memo.transcribed,bloodbank.audio.memo.dispatched,bloodbank.audio.memo.replied,bloodbank.audio.memo.played,bloodbank.agent.invocation.progressed,bloodbank.audio.memo.narrated,bloodbank.audio.memo.notified,bloodbank.audio.memo.voiced,bloodbank.audio.memo.mirrored}"
+      NTFY_ROUTER_MUTE_TYPES: "${BLOODBANK_NTFY_ROUTER_MUTE_TYPES-bloodbank.agent.hook.updated,bloodbank.system.hook.updated,bloodbank.audio.memo.uploaded,bloodbank.audio.memo.received,bloodbank.audio.memo.transcribed,bloodbank.audio.memo.dispatched,bloodbank.audio.memo.replied,bloodbank.audio.memo.played,bloodbank.agent.invocation.progressed,bloodbank.audio.memo.narrated,bloodbank.audio.memo.notified,bloodbank.audio.memo.voiced,bloodbank.audio.memo.mirrored,bloodbank.agent.invocation.detached}"
       NTFY_ROUTER_DIGEST_TYPES: "${BLOODBANK_NTFY_ROUTER_DIGEST_TYPES-bloodbank.agent.tool.*}"
       # Skip the per-type cap and the shared bucket (still wait out ntfy pushback).
       NTFY_ROUTER_LOUD_TYPES: "${BLOODBANK_NTFY_ROUTER_LOUD_TYPES-bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed}"

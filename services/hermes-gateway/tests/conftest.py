@@ -72,8 +72,19 @@ class BasePlatformAdapter:
     # without admitting it.
     stop_ineffective = False
     drop_inbound = False
+    # /model --once: how long the switch takes, and whether Hermes refuses the route.
+    model_switch_delay = 0.0
+    model_reject = False
     # Set by the Hermes runner when it wires the adapter (drain flags live there).
     gateway_runner = None
+
+    @property
+    def model_events(self):
+        return self.__dict__.setdefault("_model_event_list", [])
+
+    @property
+    def session_models(self):
+        return self.__dict__.setdefault("_session_model_map", {})
 
     def _event_session_key(self, event):
         return f"{event.source.profile}:{event.source.chat_id}"
@@ -105,10 +116,39 @@ class BasePlatformAdapter:
             return
         if self.drop_inbound:
             return
+        if event.text.startswith("/model "):
+            # Hermes' idle-path /model: a processing task of its own that
+            # answers with a confirmation (or an ❌ error) anchored to the
+            # command, and holds the session until it is done.
+            self.model_events.append(event)
+            route = event.text.split()[1]
+
+            async def switch():
+                try:
+                    await asyncio.sleep(self.model_switch_delay)
+                    if self.model_reject:
+                        reply = f"❌ Model `{route}` is not available"
+                    else:
+                        self.session_models[key] = route
+                        reply = f"Model switched to {route} (this turn only)"
+                    await self.send(event.source.chat_id, reply, reply_to=event.message_id)
+                finally:
+                    if self._active_sessions.get(key) is asyncio.current_task():
+                        del self._active_sessions[key]
+                await self.on_processing_complete(event, ProcessingOutcome.SUCCESS)
+
+            task = asyncio.create_task(switch())
+            self._active_sessions[key] = task
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+            event._gateway_accepted = True
+            return
 
         async def run():
             outcome = ProcessingOutcome.SUCCESS
             try:
+                # a --once model applies to the next turn only
+                event.turn_model = self.session_models.pop(key, None)
                 response = await self._message_handler(event)
                 if response:
                     # The final text is anchored to the triggering message, as

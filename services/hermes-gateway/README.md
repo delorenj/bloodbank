@@ -84,6 +84,13 @@ gateway:
           # Wall clock for ONE Hermes turn on this lane. Absent = 300. A strict
           # positive number of seconds (not a bool, string or null), at most 86400.
           turn_timeout_seconds: 300
+          # At the wall clock, give the slot back and let the turn run on instead
+          # of stopping it (see "Detach at the wall clock"). Absent = false.
+          detach_on_timeout: true
+          max_detached: 2                  # absent = 2 (1..64); durable max_ack_pending = 2 + 2
+          detached_ceiling_seconds: 2700   # absent = 2700; stopped as before past this
+        # data.model on a command runs that turn on the route (/model --once). Absent = true.
+        allow_model_override: true
 ```
 
 Resolution precedence is the explicit `target_profiles` mapping, followed by
@@ -269,6 +276,90 @@ returns, so the next queued interactive command is fetched immediately.
 Look it up: `sqlite3 ~/.hermes/bloodbank-hermes-gateway-state.sqlite3
 "select command_id, lane, state, outcome, failure_code from executions where
 failure_code='turn_timeout'"`, or `mise run memo:trace` for a voice memo.
+
+## Detach at the wall clock
+
+`extra.interactive.detach_on_timeout: true` changes what the lane limit does.
+A turn still running at `turn_timeout_seconds` is no longer stopped: it gives
+its slot back and runs on. The 2026-10-21 car memos showed why. Four of the
+last five 33god-pm memos hit the 300 s wall. Each was stopped in the middle of
+a model call, re-dispatched on the batch lane in the same session, and the
+batch turn re-read the history and re-thought the lost step (37-53 s and
+34-68k tokens each). The tokens were spent either way. Only the lost call and
+the duplicate run were waste.
+
+At the limit, when the lane holds fewer than `max_detached` detached turns,
+the budget came from the lane (not from a shorter `data.deadline_seconds`, which
+still stops the turn as before) and nothing has claimed the outcome yet:
+
+1. The handler task leaves `lane.inflight` and joins `lane.detached`, and the
+   lane's fetch loop is woken. The next command is pulled at once.
+2. The task keeps everything else: the un-acked JetStream message (progress
+   acks every `ack_progress_seconds`), the `started` journal row, the record in
+   `_records` (progress facts keep flowing), and the conversation lock (a
+   same-thread follow-up waits behind it).
+3. The journal row gets `detached_at` (UTC, a nullable column added in place),
+   and `bloodbank.agent.invocation.detached` is published once with
+   `elapsed_seconds`, `timeout_seconds`, `ceiling_seconds`, `detached_count`,
+   `max_detached` and the command context. Both are observability: a journal
+   or broker error is logged and the turn runs on.
+4. When Hermes finishes, the normal completion path closes it: exactly one
+   `agent.invocation.completed` (or `failed`), with `detached: true`,
+   `detached_after_seconds` and `elapsed_seconds` added, journal closed, ack.
+   A voice memo's watcher speaks it as a late reply.
+5. A turn still running `detached_ceiling_seconds` after dispatch is stopped
+   exactly as at the lane limit (`/stop`, `turn_timeout`), with
+   `timeout_source: detached_ceiling`, `timeout_seconds` = the ceiling and
+   `detached: true`. It already ran that long, so a consumer should not re-run it.
+
+When `max_detached` turns are already detached, a turn at the limit is stopped as
+before. A reload or shutdown treats a detached turn like any running one: its
+drain waits for it (`active_agents` and the consumer's `ack_pending` stay above
+0 while it runs, so the restart gate stays honest), and a turn the drain cuts off
+NAKs under `shutdown_interrupt: retry` and re-runs on the next process.
+
+**Durable bound.** A detached message is still un-acked, so the durable's
+`max_ack_pending` must be `max_inflight + max_detached` (2 + 2 = 4), or
+JetStream would keep the freed slot empty. `pull_subscribe` never edits an
+existing durable. When the only difference is `max_ack_pending`, `connect()`
+updates the durable in place (`add_consumer` with the lane's config; JetStream
+2.10 edits that field live) and then checks the full contract as before. Any
+other mismatch is still refused. Switching detach off lowers it again the same
+way.
+
+## Per-turn model: `data.model`
+
+A command may carry `data.model`, a model route for that turn only
+(`automaticai/auto/fast`, `automaticai/personal/claude-sonnet-5.5`). It is
+validated at the boundary as one token (`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$`,
+so it cannot smuggle a flag such as `--global`) and has the same shape on both
+command schemas.
+
+Just before dispatch the adapter injects an internal `/model <route> --once`
+for the command's session (same source, message id `<command_id>:turn-model`).
+It waits until Hermes has finished it (session idle, bounded by 10 s) and then
+hands over the prompt. This is Hermes' supported path for a one-turn switch. It
+resolves the route's provider runtime and never writes config.yaml or the
+session store. It restores the session's own model when that turn ends, on
+every exit path including `/stop`. Every command thread is its own Hermes
+session (`agent:<profile>:bloodbank:dm:<thread_id>`), so Telegram and other
+memos are untouched. A batch re-run of the same thread is back on the profile's
+model unless it carries `data.model` too.
+
+The switch is best effort. The turn runs on the profile's model when the route
+is not listed for the provider, when Hermes refuses it, when the session is
+busy, or when the switch is slow. The terminal fact then carries
+`model_override: {requested, applied: false, reason, detail}`. When it worked
+the fact carries `{requested, applied: true}`. `applied` is read from the
+runner's session override, and falls back to the reply text. The route must be
+in `providers.<provider>.models`. `allow_model_override: false` turns it off.
+
+There is no `data.reasoning_effort`. Hermes' per-session effort (`/reasoning`,
+`agent.reasoning_effort`) is never sent to the AutomaticAI custom provider; the
+only effort on the wire is `providers.automaticai.extra_body.reasoning_effort`.
+`/model --once` also drops `--reasoning`. And `automaticai/auto*` strips every
+effort spelling and uses its rung's own. So effort per turn means a model route,
+and an explicit route takes its effort from a model-specific providers entry.
 
 ## Delivery behavior
 

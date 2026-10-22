@@ -329,7 +329,7 @@ Segment 4 of `type` MUST be one of:
 | `mms`              | `messaging`              | Carrier MMS (media): `messaging.mms.{received,sent,completed,failed}` and the `messaging.mms.send` command (Telnyx). |
 | `rcs`              | `messaging`              | RCS chat through Google Messages / BlueBubbles: `messaging.rcs.{received,sent}`. |
 | `imessage`         | `messaging`              | iMessage through BlueBubbles: `messaging.imessage.{received,sent}`. |
-| `invocation`       | `agent`                  | One round of agent runtime calling an LLM. `started` -> `progressed` (0..n: an interim assistant message of the running turn, `data.seq` 1..n per command, `data.text` <= 500 chars; the Hermes gateway publishes every non-blank one, consumers throttle) -> `completed` or `failed`. |
+| `invocation`       | `agent`                  | One round of agent runtime calling an LLM. `started` -> `progressed` (0..n: an interim assistant message of the running turn, `data.seq` 1..n per command, `data.text` <= 500 chars; the Hermes gateway publishes every non-blank one, consumers throttle) -> `detached` (0..1 per attempt: the turn outlived its interactive lane's wall clock and gave its slot back; it runs on, and its terminal fact carries `detached: true`) -> `completed` or `failed`. |
 | `session`          | `cli`                    | One CLI session (e.g. `claude` or `copilot` process tree).  |
 | `process`          | `cli`                    | An OS process spawned within a CLI session.                 |
 | `stdout`           | `cli`                    | A stdout chunk emitted by a CLI process.                    |
@@ -426,7 +426,7 @@ covers every inbound human message, texts included.
 `uploaded`, `transcribed`, `dispatched`, `replied`, `played` (the `audio.memo.*`
 journey stages: a voice memo that is uploaded, transcribed, dispatched to an agent,
 answered aloud, and played back on the device), `progressed` (`agent.invocation.progressed`:
-a running turn said what it is doing, one interim assistant message), `narrated`
+a running turn said what it is doing, one interim assistant message), `detached` (`agent.invocation.detached`: a running turn outlived its lane's wall clock and gave its slot back instead of being stopped; not terminal), `narrated`
 (`audio.memo.narrated`: one such progress line spoken aloud for the car while the memo's
 turn still runs), `voiced` (`audio.memo.voiced`: one sentence-chunk of the reply rendered and
 uploaded, so the car starts speaking before the whole reply is rendered; a reply short enough for one
@@ -760,6 +760,7 @@ bloodbank.agent.tool.requested            # 0..n
 bloodbank.agent.tool.invoked              # 0..n
 bloodbank.agent.tool.completed            # 0..n
 bloodbank.agent.invocation.progressed     # 0..n; interim assistant messages, between the tool rounds
+bloodbank.agent.invocation.detached       # 0..1; the turn ran past its lane's wall clock and runs on (late reply)
 bloodbank.conversation.message.appended       # durable transcript record
 bloodbank.agent.invocation.completed
 bloodbank.conversation.turn.completed

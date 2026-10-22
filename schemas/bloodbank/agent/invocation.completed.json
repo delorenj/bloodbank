@@ -58,6 +58,61 @@
             null
           ],
           "description": "Delivery lane of the originating command: batch (bloodbank.agent.invocation.start) or interactive (bloodbank.agent.invocation.invoke). Stamped by the Hermes gateway on every lifecycle fact; absent on facts written before the interactive lane existed."
+        },
+        "detached": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "true when the turn outlived its lane's wall clock and ran on detached (it published bloodbank.agent.invocation.detached; for a voice memo this is a late reply). Absent on a turn that never detached."
+        },
+        "detached_after_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Detached turns only: seconds between dispatch and detaching (the lane limit)."
+        },
+        "elapsed_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Detached turns only: seconds between dispatching the turn to Hermes and its completion."
+        },
+        "model_override": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Only when the command carried data.model: what became of it. requested = the route asked for; applied = Hermes switched this turn to it (/model <route> --once); reason when not applied: disabled (allow_model_override false), session_busy, switch_timeout, switch_failed:<error>, rejected (Hermes refused the route; detail quotes its reply).",
+          "properties": {
+            "requested": {
+              "type": "string"
+            },
+            "applied": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "requested",
+            "applied"
+          ],
+          "additionalProperties": true
         }
       },
       "required": [

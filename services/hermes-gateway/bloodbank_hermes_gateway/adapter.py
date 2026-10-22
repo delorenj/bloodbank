@@ -31,6 +31,7 @@ from hermes_cli.profiles import (
 from .contract import (
     BATCH,
     COMMAND_STREAM,
+    DETACHED_CEILING_SOURCE,
     EVENT_STREAM,
     INTERACTIVE,
     TURN_TIMEOUT_CODE,
@@ -41,6 +42,7 @@ from .contract import (
     RegistryInvalid,
     RouteInvalid,
     decode_command,
+    detached_event,
     progress_event,
     progress_text,
     started_events,
@@ -145,9 +147,20 @@ def _bounded_float(
 
 DEFAULT_INTERACTIVE_TURN_TIMEOUT_SECONDS = 300.0
 MAX_TURN_TIMEOUT_SECONDS = 86_400.0
+# Detach at the wall clock (extra.interactive.detach_on_timeout): how many
+# turns may run on past it at once, and when one is stopped after all (seconds
+# after dispatch). 45 min: past Hermes' own 30 min inactivity stop
+# (agent.gateway_timeout) for a turn that stalls, short of the watcher's 1 h
+# queue horizon (MEMO_QUEUE_MAX_WAIT_S) for one that keeps working.
+DEFAULT_MAX_DETACHED = 2
+DEFAULT_DETACHED_CEILING_SECONDS = 2_700.0
 # How long the gateway waits for Hermes to unwind a stopped turn before it
 # reports the turn as not confirmed stopped.
 STOP_BUDGET_SECONDS = 10.0
+# How long the gateway waits for Hermes to finish an injected `/model --once`
+# (the switch resolves the route's provider runtime) before it dispatches the
+# turn anyway, on whatever model the session then has.
+MODEL_SWITCH_BUDGET_SECONDS = 10.0
 
 
 def _turn_timeout(
@@ -155,13 +168,14 @@ def _turn_timeout(
     default: float | None,
     *,
     prefix: str = "bloodbank.extra",
+    key: str = "turn_timeout_seconds",
 ) -> float | None:
     """Per-turn wall-clock seconds: absent = ``default``, otherwise a strict
     positive finite number (not a bool, not a numeric string, not null)."""
 
-    if "turn_timeout_seconds" not in extra:
+    if key not in extra:
         return default
-    raw = extra["turn_timeout_seconds"]
+    raw = extra[key]
     if (
         isinstance(raw, bool)
         or not isinstance(raw, (int, float))
@@ -170,7 +184,7 @@ def _turn_timeout(
         or raw > MAX_TURN_TIMEOUT_SECONDS
     ):
         raise ValueError(
-            f"{prefix}.turn_timeout_seconds must be a positive number "
+            f"{prefix}.{key} must be a positive number "
             f"no greater than {int(MAX_TURN_TIMEOUT_SECONDS)}"
         )
     return float(raw)
@@ -228,13 +242,31 @@ class LaneRuntime:
     turn_timeout: float | None = None
     # fail | retry: a turn Hermes' shutdown interrupted (SHUTDOWN_INTERRUPT_MODES).
     shutdown_interrupt: str = "fail"
+    # Detach at the wall clock: a turn that outlives the lane's turn_timeout
+    # gives its slot back instead of being stopped, and keeps running (its
+    # message un-acked) until it finishes or reaches detached_ceiling seconds
+    # after dispatch, where it is stopped as before. At most max_detached at once.
+    detach_on_timeout: bool = False
+    max_detached: int = 0
+    detached_ceiling: float | None = None
     subscription: Any = None
     task: asyncio.Task[None] | None = None
     inflight: set[asyncio.Task[None]] = field(default_factory=set)
+    # Handler tasks of detached turns: they hold no slot, but their messages
+    # are still un-acked (the consumer's max_ack_pending counts both sets).
+    detached: set[asyncio.Task[None]] = field(default_factory=set)
+    # Set when a turn detaches, so a fetch loop waiting for a slot wakes up.
+    slot_freed: asyncio.Event = field(default_factory=asyncio.Event)
 
     @property
     def name(self) -> str:
         return self.spec.name
+
+    @property
+    def max_ack_pending(self) -> int:
+        """Messages the durable may have outstanding: the slots plus detached turns."""
+
+        return self.max_inflight + (self.max_detached if self.detach_on_timeout else 0)
 
 
 def _batch_attr(name: str) -> property:
@@ -269,6 +301,12 @@ class PendingInvocation:
     # "restart" / "shutdown" once Hermes' stop() hard-interrupted this turn
     # because its drain ran out: whatever the turn reports next is not an answer.
     shutdown_interrupt: str | None = None
+    # Monotonic time the turn detached at its lane's wall clock (its slot was
+    # given back while it kept running); None for a turn that never detached.
+    detached_at: float | None = None
+    # data.model outcome: {"requested": route, "applied": bool, ...}; None when
+    # the command asked for no model of its own.
+    model_override: dict[str, Any] | None = None
 
 
 class BloodbankAdapter(BasePlatformAdapter):
@@ -395,6 +433,12 @@ class BloodbankAdapter(BasePlatformAdapter):
             )
         )
         self.execution_state = ExecutionStateStore(execution_state_path)
+        # data.model on a command: run that turn on the named route through
+        # Hermes' own `/model <route> --once` (see _apply_turn_model).
+        self.allow_model_override = _strict_bool(extra, "allow_model_override", True)
+        self.model_switch_budget_seconds = MODEL_SWITCH_BUDGET_SECONDS
+        # message id of an injected `/model` event -> the reply Hermes sent for it.
+        self._model_switch_replies: dict[str, str | None] = {}
 
         self._nc: Any = None
         self._js: Any = None
@@ -434,6 +478,24 @@ class BloodbankAdapter(BasePlatformAdapter):
             raise ValueError(
                 f"{prefix}.ack_progress_seconds must be less than ack_wait_seconds"
             )
+        turn_timeout = _turn_timeout(
+            raw, DEFAULT_INTERACTIVE_TURN_TIMEOUT_SECONDS, prefix=prefix
+        )
+        detach = _strict_bool(raw, "detach_on_timeout", False, prefix=prefix)
+        max_detached = _bounded_int(
+            raw, "max_detached", DEFAULT_MAX_DETACHED, 1, 64, prefix=prefix
+        )
+        ceiling = _turn_timeout(
+            raw,
+            DEFAULT_DETACHED_CEILING_SECONDS,
+            prefix=prefix,
+            key="detached_ceiling_seconds",
+        )
+        if detach and (turn_timeout is None or ceiling <= turn_timeout):
+            raise ValueError(
+                f"{prefix}.detached_ceiling_seconds must be greater than "
+                "turn_timeout_seconds when detach_on_timeout is true"
+            )
         return LaneRuntime(
             spec=INTERACTIVE,
             durable=durable,
@@ -444,12 +506,13 @@ class BloodbankAdapter(BasePlatformAdapter):
             nak_delay=_bounded_float(
                 raw, "nak_delay_seconds", 3.0, 0.0, 300.0, prefix=prefix
             ),
-            turn_timeout=_turn_timeout(
-                raw, DEFAULT_INTERACTIVE_TURN_TIMEOUT_SECONDS, prefix=prefix
-            ),
+            turn_timeout=turn_timeout,
             shutdown_interrupt=_choice(
                 raw, "shutdown_interrupt", "fail", SHUTDOWN_INTERRUPT_MODES, prefix=prefix
             ),
+            detach_on_timeout=detach,
+            max_detached=max_detached if detach else 0,
+            detached_ceiling=ceiling if detach else None,
         )
 
     @property
@@ -498,21 +561,46 @@ class BloodbankAdapter(BasePlatformAdapter):
                     max_deliver=lane.max_deliver,
                     filter_subject=lane.spec.subject,
                     max_waiting=1,
-                    max_ack_pending=lane.max_inflight,
+                    max_ack_pending=lane.max_ack_pending,
                 )
                 lane.subscription = await self._js.pull_subscribe(
                     lane.spec.subject,
                     durable=lane.durable,
                     stream=COMMAND_STREAM,
                     config=consumer_config,
-                    pending_msgs_limit=lane.max_inflight,
-                    pending_bytes_limit=lane.max_inflight * self.max_command_bytes,
+                    pending_msgs_limit=lane.max_ack_pending,
+                    pending_bytes_limit=lane.max_ack_pending * self.max_command_bytes,
                 )
                 info = await self._js.consumer_info(
                     COMMAND_STREAM,
                     lane.durable,
                     timeout=self.publish_timeout_seconds,
                 )
+                if self._needs_ack_pending_update(info.config, lane):
+                    # pull_subscribe never edits an existing durable. Turning
+                    # detach on (or off) changes only max_ack_pending, which
+                    # JetStream lets a consumer update in place: do that, then
+                    # hold the result to the full contract like any other bind.
+                    logger.warning(
+                        "Bloodbank durable %s max_ack_pending %s -> %d (lane=%s "
+                        "max_inflight=%d detached=%d)",
+                        lane.durable,
+                        getattr(info.config, "max_ack_pending", None),
+                        lane.max_ack_pending,
+                        lane.name,
+                        lane.max_inflight,
+                        lane.max_detached,
+                    )
+                    await self._js.add_consumer(
+                        COMMAND_STREAM,
+                        config=consumer_config,
+                        timeout=self.publish_timeout_seconds,
+                    )
+                    info = await self._js.consumer_info(
+                        COMMAND_STREAM,
+                        lane.durable,
+                        timeout=self.publish_timeout_seconds,
+                    )
                 self._assert_consumer_contract(info.config, lane)
         except Exception as exc:
             logger.error(
@@ -536,12 +624,44 @@ class BloodbankAdapter(BasePlatformAdapter):
                 name=f"bloodbank-hermes-consumer-{lane.name}",
             )
             logger.info(
-                "Bloodbank gateway connected lane=%s durable=%s max_inflight=%d",
+                "Bloodbank gateway connected lane=%s durable=%s max_inflight=%d "
+                "max_detached=%d",
                 lane.name,
                 lane.durable,
                 lane.max_inflight,
+                lane.max_detached,
             )
         return True
+
+    @staticmethod
+    def _consumer_observed(actual: Any) -> dict[str, Any]:
+        ack_policy = getattr(actual, "ack_policy", None)
+        return {
+            "filter_subject": getattr(actual, "filter_subject", None),
+            "ack_policy": getattr(ack_policy, "value", ack_policy),
+            "max_ack_pending": getattr(actual, "max_ack_pending", None),
+            "max_deliver": getattr(actual, "max_deliver", None),
+        }
+
+    @staticmethod
+    def _consumer_expected(lane: LaneRuntime) -> dict[str, Any]:
+        return {
+            "filter_subject": lane.spec.subject,
+            "ack_policy": "explicit",
+            "max_ack_pending": lane.max_ack_pending,
+            "max_deliver": lane.max_deliver,
+        }
+
+    def _needs_ack_pending_update(self, actual: Any, lane: LaneRuntime) -> bool:
+        """True when an existing durable differs from the lane only in max_ack_pending."""
+
+        observed = self._consumer_observed(actual)
+        expected = self._consumer_expected(lane)
+        if observed["max_ack_pending"] == expected["max_ack_pending"]:
+            return False
+        return all(
+            observed[key] == expected[key] for key in expected if key != "max_ack_pending"
+        )
 
     def _assert_consumer_contract(
         self, actual: Any, lane: LaneRuntime | None = None
@@ -549,21 +669,7 @@ class BloodbankAdapter(BasePlatformAdapter):
         """Refuse to bind a stale durable with unsafe delivery semantics."""
 
         lane = self._lane(lane)
-        ack_policy = getattr(actual, "ack_policy", None)
-        ack_policy = getattr(ack_policy, "value", ack_policy)
-        expected = {
-            "filter_subject": lane.spec.subject,
-            "ack_policy": "explicit",
-            "max_ack_pending": lane.max_inflight,
-            "max_deliver": lane.max_deliver,
-        }
-        observed = {
-            "filter_subject": getattr(actual, "filter_subject", None),
-            "ack_policy": ack_policy,
-            "max_ack_pending": getattr(actual, "max_ack_pending", None),
-            "max_deliver": getattr(actual, "max_deliver", None),
-        }
-        if observed != expected:
+        if self._consumer_observed(actual) != self._consumer_expected(lane):
             raise RuntimeError(
                 "existing Bloodbank durable consumer does not match the configured "
                 "canonical subject and bounded delivery contract"
@@ -581,8 +687,16 @@ class BloodbankAdapter(BasePlatformAdapter):
         # Ensure Hermes turns reach their processing-complete hook before the
         # broker waiters are canceled. A canceled turn publishes its terminal
         # failure/turn outcome and may then be acknowledged safely.
+        # Detached turns are command tasks too: their messages are un-acked and
+        # each settles (ack, NAK for a retry) the same way an in-flight one does.
+        # Snapshot them first: a detached task leaves lane.detached as soon as
+        # its turn closes, before it has acked.
+        tasks = [
+            task
+            for lane in self._lanes
+            for task in (*lane.inflight, *lane.detached)
+        ]
         await self.cancel_background_tasks()
-        tasks = [task for lane in self._lanes for task in lane.inflight]
         if tasks:
             try:
                 await asyncio.wait_for(
@@ -595,6 +709,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 await asyncio.gather(*tasks, return_exceptions=True)
         for lane in self._lanes:
             lane.inflight.clear()
+            lane.detached.clear()
         await self._close_nats()
         self._release_platform_lock()
 
@@ -794,7 +909,16 @@ class BloodbankAdapter(BasePlatformAdapter):
         self._resume_lane(lane)
         capacity = lane.max_inflight - len(lane.inflight)
         if capacity <= 0:
-            await asyncio.wait(lane.inflight, return_when=asyncio.FIRST_COMPLETED)
+            # A slot comes back when a command task ends or when a turn
+            # detaches (its task leaves lane.inflight but keeps running).
+            lane.slot_freed.clear()
+            freed = asyncio.ensure_future(lane.slot_freed.wait())
+            try:
+                await asyncio.wait(
+                    {*lane.inflight, freed}, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                freed.cancel()
             return
         try:
             messages = await lane.subscription.fetch(
@@ -984,6 +1108,11 @@ class BloodbankAdapter(BasePlatformAdapter):
                         message_id=invocation.envelope["command_id"],
                         internal=True,
                     )
+                    # data.model: switch this session's model for the next
+                    # turn only, before the prompt is handed over.
+                    record.model_override = await self._apply_turn_model(
+                        invocation, source
+                    )
                     # Re-read the registry after all pre-dispatch awaits. A
                     # claimed or restarted pending command must not execute on
                     # a route disabled while lifecycle publication was in flight.
@@ -1078,6 +1207,114 @@ class BloodbankAdapter(BasePlatformAdapter):
                 await asyncio.gather(progress_task, return_exceptions=True)
             if record is not None:
                 self._records.pop(record.invocation.invocation_id, None)
+
+    async def _apply_turn_model(
+        self, invocation: Invocation, source: Any
+    ) -> dict[str, Any] | None:
+        """Run this command's turn on ``data.model``: Hermes' ``/model <route> --once``.
+
+        The switch goes through the supported slash-command path, the same one a
+        user typing it in a chat gets: Hermes resolves the route's provider
+        runtime, keeps it for the session's NEXT turn only (never written to
+        config.yaml or the session store) and restores the session's own model
+        when that turn ends, however it ends (/stop and eviction included). Every
+        command thread is its own Hermes session, so nothing else is affected.
+
+        Best effort, never the turn's fate: an unknown route, a busy session or a
+        slow switch leaves the turn on the profile's model, and the outcome
+        (``requested``, ``applied``, ``reason``) rides on the terminal fact."""
+
+        route = invocation.model
+        if not route:
+            return None
+        outcome: dict[str, Any] = {"requested": route, "applied": False}
+        if not self.allow_model_override:
+            outcome["reason"] = "disabled"
+            return outcome
+        probe = MessageEvent(
+            text=f"/model {route} --once",
+            message_type=MessageType.TEXT,
+            source=source,
+            message_id=f"{invocation.invocation_id}:turn-model",
+            internal=True,
+        )
+        key = self._session_key(probe)
+        active = getattr(self, "_active_sessions", None)
+        if key is not None and active is not None and key in active:
+            # A busy session would queue the command as text, not run it.
+            outcome["reason"] = "session_busy"
+            logger.warning(
+                "Bloodbank model override skipped lane=%s profile=%s command_id=%s "
+                "model=%s: the session is busy",
+                invocation.lane,
+                invocation.profile,
+                invocation.invocation_id,
+                route,
+            )
+            return outcome
+        self._model_switch_replies[probe.message_id] = None
+        try:
+            await asyncio.wait_for(
+                super().handle_message(probe), self.model_switch_budget_seconds
+            )
+            # handle_message only starts the command's processing task: the
+            # switch is done when the session is idle again.
+            deadline = time.monotonic() + self.model_switch_budget_seconds
+            while (
+                key is not None
+                and active is not None
+                and key in active
+                and time.monotonic() < deadline
+            ):
+                await asyncio.sleep(0.05)
+            if key is not None and active is not None and key in active:
+                outcome["reason"] = "switch_timeout"
+        except Exception as exc:
+            outcome["reason"] = f"switch_failed:{type(exc).__name__}"
+        finally:
+            reply = self._model_switch_replies.pop(probe.message_id, None)
+        applied = self._session_model_applied(source, key, route)
+        if applied is None:
+            # No runner view of the session (tests, an older Hermes): read the reply.
+            applied = bool(reply) and not str(reply).lstrip().startswith("❌")
+        outcome["applied"] = applied
+        if not applied:
+            outcome.setdefault("reason", "rejected")
+            if reply:
+                outcome["detail"] = " ".join(str(reply).split())[:200]
+        logger.log(
+            logging.INFO if applied else logging.WARNING,
+            "Bloodbank model override %s lane=%s profile=%s command_id=%s model=%s%s",
+            "applied" if applied else "not applied",
+            invocation.lane,
+            invocation.profile,
+            invocation.invocation_id,
+            route,
+            "" if applied else f" reason={outcome.get('reason')} reply={outcome.get('detail', '')!r}",
+        )
+        return outcome
+
+    def _session_model_applied(
+        self, source: Any, key: str | None, route: str
+    ) -> bool | None:
+        """Whether Hermes now holds ``route`` as the session's model override,
+        or None when the runner offers no view of it."""
+
+        runner = getattr(self, "gateway_runner", None)
+        lookup = getattr(runner, "_session_model_override", None)
+        if not callable(lookup):
+            return None
+        try:
+            to_key = getattr(runner, "_session_key_for_source", None)
+            session_key = to_key(source) if callable(to_key) else key
+            override = lookup(session_key) if session_key else None
+        except Exception:
+            return None
+        if not isinstance(override, dict):
+            return False
+        model = str(override.get("model") or "")
+        # Hermes may store the route as given or without its provider prefix.
+        return bool(model) and (route == model or route.endswith("/" + model) or model.endswith(route))
 
     async def _assert_dispatch_route(self, invocation: Invocation) -> None:
         resolved_profile = await asyncio.to_thread(
@@ -1196,6 +1433,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 + ("; the command has no deliveries left" if last else "")
             ),
             failure_data=exc.data or {"refusal": exc.reason},
+            extra_data=self._turn_annotations(record),
         )
         await asyncio.to_thread(
             self.execution_state.mark_completed,
@@ -1309,7 +1547,13 @@ class BloodbankAdapter(BasePlatformAdapter):
     async def _await_turn(
         self, record: PendingInvocation, lane: LaneRuntime, dispatched_at: float
     ) -> None:
-        """Wait for Hermes to finish the turn, or stop it when the budget runs out."""
+        """Wait for Hermes to finish the turn, or stop it when the budget runs out.
+
+        On a lane with ``detach_on_timeout`` a turn that outlives the lane limit
+        detaches instead (``_detach_turn``): its slot is given back, the wait
+        goes on to the lane's ``detached_ceiling`` and only then is the turn
+        stopped. Everything after the wait (journal, terminal facts, ack or NAK,
+        conversation lock) is the same code path either way."""
 
         timeout, source = self._turn_deadline(lane, record.invocation)
         if timeout is None:
@@ -1318,8 +1562,156 @@ class BloodbankAdapter(BasePlatformAdapter):
         try:
             # shield: expiry must not cancel the future the completion hook sets.
             await asyncio.wait_for(asyncio.shield(record.completion), timeout)
+            return
         except asyncio.TimeoutError:
+            pass
+        task = self._detach_turn(record, lane, timeout, source)
+        if task is None:
             await self._expire_turn(record, lane, timeout, source, dispatched_at)
+            return
+        try:
+            await self._announce_detached(record, lane, timeout, source)
+            ceiling = float(lane.detached_ceiling or timeout)
+            remaining = ceiling - (time.monotonic() - dispatched_at)
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(record.completion), max(remaining, 0.0)
+                )
+            except asyncio.TimeoutError:
+                await self._expire_turn(
+                    record, lane, ceiling, DETACHED_CEILING_SOURCE, dispatched_at
+                )
+        finally:
+            lane.detached.discard(task)
+
+    def _detach_turn(
+        self,
+        record: PendingInvocation,
+        lane: LaneRuntime,
+        timeout: float,
+        source: str,
+    ) -> asyncio.Task[Any] | None:
+        """Give the turn's slot back and let it run on; the detached task, or None.
+
+        Only the lane's own limit detaches: a ``data.deadline_seconds`` is the
+        caller asking for the turn to be stopped, and is honoured as before. A
+        turn whose outcome is already claimed, a lane already holding
+        ``max_detached`` detached turns, or one with no ceiling past the limit
+        falls back to the stop. The task leaves ``lane.inflight`` (the fetch
+        loop may pull another command at once) but keeps its message un-acked,
+        its progress acks, its journal row and the conversation lock."""
+
+        if (
+            not lane.detach_on_timeout
+            or source != "lane"
+            or record.finalizing
+            or record.completion.done()
+            or lane.detached_ceiling is None
+            or lane.detached_ceiling <= timeout
+        ):
+            return None
+        invocation = record.invocation
+        if len(lane.detached) >= lane.max_detached:
+            logger.warning(
+                "Bloodbank turn not detached lane=%s profile=%s command_id=%s: "
+                "%d detached turns already run on (max_detached=%d); stopping it",
+                lane.name,
+                invocation.profile,
+                invocation.invocation_id,
+                len(lane.detached),
+                lane.max_detached,
+            )
+            return None
+        task = asyncio.current_task()
+        if task is None:
+            return None
+        record.detached_at = time.monotonic()
+        lane.inflight.discard(task)
+        lane.detached.add(task)
+        task.add_done_callback(lane.detached.discard)
+        lane.slot_freed.set()
+        logger.warning(
+            "Bloodbank turn detached lane=%s profile=%s command_id=%s after %.1fs "
+            "(limit %.1fs): slot released, the turn runs on until %.0fs",
+            lane.name,
+            invocation.profile,
+            invocation.invocation_id,
+            record.detached_at - (record.dispatched_at or record.detached_at),
+            timeout,
+            lane.detached_ceiling,
+        )
+        return task
+
+    async def _announce_detached(
+        self,
+        record: PendingInvocation,
+        lane: LaneRuntime,
+        timeout: float,
+        source: str,
+    ) -> None:
+        """Journal ``detached_at`` and publish agent.invocation.detached.
+
+        Observability, never the turn's fate: a journal or broker error is logged
+        and the turn still runs on to its normal close."""
+
+        invocation = record.invocation
+        elapsed = self._detached_after(record) or timeout
+        try:
+            await asyncio.to_thread(
+                self.execution_state.mark_detached,
+                command_id=invocation.invocation_id,
+                digest=record.envelope_digest,
+            )
+        except Exception as exc:
+            logger.error(
+                "Bloodbank detached journal write failed command_id=%s error_type=%s",
+                invocation.invocation_id,
+                type(exc).__name__,
+            )
+        try:
+            await self._publish_many(
+                (
+                    detached_event(
+                        invocation,
+                        elapsed_seconds=elapsed,
+                        timeout_seconds=timeout,
+                        timeout_source=source,
+                        ceiling_seconds=float(lane.detached_ceiling or timeout),
+                        detached_count=len(lane.detached),
+                        max_detached=lane.max_detached,
+                    ),
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "Bloodbank detached fact publication failed command_id=%s error_type=%s",
+                invocation.invocation_id,
+                type(exc).__name__,
+            )
+
+    @staticmethod
+    def _detached_after(record: PendingInvocation) -> float | None:
+        if record.detached_at is None or record.dispatched_at is None:
+            return None
+        return max(0.0, record.detached_at - record.dispatched_at)
+
+    def _turn_annotations(self, record: PendingInvocation) -> dict[str, Any] | None:
+        """Terminal-fact fields the turn earned on the way: how long it ran in
+        all when it detached, and what became of its ``data.model``."""
+
+        data: dict[str, Any] = {}
+        if record.model_override is not None:
+            data["model_override"] = dict(record.model_override)
+        after = self._detached_after(record)
+        if after is None:
+            return data or None
+        elapsed = time.monotonic() - (record.dispatched_at or record.detached_at or 0.0)
+        data.update(
+            detached=True,
+            detached_after_seconds=round(after, 1),
+            elapsed_seconds=round(max(0.0, elapsed), 1),
+        )
+        return data
 
     async def _expire_turn(
         self,
@@ -1351,6 +1743,13 @@ class BloodbankAdapter(BasePlatformAdapter):
                 f"agent turn timed out after {_seconds(elapsed)}s on {lane.name} "
                 f"lane (limit {_seconds(timeout)}s)"
             )
+            annotations = self._turn_annotations(record) or {}
+            if annotations.get("detached"):
+                message = (
+                    f"agent turn timed out after {_seconds(elapsed)}s on {lane.name} "
+                    f"lane (detached at {_seconds(annotations['detached_after_seconds'])}s, "
+                    f"ceiling {_seconds(timeout)}s)"
+                )
             events = terminal_events(
                 invocation,
                 outcome="failure",
@@ -1358,6 +1757,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 failure_message=message
                 + ("" if stopped else "; Hermes did not confirm the turn stopped"),
                 failure_data={
+                    **annotations,
                     "elapsed_seconds": round(elapsed, 1),
                     "timeout_seconds": round(timeout, 1),
                     "timeout_source": source,
@@ -1541,6 +1941,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 failure_code=failure_code,
                 failure_message=failure_message,
                 failure_data=failure_data,
+                extra_data=self._turn_annotations(record),
             )
             await asyncio.to_thread(
                 self.execution_state.mark_completed,
@@ -1555,6 +1956,16 @@ class BloodbankAdapter(BasePlatformAdapter):
             record.completion.set_exception(exc)
             raise
         else:
+            if record.detached_at is not None:
+                logger.info(
+                    "Bloodbank detached turn closed lane=%s profile=%s command_id=%s "
+                    "outcome=%s elapsed=%.1fs",
+                    record.invocation.lane,
+                    record.invocation.profile,
+                    record.invocation.invocation_id,
+                    terminal_outcome,
+                    time.monotonic() - (record.dispatched_at or time.monotonic()),
+                )
             record.completion.set_result(None)
 
     def _lane_named(self, name: str | None) -> LaneRuntime:
@@ -1642,6 +2053,15 @@ class BloodbankAdapter(BasePlatformAdapter):
         Observability never fails the turn: any error is logged and the send
         still succeeds."""
 
+        if (
+            reply_to
+            and str(reply_to) in self._model_switch_replies
+            and self._model_switch_replies[str(reply_to)] is None
+            and isinstance(content, str)
+        ):
+            # Hermes' answer to an injected `/model --once` (confirmation or error).
+            self._model_switch_replies[str(reply_to)] = content
+            return SendResult(success=True, message_id=str(uuid.uuid4()))
         try:
             self._note_final_reply(chat_id, content, reply_to, metadata)
         except Exception as exc:

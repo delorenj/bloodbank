@@ -528,6 +528,105 @@ def test_turn_timeout_failed_fact_validates_and_cannot_override_owned_fields(
     assert turn["data"]["outcome"] == "failed"
 
 
+def _schema_data(repo_root, name):
+    schema = json.loads(
+        (repo_root / "schemas/bloodbank/agent" / f"{name}.json").read_text(encoding="utf-8")
+    )
+    return schema["properties"]["data"]
+
+
+def test_detached_event_validates_and_is_not_a_terminal_fact(valid_command, repo_root):
+    import sys
+
+    jsonschema = pytest.importorskip("jsonschema")
+    from bloodbank_hermes_gateway.contract import INVOCATION_DETACHED, detached_event
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    valid_command["data"]["context"] = {"memo_id": "m-1", "reason": "voice-inbox"}
+    invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", "interactive")
+    event = detached_event(
+        invocation,
+        elapsed_seconds=300.04,
+        timeout_seconds=300.0,
+        timeout_source="lane",
+        ceiling_seconds=2700.0,
+        detached_count=1,
+        max_detached=2,
+    )
+    validate_envelope(event)
+    jsonschema.validate(event["data"], _schema_data(repo_root, "invocation.detached"))
+    assert event["type"] == INVOCATION_DETACHED == "bloodbank.agent.invocation.detached"
+    assert event["subject"] == "bloodbank.evt.agent.invocation.detached"
+    assert event["correlationid"] == valid_command["correlationid"]
+    assert event["causationid"] == started_events(invocation)[1]["id"]
+    data = event["data"]
+    assert (data["elapsed_seconds"], data["timeout_seconds"], data["ceiling_seconds"]) == (
+        300.0, 300.0, 2700.0)
+    assert (data["lane"], data["command_id"]) == ("interactive", valid_command["command_id"])
+    assert data["context"] == {"memo_id": "m-1", "reason": "voice-inbox"}
+    # random per attempt, like progress: a re-run after a restart detaches anew
+    again = detached_event(
+        invocation, elapsed_seconds=300, timeout_seconds=300, timeout_source="lane",
+        ceiling_seconds=2700, detached_count=1, max_detached=2,
+    )
+    assert again["id"] != event["id"]
+
+
+def test_a_detached_turns_terminal_facts_validate_and_keep_owned_fields(
+    valid_command, repo_root
+):
+    import sys
+
+    jsonschema = pytest.importorskip("jsonschema")
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", "interactive")
+    detached = {
+        "detached": True,
+        "detached_after_seconds": 300.0,
+        "elapsed_seconds": 512.4,
+        "invocation_id": "attacker",
+        "lane": "batch",
+    }
+    completed, turn = terminal_events(invocation, outcome="success", extra_data=detached)
+    for event in (completed, turn):
+        validate_envelope(event)
+    jsonschema.validate(completed["data"], _schema_data(repo_root, "invocation.completed"))
+    data = completed["data"]
+    assert (data["detached"], data["detached_after_seconds"], data["elapsed_seconds"]) == (
+        True, 300.0, 512.4)
+    assert data["invocation_id"] == valid_command["command_id"]
+    assert data["lane"] == "interactive"
+    assert turn["data"]["outcome"] == "completed"
+
+    failed, _turn = terminal_events(
+        invocation,
+        outcome="failure",
+        failure_code="turn_timeout",
+        failure_message="agent turn timed out after 2700s on interactive lane (detached at 300s, ceiling 2700s)",
+        failure_data={
+            "elapsed_seconds": 2700.1,
+            "timeout_seconds": 2700.0,
+            "timeout_source": "detached_ceiling",
+            "turn_stopped": True,
+        },
+        extra_data=detached,
+    )
+    validate_envelope(failed)
+    jsonschema.validate(failed["data"], _schema_data(repo_root, "invocation.failed"))
+    data = failed["data"]
+    assert (data["timeout_source"], data["elapsed_seconds"], data["detached"]) == (
+        "detached_ceiling", 2700.1, True)
+    assert data["lane"] == "interactive"
+
+    # a turn that never detached carries none of it
+    plain, _ = terminal_events(invocation, outcome="success")
+    assert not {"detached", "detached_after_seconds", "elapsed_seconds"} & set(plain["data"])
+
+
 def test_progress_event_validates_and_echoes_the_command(valid_command, repo_root):
     import sys
 

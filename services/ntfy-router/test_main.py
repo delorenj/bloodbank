@@ -194,6 +194,8 @@ class DispositionTest(unittest.TestCase):
         self.assertEqual(policy.classify("bloodbank.audio.memo.failed"), "route")
         # every interim assistant message of a turn is trace, not news
         self.assertEqual(policy.classify("bloodbank.agent.invocation.progressed"), "mute")
+        # a turn that ran past its interactive wall clock and runs on: its reply still comes, late
+        self.assertEqual(policy.classify("bloodbank.agent.invocation.detached"), "mute")
 
     def test_a_deliberate_memo_cancel_never_pages_but_a_real_failure_still_does(self):
         router, ntfy, _ = make(policy=main.Policy.from_env({}))

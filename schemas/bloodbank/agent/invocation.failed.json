@@ -32,7 +32,7 @@
             "string",
             "null"
           ],
-          "description": "Machine reason. The Hermes gateway uses processing_failed, processing_cancelled, route_policy_invalid_before_dispatch, turn_timeout (the lane's per-turn wall clock expired and the gateway stopped the turn; see elapsed_seconds, timeout_seconds, timeout_source and turn_stopped), hermes_refused (Hermes did not run the turn: it refused it with a notice a retry cannot fix, or kept refusing it until the command had no deliveries left; see refusal), hermes_turn_error (a turn ran and Hermes ended it with an error notice such as a provider rate limit instead of an answer; see refusal) and interrupted_by_shutdown (the turn was still running when Hermes' stop drain ran out and Hermes cut it off or cancelled it at adapter teardown: it did not finish and partial work may have run; see interrupted_by and elapsed_seconds)."
+          "description": "Machine reason. The Hermes gateway uses processing_failed, processing_cancelled, route_policy_invalid_before_dispatch, turn_timeout (the lane's per-turn wall clock expired and the gateway stopped the turn, or a turn that detached at that clock was still running at the lane's detached ceiling; see elapsed_seconds, timeout_seconds, timeout_source, turn_stopped and detached), hermes_refused (Hermes did not run the turn: it refused it with a notice a retry cannot fix, or kept refusing it until the command had no deliveries left; see refusal), hermes_turn_error (a turn ran and Hermes ended it with an error notice such as a provider rate limit instead of an answer; see refusal) and interrupted_by_shutdown (the turn was still running when Hermes' stop drain ran out and Hermes cut it off or cancelled it at adapter teardown: it did not finish and partial work may have run; see interrupted_by and elapsed_seconds)."
         },
         "error_message": {
           "type": [
@@ -65,14 +65,14 @@
             "number",
             "null"
           ],
-          "description": "turn_timeout and interrupted_by_shutdown only: seconds between dispatching the turn to Hermes and stopping it (turn_timeout) or Hermes cutting it off (interrupted_by_shutdown)."
+          "description": "turn_timeout and interrupted_by_shutdown: seconds between dispatching the turn to Hermes and stopping it (turn_timeout) or Hermes cutting it off (interrupted_by_shutdown). Also set on any failure of a turn that detached (seconds from dispatch to its close)."
         },
         "timeout_seconds": {
           "type": [
             "number",
             "null"
           ],
-          "description": "turn_timeout only: the wall-clock budget that expired (the lane limit, or a shorter data.deadline_seconds from the command)."
+          "description": "turn_timeout only: the wall-clock budget that expired (the lane limit, a shorter data.deadline_seconds from the command, or the lane's detached ceiling)."
         },
         "timeout_source": {
           "type": [
@@ -82,9 +82,10 @@
           "enum": [
             "lane",
             "envelope",
+            "detached_ceiling",
             null
           ],
-          "description": "turn_timeout only: where the expired budget came from: the lane's turn_timeout_seconds, or the command's data.deadline_seconds."
+          "description": "turn_timeout only: where the expired budget came from: the lane's turn_timeout_seconds, the command's data.deadline_seconds, or detached_ceiling (the turn detached at the lane limit and was still running at extra.interactive.detached_ceiling_seconds after dispatch; it already ran that long, so a consumer should not re-run the prompt)."
         },
         "turn_stopped": {
           "type": [
@@ -111,6 +112,53 @@
             null
           ],
           "description": "interrupted_by_shutdown only: gateway_restart when Hermes was restarting (reload or restart request), gateway_shutdown when it was stopping."
+        },
+        "detached": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "true when the turn outlived its lane's wall clock and ran on detached (it published bloodbank.agent.invocation.detached; for a voice memo this is a late reply). Absent on a turn that never detached."
+        },
+        "detached_after_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Detached turns only: seconds between dispatch and detaching (the lane limit)."
+        },
+        "model_override": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Only when the command carried data.model: what became of it. requested = the route asked for; applied = Hermes switched this turn to it (/model <route> --once); reason when not applied: disabled (allow_model_override false), session_busy, switch_timeout, switch_failed:<error>, rejected (Hermes refused the route; detail quotes its reply).",
+          "properties": {
+            "requested": {
+              "type": "string"
+            },
+            "applied": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "requested",
+            "applied"
+          ],
+          "additionalProperties": true
         }
       },
       "required": [

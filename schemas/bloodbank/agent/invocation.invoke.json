@@ -73,6 +73,13 @@
           "type": ["number", "null"],
           "exclusiveMinimum": 0,
           "description": "Optional wall-clock budget for the turn, in seconds. A lane that enforces a per-turn timeout (the interactive lane does, 300 s by default; the batch lane only when configured) stops the Hermes turn after min(this, the lane's turn_timeout_seconds) and publishes bloodbank.agent.invocation.failed with error_code turn_timeout. It can only shorten the lane limit, never extend it; a lane with no timeout ignores it."
+        },
+        "model": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$",
+          "description": "Optional model route for THIS turn only, e.g. automaticai/auto/fast or automaticai/personal/claude-sonnet-5.5. The Hermes gateway applies it with Hermes' own `/model <route> --once` on the command's session just before dispatch: the session runs this one turn on the route and returns to the profile's model when the turn ends (never written to config). One token: no whitespace, not starting with - or /. Best effort: an unknown or unlisted route, a busy session or a slow switch leaves the turn on the profile's model, and the terminal fact's model_override {requested, applied, reason} says what happened. Effort is not a separate field: on automaticai/auto* routes the AutomaticAI gateway picks the effort from the route's rung, and an explicit route takes the effort its providers entry sets."
         }
       },
       "required": ["target_agent_id", "prompt"],

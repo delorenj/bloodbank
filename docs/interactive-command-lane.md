@@ -638,7 +638,7 @@ A wall clock per Hermes turn, enforced by the adapter, per lane:
 
 Rejected: ending the wait without stopping the turn (frees the NATS slot but the
 agent keeps spending tokens and tool calls, and the next memo then competes with
-a ghost); a timeout only in the Holocene watcher (the watcher cannot stop a turn
+a ghost; revisited and adopted as an opt-in on 2026-10-22, see section 9); a timeout only in the Holocene watcher (the watcher cannot stop a turn
 and the other `invoke` producers would stay unbounded); lowering `ack_wait` to
 let JetStream redeliver (it would re-run the prompt, the opposite of the goal).
 
@@ -1181,3 +1181,115 @@ Facts this run settled that 8.3 had only from code: `restart_after_turn_timeout`
 Raw logs are in `/tmp/claude-retryproof/` (second attempt: `driver.sh`,
 `driver.log`, `observe.log`, `holo.log`) and `/tmp/claude-retryproof1/` (first
 attempt).
+
+## 9. Detach at the wall clock (2026-10-22)
+
+### 9.1 Why the 7.2 rejection no longer holds
+
+Car memos on 2026-10-21 (33god-pm and navi-pm, `memo:trace`):
+
+| memo | interactive | after |
+| --- | --- | --- |
+| cb4c1582 | killed at 300 s | batch re-run, answer at 532 s |
+| 2445afaa | killed at 300 s | batch re-run, answer at 384 s |
+| fa0043e6 | killed at 300 s | batch re-run, answer at 1172 s |
+| d8cbde92 | killed at 300 s | batch re-run, answer at 1989 s |
+
+All four were `interrupted_during_api_call`. Holocene escalates such a memo to
+the batch lane on the same thread, so the Hermes session continues the work and
+the tokens are spent anyway. The stop only cost the in-flight call and a
+re-think from scratch: batch first calls took 53.1, 50.8, 36.8 and 8.6 s. In
+2445afaa's case the answer was being written when `/stop` landed. The "ghost"
+of 7.2 is now bounded (`max_detached`, `detached_ceiling_seconds`) and visible
+(`agent.invocation.detached`, journal `detached_at`). A hung shell, the 7.1
+problem, is already capped by Hermes' `terminal.timeout` and, failing that, by
+the ceiling.
+
+### 9.2 Behaviour
+
+`extra.interactive.detach_on_timeout: true` (default false), `max_detached`
+(default 2), `detached_ceiling_seconds` (default 2700, must exceed
+`turn_timeout_seconds`). The gateway README, "Detach at the wall clock", has
+the full sequence. In short:
+
+- At the lane limit, while `len(lane.detached) < max_detached`, the
+  budget came from the lane, and the outcome is unclaimed, the handler task
+  moves from `lane.inflight` to `lane.detached` and wakes the fetch loop. The
+  same task goes on waiting, so the journal, ack/NAK, the conversation lock and
+  shutdown handling are the code path of 7.4 and 8, unchanged.
+- The NATS message stays un-acked; its progress acks continue. An ack at
+  detach would lose the NAK re-run that `shutdown_interrupt: retry` gives a
+  turn a reload cuts off.
+- The durable's `max_ack_pending` is `max_inflight + max_detached` (2 + 2 = 4).
+  `connect()` raises it in place when that is the only difference.
+- A `data.deadline_seconds` budget still stops the turn (the caller asked).
+- At `detached_ceiling_seconds` after dispatch a still-running turn is stopped
+  as in 7.3/7.4 with `timeout_source: detached_ceiling`.
+
+### 9.3 Contract for consumers (Holocene inbox-watcher)
+
+| signal | where | meaning |
+| --- | --- | --- |
+| `bloodbank.agent.invocation.detached` | Candystore, by `correlationid` / `data.command_id` | the turn passed the lane limit and runs on. `data`: `elapsed_seconds`, `timeout_seconds` (300), `timeout_source` (`lane`), `ceiling_seconds` (2700), `detached_count`, `max_detached`, `lane`, `context` |
+| `executions.detached_at` | gateway journal (nullable TEXT, UTC ISO, `state` stays `started`) | same, without a broker round trip. Read it with the `_has_column` pattern, as for `failure_code` |
+| `agent.invocation.completed` with `data.detached: true` | Candystore, journal `terminal_events` | the late answer is in the session: speak it as a late reply. Also `detached_after_seconds`, `elapsed_seconds` |
+| `agent.invocation.failed` with `data.detached: true` | same | the detached turn failed. `error_code turn_timeout` + `timeout_source detached_ceiling` means it ran the whole ceiling and was stopped. Do not re-run it on another lane |
+| `agent.invocation.failed` `turn_timeout`, `timeout_source lane` or `envelope`, no `detached` | same | as before: stopped at the limit (detach off, or `max_detached` reached, or an envelope deadline). Escalation still applies |
+
+A detached turn is "running" in the journal until it closes, at most 2700 s
+after dispatch. The watcher's own horizon (`MEMO_QUEUE_MAX_WAIT_S`, 3600 s)
+already covers it.
+
+### 9.4 Tests
+
+`services/hermes-gateway/tests/test_adapter.py`, "Detach at the interactive
+wall clock" (`make_detach_adapter`):
+
+- strict config, and `max_ack_pending` = slots + detached;
+- the consumer contract is 4, and connect raises an old durable from 2 to 4 in
+  place while refusing any other mismatch;
+- a detached turn runs on (un-acked, progress acks, `started` +
+  `detached_at`, one detached fact) and closes completed exactly once with
+  `detached: true`;
+- the freed slot runs a third memo while two detached turns run on;
+- a turn still running at the ceiling is stopped with `detached_ceiling`;
+- once `max_detached` is reached, the old stop path is used;
+- an envelope deadline still stops the turn;
+- a reload cut-off of a detached turn NAKs with no terminal fact;
+- a late failure closes failed once with `detached`;
+- disconnect settles detached tasks;
+- a journal or publish error at detach never fails the turn;
+- the journal column migrates in place.
+
+`test_contract.py` validates the detached fact and the detached
+completed/failed facts against the schemas.
+
+## 10. Per-turn model: `data.model` (2026-10-22)
+
+The car's turns are slow because of the model, not because of the effort
+setting. Replaying cb4c1582's heavy step (20.7k-token prompt) took 51.4 s on
+glm-5.3 @ max (112.5 s @ high), 11-27 s on kimi-2.8, 7.2 s on sol-6.1 and 5.1 s
+on claude-sonnet-5.5. The car's tokens land on GLM-5.3 @ max whenever the
+frontier pools are exhausted. So a command may now name the route for its one
+turn.
+
+- `data.model` is optional and identical on both command schemas. It is one
+  token (`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$`); anything else is poison.
+- The adapter injects an internal `/model <route> --once` for the command's
+  session before the prompt and waits up to 10 s for it to finish. This is the
+  same supported path as 7.3's `/stop`. Hermes keeps the override in memory for
+  the next turn only and restores it on every exit path. Nothing is written to
+  config.yaml or the session store.
+- Best effort: the outcome is `data.model_override {requested, applied, reason,
+  detail}` on the terminal fact. A refused route, a busy session or a slow
+  switch runs the turn on the profile's model.
+- The route must be listed in `providers.<provider>.models`, and the caller's
+  AutomaticAI token must be scoped to it. As of 2026-10-21 the car tokens
+  (`hermes-33god-pm`, `hermes`) allow GLM, Kimi, Sol and free routes only. Adding
+  claude-sonnet-5.5 to their scope is an operator decision
+  (`client-portal/gateway ops/gateway-tokens.py`).
+- No `data.reasoning_effort`. Hermes' effort setting never reaches the
+  AutomaticAI custom provider (`agent/reasoning_params.py`
+  `_supports_reasoning_extra_body`), `/model --once` ignores `--reasoning`, and
+  `automaticai/auto*` strips every effort spelling. Per-turn effort is a route
+  choice.

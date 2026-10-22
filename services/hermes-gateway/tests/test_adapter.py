@@ -3160,3 +3160,696 @@ async def test_a_pause_that_lasts_is_logged_again(tmp_path, caplog):
     messages = [r.getMessage() for r in caplog.records]
     assert sum("stopped fetching" in m for m in messages) == 1
     assert sum("still not fetching" in m and "maintenance" in m for m in messages) == 1
+
+
+# --- Detach at the interactive wall clock ------------------------------------
+#
+# extra.interactive.detach_on_timeout: a turn that outlives the lane limit gives
+# its slot back instead of being stopped. It keeps running (message un-acked,
+# progress acks, journal row 'started' + detached_at, conversation lock held),
+# publishes agent.invocation.detached once, and closes with exactly one
+# completed/failed fact carrying detached: true. Only a turn still running at
+# detached_ceiling seconds after dispatch is stopped (turn_timeout,
+# timeout_source detached_ceiling).
+
+
+def make_detach_adapter(tmp_path, *, timeout=0.15, ceiling=5.0, max_detached=2, max_inflight=2):
+    adapter = make_lane_adapter(tmp_path, max_inflight=max_inflight)
+    adapter.config.extra["interactive"].update(
+        detach_on_timeout=True,
+        max_detached=max_detached,
+        turn_timeout_seconds=timeout,
+        detached_ceiling_seconds=ceiling,
+    )
+    adapter = BloodbankAdapter(adapter.config)
+    adapter._js = FakeJetStream()
+    for item in adapter.lanes:
+        item.ack_progress = 0.01
+    return adapter
+
+
+def detached_facts(adapter, command):
+    return [
+        event
+        for event in adapter._js.events
+        if event["data"]["command_id"] == command["command_id"]
+        and event["type"] == "bloodbank.agent.invocation.detached"
+    ]
+
+
+def completed_fact(adapter, command):
+    return next(
+        event
+        for event in adapter._js.events
+        if event["data"]["command_id"] == command["command_id"]
+        and event["type"] == "bloodbank.agent.invocation.completed"
+    )
+
+
+def test_detach_is_off_by_default_and_its_configuration_is_strict(tmp_path):
+    interactive = lane(make_lane_adapter(tmp_path), "interactive")
+    assert interactive.detach_on_timeout is False
+    assert (interactive.max_detached, interactive.detached_ceiling) == (0, None)
+    assert interactive.max_ack_pending == interactive.max_inflight == 2
+
+    adapter = make_adapter(tmp_path)
+    adapter.config.extra["interactive"] = {"enabled": True, "detach_on_timeout": True}
+    built = lane(BloodbankAdapter(adapter.config), "interactive")
+    assert (built.turn_timeout, built.max_detached, built.detached_ceiling) == (300.0, 2, 2700.0)
+    # the durable must hold the slots plus the detached turns' un-acked messages
+    assert built.max_ack_pending == 4
+
+    for bad in ({"detach_on_timeout": "yes"}, {"detach_on_timeout": 1}):
+        adapter.config.extra["interactive"] = {"enabled": True, **bad}
+        with pytest.raises(ValueError, match="detach_on_timeout"):
+            BloodbankAdapter(adapter.config)
+    for bad in (0, 65, "many"):
+        adapter.config.extra["interactive"] = {
+            "enabled": True, "detach_on_timeout": True, "max_detached": bad,
+        }
+        with pytest.raises(ValueError, match="max_detached"):
+            BloodbankAdapter(adapter.config)
+    for bad in (0, -5, True, "2700", float("nan"), 86_401):
+        adapter.config.extra["interactive"] = {
+            "enabled": True, "detach_on_timeout": True, "detached_ceiling_seconds": bad,
+        }
+        with pytest.raises(ValueError, match="detached_ceiling_seconds"):
+            BloodbankAdapter(adapter.config)
+    # a ceiling at or under the lane limit would detach nothing
+    adapter.config.extra["interactive"] = {
+        "enabled": True, "detach_on_timeout": True,
+        "turn_timeout_seconds": 300, "detached_ceiling_seconds": 300,
+    }
+    with pytest.raises(ValueError, match="greater than turn_timeout_seconds"):
+        BloodbankAdapter(adapter.config)
+
+
+def test_the_consumer_contract_counts_detached_turns(tmp_path):
+    adapter = make_detach_adapter(tmp_path)
+    interactive = lane(adapter, "interactive")
+    durable = SimpleNamespace(
+        filter_subject="bloodbank.cmd.agent.invocation.invoke",
+        ack_policy=SimpleNamespace(value="explicit"),
+        max_ack_pending=4,
+        max_deliver=interactive.max_deliver,
+    )
+    adapter._assert_consumer_contract(durable, interactive)
+    assert adapter._needs_ack_pending_update(durable, interactive) is False
+
+    old = SimpleNamespace(**{**vars(durable), "max_ack_pending": 2})
+    with pytest.raises(RuntimeError, match="does not match"):
+        adapter._assert_consumer_contract(old, interactive)
+    # only max_ack_pending differs: updated in place on connect
+    assert adapter._needs_ack_pending_update(old, interactive) is True
+    # anything else wrong is still refused, never "fixed"
+    wrong = SimpleNamespace(**{**vars(old), "filter_subject": "bloodbank.cmd.other"})
+    assert adapter._needs_ack_pending_update(wrong, interactive) is False
+    wrong = SimpleNamespace(**{**vars(old), "max_deliver": 99})
+    assert adapter._needs_ack_pending_update(wrong, interactive) is False
+
+
+@pytest.mark.asyncio
+async def test_connect_raises_an_existing_durables_max_ack_pending_for_detach(
+    tmp_path, monkeypatch
+):
+    adapter = make_detach_adapter(tmp_path)
+    durables = {
+        "bloodbank-hermes-gateway": SimpleNamespace(
+            filter_subject="bloodbank.cmd.agent.invocation.start",
+            ack_policy=SimpleNamespace(value="explicit"),
+            max_ack_pending=2,
+            max_deliver=5,
+        ),
+        "bloodbank-hermes-gateway-interactive": SimpleNamespace(
+            filter_subject="bloodbank.cmd.agent.invocation.invoke",
+            ack_policy=SimpleNamespace(value="explicit"),
+            max_ack_pending=2,  # bound before detach existed
+            max_deliver=3,
+        ),
+    }
+    updates = []
+    never = asyncio.Event()
+
+    class Subscription:
+        async def fetch(self, *_args, **_kwargs):
+            await never.wait()
+
+    class JetStream:
+        async def pull_subscribe(self, subject, **kwargs):
+            # an existing durable is bound as it is: pull_subscribe never edits it
+            return Subscription()
+
+        async def consumer_info(self, _stream, durable, timeout=None):
+            return SimpleNamespace(config=durables[durable])
+
+        async def add_consumer(self, stream, config=None, timeout=None):
+            updates.append((stream, config))
+            durables[config.durable_name].max_ack_pending = config.max_ack_pending
+            return SimpleNamespace(config=config)
+
+    class Connection:
+        def jetstream(self):
+            return JetStream()
+
+        async def drain(self):
+            return None
+
+    async def connect(**_kwargs):
+        return Connection()
+
+    nats_module = types.ModuleType("nats")
+    nats_module.__path__ = []
+    nats_module.connect = connect
+    nats_js = types.ModuleType("nats.js")
+    nats_js.__path__ = []
+    nats_api = types.ModuleType("nats.js.api")
+    nats_api.AckPolicy = SimpleNamespace(EXPLICIT="explicit")
+    nats_api.DeliverPolicy = SimpleNamespace(ALL="all")
+    nats_api.ConsumerConfig = lambda **kwargs: SimpleNamespace(**kwargs)
+    monkeypatch.setitem(sys.modules, "nats", nats_module)
+    monkeypatch.setitem(sys.modules, "nats.js", nats_js)
+    monkeypatch.setitem(sys.modules, "nats.js.api", nats_api)
+
+    assert await adapter.connect() is True
+    assert [(stream, config.durable_name, config.max_ack_pending) for stream, config in updates] == [
+        ("BLOODBANK_COMMANDS", "bloodbank-hermes-gateway-interactive", 4)
+    ]
+    assert durables["bloodbank-hermes-gateway"].max_ack_pending == 2  # batch untouched
+    await adapter.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_a_detached_turn_runs_on_and_closes_completed_once_as_a_late_reply(
+    tmp_path, valid_command
+):
+    adapter = make_detach_adapter(tmp_path, timeout=0.1)
+    interactive = lane(adapter, "interactive")
+    release = asyncio.Event()
+
+    async def handler(_event):
+        await release.wait()
+        return "The answer, late."
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-long")
+    message = JsMessage(memo)
+    task = asyncio.create_task(adapter._handle_broker_message(message, interactive))
+    for _ in range(200):
+        if detached_facts(adapter, memo):
+            break
+        await asyncio.sleep(0.01)
+
+    # past the lane limit: detached, not stopped, nothing terminal, nothing acked
+    assert adapter.stop_events == []
+    assert terminal_types(adapter, memo) == []
+    assert (message.acked, message.nacked, message.termed) == (0, 0, 0)
+    assert task in interactive.detached  # the running handler holds no slot
+    record = adapter._records[memo["command_id"]]
+    assert record.detached_at is not None and not record.finalizing
+    row = adapter.execution_state.get(memo["command_id"])
+    assert row.state == "started" and row.detached_at is not None
+    [fact] = detached_facts(adapter, memo)
+    assert fact["subject"] == "bloodbank.evt.agent.invocation.detached"
+    assert fact["data"]["lane"] == "interactive"
+    assert fact["data"]["timeout_seconds"] == 0.1
+    assert fact["data"]["timeout_source"] == "lane"
+    assert fact["data"]["ceiling_seconds"] == 5.0
+    assert fact["data"]["elapsed_seconds"] >= 0.1
+    assert fact["data"]["context"] == memo["data"]["context"]
+    # progress acks keep the un-acked message alive while it runs on
+    progress_before = message.progress
+    await asyncio.sleep(0.05)
+    assert message.progress > progress_before
+
+    release.set()
+    await asyncio.wait_for(task, 2)
+
+    assert (message.acked, message.nacked, message.termed) == (1, 0, 0)
+    assert terminal_types(adapter, memo) == ["bloodbank.agent.invocation.completed"]
+    data = completed_fact(adapter, memo)["data"]
+    assert data["detached"] is True
+    assert data["detached_after_seconds"] >= 0.1
+    assert data["elapsed_seconds"] >= data["detached_after_seconds"]
+    assert data["lane"] == "interactive"
+    row = adapter.execution_state.get(memo["command_id"])
+    assert (row.state, row.outcome, row.failure_code) == ("completed", "success", None)
+    assert row.detached_at is not None
+    assert memo["command_id"] not in adapter._records
+    assert interactive.detached == set()
+    assert adapter._conversation_locks == {}
+
+
+@pytest.mark.asyncio
+async def test_a_turn_inside_its_budget_never_detaches(tmp_path, valid_command):
+    adapter = make_detach_adapter(tmp_path, timeout=5, ceiling=10)
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0.02, result="done"))
+    memo = memo_command(valid_command, "memo-quick")
+    message = FakeMessage(memo)
+    await adapter._handle_broker_message(message, lane(adapter, "interactive"))
+    assert message.acked == 1 and detached_facts(adapter, memo) == []
+    data = completed_fact(adapter, memo)["data"]
+    assert "detached" not in data and "elapsed_seconds" not in data
+    assert adapter.execution_state.get(memo["command_id"]).detached_at is None
+
+
+@pytest.mark.asyncio
+async def test_detaching_frees_the_slot_so_the_next_memo_runs_while_both_run_on(
+    tmp_path, valid_command
+):
+    adapter = make_detach_adapter(tmp_path, timeout=0.2, max_inflight=2)
+    interactive = lane(adapter, "interactive")
+    interactive.subscription = QueueSubscription()
+    adapter.fetch_timeout_seconds = 0.05
+    release = asyncio.Event()
+    ran = []
+
+    async def handler(event):
+        ran.append(event.source.chat_id)
+        if event.source.chat_id.startswith("long-"):
+            await release.wait()
+        return "done"
+
+    adapter.set_message_handler(handler)
+    long = [memo_command(valid_command, f"long-{i}") for i in range(2)]
+    long_messages = [FakeMessage(command) for command in long]
+    for message in long_messages:
+        interactive.subscription.queue.put_nowait(message)
+    third = memo_command(valid_command, "memo-third")
+    third_message = FakeMessage(third)
+
+    adapter._running = True
+    loop = asyncio.create_task(adapter._consume_loop(interactive))
+    try:
+        for _ in range(100):
+            if len(interactive.inflight) == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert len(interactive.inflight) == 2
+        interactive.subscription.queue.put_nowait(third_message)
+        await asyncio.sleep(0.1)
+        assert "memo-third" not in ran  # both slots held, inside the limit
+
+        for _ in range(300):
+            if third_message.acked:
+                break
+            await asyncio.sleep(0.02)
+        assert third_message.acked == 1, "the slot a detached turn gave back never ran the third memo"
+        # both long turns run on, detached, un-acked, never stopped
+        assert len(interactive.detached) == 2
+        assert all(m.acked == 0 and m.nacked == 0 for m in long_messages)
+        assert adapter.stop_events == []
+        assert all(terminal_types(adapter, c) == [] for c in long)
+
+        release.set()
+        for _ in range(100):
+            if all(m.acked for m in long_messages):
+                break
+            await asyncio.sleep(0.02)
+        assert all(m.acked == 1 and m.nacked == 0 for m in long_messages)
+        for command in long:
+            assert terminal_types(adapter, command) == ["bloodbank.agent.invocation.completed"]
+            assert completed_fact(adapter, command)["data"]["detached"] is True
+            assert len(detached_facts(adapter, command)) == 1
+        assert "detached" not in completed_fact(adapter, third)["data"]
+        assert interactive.detached == set()
+    finally:
+        adapter._running = False
+        release.set()
+        loop.cancel()
+        await asyncio.gather(loop, return_exceptions=True)
+        await asyncio.gather(*interactive.inflight, *interactive.detached, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_a_detached_turn_still_running_at_the_ceiling_is_stopped(
+    tmp_path, valid_command
+):
+    adapter = make_detach_adapter(tmp_path, timeout=0.1, ceiling=0.3)
+    interactive = lane(adapter, "interactive")
+    cancelled = asyncio.Event()
+
+    async def handler(_event):
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-forever")
+    message = FakeMessage(memo)
+    await asyncio.wait_for(adapter._handle_broker_message(message, interactive), 5)
+
+    assert cancelled.is_set()
+    assert [e.text for e in adapter.stop_events] == ["/stop"]
+    assert (message.acked, message.nacked) == (1, 0)
+    assert len(detached_facts(adapter, memo)) == 1
+    assert terminal_types(adapter, memo) == ["bloodbank.agent.invocation.failed"]
+    data = failed_fact(adapter, memo)["data"]
+    assert data["error_code"] == "turn_timeout"
+    assert data["timeout_source"] == "detached_ceiling"
+    assert data["timeout_seconds"] == 0.3
+    assert data["elapsed_seconds"] >= 0.3
+    assert data["detached"] is True and data["detached_after_seconds"] >= 0.1
+    assert data["turn_stopped"] is True
+    assert "detached at" in data["error_message"] and "ceiling 0.3s" in data["error_message"]
+    row = adapter.execution_state.get(memo["command_id"])
+    assert (row.outcome, row.failure_code) == ("failure", "turn_timeout")
+    assert interactive.detached == set()
+
+
+@pytest.mark.asyncio
+async def test_with_max_detached_reached_the_turn_is_stopped_as_before(
+    tmp_path, valid_command
+):
+    adapter = make_detach_adapter(tmp_path, timeout=0.1, max_detached=1)
+    interactive = lane(adapter, "interactive")
+    release = asyncio.Event()
+
+    async def handler(event):
+        if event.source.chat_id == "first":
+            await release.wait()
+            return "done"
+        await asyncio.sleep(30)
+
+    adapter.set_message_handler(handler)
+    first = memo_command(valid_command, "first")
+    first_message = FakeMessage(first)
+    first_task = asyncio.create_task(adapter._handle_broker_message(first_message, interactive))
+    for _ in range(200):
+        if detached_facts(adapter, first):
+            break
+        await asyncio.sleep(0.01)
+    assert len(interactive.detached) == 1
+
+    second = memo_command(valid_command, "second")
+    second_message = FakeMessage(second)
+    await asyncio.wait_for(adapter._handle_broker_message(second_message, interactive), 5)
+    assert detached_facts(adapter, second) == []
+    assert failed_fact(adapter, second)["data"]["timeout_source"] == "lane"
+    assert "detached" not in failed_fact(adapter, second)["data"]
+    assert second_message.acked == 1
+
+    release.set()
+    await asyncio.wait_for(first_task, 2)
+    assert terminal_types(adapter, first) == ["bloodbank.agent.invocation.completed"]
+
+
+@pytest.mark.asyncio
+async def test_an_envelope_deadline_still_stops_the_turn(tmp_path, valid_command):
+    """data.deadline_seconds is the caller asking for a stop: it never detaches."""
+
+    adapter = make_detach_adapter(tmp_path, timeout=5, ceiling=10)
+
+    async def handler(_event):
+        await asyncio.sleep(30)
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-deadline", deadline_seconds=0.1)
+    message = FakeMessage(memo)
+    await asyncio.wait_for(adapter._handle_broker_message(message, lane(adapter, "interactive")), 5)
+    assert detached_facts(adapter, memo) == []
+    data = failed_fact(adapter, memo)["data"]
+    assert (data["timeout_source"], data["timeout_seconds"]) == ("envelope", 0.1)
+    assert message.acked == 1
+
+
+@pytest.mark.asyncio
+async def test_a_detached_turn_a_reload_cuts_off_is_nakked_for_a_rerun(
+    tmp_path, valid_command
+):
+    adapter = make_detach_adapter(tmp_path, timeout=0.1)
+    interactive = lane(adapter, "interactive")
+    interactive.shutdown_interrupt = "retry"
+    runner = stopping_runner(adapter)
+    memo = memo_command(valid_command, "memo-reload")
+    message, task, release, _calls = await _running_turn(adapter, memo, interactive)
+    for _ in range(200):
+        if detached_facts(adapter, memo):
+            break
+        await asyncio.sleep(0.01)
+    assert interactive.detached
+
+    runner.begin_stop()
+    runner._running_agents[_session_of(adapter, memo)] = object()
+    runner._interrupt_running_agents("Gateway restarting")
+    release.set()
+    await asyncio.wait_for(task, 2)
+
+    # no terminal fact, journal still dispatchable: the next process re-runs it
+    assert (message.acked, message.nacked) == (0, 1)
+    assert terminal_types(adapter, memo) == []
+    row = adapter.execution_state.get(memo["command_id"])
+    assert row.state == "started" and row.detached_at is not None
+    assert interactive.detached == set()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_turn_after_detach_closes_failed_once_with_detached(
+    tmp_path, valid_command
+):
+    adapter = make_detach_adapter(tmp_path, timeout=0.1)
+    interactive = lane(adapter, "interactive")
+    release = asyncio.Event()
+
+    async def handler(_event):
+        await release.wait()
+        raise RuntimeError("tool exploded")
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-fails-late")
+    message = FakeMessage(memo)
+    task = asyncio.create_task(adapter._handle_broker_message(message, interactive))
+    for _ in range(200):
+        if detached_facts(adapter, memo):
+            break
+        await asyncio.sleep(0.01)
+    release.set()
+    await asyncio.wait_for(task, 2)
+    assert terminal_types(adapter, memo) == ["bloodbank.agent.invocation.failed"]
+    data = failed_fact(adapter, memo)["data"]
+    assert data["error_code"] == "processing_failed" and data["detached"] is True
+    assert message.acked == 1
+
+
+@pytest.mark.asyncio
+async def test_disconnect_settles_detached_turns_too(tmp_path, valid_command):
+    adapter = make_detach_adapter(tmp_path, timeout=0.1)
+    interactive = lane(adapter, "interactive")
+
+    async def handler(_event):
+        await asyncio.sleep(30)
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-teardown")
+    message = FakeMessage(memo)
+    task = asyncio.create_task(adapter._handle_broker_message(message, interactive))
+    interactive.inflight.add(task)
+    for _ in range(200):
+        if detached_facts(adapter, memo):
+            break
+        await asyncio.sleep(0.01)
+    assert task in interactive.detached and task not in interactive.inflight
+
+    await asyncio.wait_for(adapter.disconnect(), 10)
+    assert task.done()
+    # settled one way or the other (cancelled turn closes, or the handler NAKs); never left hanging
+    assert message.acked + message.nacked == 1
+    assert interactive.detached == set()
+
+
+@pytest.mark.asyncio
+async def test_a_detached_journal_or_publish_failure_never_fails_the_turn(
+    tmp_path, valid_command, monkeypatch
+):
+    adapter = make_detach_adapter(tmp_path, timeout=0.1)
+    interactive = lane(adapter, "interactive")
+    release = asyncio.Event()
+
+    def broken_mark_detached(**_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(adapter.execution_state, "mark_detached", broken_mark_detached)
+    real_publish = adapter._js.publish
+
+    async def flaky(subject, payload, **kwargs):
+        if subject.endswith("invocation.detached"):
+            raise RuntimeError("broker unavailable")
+        return await real_publish(subject, payload, **kwargs)
+
+    adapter._js.publish = flaky
+
+    async def handler(_event):
+        await release.wait()
+        return "done"
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-blind")
+    message = FakeMessage(memo)
+    task = asyncio.create_task(adapter._handle_broker_message(message, interactive))
+    for _ in range(200):
+        if adapter._records.get(memo["command_id"]) and adapter._records[memo["command_id"]].detached_at:
+            break
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)
+    release.set()
+    await asyncio.wait_for(task, 2)
+    assert message.acked == 1
+    assert completed_fact(adapter, memo)["data"]["detached"] is True
+
+
+def test_journal_gains_a_nullable_detached_at_column_without_losing_rows(tmp_path):
+    path = tmp_path / "state.sqlite3"
+    ExecutionStateStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE executions DROP COLUMN detached_at")
+        db.execute(
+            """INSERT INTO executions(command_id, envelope_digest, profile, state,
+                   started_events, created_at, updated_at)
+               VALUES ('old', 'digest', 'research', 'started', '[]', 'now', 'now')"""
+        )
+    store = ExecutionStateStore(path)
+    row = store.get("old")
+    assert row.state == "started" and row.detached_at is None
+    detached = store.mark_detached(command_id="old", digest="digest")
+    assert detached.detached_at is not None and detached.state == "started"
+    # idempotent: the first stamp is kept
+    assert store.mark_detached(command_id="old", digest="digest").detached_at == detached.detached_at
+    with pytest.raises(RuntimeError, match="different command envelope"):
+        store.mark_detached(command_id="old", digest="other")
+
+
+# --- data.model: one turn on another model route -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_data_model_switches_only_that_turn_through_model_once(tmp_path, valid_command):
+    adapter = make_timeout_adapter(tmp_path, timeout=5)
+    adapter.model_switch_delay = 0.05
+    seen = []
+
+    async def handler(event):
+        seen.append((event.text, getattr(event, "turn_model", None)))
+        return "done"
+
+    adapter.set_message_handler(handler)
+    memo = memo_command(valid_command, "memo-fast-model", model="automaticai/auto/fast")
+    message = FakeMessage(memo)
+    await adapter._handle_broker_message(message, lane(adapter, "interactive"))
+
+    [switch] = adapter.model_events
+    assert switch.text == "/model automaticai/auto/fast --once"
+    assert switch.internal is True
+    assert switch.message_id == f"{memo['command_id']}:turn-model"
+    assert switch.source.chat_id == "memo-fast-model"
+    # the prompt ran after the switch finished, on the switched model, once
+    assert seen == [(memo["data"]["prompt"], "automaticai/auto/fast")]
+    assert message.acked == 1
+    data = completed_fact(adapter, memo)["data"]
+    assert data["model_override"] == {"requested": "automaticai/auto/fast", "applied": True}
+    # the /model confirmation is not mistaken for the turn's answer or progress
+    assert not any(e["type"].endswith("progressed") for e in adapter._js.events)
+
+    # the next turn on the same thread, without data.model, is back on the profile's model
+    again = memo_command(valid_command, "memo-fast-model")
+    await adapter._handle_broker_message(FakeMessage(again), lane(adapter, "interactive"))
+    assert seen[-1] == (again["data"]["prompt"], None)
+    assert len(adapter.model_events) == 1
+    assert "model_override" not in completed_fact(adapter, again)["data"]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_model_route_leaves_the_turn_on_the_profile_model(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    adapter.model_reject = True
+    seen = []
+
+    async def handler(event):
+        seen.append(getattr(event, "turn_model", None))
+        return "done"
+
+    adapter.set_message_handler(handler)
+    command = json.loads(json.dumps(valid_command))
+    command["data"]["model"] = "automaticai/nope"
+    message = FakeMessage(command)
+    await adapter._handle_broker_message(message)
+    assert seen == [None] and message.acked == 1
+    override = completed_fact(adapter, command)["data"]["model_override"]
+    assert override["requested"] == "automaticai/nope"
+    assert override["applied"] is False and override["reason"] == "rejected"
+    assert "not available" in override["detail"]
+
+
+@pytest.mark.asyncio
+async def test_model_override_can_be_switched_off(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    adapter.config.extra["allow_model_override"] = False
+    adapter = BloodbankAdapter(adapter.config)
+    adapter._js = FakeJetStream()
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result="done"))
+    command = json.loads(json.dumps(valid_command))
+    command["data"]["model"] = "automaticai/auto/fast"
+    await adapter._handle_broker_message(FakeMessage(command))
+    assert adapter.model_events == []
+    assert completed_fact(adapter, command)["data"]["model_override"] == {
+        "requested": "automaticai/auto/fast", "applied": False, "reason": "disabled",
+    }
+    adapter.config.extra["allow_model_override"] = "yes"
+    with pytest.raises(ValueError, match="allow_model_override"):
+        BloodbankAdapter(adapter.config)
+
+
+@pytest.mark.asyncio
+async def test_a_slow_model_switch_is_bounded_and_the_turn_still_runs(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    adapter.model_switch_budget_seconds = 0.05
+    adapter.model_switch_delay = 0.5
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result="done"))
+    command = json.loads(json.dumps(valid_command))
+    command["data"]["model"] = "automaticai/auto/fast"
+    message = FakeMessage(command)
+    try:
+        await asyncio.wait_for(adapter._handle_broker_message(message), 3)
+        override = completed_fact(adapter, command)["data"]["model_override"]
+        assert override["applied"] is False and override["reason"] == "switch_timeout"
+        # the busy session queued nothing as text: the turn ran (here the fake runs it alongside)
+        assert message.acked == 1
+    finally:
+        await adapter.cancel_background_tasks()
+
+
+@pytest.mark.asyncio
+async def test_the_runner_view_decides_whether_the_model_was_applied(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    overrides = {}
+    runner = make_runner()
+    runner._session_key_for_source = lambda source: f"agent:{source.profile}:{source.chat_id}"
+    runner._session_model_override = lambda key: overrides.get(key)
+    adapter.gateway_runner = runner
+    adapter.set_message_handler(lambda _event: asyncio.sleep(0, result="done"))
+
+    command = json.loads(json.dumps(valid_command))
+    command["data"]["model"] = "automaticai/personal/claude-sonnet-5.5"
+    # Hermes confirmed, but its session holds no override: not applied
+    await adapter._handle_broker_message(FakeMessage(command))
+    assert completed_fact(adapter, command)["data"]["model_override"]["applied"] is False
+
+    overrides["agent:bloodbank-pm:thread-1"] = {"model": "personal/claude-sonnet-5.5"}
+    second = json.loads(json.dumps(command))
+    second["command_id"] = str(uuid.uuid4())
+    await adapter._handle_broker_message(FakeMessage(second))
+    assert completed_fact(adapter, second)["data"]["model_override"]["applied"] is True
+
+
+def test_data_model_is_validated_at_the_boundary(valid_command):
+    from bloodbank_hermes_gateway.contract import CommandInvalid, INTERACTIVE, decode_command
+
+    command = as_interactive(valid_command)
+    for good in (None, "automaticai/auto/fast", "automaticai/personal/claude-sonnet-5.5", "kimi-2.8"):
+        command["data"]["model"] = good
+        envelope = decode_command(json.dumps(command).encode(), lane=INTERACTIVE)
+        assert Invocation.from_envelope(envelope, "bloodbank-pm", "interactive").model == good
+    for bad in ("", " auto", "auto --global", "--global", "/model x", "a" * 201, 5, True, [], {}):
+        command["data"]["model"] = bad
+        with pytest.raises(CommandInvalid, match="data.model"):
+            decode_command(json.dumps(command).encode(), lane=INTERACTIVE)

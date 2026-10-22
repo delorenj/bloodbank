@@ -109,6 +109,8 @@ EVENT_ACTIONS = frozenset({
     "voiced",
     # audio.memo.mirrored: the reply's Earshot phone copy landed after the replied fact (a late background retry)
     "mirrored",
+    # agent.invocation.detached: a running turn outlived its lane's wall clock and gave its slot back (it runs on)
+    "detached",
 })
 
 COMMAND_ACTIONS = frozenset({
