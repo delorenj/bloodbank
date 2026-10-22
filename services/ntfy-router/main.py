@@ -110,11 +110,14 @@ SLOP_TOPIC = "slop"
 # audio.memo.voiced (each sentence-chunk of a reply, uploaded before the full file) and audio.memo.mirrored
 # (the phone copy landed late, after replied) are the same: muted. So is agent.invocation.detached (a
 # turn ran past its interactive wall clock and runs on; its reply still comes, late).
+# audio.memo.routed (one per fast in-car conversation decision) and audio.memo.delegated (one per
+# confirmed brief) are the fast conversation layer's trace, several per drive: muted.
 DEFAULT_MUTE = ("bloodbank.agent.hook.updated,bloodbank.system.hook.updated,"
                 "bloodbank.audio.memo.uploaded,bloodbank.audio.memo.received,bloodbank.audio.memo.transcribed,"
                 "bloodbank.audio.memo.dispatched,bloodbank.audio.memo.replied,bloodbank.audio.memo.played,"
                 "bloodbank.agent.invocation.progressed,bloodbank.audio.memo.narrated,bloodbank.audio.memo.notified,"
-                "bloodbank.audio.memo.voiced,bloodbank.audio.memo.mirrored,bloodbank.agent.invocation.detached")
+                "bloodbank.audio.memo.voiced,bloodbank.audio.memo.mirrored,bloodbank.agent.invocation.detached,"
+                "bloodbank.audio.memo.routed,bloodbank.audio.memo.delegated")
 DEFAULT_DIGEST = "bloodbank.agent.tool.*"
 # Deploys, slop alerts, telephony, carrier texts and audio: rare, and wanted the moment they happen.
 DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed"

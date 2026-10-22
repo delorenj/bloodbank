@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/audio/memo.delegated.json",
+  "title": "Audio Memo Delegated Event",
+  "description": "A driver-confirmed brief from the fast in-car conversation layer was dispatched to an agent (one event per confirmed brief). Part of the voice memo journey: correlationid = data.memo_id and ordering_key 'memo:<memo_id>'. See bloodbank/docs/event-naming.md.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.audio.memo.delegated"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "audio"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.audio.memo.delegated.",
+      "properties": {
+        "memo_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Journey id: uuid5(NAMESPACE_URL, 's3://holocene-auto/' + s3_key)."
+        },
+        "s3_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Object key of the voice memo: inbox/<agent>/<yyyy>/<mm>/<dd>/<file>."
+        },
+        "target_agent_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Agent the memo was addressed to (the inbox/<agent>/ prefix)."
+        },
+        "conv_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Id of the fast in-car conversation session this memo belongs to."
+        },
+        "tile_agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The agent whose tile the driver was talking to; the brief belongs to this conversation."
+        },
+        "brief_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "uuid5 id of the confirmed brief."
+        },
+        "brief_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the brief text exactly as dispatched."
+        },
+        "command_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "uuid5(brief_id): command_id of the agent invocation that carries the brief."
+        },
+        "lane": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Hermes gateway lane the brief was dispatched on (batch by default)."
+        },
+        "perm": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Permission level of the dispatched brief, clamped by what the driver said."
+        }
+      },
+      "required": [
+        "memo_id",
+        "s3_key",
+        "target_agent_id",
+        "tile_agent_id",
+        "conv_id",
+        "brief_id",
+        "brief_sha256",
+        "command_id",
+        "lane",
+        "perm"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}
