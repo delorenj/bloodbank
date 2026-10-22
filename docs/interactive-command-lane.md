@@ -1327,7 +1327,8 @@ covers it.
   after the car had heard "still on it". A detached turn now follows
   `interactive.detached_shutdown_interrupt`, `fail` by default: closed as
   `interrupted_by_shutdown` with `detached: true`, acked once. The watcher
-  says the turn was cut off and does not escalate it. `retry` keeps the old
+  fails the memo with that error (memo:trace shows it) and does not escalate
+  it; `memo:retry` sends it again if the operator wants. `retry` keeps the old
   behaviour.
 - **`detached_at` is per attempt.** A redelivered `started` row (after a NAK
   or an unclean exit) goes through `mark_started` again, which clears the last
