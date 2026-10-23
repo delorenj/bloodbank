@@ -256,6 +256,29 @@ class SweepTest(unittest.TestCase):
         self.assertEqual([e['id'] for _s, e, _h in self.js.calls], [*self.ids[1:], self.ids[0]])
         self.assertEqual(self.archive.health()['unpublished'], 0)
 
+    def test_a_pending_read_failure_does_not_kill_the_next_sweep(self):
+        from unittest.mock import patch
+
+        real = self.archive.pending
+        calls = 0
+
+        def flaky():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError('archive temporarily unavailable')
+            return real()
+
+        async def exercise():
+            with patch.object(self.archive, 'pending', side_effect=flaky), patch.object(b.asyncio, 'sleep') as backoff:
+                await self.bridge.sweep()
+                backoff.assert_awaited_once_with(15)
+                await self.bridge.sweep()
+
+        asyncio.run(exercise())
+        self.assertEqual(self.archive.health()['unpublished'], 0)
+        self.assertEqual(calls, 2)
+
     def test_the_sweep_waits_while_the_broker_is_down(self):
         self.connected = False
         asyncio.run(self.bridge.sweep())

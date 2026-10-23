@@ -325,7 +325,13 @@ class Bridge:
         """
         if not self.broker_connected():
             return
-        for event in self.archive.pending():
+        try:
+            pending = list(self.archive.pending())
+        except Exception as exc:
+            log(status='archive_pending_failed', code=type(exc).__name__)
+            await asyncio.sleep(15)
+            return
+        for event in pending:
             try:
                 await self.publish(event)
                 log(command_id=event['id'], status='republished')
