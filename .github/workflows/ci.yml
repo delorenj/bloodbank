@@ -53,6 +53,9 @@ jobs:
       - name: Cost contract and durable bridge tests
         run: python -m unittest discover -s services/cost-bridge -p 'test_*.py'
 
+      - name: Farm command bridge tests (Milkshake Create Invoice ingress)
+        run: python -m unittest discover -s services/farm-command-bridge -p 'test_*.py'
+
       - name: Compile cli
         # Fails if the operator CLI has a syntax error.
         run: python -m compileall cli

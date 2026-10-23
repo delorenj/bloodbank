@@ -1,0 +1,35 @@
+# farm-command-bridge: the Farm's signed Create Invoice command -> bloodbank.cmd.billing.invoice.generate.
+# Start (secrets resolved into this process only):
+#   op run --env-file .env.op -- docker compose --env-file /dev/null up -d --build
+name: bloodbank-farm-command-bridge
+services:
+  farm-command-bridge:
+    image: bloodbank-farm-command-bridge:local
+    build:
+      context: ../..
+      dockerfile: services/farm-command-bridge/Dockerfile
+    restart: unless-stopped
+    environment:
+      NATS_URL: nats://bloodbank-nats:4222
+      FARM_COMMAND_KEYS: ${FARM_COMMAND_KEYS:?FARM_COMMAND_KEYS comes from .env.op via op run}
+    volumes: [farm-command-archive:/data]
+    networks: [bloodbank-network, proxy]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.routers.farm-commands.rule: Host(`farm-commands.delo.sh`)
+      traefik.http.routers.farm-commands.entrypoints: websecure
+      traefik.http.routers.farm-commands.tls.certresolver: letsencrypt
+      traefik.http.services.farm-commands.loadbalancer.server.port: "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  farm-command-archive:
+networks:
+  bloodbank-network:
+    external: true
+  proxy:
+    external: true
