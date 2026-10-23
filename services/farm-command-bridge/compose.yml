@@ -21,11 +21,18 @@ services:
       traefik.http.routers.farm-commands.entrypoints: websecure
       traefik.http.routers.farm-commands.tls.certresolver: letsencrypt
       traefik.http.services.farm-commands.loadbalancer.server.port: "8080"
+    # Liveness only: /healthz answers 200 whenever the process serves (readiness, NATS connected
+    # and archive drained, is in its body and on /readyz). A NATS blip must not mark the container
+    # unhealthy, or Traefik stops routing and the Farm gets a 404 instead of 503 BUS_UNAVAILABLE.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz',timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
+      # Traefik routes only to a healthy container: probe every 2 s while starting, so a restart
+      # is routable within seconds rather than after the first 30 s interval.
+      start_period: 30s
+      start_interval: 2s
 volumes:
   farm-command-archive:
 networks:

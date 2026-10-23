@@ -274,7 +274,18 @@ class Bridge:
         self.broker_connected, self.clock = broker_connected, clock
 
     def health(self):
-        state = self.archive.health()
+        """Liveness is answering at all; readiness (broker up, archive drained) is in the body.
+
+        The container healthcheck reads only liveness, so Traefik keeps routing through a NATS
+        blip: a POST then answers 503 BUS_UNAVAILABLE with the command archived, and the sweep
+        publishes it once the broker is back.
+        """
+        try:
+            state = self.archive.health()
+        except Exception as exc:
+            state = {'archived': None, 'unpublished': None, 'errors': None,
+                     'last_error': 'archive:' + type(exc).__name__}
+        state['live'] = True
         state['broker_connected'] = bool(self.broker_connected())
         state['ready'] = state['broker_connected'] and state['unpublished'] == 0
         return state
@@ -307,12 +318,19 @@ class Bridge:
         return self.archive.save(request['command_id'], raw, event)
 
     async def sweep(self):
+        """Publish every archived, unpublished command; one that fails never holds up the rest.
+
+        Skipped while the broker is down (every publish would wait out its timeout). A row that
+        cannot publish is logged and marked with its error, and the sweep moves on to the next.
+        """
+        if not self.broker_connected():
+            return
         for event in self.archive.pending():
             try:
                 await self.publish(event)
                 log(command_id=event['id'], status='republished')
-            except Exception:
-                break
+            except Exception as exc:
+                log(command_id=event['id'], status='republish_failed', code=type(exc).__name__)
 
 
 def handler(bridge, loop):
@@ -333,10 +351,14 @@ def handler(bridge, loop):
             return self.respond(refusal.status, {'success': False, 'error': refusal.code, 'code': refusal.code})
 
         def do_GET(self):
-            if self.path != '/healthz':
+            # /healthz is liveness (always 200 while the process serves; readiness in the body),
+            # which is what the container healthcheck and so Traefik's routing read. /readyz is
+            # the same body with 503 while not ready, for monitors that alert on a status code.
+            if self.path not in ('/healthz', '/readyz'):
                 return self.respond(404, {'error': 'Not found'})
             state = bridge.health()
-            return self.respond(200 if state['ready'] else 503, state)
+            ready_code = 200 if state['ready'] else 503
+            return self.respond(200 if self.path == '/healthz' else ready_code, state)
 
         def do_POST(self):
             if self.path != PATH:

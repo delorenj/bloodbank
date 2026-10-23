@@ -201,5 +201,80 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(self.post(raw3, {'X-Milkshake-Key-Id': KEY_ID, 'X-Milkshake-Signature': sig3})[0], 503)
 
 
+    def get(self, path):
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('GET', path)
+        response = conn.getresponse()
+        return response.status, json.loads(response.read())
+
+    def test_healthz_is_liveness_and_readiness_is_in_the_body(self):
+        status, body = self.get('/healthz')
+        self.assertEqual((status, body['live'], body['ready']), (200, True, True))
+        self.assertEqual(self.get('/readyz')[0], 200)
+        self.bridge.broker_connected = lambda: False  # a NATS blip
+        status, body = self.get('/healthz')
+        self.assertEqual(status, 200)  # the container stays healthy, Traefik keeps routing
+        self.assertEqual((body['live'], body['ready'], body['broker_connected']), (True, False, False))
+        status, body = self.get('/readyz')
+        self.assertEqual((status, body['ready']), (503, False))
+        self.bridge.broker_connected = lambda: True
+        self.js.fail = ConnectionError()
+        raw, sig = signed(request())
+        self.assertEqual(self.post(raw, {'X-Milkshake-Key-Id': KEY_ID, 'X-Milkshake-Signature': sig})[0], 503)
+        status, body = self.get('/healthz')
+        self.assertEqual((status, body['unpublished'], body['ready']), (200, 1, False))
+        self.assertEqual(body['last_error'], 'publish:ConnectionError')
+
+
+class SweepTest(unittest.TestCase):
+    """The sweep publishes every pending row; one that cannot publish never holds up the rest."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.archive = b.Archive(Path(self.temp.name) / 'archive.sqlite')
+        self.js = PoisonJS()
+        self.connected = True
+        self.bridge = b.Bridge(self.archive, {KEY_ID: KEY}, self.js,
+                               broker_connected=lambda: self.connected, clock=lambda: NOW)
+        self.ids = []
+        for n in range(3):
+            raw, sig = signed(request(client_request_id=f'cccccccc-2222-4333-8444-55555555555{n}'))
+            _status, event, _published = self.bridge.accept(raw, KEY_ID, sig)
+            self.ids.append(event['id'])
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_a_row_that_cannot_publish_is_skipped_and_the_rest_flow(self):
+        self.js.poison = {self.ids[0]}
+        asyncio.run(self.bridge.sweep())
+        self.assertEqual([e['id'] for _s, e, _h in self.js.calls], self.ids[1:])
+        health = self.archive.health()
+        self.assertEqual((health['unpublished'], health['errors']), (1, 1))
+        self.js.poison = set()
+        asyncio.run(self.bridge.sweep())  # the next sweep retries only the one left
+        self.assertEqual([e['id'] for _s, e, _h in self.js.calls], [*self.ids[1:], self.ids[0]])
+        self.assertEqual(self.archive.health()['unpublished'], 0)
+
+    def test_the_sweep_waits_while_the_broker_is_down(self):
+        self.connected = False
+        asyncio.run(self.bridge.sweep())
+        self.assertEqual((self.js.attempts, self.archive.health()['unpublished']), (0, 3))
+
+
+class PoisonJS(FakeJS):
+    """Refuses the events whose id is in ``poison``; publishes the rest."""
+
+    def __init__(self):
+        super().__init__()
+        self.poison, self.attempts = set(), 0
+
+    async def publish(self, subject, body, headers=None, timeout=None):
+        self.attempts += 1
+        if json.loads(body)['id'] in self.poison:
+            raise ValueError('poison row')
+        return await super().publish(subject, body, headers, timeout)
+
+
 if __name__ == '__main__':
     unittest.main()

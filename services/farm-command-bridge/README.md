@@ -33,9 +33,14 @@ Run from this directory with the keys resolved only in process memory:
 op run --env-file .env.op -- docker compose --env-file /dev/null up -d --build
 ```
 
-`GET /healthz` reports `archived`, `unpublished`, `errors`, `last_error`, `broker_connected`
-(503 while anything is unpublished or the broker is down). Logs carry `command_id`, status and
-code only: never a body, a reason, a key or a signature.
+`GET /healthz` is liveness: 200 whenever the process serves, with readiness in the body
+(`live`, `ready`, `broker_connected`, `archived`, `unpublished`, `errors`, `last_error`). The
+container healthcheck reads only that, so Traefik keeps routing through a NATS blip (a POST then
+answers `503 BUS_UNAVAILABLE` with the command archived, and the sweep publishes it once the broker
+is back). `GET /readyz` is the same body with 503 while anything is unpublished or the broker is
+down, for monitors. The 15 s sweep skips while the broker is down and moves past a row that cannot
+publish (logged `republish_failed`, its error kept on the row), so one bad row never holds up the
+rest. Logs carry `command_id`, status and code only: never a body, a reason, a key or a signature.
 
 Re-send one archived command with its original envelope (JetStream dedupes on the id within its
 window; the consumer's ledger dedupes forever):
