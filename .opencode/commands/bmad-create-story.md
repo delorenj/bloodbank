@@ -1,5 +1,5 @@
 ---
-description: "Creates a dedicated story file with all the context the agent will need to implement it later. Use when the user says \"create the next story\" or \"create story [story identifier]\""
+description: "Deprecated: `bmad-build` is now the official implementation method. Only use this when explicitly invoked by name"
 ---
 
 @skills/bmad-create-story

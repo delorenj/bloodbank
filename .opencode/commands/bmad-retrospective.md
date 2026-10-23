@@ -1,5 +1,5 @@
 ---
-description: "Post-epic review to extract lessons and assess success. Use when the user says \"run a retrospective\" or \"lets retro the epic [epic]\""
+description: "Review a completed epic against the evidence it left behind — spec, stories, diffs, commits, sprint status — and produce a retrospective with sourced findings, action items, and an acceptance decision. Use when the user says \"run a retrospective\" or \"lets retro the epic [epic]\". Supports -H/--headless"
 ---
 
 @skills/bmad-retrospective
