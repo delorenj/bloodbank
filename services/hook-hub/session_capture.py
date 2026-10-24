@@ -63,6 +63,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hindsight as hs  # noqa: E402  (shared bank resolution, hygiene, journal)
 from concerns import result, value  # noqa: E402
 
+# Import the stdlib NATS publisher for emitting conversation events.
+# session_capture runs inside hook-hub which has agent-hooks/core on path.
+try:
+    from core.nats_publish import publish as nats_publish
+except ImportError:
+    # Fallback: add agent-hooks to path explicitly
+    _agent_hooks = Path(__file__).resolve().parent.parent / "agent-hooks"
+    if _agent_hooks.exists():
+        sys.path.insert(0, str(_agent_hooks))
+        from core.nats_publish import publish as nats_publish
+    else:
+        nats_publish = None
+
 # CLIs whose turn end yields the final assistant message, directly or through a
 # transcript this module can read. The registry rows narrow to the same set.
 #   claude       Stop.last_assistant_message (2.1.283 schema); transcript fallback
