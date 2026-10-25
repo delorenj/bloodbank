@@ -7,6 +7,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
+import urllib.request
+import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -49,6 +52,52 @@ class CandyStoreContextTests(unittest.TestCase):
                     self.assertIn("handoff", json.loads(stdout)["injectSteps"][0]["ephemeralMessage"])
                 else:
                     self.assertIn("handoff", stdout)
+
+    def test_a_claude_prefixed_session_is_excluded_by_its_base_uuid(self):
+        # Claude Code's hook payload names the session claude-<uuid>, but
+        # session capture stores the un-prefixed UUID as the correlationid.
+        # Excluding the prefixed form matched nothing: the current session
+        # topped its own briefing.
+        uuid_session = str(uuid.uuid4())
+        raw_urlopen = urllib.request.urlopen
+
+        def urlopen(request, *args, **kwargs):
+            url = getattr(request, "full_url", request)
+            if url.endswith(f"/events/{uuid_session}/raw"):
+                return mock.MagicMock(status=200, __enter__=lambda s: s, __exit__=lambda *a: None)
+            return raw_urlopen(request, *args, **kwargs)
+
+        with mock.patch.dict(os.environ, {"BB_HOOK_CLI": "claude", "BB_HOOK_NATIVE": "SessionStart"}), \
+             mock.patch.object(concerns, "disabled", return_value=False), \
+             mock.patch.object(concerns.urllib.request, "urlopen", urlopen), \
+             mock.patch.object(concerns, "invoke", return_value=concerns.result(
+                 "succeeded", "handler_completed", "A prior session's handoff"
+             )) as invoke:
+            concerns.dispatch("candystore-context", {
+                "sessionId": f"claude-{uuid_session}", "cwd": "/code/project",
+            })
+            command = invoke.call_args[0][0]
+            self.assertEqual(command[command.index("--exclude-session") + 1], uuid_session)
+
+        # An unknown base keeps the prefixed form rather than excluding noise.
+        class missing(Exception):
+            pass
+
+        def not_found(request, *args, **kwargs):
+            raise urllib.error.URLError("404")
+
+        with mock.patch.dict(os.environ, {"BB_HOOK_CLI": "claude", "BB_HOOK_NATIVE": "SessionStart"}), \
+             mock.patch.object(concerns, "disabled", return_value=False), \
+             mock.patch.object(concerns.urllib.request, "urlopen", not_found), \
+             mock.patch.object(concerns, "invoke", return_value=concerns.result(
+                 "succeeded", "handler_completed", "A prior session's handoff"
+             )) as invoke:
+            concerns.dispatch("candystore-context", {
+                "sessionId": "claude-not-yet-stored", "cwd": "/code/project",
+            })
+            command = invoke.call_args[0][0]
+            self.assertEqual(command[command.index("--exclude-session") + 1],
+                             "claude-not-yet-stored")
 
     def test_hermes_only_retrieves_on_first_model_bound_turn(self):
         payloads = [

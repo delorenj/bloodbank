@@ -19,6 +19,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -251,8 +252,25 @@ def dispatch(concern: str, raw: dict) -> dict:
             os.close(descriptor)
         command = [str(Path.home() / ".local/bin/candystore"), "context", "latest",
                    "--cwd", str(payload["cwd"]), "--timeout", "4"]
-        if payload["session_id"]:
-            command.extend(["--exclude-session", payload["session_id"]])
+        session_id = payload["session_id"]
+        try:
+            # Claude Code's hook payload carries the session ID under its own
+            # project naming (claude-...). Session capture stores the un-prefixed
+            # UUID as the CloudEvent correlationid; the CLI's native expression
+            # sees neither, so without this the current session tops the briefing
+            # that exists to exclude it. Verify the mapping exists before
+            # stripping the prefix: a tool result (the UUID is itself a
+            # correlationid) is the one consumer that could hold it.
+            base = session_id.removeprefix("claude-")
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:8683/events/{urllib.parse.quote(base)}/raw", timeout=0.5
+            ) as response:
+                if response.status == 200:
+                    session_id = base
+        except (OSError, ValueError, urllib.error.URLError):
+            pass
+        if session_id:
+            command.extend(["--exclude-session", session_id])
         output = invoke(command, payload, context=True, timeout=4.5)
         if output["_hook_hub"]["status"] != "succeeded":
             output["stdout"] = ""
