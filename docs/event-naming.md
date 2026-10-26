@@ -300,6 +300,7 @@ Segment 3 of `type` MUST be one of:
 | `telephony`    | Phone calls on the operator's lines (Telnyx numbers and the forwarded personal cell): calls, recordings, voicemail transcripts, and call commands executed through Telnyx. Text messages are `messaging` (one entity per transport: `sms`, `mms`, `rcs`, `imessage`). | active   |
 | `messaging`    | Human messages and platform alerts on every channel — email, chat platforms, messaging apps, and carrier texts (SMS/MMS/RCS/iMessage). The entity segment names the platform (`messaging.<platform>.<action>`: `received` for a message, `notified` for a mention/reaction/activity alert); see the platform rows in §7. | active   |
 | `crank`        | Desk-mode crank sessions: the operator's circuit of agent tabs in the zellij Workspace and Wingman, the voice pair programmer that watches it (`duty.started`, `duty.ended`, `alert.raised`). | active   |
+| `cron`         | Time-driven scheduling facts from the Candybar cron framework: the UTC minute heartbeat every schedule keys off (`tick.fired`) and the registered-unit lifecycle (`candybar.*`), plus the `candybar.invoke` dispatch command. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
@@ -388,6 +389,8 @@ Segment 4 of `type` MUST be one of:
 | `duty`             | `crank`                  | One Wingman duty session: from going on duty to going off. `data.duty_id` is the session and the envelope `correlationid`. |
 | `alert`            | `crank`                  | One line Wingman said to the operator about crank tabs (a tab waiting, finished, broken, waiting too long, or the focused tab's progress); the signals behind it live in data. |
 | `call`             | `telephony`              | One phone call on an operator line, from setup to hangup; recordings and voicemails are `call.recorded`. |
+| `tick`             | `cron`                   | One UTC minute boundary fired by the Candybar heartbeat publisher; `tick:<unix_epoch_minute>` is both the ordering bucket and `data.tick_id`. |
+| `candybar`         | `cron`                   | One registered scheduled unit in the Candybar cron framework: registration (`created`/`updated`), invocation lifecycle (`invoked`/`completed`/`failed`), suppressed fires (`skipped`), and the `candybar.invoke` dispatch command. |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -430,6 +433,7 @@ covers every inbound human message, texts included.
 `flagged`, `routed`, `breached`, `observed`, `clocked_in`, `clocked_out`.
 `delegated`, `raised`, `released`, `expired`, `skipped`, `notified`,
 `revoked` (`billing.rule.revoked`: a rule was revoked; the rule's recording stays), `issued` (`billing.invoice.issued`: a statement was frozen on the ledger), `delivered` (`billing.invoice.delivered`: an issued statement was raised on a delivery rail),
+`fired` (`cron.tick.fired`: the UTC minute heartbeat every candybar schedule keys off),
 `uploaded`, `transcribed`, `dispatched`, `replied`, `played` (the `audio.memo.*`
 journey stages: a voice memo that is uploaded, transcribed, dispatched to an agent,
 answered aloud, and played back on the device), `progressed` (`agent.invocation.progressed`:
@@ -561,6 +565,8 @@ subscription:<series_id>         # finance: recurring-series lifecycle incl. zom
 projection:liquid                # finance: single household-wide projection bucket
 clock:<clock_system>:<principal> # attendance: one worker/system time-clock state bucket
 duty:<duty_id>                   # crank: every fact of one Wingman duty session (duty.*, alert.raised)
+tick:<tick_id>                   # cron: the minute heartbeat itself (tick_id = tick:<unix_epoch_minute>)
+candybar:<candybar_id>           # cron: every lifecycle fact of one registered candybar
 project:<project_slug>           # project: one bucket per pjangler project; activity audiences and deployments share it
 call:<call_id>                   # telephony: every event of one phone call, recording and transcript included
 line:<line>                      # messaging carrier texts (sms/mms/rcs/imessage) on one line ("cell", "imessage" or a Telnyx E.164)
@@ -596,6 +602,8 @@ agent.invocation.start : target:<target_agent_id>:command:<command_id>
 cli.process.spawn      : cli_session:<session_id>:cmd:<sha256(args)>
 agent.tool.invoke      : invocation:<invocation_id>:tool_call:<id>
 billing.invoice.generate : client:<client>:command:<command_id>
+cron.candybar.invoke   : candybar:<candybar_id>:tick:<tick_id>    # scheduled fire
+                       : candybar:<candybar_id>:manual:<uuid>     # manual invoke
 ```
 
 A retry of the same command MUST present the same `idempotency_key`. Bloodbank
@@ -698,8 +706,8 @@ JSON Schema documents with their own revision line (§13's `<n>`), not event
 types. Everything under `bloodbank/<domain>/` is named for the fact it
 describes and nothing else.
 
-There are 20 live domains — `agent`, `attendance`, `audio`, `billing`,
-`cli`, `conversation`, `crank`, `curator`, `finance`, `lifecycle`, `llm`,
+There are 21 live domains — `agent`, `attendance`, `audio`, `billing`,
+`cli`, `conversation`, `crank`, `cron`, `curator`, `finance`, `lifecycle`, `llm`,
 `messaging`, `portfolio`, `project`, `repo`, `reporting`, `review`,
 `system`, `telephony`, `workflow` — matching the active half of
 `ALLOWED_DOMAINS` in `services/agent-hooks/core/validate.py`. A domain

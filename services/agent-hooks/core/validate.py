@@ -60,6 +60,8 @@ ALLOWED_DOMAINS = frozenset({
     "conversation", "agent", "llm", "cli", "system", "audio", "repo", "lifecycle",
     "finance", "billing", "attendance", "curator", "reporting", "portfolio", "project",
     "workflow", "telephony", "messaging", "review", "crank",
+    # candybar cron framework: minute tick + registered-unit lifecycle
+    "cron",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "memory",
 })
@@ -95,6 +97,8 @@ ALLOWED_ENTITIES = frozenset({
     "email", "telegram", "slack", "teams", "whatsapp", "google_chat",
     # messaging: one entity per carrier-text transport (messaging.<transport>.*)
     "sms", "mms", "rcs", "imessage",
+    # cron: the heartbeat minute and one registered candybar
+    "tick", "candybar",
 })
 
 EVENT_ACTIONS = frozenset({
@@ -119,6 +123,8 @@ EVENT_ACTIONS = frozenset({
     "detached",
     # billing.rule.revoked, billing.invoice.issued, billing.invoice.delivered: Milkshake ledger facts
     "revoked", "issued", "delivered",
+    # cron.tick.fired: the UTC minute heartbeat every candybar schedule keys off
+    "fired",
 })
 
 COMMAND_ACTIONS = frozenset({
