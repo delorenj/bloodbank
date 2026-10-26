@@ -97,6 +97,12 @@ jobs:
           assert 'BLOODBANK_COMMANDS' in names
           print(f'OK  {sorted(names)}')"
 
+      - name: Validate schema tree
+        # $id uniqueness + $ref resolution + Draft 2020-12 meta check over
+        # schemas/ (docs/event-naming.md §12). Stdlib walk; uses the jsonschema
+        # installed above when present.
+        run: bash scripts/validate_schemas.sh
+
       - name: Validate docker compose config parses
         # Uses the builtin docker compose; no services started.
         run: docker compose --project-name bloodbank -f compose/docker-compose.yml config > /dev/null
