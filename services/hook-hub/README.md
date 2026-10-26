@@ -543,17 +543,19 @@ confirmed (`completed`), after which it is forgotten.
   instead of being dropped. Replay one with
   `curl -X POST "$url" -H 'Content-Type: application/json' -d "$(jq .request <file>)"`.
 - **Sweeper.** Every captured turn and session end sweeps the other sessions'
-  buffers (up to 8, within 3s). The `hindsight-capture-sweep.timer` user unit
-  runs `session_capture.py sweep` every 10 minutes for the hours when no agent
-  is running. A closed session with nothing left is deleted. So is one idle for
-  a day with nothing pending. `python3 session_capture.py status` lists live
-  buffers.
+  buffers (up to 8, within 3s). The `hindsight-capture-sweep.service` user unit
+  runs `session_capture.py sweep`; since 2026-10-26 it is started every 10
+  minutes by the `hindsight-capture-sweep` candybar (candybar cron migration
+  wave 4, AD-18/AD-21) — the `.timer` is retired. A closed session with nothing
+  left is deleted. So is one idle for a day with nothing pending.
+  `python3 session_capture.py status` lists live buffers.
 
-Install the timer with the other user units:
+Install the service with the other user units (scheduling is candybar's — do
+NOT enable the timer; the file is kept only for the ledger's rollback):
 
 ```sh
-ln -sf ~/code/33GOD/bloodbank/services/hook-hub/systemd/hindsight-capture-sweep.{service,timer} ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now hindsight-capture-sweep.timer
+ln -sf ~/code/33GOD/bloodbank/services/hook-hub/systemd/hindsight-capture-sweep.service ~/.config/systemd/user/
+systemctl --user daemon-reload
 ```
 
 ### Verification (2026-09-26, server 0.10.1)
