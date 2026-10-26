@@ -1,3 +1,6 @@
+# RETIRED 2026-10-26: scheduling moved to candybar (33GOD/candybar
+# deploy/migration/ledger.yaml, id systemd:bloodbank-agent-hooks-health.timer).
+# Kept for rollback only — never `systemctl --user enable` this timer.
 [Unit]
 Description=Run bloodbank agent-hooks health check every 5 minutes
 
