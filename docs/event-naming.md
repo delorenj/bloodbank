@@ -321,6 +321,7 @@ Segment 4 of `type` MUST be one of:
 | `invoice`          | `billing`                | One customer statement requested from the Farm and generated (planned or issued) by the billing authority; the client and period live in data. |
 | `rule`             | `billing`                | One Milkshake ledger rule that decides who bears a vendor cost or what the client is charged (`billing.rule.recorded`, `billing.rule.revoked`); the client lives in data. |
 | `snapshot`         | `billing`                | One `milkshake/v1` snapshot of a client's billing state accepted by the Farm (`billing.snapshot.sent`). |
+| `line_item`        | `billing`                | One customer line of a client's statement (a label and its total) for one period, moved by a Milkshake ledger change (`billing.line_item.updated`: previous and new cents, `open` or `issued`); the client, period and label live in data, never a vendor. |
 | `thread`           | `conversation`           | One durable agent conversation across many turns — the original model of an agent session. `thread:<thread_id>` is the ordering bucket for `conversation.turn.*`; `thread.created`/`thread.resumed` have schemas but no producer emits them. Not used by `messaging` (there a thread is `data.thread_id`). |
 | `turn`             | `conversation`           | One user-prompt-to-final-response unit inside a thread.     |
 | `message`          | `conversation`           | A single user/assistant message appended to the transcript. (Retired in `telephony` and `messaging`: texts and chat messages are per-transport/per-platform `messaging` entities.) |
@@ -572,7 +573,7 @@ call:<call_id>                   # telephony: every event of one phone call, rec
 line:<line>                      # messaging carrier texts (sms/mms/rcs/imessage) on one line ("cell", "imessage" or a Telnyx E.164)
 messaging:<platform>:<thread_id> # messaging: one platform-native thread; a threadless notified alert uses its notification_id
 invoice:<client>                 # billing: every invoice fact of one client (billing.invoice.*); `invoice:unverified` while the command was refused before its client was proven
-ledger:<client>                  # billing: every other ledger fact of one client announced by Milkshake (billing.rule.*, billing.cost.recorded, billing.snapshot.sent); `ledger:global` for a fact of no client. Invoice issued/delivered use `invoice:<client>` so one client's invoice facts stay in order.
+ledger:<client>                  # billing: every other ledger fact of one client announced by Milkshake (billing.rule.*, billing.cost.recorded, billing.snapshot.sent, billing.line_item.updated); `ledger:global` for a fact of no client. Invoice issued/delivered use `invoice:<client>` so one client's invoice facts stay in order.
 ```
 
 Pick the narrowest bucket that captures the event's natural ordering.

@@ -88,6 +88,8 @@ ALLOWED_ENTITIES = frozenset({
     "invoice",
     # billing: Milkshake ledger facts: a rule that decides who bears a cost; a pushed Farm snapshot
     "rule", "snapshot",
+    # billing: one customer line of a client's statement moved by a Milkshake ledger change
+    "line_item",
     # project: durable user-facing deliverables captured by the artifact sidecar
     "artifact",
     "call", "slop",

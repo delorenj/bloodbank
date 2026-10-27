@@ -90,7 +90,8 @@
             "margin",
             "service_fee",
             "discount",
-            "narrative"
+            "narrative",
+            "retainer"
           ]
         },
         "timing": {
