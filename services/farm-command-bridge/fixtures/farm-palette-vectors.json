@@ -1,0 +1,554 @@
+{
+  "source": "Milkshake docs/farm-commands.md section 14.3.4. The key is a test value, never provisioned.",
+  "key": "milkshake-farm-command-test-vector",
+  "key_id": "farm-command-test",
+  "session_id": "sess_8Yb2kQ",
+  "issued_at": "2026-11-02T14:05:09.000000Z",
+  "issued_at_ms": 1793628309000,
+  "requested_by": "jarad@automaticai.io",
+  "client": "fixture-client",
+  "vectors": [
+    {
+      "name": "squeeze-plan",
+      "command": "squeeze",
+      "subject": "bloodbank.cmd.billing.cost.receive",
+      "mode": "plan",
+      "args": {
+        "client": "fixture-client",
+        "period": "2026-10",
+        "refresh": true,
+        "vendor": "deepgram"
+      },
+      "client_request_id": "0b8f2d1e-6a4c-4f3b-9e2d-1c0a9b8e7d61",
+      "command_id": "151cc815-538d-501f-a98b-a73ee9df6bda",
+      "body": "{\"args\":{\"client\":\"fixture-client\",\"period\":\"2026-10\",\"refresh\":true,\"vendor\":\"deepgram\"},\"client\":\"fixture-client\",\"client_request_id\":\"0b8f2d1e-6a4c-4f3b-9e2d-1c0a9b8e7d61\",\"command\":\"squeeze\",\"command_id\":\"151cc815-538d-501f-a98b-a73ee9df6bda\",\"issued_at\":\"2026-11-02T14:05:09.000000Z\",\"mode\":\"plan\",\"requested_by\":\"jarad@automaticai.io\",\"schema_version\":2,\"session_id\":\"sess_8Yb2kQ\",\"subject\":\"bloodbank.cmd.billing.cost.receive\"}",
+      "body_bytes": 434,
+      "body_sha256": "7ab91d20e78c244d7de8592134777d37562496bfa95ed5c28eca6fabc5a7c98f",
+      "signature": "sha256=44f187cda5329252a1d04c6148c2d7884ca30610fd3fbc3b72638255847a9750",
+      "args_sha256": "77ae60842d4a40c108b0248159418b3e6838f9fb1e4b2019d00fc48987909d82",
+      "argv": [
+        "ms",
+        "squeeze",
+        "--client=fixture-client",
+        "--period=2026-10",
+        "--refresh",
+        "--vendor=deepgram",
+        "--json"
+      ]
+    },
+    {
+      "name": "boi-review-apply",
+      "command": "boi review",
+      "subject": "bloodbank.cmd.billing.cost.close",
+      "mode": "apply",
+      "args": {
+        "decision": "keep-manual",
+        "reason": "The vendor figure includes a refunded call",
+        "scope": "47c670c4c5c47b43556f983ab9d35b50117d041ea803eb908d7c4d970daf768f"
+      },
+      "client_request_id": "1c9e3f2a-7b5d-4a4c-8f3e-2d1b0c9f8e72",
+      "command_id": "12ceb0de-435a-5e5d-be02-faf0d7115913",
+      "body": "{\"args\":{\"decision\":\"keep-manual\",\"reason\":\"The vendor figure includes a refunded call\",\"scope\":\"47c670c4c5c47b43556f983ab9d35b50117d041ea803eb908d7c4d970daf768f\"},\"client\":\"fixture-client\",\"client_request_id\":\"1c9e3f2a-7b5d-4a4c-8f3e-2d1b0c9f8e72\",\"command\":\"boi review\",\"command_id\":\"12ceb0de-435a-5e5d-be02-faf0d7115913\",\"issued_at\":\"2026-11-02T14:05:09.000000Z\",\"mode\":\"apply\",\"requested_by\":\"jarad@automaticai.io\",\"schema_version\":2,\"session_id\":\"sess_8Yb2kQ\",\"subject\":\"bloodbank.cmd.billing.cost.close\"}",
+      "body_bytes": 510,
+      "body_sha256": "ca9559303c0befa6c8e2a72ad72c0e1fa3cec5f94ae24c995b702e0e4b4392f0",
+      "signature": "sha256=a04b4947b0d220b8e18df94e68d64ba4d033261317c6e9391b7bb29050040e1c",
+      "args_sha256": "814364c364fb377649a65800767b2dfc2028f3adb7883ae8f59b2e5c7b66536c",
+      "argv": [
+        "ms",
+        "boi",
+        "review",
+        "--decision=keep-manual",
+        "--reason=The vendor figure includes a refunded call",
+        "--scope=47c670c4c5c47b43556f983ab9d35b50117d041ea803eb908d7c4d970daf768f",
+        "--json"
+      ]
+    },
+    {
+      "name": "rule-revoke-apply",
+      "command": "rule revoke",
+      "subject": "bloodbank.cmd.billing.rule.cancel",
+      "mode": "apply",
+      "args": {
+        "reason": "The label names a vendor",
+        "rule_id": "r42"
+      },
+      "client_request_id": "2d0f4a3b-8c6e-4b5d-9a4f-3e2c1d0a9f83",
+      "command_id": "2d429e7d-c707-57df-a494-6f684ee1fcb7",
+      "body": "{\"args\":{\"reason\":\"The label names a vendor\",\"rule_id\":\"r42\"},\"client\":\"fixture-client\",\"client_request_id\":\"2d0f4a3b-8c6e-4b5d-9a4f-3e2c1d0a9f83\",\"command\":\"rule revoke\",\"command_id\":\"2d429e7d-c707-57df-a494-6f684ee1fcb7\",\"issued_at\":\"2026-11-02T14:05:09.000000Z\",\"mode\":\"apply\",\"requested_by\":\"jarad@automaticai.io\",\"schema_version\":2,\"session_id\":\"sess_8Yb2kQ\",\"subject\":\"bloodbank.cmd.billing.rule.cancel\"}",
+      "body_bytes": 410,
+      "body_sha256": "8b284f349bc7bc9bfe87403617a88194e86f1ba92574ca3f03f4237c9fbda089",
+      "signature": "sha256=88e341b807a08310cf1709ac64d29c266bd86c9ac475a606d1243c59dd37fccc",
+      "args_sha256": "1dfc8a89f442496a824f4b95f5a67349202ad8a4ddc9ea28cc0496ca80d9294e",
+      "argv": [
+        "ms",
+        "rule",
+        "revoke",
+        "--reason=The label names a vendor",
+        "--json",
+        "--",
+        "r42"
+      ]
+    },
+    {
+      "name": "yrd-payment-plan",
+      "command": "yrd payment",
+      "subject": "bloodbank.cmd.billing.payment.receive",
+      "mode": "plan",
+      "args": {
+        "client": "fixture-client",
+        "number": "AAI-2026-10"
+      },
+      "client_request_id": "3e1a5b4c-9d7f-4c6e-8b5a-4f3d2e1b0a94",
+      "command_id": "7ec7d96a-50d3-5837-a39b-54c0429ccf8c",
+      "body": "{\"args\":{\"client\":\"fixture-client\",\"number\":\"AAI-2026-10\"},\"client\":\"fixture-client\",\"client_request_id\":\"3e1a5b4c-9d7f-4c6e-8b5a-4f3d2e1b0a94\",\"command\":\"yrd payment\",\"command_id\":\"7ec7d96a-50d3-5837-a39b-54c0429ccf8c\",\"issued_at\":\"2026-11-02T14:05:09.000000Z\",\"mode\":\"plan\",\"requested_by\":\"jarad@automaticai.io\",\"schema_version\":2,\"session_id\":\"sess_8Yb2kQ\",\"subject\":\"bloodbank.cmd.billing.payment.receive\"}",
+      "body_bytes": 410,
+      "body_sha256": "14003f7b5fbdf72539ca6a5531f39017ce674fc2c96f2392e80b7e43028f145d",
+      "signature": "sha256=f3f2db9db131894ed72fdb4d0af1a0801205766317dc61ddac1531253b601aae",
+      "args_sha256": "65659a8fcff23468be2c417cb3a36cc582c7619878a8bc90996ecd8a44c52a4b",
+      "argv": [
+        "ms",
+        "yrd",
+        "payment",
+        "--client=fixture-client",
+        "--json",
+        "--",
+        "AAI-2026-10"
+      ]
+    },
+    {
+      "name": "farm-push-plan",
+      "command": "farm push",
+      "subject": "bloodbank.cmd.billing.snapshot.send",
+      "mode": "plan",
+      "args": {
+        "client": "fixture-client",
+        "period": [
+          "2026-09",
+          "2026-10"
+        ]
+      },
+      "client_request_id": "4f2b6c5d-0e8a-4d7f-9c6b-5a4e3f2c1b05",
+      "command_id": "2c53fc6a-8492-5d1d-9f1f-e971b70c1758",
+      "body": "{\"args\":{\"client\":\"fixture-client\",\"period\":[\"2026-09\",\"2026-10\"]},\"client\":\"fixture-client\",\"client_request_id\":\"4f2b6c5d-0e8a-4d7f-9c6b-5a4e3f2c1b05\",\"command\":\"farm push\",\"command_id\":\"2c53fc6a-8492-5d1d-9f1f-e971b70c1758\",\"issued_at\":\"2026-11-02T14:05:09.000000Z\",\"mode\":\"plan\",\"requested_by\":\"jarad@automaticai.io\",\"schema_version\":2,\"session_id\":\"sess_8Yb2kQ\",\"subject\":\"bloodbank.cmd.billing.snapshot.send\"}",
+      "body_bytes": 414,
+      "body_sha256": "f2bff05c9cde4bb60e4467ee0cee53907c639ef03f7020ee02e48bb25d65159b",
+      "signature": "sha256=ec164d146754632363eb4fd47f5d0708d7569ad62e2e37b87ec4f130ab19c35a",
+      "args_sha256": "03b729d225288e686b462f73e525dc4b351d671dbbfb21e8f53ec1a8b132d17a",
+      "argv": [
+        "ms",
+        "farm",
+        "push",
+        "--client=fixture-client",
+        "--period=2026-09",
+        "--period=2026-10",
+        "--json"
+      ]
+    }
+  ],
+  "envelope": {
+    "for": "squeeze-plan",
+    "received_at": "2026-11-02T14:05:10.123456Z",
+    "bytes": 1569,
+    "sha256": "45862350923cb8ed7723d82e5ac1c6470fa34450030d31e480dc08c00fde5ce2",
+    "run_actor": "farm:jarad@automaticai.io/151cc815-538d-501f-a98b-a73ee9df6bda",
+    "result_event_ids": {
+      "completed": "41c9aff6-cc8c-51e2-9f61-e19616976787",
+      "denied": "430f0c45-9e5d-521e-b12e-9ca1960e6b30",
+      "failed": "9187a3ae-b2ab-5b51-b7e0-d6617edfa778"
+    }
+  },
+  "args_cases": [
+    {
+      "name": "squeeze-period",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":\"2026-10\"}",
+      "valid": true,
+      "rule": "1"
+    },
+    {
+      "name": "squeeze-range",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"date_from\":\"2026-10-01\",\"date_to\":\"2026-10-31\"}",
+      "valid": true,
+      "rule": "1,2"
+    },
+    {
+      "name": "squeeze-one-day-range",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"date_from\":\"2026-10-05\",\"date_to\":\"2026-10-05\"}",
+      "valid": true,
+      "rule": "2"
+    },
+    {
+      "name": "squeeze-span-both",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":\"2026-10\",\"date_from\":\"2026-10-01\",\"date_to\":\"2026-10-31\"}",
+      "valid": false,
+      "rule": "2"
+    },
+    {
+      "name": "squeeze-span-none",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\"}",
+      "valid": false,
+      "rule": "2"
+    },
+    {
+      "name": "squeeze-span-half",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"date_from\":\"2026-10-01\"}",
+      "valid": false,
+      "rule": "2"
+    },
+    {
+      "name": "squeeze-span-reversed",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"date_from\":\"2026-10-31\",\"date_to\":\"2026-10-01\"}",
+      "valid": false,
+      "rule": "2"
+    },
+    {
+      "name": "squeeze-not-a-calendar-date",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"date_from\":\"2026-02-30\",\"date_to\":\"2026-03-01\"}",
+      "valid": false,
+      "rule": "1 (DAY)"
+    },
+    {
+      "name": "squeeze-bad-month",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":\"2026-13\"}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "squeeze-client-mismatch",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"other-client\",\"period\":\"2026-10\"}",
+      "valid": false,
+      "rule": "3"
+    },
+    {
+      "name": "squeeze-client-missing",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"period\":\"2026-10\"}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "squeeze-flag-false",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":\"2026-10\",\"refresh\":false}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "squeeze-flag-true",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":\"2026-10\",\"refresh\":true}",
+      "valid": true,
+      "rule": "1"
+    },
+    {
+      "name": "squeeze-apply-is-not-an-argument",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":\"2026-10\",\"apply\":true}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "squeeze-vendor-shape",
+      "command": "squeeze",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":\"2026-10\",\"vendor\":\"Deep Gram\"}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "rule-revoke-ok",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"The label names a vendor\"}",
+      "valid": true,
+      "rule": "1"
+    },
+    {
+      "name": "rule-revoke-rule-id-leading-dash",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"-r42\",\"reason\":\"The label names a vendor\"}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "rule-revoke-reason-missing",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\"}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "rule-revoke-reason-empty",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"\"}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "rule-revoke-reason-leading-space",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\" The label names a vendor\"}",
+      "valid": false,
+      "rule": "1 (REASON)"
+    },
+    {
+      "name": "rule-revoke-reason-trailing-nbsp",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"The label names a vendor\\u00a0\"}",
+      "valid": false,
+      "rule": "1 (REASON)"
+    },
+    {
+      "name": "rule-revoke-reason-trailing-nel",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"The label names a vendor\\u0085\"}",
+      "valid": false,
+      "rule": "1 (REASON)"
+    },
+    {
+      "name": "rule-revoke-reason-leading-bom",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"\\ufeffThe label names a vendor\"}",
+      "valid": false,
+      "rule": "1 (REASON)"
+    },
+    {
+      "name": "rule-revoke-reason-newline",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"two\\nlines\"}",
+      "valid": false,
+      "rule": "4"
+    },
+    {
+      "name": "rule-revoke-reason-bell",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"a\\u0007b\"}",
+      "valid": false,
+      "rule": "4"
+    },
+    {
+      "name": "rule-revoke-reason-del",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"a\\u007fb\"}",
+      "valid": false,
+      "rule": "4"
+    },
+    {
+      "name": "rule-revoke-reason-interior-line-separator",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"a\\u2028b\"}",
+      "valid": true,
+      "rule": "1 (U+2028 is not C0; only the ends are trimmed)"
+    },
+    {
+      "name": "rule-revoke-reason-500-code-points",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"\"}",
+      "reason_repeat": {
+        "unit": "a",
+        "times": 500
+      },
+      "valid": true,
+      "rule": "1 (REASON)"
+    },
+    {
+      "name": "rule-revoke-reason-501-code-points",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"\"}",
+      "reason_repeat": {
+        "unit": "a",
+        "times": 501
+      },
+      "valid": false,
+      "rule": "1 (REASON)"
+    },
+    {
+      "name": "rule-revoke-reason-500-emoji",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"\"}",
+      "reason_repeat": {
+        "unit": "😀",
+        "times": 500
+      },
+      "valid": true,
+      "rule": "1 (REASON counts code points, not UTF-16 units)"
+    },
+    {
+      "name": "rule-revoke-reason-501-emoji",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"rule_id\":\"r42\",\"reason\":\"\"}",
+      "reason_repeat": {
+        "unit": "😀",
+        "times": 501
+      },
+      "valid": false,
+      "rule": "1 (REASON)"
+    },
+    {
+      "name": "rule-revoke-reason-lone-high-surrogate",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"reason\":\"a\\ud800b\",\"rule_id\":\"r42\"}",
+      "valid": false,
+      "rule": "5"
+    },
+    {
+      "name": "rule-revoke-reason-lone-low-surrogate",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"reason\":\"a\\udc00b\",\"rule_id\":\"r42\"}",
+      "valid": false,
+      "rule": "5"
+    },
+    {
+      "name": "rule-revoke-reason-surrogate-pair-is-one-emoji",
+      "command": "rule revoke",
+      "client": "fixture-client",
+      "args_json": "{\"reason\":\"a\\ud83d\\ude00b\",\"rule_id\":\"r42\"}",
+      "valid": true,
+      "rule": "5 (a pair is one code point)"
+    },
+    {
+      "name": "boi-review-ok",
+      "command": "boi review",
+      "client": "fixture-client",
+      "args_json": "{\"scope\":\"47c670c4c5c47b43556f983ab9d35b50117d041ea803eb908d7c4d970daf768f\",\"decision\":\"accept-api\",\"reason\":\"The label names a vendor\"}",
+      "valid": true,
+      "rule": "1"
+    },
+    {
+      "name": "boi-review-decision-unknown",
+      "command": "boi review",
+      "client": "fixture-client",
+      "args_json": "{\"scope\":\"47c670c4c5c47b43556f983ab9d35b50117d041ea803eb908d7c4d970daf768f\",\"decision\":\"accept\",\"reason\":\"The label names a vendor\"}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "boi-review-scope-uppercase",
+      "command": "boi review",
+      "client": "fixture-client",
+      "args_json": "{\"scope\":\"47C670C4C5C47B43556F983AB9D35B50117D041EA803EB908D7C4D970DAF768F\",\"decision\":\"accept-api\",\"reason\":\"The label names a vendor\"}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "yrd-payment-all-statements",
+      "command": "yrd payment",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\"}",
+      "valid": true,
+      "rule": "1"
+    },
+    {
+      "name": "yrd-payment-one-statement",
+      "command": "yrd payment",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"number\":\"AAI-2026-10\"}",
+      "valid": true,
+      "rule": "1"
+    },
+    {
+      "name": "yrd-payment-number-leading-dash",
+      "command": "yrd payment",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"number\":\"-AAI-2026-10\"}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "yrd-payment-client-missing",
+      "command": "yrd payment",
+      "client": "fixture-client",
+      "args_json": "{\"number\":\"AAI-2026-10\"}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "farm-push-default-months",
+      "command": "farm push",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\"}",
+      "valid": true,
+      "rule": "1"
+    },
+    {
+      "name": "farm-push-six-months",
+      "command": "farm push",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":[\"2026-05\",\"2026-06\",\"2026-07\",\"2026-08\",\"2026-09\",\"2026-10\"]}",
+      "valid": true,
+      "rule": "1"
+    },
+    {
+      "name": "farm-push-seven-months",
+      "command": "farm push",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":[\"2026-04\",\"2026-05\",\"2026-06\",\"2026-07\",\"2026-08\",\"2026-09\",\"2026-10\"]}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "farm-push-empty-list",
+      "command": "farm push",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":[]}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "farm-push-duplicate-month",
+      "command": "farm push",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":[\"2026-10\",\"2026-10\"]}",
+      "valid": false,
+      "rule": "1"
+    },
+    {
+      "name": "farm-push-a-string-not-a-list",
+      "command": "farm push",
+      "client": "fixture-client",
+      "args_json": "{\"client\":\"fixture-client\",\"period\":\"2026-10\"}",
+      "valid": false,
+      "rule": "1"
+    }
+  ]
+}
