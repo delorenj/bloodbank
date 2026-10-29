@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/_common/farm_command_request.v1.json",
+  "title": "Farm command palette request (v2) shared definitions",
+  "description": "Shared $defs for the Farm command palette (Milkshake Story 10.3, docs/farm-commands.md section 14): the v2 signed request the portal Worker signs and farm-command-bridge wraps, and the data shape of the three billing.farm_command.* result events. Each billing.<entity>.<verb> palette command schema refines palette_request with its subject, command and args; every shape here is the one 14.3.2 fixes for all three implementations. Patterns are anchored with ^...$ and the bridge checks the trailing-newline gap in code (rule 4).",
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 64,
+      "description": "A Milkshake client or vendor slug (domain.model.SLUG)."
+    },
+    "period": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+      "description": "A calendar month, YYYY-MM."
+    },
+    "day": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+      "description": "A calendar day, YYYY-MM-DD. The pattern cannot say 2026-02-30 is not a date: validators do not assert format unless told to, so the bridge also checks it with date.fromisoformat (check_palette_request)."
+    },
+    "instant": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$",
+      "description": "YYYY-MM-DDTHH:MM:SS.ffffffZ: the Worker clock, milliseconds padded with 000."
+    },
+    "email": {
+      "type": "string",
+      "pattern": "^[a-z0-9._%+'-]+@[a-z0-9-]+(\\.[a-z0-9-]+)+$",
+      "maxLength": 158,
+      "description": "A verified session email, trimmed and lowercased. At most 158 characters: the run actor farm:<email>/<command_id> is 5 + email + 1 + 36 characters and the ledger schemas cap data.actor at 200 (docs/farm-commands.md 14.3.1)."
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "A lowercase canonical UUID."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^[^\\t\\n\\u000b\\u000c\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff](?:[\\s\\S]*[^\\t\\n\\u000b\\u000c\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff])?$",
+      "description": "1 to 500 code points; the first and last character are not in the fixed WS set (U+0009 to U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF). Control characters are refused by rule 4 in code."
+    },
+    "flag": {
+      "type": "boolean",
+      "const": true,
+      "description": "A CLI switch: true, or left out. Never false."
+    },
+    "palette_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The v2 request the portal Worker signed, exactly as signed (docs/farm-commands.md 14.3.1). args is left to the referencing command schema.",
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "command_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "uuid5(NS_FARM_COMMAND, session_id + \":\" + client_request_id); equals the envelope command_id."
+        },
+        "client_request_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "A nonce the browser mints once per submit; a retry of the same submit reuses it."
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The entry's subject from the allow-list, set by the Worker."
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "An allow-list name with handler run."
+        },
+        "client": {
+          "$ref": "#/$defs/slug",
+          "description": "The client the command acts for."
+        },
+        "args": {
+          "type": "object",
+          "description": "Only arguments that are set; refined by the referencing command schema."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "apply"
+          ]
+        },
+        "requested_by": {
+          "$ref": "#/$defs/email"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "The auth session row id, never the session token."
+        },
+        "issued_at": {
+          "$ref": "#/$defs/instant",
+          "description": "The Worker clock."
+        }
+      },
+      "required": [
+        "schema_version",
+        "command_id",
+        "client_request_id",
+        "subject",
+        "command",
+        "client",
+        "args",
+        "mode",
+        "requested_by",
+        "session_id",
+        "issued_at"
+      ]
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "alg": {
+          "const": "hmac-sha256"
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "Lowercase hex HMAC-SHA256 over the canonical JSON bytes of request."
+        }
+      },
+      "required": [
+        "alg",
+        "key_id",
+        "value"
+      ]
+    },
+    "palette_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The command envelope data (docs/farm-commands.md 14.4.2): data.schema_version is this schema family's first revision, request.schema_version is the v2 request shape.",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "request": {
+          "$ref": "#/$defs/palette_request"
+        },
+        "signature": {
+          "$ref": "#/$defs/signature"
+        },
+        "body_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "sha256 of the signed bytes."
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the bridge accepted it; equals the envelope time."
+        }
+      },
+      "required": [
+        "schema_version",
+        "request",
+        "signature",
+        "body_sha256",
+        "received_at"
+      ]
+    }
+  }
+}

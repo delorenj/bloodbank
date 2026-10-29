@@ -317,10 +317,12 @@ Segment 4 of `type` MUST be one of:
 
 | Entity             | Domain pairing (typical) | Notes                                                       |
 | ------------------ | ------------------------ | ----------------------------------------------------------- |
-| `cost`             | `billing`                | Scoped provider bill-period snapshot, replaced by revisions. |
+| `cost`             | `billing`                | Scoped provider bill-period snapshot, replaced by revisions. Commands `billing.cost.receive` (read vendor costs into the ledger) and `billing.cost.close` (settle a manual-versus-vendor conflict). |
 | `invoice`          | `billing`                | One customer statement requested from the Farm and generated (planned or issued) by the billing authority; the client and period live in data. |
-| `rule`             | `billing`                | One Milkshake ledger rule that decides who bears a vendor cost or what the client is charged (`billing.rule.recorded`, `billing.rule.revoked`); the client lives in data. |
-| `snapshot`         | `billing`                | One `milkshake/v1` snapshot of a client's billing state accepted by the Farm (`billing.snapshot.sent`). |
+| `rule`             | `billing`                | One Milkshake ledger rule that decides who bears a vendor cost or what the client is charged (`billing.rule.recorded`, `billing.rule.revoked`; command `billing.rule.cancel`); the client lives in data. |
+| `snapshot`         | `billing`                | One `milkshake/v1` snapshot of a client's billing state accepted by the Farm (`billing.snapshot.sent`; command `billing.snapshot.send`). |
+| `farm_command`     | `billing`                | The outcome of one allow-listed `ms` command the Farm asked Milkshake to run through the palette (Story 10.3), other than Create Invoice: `billing.farm_command.completed`, `denied`, `failed`; the command name, client and status live in data. The ledger facts an apply caused are announced separately (`billing.rule.revoked`, `billing.cost.recorded`, `billing.snapshot.sent`). |
+| `payment`          | `billing`                | One issued statement's payment status as judged against the bank's cash; command `billing.payment.receive` reads it (a plan) or records the change (an apply: `yrd.payment_changed`). |
 | `line_item`        | `billing`                | One customer line of a client's statement (a label and its total) for one period, moved by a Milkshake ledger change (`billing.line_item.updated`: previous and new cents, `open` or `issued`); the client, period and label live in data, never a vendor. |
 | `thread`           | `conversation`           | One durable agent conversation across many turns — the original model of an agent session. `thread:<thread_id>` is the ordering bucket for `conversation.turn.*`; `thread.created`/`thread.resumed` have schemas but no producer emits them. Not used by `messaging` (there a thread is `data.thread_id`). |
 | `turn`             | `conversation`           | One user-prompt-to-final-response unit inside a thread.     |
@@ -573,7 +575,7 @@ call:<call_id>                   # telephony: every event of one phone call, rec
 line:<line>                      # messaging carrier texts (sms/mms/rcs/imessage) on one line ("cell", "imessage" or a Telnyx E.164)
 messaging:<platform>:<thread_id> # messaging: one platform-native thread; a threadless notified alert uses its notification_id
 invoice:<client>                 # billing: every invoice fact of one client (billing.invoice.*); `invoice:unverified` while the command was refused before its client was proven
-ledger:<client>                  # billing: every other ledger fact of one client announced by Milkshake (billing.rule.*, billing.cost.recorded, billing.snapshot.sent, billing.line_item.updated); `ledger:global` for a fact of no client. Invoice issued/delivered use `invoice:<client>` so one client's invoice facts stay in order.
+ledger:<client>                  # billing: every other ledger fact of one client announced by Milkshake (billing.rule.*, billing.cost.recorded, billing.snapshot.sent, billing.line_item.updated) and the outcome of each palette command (billing.farm_command.*), so an outcome orders with the ledger facts it caused; `ledger:global` for a fact of no client, including a `farm_command` event refused before its client was proven (the claimed client is unverified, so it must not name a bucket; `invoice:unverified` stays for the `billing.invoice.*` family). Invoice issued/delivered use `invoice:<client>` so one client's invoice facts stay in order.
 ```
 
 Pick the narrowest bucket that captures the event's natural ordering.
@@ -603,6 +605,11 @@ agent.invocation.start : target:<target_agent_id>:command:<command_id>
 cli.process.spawn      : cli_session:<session_id>:cmd:<sha256(args)>
 agent.tool.invoke      : invocation:<invocation_id>:tool_call:<id>
 billing.invoice.generate : client:<client>:command:<command_id>
+billing.cost.receive   : client:<client>:command:<command_id>
+billing.cost.close     : client:<client>:command:<command_id>
+billing.rule.cancel    : client:<client>:command:<command_id>
+billing.payment.receive : client:<client>:command:<command_id>
+billing.snapshot.send  : client:<client>:command:<command_id>
 cron.candybar.invoke   : candybar:<candybar_id>:tick:<tick_id>    # scheduled fire
                        : candybar:<candybar_id>:manual:<uuid>     # manual invoke
 ```

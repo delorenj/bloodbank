@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/billing/payment.receive.json",
+  "title": "Billing Payment Receive Command",
+  "description": "Imperative request, from a Farm operator through the command palette, that the billing authority read one client's issued statements against the bank's cash and, on an apply, record a changed payment status (ms yrd payment). A plan reads (GET); an apply appends yrd.payment_changed. Signed by the portal Worker (HMAC-SHA256, a farm-command-* key) and accepted by farm-command-bridge at POST /v1/commands; the consumer re-verifies the signature, checks the sender's per-client grant on its own ledger and answers with billing.farm_command.completed, .denied or .failed carrying this command_id. Recommended idempotency_key: 'billing.payment.receive:client:<client>:command:<command_id>'. See bloodbank/docs/event-naming.md (billing) and Milkshake docs/farm-commands.md section 14.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.billing.payment.receive"
+    },
+    "kind": {
+      "const": "command"
+    },
+    "domain": {
+      "const": "billing"
+    },
+    "subject": {
+      "const": "bloodbank.cmd.billing.payment.receive"
+    },
+    "schemaref": {
+      "const": "bloodbank.billing.payment.receive.v1"
+    },
+    "dataschema": {
+      "const": "apicurio://holyfields/bloodbank.billing.payment.receive/versions/1"
+    },
+    "delivery": {
+      "const": "single_consumer"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "pattern": "^billing\\.payment\\.receive:client:[a-z0-9]+(-[a-z0-9]+)*:command:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "data": {
+      "allOf": [
+        {
+          "$ref": "../../_common/farm_command_request.v1.json#/$defs/palette_data"
+        }
+      ],
+      "description": "Payload for bloodbank.billing.payment.receive.",
+      "properties": {
+        "request": {
+          "allOf": [
+            {
+              "$ref": "../../_common/farm_command_request.v1.json#/$defs/palette_request"
+            }
+          ],
+          "properties": {
+            "subject": {
+              "const": "bloodbank.cmd.billing.payment.receive"
+            },
+            "command": {
+              "const": "yrd payment"
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "client": {
+                  "$ref": "../../_common/farm_command_request.v1.json#/$defs/slug"
+                },
+                "number": {
+                  "type": "string",
+                  "pattern": "^AAI-([A-Z][A-Z0-9]{1,11}-)?([0-9]{4}-[0-9]{2}|[0-9]{8}-[0-9]{8})(-v[0-9]+)?(-TU[0-9]*)?$"
+                }
+              },
+              "required": [
+                "client"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "subject",
+    "schemaref",
+    "dataschema",
+    "command_id",
+    "idempotency_key",
+    "actor",
+    "data",
+    "delivery"
+  ]
+}
