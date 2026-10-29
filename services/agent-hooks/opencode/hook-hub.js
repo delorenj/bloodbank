@@ -379,6 +379,7 @@ export default {
       });
 
       await ctx.tool.hook("execute.before", async (event) => {
+        let verdict = "";
         try {
           const sessionID = event.sessionID;
           own(sessionID);
@@ -399,8 +400,20 @@ export default {
             waiting.push(sessionID);
             rememberEntry(pendingShellCalls, key, waiting, MAX_CAPTURED);
           }
-          await emit("tool.execute.before", payload, directoryOf(sessionID));
+          verdict = await emit("tool.execute.before", payload, directoryOf(sessionID));
         } catch { /* never block a tool over telemetry */ }
+        // The one place a hub handler may veto a tool: native-clock-guard answers
+        // with {"permissionDecision":"deny","permissionDecisionReason":...} on
+        // stdout (OpenCode's bridge ignores exit codes). Telemetry still never
+        // blocks: a missing, empty or unparseable reply allows the call.
+        let denial = "";
+        try {
+          const decision = verdict ? JSON.parse(verdict) : undefined;
+          if (decision && decision.permissionDecision === "deny") {
+            denial = String(decision.permissionDecisionReason || "Blocked by hook-hub policy.");
+          }
+        } catch { /* not a decision */ }
+        if (denial) throw new Error(denial);
       });
 
       await ctx.tool.hook("execute.after", async (event) => {

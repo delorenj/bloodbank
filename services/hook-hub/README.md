@@ -66,6 +66,7 @@ explicit skips for absent project context or optional tools.
 | Nanoleaf | Claude lifecycle and attention signals, with the existing panel runtime. |
 | Sound notifications | Claude/Codex attention signals, Codex turn completion, and OpenCode session closure. |
 | Zellij attention and Git checkpoint | OpenCode only; attention requires a Zellij pane, and the existing checkpoint project opt-out is preserved. |
+| Native-clock guard | Claude, Codex, Copilot, Kimi, Gemini, Hermes, OpenCode `pre_tool` on shell, file-write and `cronjob_manage` tools. Denies crontab writes, new `*.timer`/cron.d/launchd-interval files, `systemd-run --on-*`, `at`/`batch`, Hermes internal cron jobs. Candybar is the single clock; exemptions come from `candybar/deploy/scheduling-policy.json`. Standalone script (`native_clock_guard.py`): a deny is a real exit 2 + stderr, with stdout JSON for Gemini (trailer) and OpenCode. Antigravity has no `pre_tool` binding and is not guarded. |
 
 Project Notebook, Nanoleaf, CodeGraph, Code Review Graph, Orca, CommonProject/PJangler projections,
 and guarded project fallbacks consult the same ownership contract so ordinary

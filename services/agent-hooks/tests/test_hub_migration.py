@@ -374,6 +374,12 @@ if native == "session.created":
         print(json.dumps({"additionalContext": context}))
     elif style == "plain":
         print("  " + context + "  ")
+elif native == "tool.execute.before":
+    command = (payload.get("tool_input") or {}).get("command")
+    if command == "deny-me":
+        print(json.dumps({"permissionDecision": "deny", "permissionDecisionReason": "BLOCKED by fixture"}))
+    elif command == "garbage-reply":
+        print("not json {")
 elif native == "chat.message" and os.environ["BB_TEST_PROMPT_CONTEXT"] == "1":
     print(json.dumps({"hookSpecificOutput": {"additionalContext": "prompt context:" + payload["turn_id"]}}))
 """
@@ -407,6 +413,26 @@ class TestOpenCodeBridge(unittest.TestCase):
             return
         self.assertEqual(len(content), 2)
         self.assertEqual(content[1], {"type": "text", "text": f"<system-reminder>\n{text}\n</system-reminder>"})
+
+    def test_hub_deny_vetoes_the_tool_but_telemetry_never_does(self):
+        outputs, calls = self.run_bridge("""
+await created('session-D');
+const attempt = async (command) => {
+  try { await toolBefore('session-D', 'call-' + command, { command }); return 'allowed'; }
+  catch (error) { return 'blocked:' + error.message; }
+};
+console.log(JSON.stringify({
+  denied: await attempt('deny-me'),
+  garbage: await attempt('garbage-reply'),
+  plain: await attempt('ls'),
+}));
+await deleted('session-D');
+""")
+        self.assertEqual(outputs["denied"], "blocked:BLOCKED by fixture")
+        self.assertEqual(outputs["garbage"], "allowed")
+        self.assertEqual(outputs["plain"], "allowed")
+        before = [c for c in calls if c["payload"]["hook_event_name"] == "tool.execute.before"]
+        self.assertEqual(len(before), 3, "a denied tool call must still be recorded")
 
     def test_turn_keeps_session_identity_context_and_failed_tool_once(self):
         outputs, calls = self.run_bridge("""

@@ -334,6 +334,25 @@ require_env      = ["ZELLIJ_SESSION_NAME", "ZELLIJ_PANE_ID"]
 timeout_ms       = 1000
 enabled          = false
 
+[[handler]]
+# One clock: Candybar. Denies agent tool calls that create a native recurring
+# clock (crontab, new *.timer, systemd-run --on-*, at/batch, Hermes internal
+# cron, launchd intervals, Hermes cronjob_manage recurring create). Standalone
+# script so a deny is a real exit 2 + stderr; Gemini/OpenCode get stdout JSON.
+# Exemptions: candybar/deploy/scheduling-policy.json (exact ids).
+# Hatch: CANDYBAR_NATIVE_CLOCK=rollback:<ledger-id> <cmd>. Fails open when the
+# hub is down; `candybar doctor --live` is the backstop. Antigravity has no
+# pre_tool binding (hooks.master.json note) and is not guarded.
+id = "native-clock-guard"
+mode = "sync"
+on = ["pre_tool"]
+clis = ["claude", "codex", "copilot", "kimi", "gemini", "hermes", "opencode"]
+match_tool = "(?i)^(bash|shell|shell_command|local_shell|exec_command|run_shell_command|terminal|write|write_file|create|edit|multiedit|replace|patch|apply_patch|str_replace_editor|cronjob_manage)$"
+command = ["/usr/bin/python3", "~/.agents/hooks/hub/native_clock_guard.py"]
+timeout_ms = 1000
+order = 0
+enabled = true
+
 # ---------------------------------------------------------------- smoke test
 # Enabled by default: proves the socket, the binding table and the dispatch path
 # without touching anything real. Safe to leave on; it only writes to the log.

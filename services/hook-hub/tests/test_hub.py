@@ -148,6 +148,72 @@ class TestDispatch(unittest.TestCase):
             self.assertEqual(r["handled"], ["a"])
             self.assertEqual(r["exit_code"], 0)
 
+    def _native_clock_registry(self, real_row: bool = False) -> str:
+        """The native-clock-guard row, pointed at this checkout's script."""
+        guard = HUB_DIR / "native_clock_guard.py"
+        if real_row:
+            import tomllib
+            rows = tomllib.loads((HUB_DIR / "handlers.toml").read_text())["handler"]
+            row = next(r for r in rows if r["id"] == "native-clock-guard")
+            self.assertEqual(row["mode"], "sync")
+            self.assertEqual(row["on"], ["pre_tool"])
+            self.assertEqual(row["order"], 0)
+            self.assertTrue(row["enabled"])
+            self.assertEqual(row["command"][0], "/usr/bin/python3")
+            self.assertTrue(row["command"][1].endswith("hooks/hub/native_clock_guard.py"))
+            clis, match = row["clis"], row["match_tool"]
+        else:
+            clis = ["claude", "codex", "copilot", "kimi", "gemini", "hermes", "opencode"]
+            match = "(?i)^(bash|terminal|write|run_shell_command|cronjob_manage)$"
+        return f"""
+[[handler]]
+id = "native-clock-guard"
+mode = "sync"
+on = ["pre_tool"]
+clis = {json.dumps(clis)}
+match_tool = {json.dumps(match)}
+command = ["/usr/bin/python3", "{guard}"]
+timeout_ms = 3000
+order = 0
+enabled = true
+"""
+
+    def _check_native_clock_deny(self, registry: str) -> None:
+        env = {"CANDYBAR_REPO": str(self.tmp / "no-candybar")}
+        with HubHarness(self.tmp, registry, env_extra=env) as h:
+            r = h.request("claude", "PreToolUse",
+                          payload={"tool_name": "Bash", "tool_input": {"command": "crontab -e"}})
+            self.assertEqual(r["exit_code"], 2)
+            self.assertIn("BLOCKED by native-clock-guard", r["stderr"])
+            self.assertEqual(r["handled"], ["native-clock-guard"])
+            ok = h.request("claude", "PreToolUse",
+                           payload={"tool_name": "Bash", "tool_input": {"command": "crontab -l"}})
+            self.assertEqual(ok["exit_code"], 0)
+            self.assertNotIn("stderr", ok)
+            gem = h.request("gemini", "BeforeTool",
+                            payload={"tool_name": "run_shell_command",
+                                     "tool_input": {"command": "systemctl --user enable --now x.timer"}})
+            self.assertEqual(json.loads(gem["stdout"])["decision"], "deny")
+            one_shot = h.request("hermes", "pre_tool_call", payload={
+                "tool_name": "cronjob_manage",
+                "tool_input": {"action": "create", "schedule": "in 30m", "prompt": "x"}})
+            self.assertEqual(one_shot["exit_code"], 0)
+            recurring = h.request("hermes", "pre_tool_call", payload={
+                "tool_name": "cronjob_manage",
+                "tool_input": {"action": "create", "schedule": "every 2h", "prompt": "x"}})
+            self.assertEqual(recurring["exit_code"], 2)
+            # an unrelated tool never even spawns the guard
+            read = h.request("claude", "PreToolUse", payload={"tool_name": "Read", "tool_input": {}})
+            self.assertEqual(read["handled"], [])
+
+    def test_native_clock_guard_denial_reaches_the_cli(self):
+        """A deny must be a real exit 2 + stderr through the hub, not just stdout."""
+        self._check_native_clock_deny(self._native_clock_registry())
+
+    def test_registered_native_clock_guard_row_denies(self):
+        """The row actually shipped in handlers.toml behaves the same."""
+        self._check_native_clock_deny(self._native_clock_registry(real_row=True))
+
     def test_sync_handlers_compose_in_order(self):
         reg = (echo_handler("second", "SECOND", order=20)
                + echo_handler("first", "FIRST", order=10))
