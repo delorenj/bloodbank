@@ -1,0 +1,382 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/_common/mercury_hook.v1.json",
+  "title": "Mercury transaction webhook (hook request and result) shared definitions",
+  "description": "Shared $defs for Milkshake Story 9.6 (docs/farm-commands.md section 16): the minimal hook request farm-command-bridge builds from an authentic Mercury webhook delivery and signs with its own mercury-hook-* key (16.4), and the data shape of the three billing.transaction.* result events milkshake-farm-consumer publishes (16.7.6). Ids, types and instants only: never an amount, a counterparty, a note, a description or a category. Patterns are anchored with ^...$.",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "A lowercase canonical UUID."
+    },
+    "instant": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$",
+      "description": "YYYY-MM-DDTHH:MM:SS.ffffffZ in UTC: six fraction digits, always."
+    },
+    "day": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+      "description": "A calendar day, YYYY-MM-DD."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Lowercase hex SHA-256."
+    },
+    "hook_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The request farm-command-bridge builds from one authentic Mercury delivery and signs (docs/farm-commands.md 16.4). Every key is always present: an optional Mercury field is null, never a missing key. Canonical form as section 2.2 (sorted keys, no whitespace, UTF-8).",
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "command_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "uuid5(NS_MERCURY_HOOK, \"event:\" + event_id); equals the envelope command_id."
+        },
+        "endpoint_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "The Mercury webhook endpoint whose signing secret verified the delivery."
+        },
+        "event_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "Mercury's event id, lowercased: Mercury's dedupe key."
+        },
+        "resource_type": {
+          "const": "transaction",
+          "description": "Only transaction events are published; the bridge archives the rest as ignored."
+        },
+        "resource_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "The Mercury transaction id, lowercased."
+        },
+        "operation_type": {
+          "type": "string",
+          "enum": [
+            "create",
+            "update",
+            "delete"
+          ]
+        },
+        "resource_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "Mercury's resourceVersion; null when absent or unreadable."
+        },
+        "occurred_at": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/instant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Mercury's occurredAt in UTC; null when absent or unparseable."
+        },
+        "created_at": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/instant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "mergePatch.createdAt when present and parseable (undocumented by Mercury); else null."
+        },
+        "posted_at": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/instant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "mergePatch.postedAt when present, non-null and parseable; else null."
+        },
+        "changed_paths": {
+          "oneOf": [
+            {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.]{0,63}$"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Mercury's changedPaths, unique and sorted by code point: field names, never values. Null when absent or not such a list."
+        },
+        "mercury_t": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The Mercury-Signature t (Unix seconds)."
+        },
+        "mercury_body_sha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "sha256 of the raw Mercury body, archived by the bridge as evidence."
+        },
+        "received_at": {
+          "$ref": "#/$defs/instant",
+          "description": "The bridge's clock at receipt; equals the envelope time."
+        }
+      },
+      "required": [
+        "schema_version",
+        "command_id",
+        "endpoint_id",
+        "event_id",
+        "resource_type",
+        "resource_id",
+        "operation_type",
+        "resource_version",
+        "occurred_at",
+        "created_at",
+        "posted_at",
+        "changed_paths",
+        "mercury_t",
+        "mercury_body_sha256",
+        "received_at"
+      ]
+    },
+    "hook_signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "alg": {
+          "const": "hmac-sha256"
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^mercury-hook-[a-z0-9-]{1,40}$",
+          "description": "A key of the mercury-hook purpose: a farm-invoice-* or farm-command-* key never signs a hook request."
+        },
+        "value": {
+          "$ref": "#/$defs/sha256",
+          "description": "Lowercase hex HMAC-SHA256 over the canonical JSON bytes of request."
+        }
+      },
+      "required": [
+        "alg",
+        "key_id",
+        "value"
+      ]
+    },
+    "hook_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The data of billing.transaction.recorded, .denied and .failed (docs/farm-commands.md 16.7.6): one shape, every key present. Never an amount, a counterparty, a note or a category.",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "command_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null only when the envelope could not be read."
+        },
+        "event_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null only when the envelope could not be read."
+        },
+        "endpoint_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null only when the envelope could not be read."
+        },
+        "resource_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null only when the envelope could not be read."
+        },
+        "operation_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "create",
+            "update",
+            "delete",
+            null
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "synced",
+            "covered",
+            "refused",
+            "failed"
+          ],
+          "description": "recorded carries synced or covered, denied refused, failed failed. The bridge's ignored deliveries never reach the bus."
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "The refusal or failure code (docs/farm-commands.md 16.12); on synced, the failure that followed the committed sync, else null."
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "One line, no amounts."
+        },
+        "batch_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The batch that synced it, or for covered the batch whose read covered it."
+        },
+        "since": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/day"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The read window start; null with read_at set means a full read."
+        },
+        "read_at": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/instant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the syncing or covering read began."
+        },
+        "batch_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "new": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "changed": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "unchanged": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tagged": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Autotag proposals appended (0 when autotag did not run); null when covered, refused or failed."
+        },
+        "pushed": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Every Farm push succeeded (true), one failed (false), none was due (null)."
+        },
+        "pushed_clients": {
+          "oneOf": [
+            {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                "maxLength": 64
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "command_id",
+        "event_id",
+        "endpoint_id",
+        "resource_id",
+        "operation_type",
+        "status",
+        "code",
+        "message",
+        "batch_id",
+        "since",
+        "read_at",
+        "batch_size",
+        "new",
+        "changed",
+        "unchanged",
+        "tagged",
+        "pushed",
+        "pushed_clients"
+      ]
+    }
+  }
+}
