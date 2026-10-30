@@ -54,7 +54,7 @@ services:
       NTFY_ROUTER_MUTE_TYPES: "${BLOODBANK_NTFY_ROUTER_MUTE_TYPES-bloodbank.agent.hook.updated,bloodbank.system.hook.updated,bloodbank.audio.memo.uploaded,bloodbank.audio.memo.received,bloodbank.audio.memo.transcribed,bloodbank.audio.memo.dispatched,bloodbank.audio.memo.replied,bloodbank.audio.memo.played,bloodbank.agent.invocation.progressed,bloodbank.audio.memo.narrated,bloodbank.audio.memo.notified,bloodbank.audio.memo.voiced,bloodbank.audio.memo.mirrored,bloodbank.agent.invocation.detached,bloodbank.audio.memo.routed,bloodbank.audio.memo.delegated,bloodbank.crank.duty.started,bloodbank.crank.duty.ended,bloodbank.crank.alert.raised}"
       NTFY_ROUTER_DIGEST_TYPES: "${BLOODBANK_NTFY_ROUTER_DIGEST_TYPES-bloodbank.agent.tool.*}"
       # Skip the per-type cap and the shared bucket (still wait out ntfy pushback).
-      NTFY_ROUTER_LOUD_TYPES: "${BLOODBANK_NTFY_ROUTER_LOUD_TYPES-bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed}"
+      NTFY_ROUTER_LOUD_TYPES: "${BLOODBANK_NTFY_ROUTER_LOUD_TYPES-bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed}"
       ROUTE_RATE_PER_MIN: "${BLOODBANK_NTFY_ROUTER_RATE_PER_MIN:-20}"
       ROUTE_BURST: "${BLOODBANK_NTFY_ROUTER_BURST:-10}"
       ROUTE_PER_TYPE_PER_MIN: "${BLOODBANK_NTFY_ROUTER_PER_TYPE_PER_MIN:-6}"

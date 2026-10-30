@@ -122,7 +122,7 @@ DEFAULT_MUTE = ("bloodbank.agent.hook.updated,bloodbank.system.hook.updated,"
                 "bloodbank.audio.memo.routed,bloodbank.audio.memo.delegated,bloodbank.crank.duty.started,bloodbank.crank.duty.ended,bloodbank.crank.alert.raised")
 DEFAULT_DIGEST = "bloodbank.agent.tool.*"
 # Deploys, slop alerts, telephony, carrier texts and audio: rare, and wanted the moment they happen.
-DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed"
+DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed"
 
 DEPLOYMENT_COMPLETED = "bloodbank.project.deployment.completed"
 DEPLOYMENT_FAILED = "bloodbank.project.deployment.failed"

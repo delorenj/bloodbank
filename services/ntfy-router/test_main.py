@@ -182,8 +182,20 @@ class PolicyTest(unittest.TestCase):
         self.assertTrue(policy.is_loud("bloodbank.audio.memo.failed"))
         self.assertFalse(policy.is_loud("bloodbank.audio.memo.transcribed"))
         self.assertFalse(policy.is_loud("bloodbank.llm.usage.recorded"))
+        # Milkshake Story 9.6: a Mercury webhook that could not be read into the ledger pages.
+        self.assertTrue(policy.is_loud("bloodbank.billing.transaction.failed"))
+        self.assertFalse(policy.is_loud("bloodbank.billing.transaction.recorded"))
+        self.assertFalse(policy.is_loud("bloodbank.billing.transaction.denied"))
         self.assertEqual(policy.classify("bloodbank.project.deployment.completed"), "route")
         self.assertFalse(main.Policy.from_env({"NTFY_ROUTER_LOUD_TYPES": ""}).is_loud(main.DEPLOYMENT_COMPLETED))
+
+    def test_the_compose_default_matches_default_loud(self):
+        import re
+        from pathlib import Path
+        compose = (Path(__file__).with_name("compose.yml")).read_text()
+        match = re.search(r'NTFY_ROUTER_LOUD_TYPES: "\$\{BLOODBANK_NTFY_ROUTER_LOUD_TYPES-([^}]*)\}"', compose)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), main.DEFAULT_LOUD)
 
 
 class DispositionTest(unittest.TestCase):
