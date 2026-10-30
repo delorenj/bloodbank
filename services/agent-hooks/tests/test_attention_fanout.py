@@ -109,6 +109,29 @@ class AttentionFanoutTests(unittest.TestCase):
         self.assertEqual(envelope["data"]["tool_name"], "Bash")
         self.assertEqual(publish.call_args.kwargs["timeout"], DECKARD_PUBLISH_TIMEOUT)
 
+    def test_native_contract_remains_testable_when_host_owns_claude_hooks(self) -> None:
+        ownership = self.agent_dir / "ownership.json"
+        ownership.write_text(json.dumps({"version": 1, "clis": ["claude"]}))
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "BB_HOOK_HUB": "off",  # Exercise the native publisher, not host hook-hub forwarding.
+                    "BB_HOOK_OWNERSHIP": str(ownership),
+                    "BLOODBANK_ENABLED": "true",
+                    "ZELLIJ_PANE_ID": "41",
+                    "ZELLIJ_SESSION_NAME": "Workspace",
+                },
+                clear=False,
+            ),
+            mock.patch("core.publisher.nats_publish") as publish,
+            mock.patch("sys.stdin", io.StringIO('{"message":"waiting"}')),
+        ):
+            self.assertEqual(run(get_adapter("claude"), ["publish.py", "Notification"]), 0)
+
+        publish.assert_called_once()
+        self.assertEqual(publish.call_args.args[0], DECKARD_ATTENTION_SUBJECT)
+
     def test_contract_literals_and_two_native_invocations_have_unique_uuid_ids(self) -> None:
         self.assertEqual(DECKARD_ATTENTION_SUBJECT, "deckard.evt.attention")
         self.assertEqual(DECKARD_ATTENTION_TYPE, "deckard.v1.agent.attention")
@@ -116,6 +139,7 @@ class AttentionFanoutTests(unittest.TestCase):
             mock.patch.dict(
                 os.environ,
                 {
+                    "BB_HOOK_HUB": "off",  # Keep the native path independent of host ownership.
                     "BLOODBANK_ENABLED": "true",
                     "ZELLIJ_PANE_ID": "41",
                     "ZELLIJ_SESSION_NAME": "Workspace",
