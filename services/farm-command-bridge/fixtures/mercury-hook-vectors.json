@@ -1,0 +1,485 @@
+{
+  "source": "Milkshake docs/farm-commands.md section 16 (Story 9.6); scheme: https://docs.mercury.com/reference/webhooks",
+  "ns_mercury_hook": "f4a8a3aa-c580-5dc5-bcb4-ac5e108bc3d0",
+  "mercury_secrets": [
+    {
+      "endpoint_id": "5f0d2c4b-1a3e-4b6f-8c7d-9e0f1a2b3c4d",
+      "secret": "milkshake-mercury-webhook-test-vector"
+    },
+    {
+      "endpoint_id": "6a1e3d5c-2b4f-4c7a-9d8e-0f1a2b3c4d5e",
+      "secret": "milkshake-mercury-webhook-test-vector-previous"
+    }
+  ],
+  "key_id": "mercury-hook-test",
+  "key": "milkshake-mercury-hook-test-vector-key",
+  "window_s": 300,
+  "vectors": [
+    {
+      "name": "create",
+      "mercury_body": "{\"id\":\"0b6f3c1e-8a2d-4f5b-9c7e-1d2a3b4c5d6e\",\"resourceType\":\"transaction\",\"resourceId\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"operationType\":\"create\",\"resourceVersion\":1,\"occurredAt\":\"2026-11-02T14:05:08.654321Z\",\"changedPaths\":[\"status\",\"amount\",\"bankDescription\"],\"mergePatch\":{\"amount\":-125.5,\"bankDescription\":\"FIXTURE VENDOR INC\",\"status\":\"pending\"},\"previousValues\":null}",
+      "mercury_body_bytes": 378,
+      "mercury_body_sha256": "d0a8bb86141d4010bd5fd1db62b7c6a218d324826b871ed4471219de88f78059",
+      "t": 1793628309,
+      "signed_prefix": "1793628309.",
+      "signature": "d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "header": "t=1793628309,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "received_at": "2026-11-02T14:05:10.123456Z",
+      "request": "{\"changed_paths\":[\"amount\",\"bankDescription\",\"status\"],\"command_id\":\"251f81c0-76eb-5307-a780-b18b82df1986\",\"created_at\":null,\"endpoint_id\":\"5f0d2c4b-1a3e-4b6f-8c7d-9e0f1a2b3c4d\",\"event_id\":\"0b6f3c1e-8a2d-4f5b-9c7e-1d2a3b4c5d6e\",\"mercury_body_sha256\":\"d0a8bb86141d4010bd5fd1db62b7c6a218d324826b871ed4471219de88f78059\",\"mercury_t\":1793628309,\"occurred_at\":\"2026-11-02T14:05:08.654321Z\",\"operation_type\":\"create\",\"posted_at\":null,\"received_at\":\"2026-11-02T14:05:10.123456Z\",\"resource_id\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"resource_type\":\"transaction\",\"resource_version\":1,\"schema_version\":1}",
+      "request_bytes": 594,
+      "request_sha256": "6f4add39af8cf9eaa6a839a0927c3c50d099519be805c2ac771c947e0adce4e4",
+      "bridge_signature": "25774fa1c56fac58c95ae162608d1c31eec2c40ee755f2ae13e9f14ea9c9d04d",
+      "command_id": "251f81c0-76eb-5307-a780-b18b82df1986",
+      "envelope_bytes": 1738,
+      "envelope_sha256": "2e49f16692230e1d4a5d0ed3c5958e7665941f02afa505920547665662b47df2",
+      "result_event_ids": {
+        "recorded": "4164ff98-9fad-515d-8136-c8542700c904",
+        "denied": "69241067-7ef4-5028-b5a3-c942986f7ca6",
+        "failed": "e9084a1c-6216-571c-8845-afcad158e2b1"
+      }
+    },
+    {
+      "name": "update",
+      "mercury_body": "{\n  \"id\": \"1c7f4d2f-9b3e-4a6c-8d8f-2e3b4c5d6e7f\",\n  \"resourceType\": \"transaction\",\n  \"resourceId\": \"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\n  \"operationType\": \"update\",\n  \"resourceVersion\": 2,\n  \"occurredAt\": \"2026-11-02T14:06:40Z\",\n  \"changedPaths\": [\n    \"status\",\n    \"postedAt\"\n  ],\n  \"mergePatch\": {\n    \"postedAt\": \"2026-11-02T14:06:40.000000+00:00\",\n    \"status\": \"sent\"\n  },\n  \"previousValues\": {\n    \"postedAt\": null,\n    \"status\": \"pending\"\n  }\n}",
+      "mercury_body_bytes": 455,
+      "mercury_body_sha256": "9284e16cd67ef726027b0366a89286cb3480e280bae146d8d35793260b902fed",
+      "t": 1793628401,
+      "signed_prefix": "1793628401.",
+      "signature": "794d6d272ed8f3e2c7a373919fbecfbee9b304fd7335ea689057ea78a284bf76",
+      "header": "t=1793628401,v1=794d6d272ed8f3e2c7a373919fbecfbee9b304fd7335ea689057ea78a284bf76",
+      "received_at": "2026-11-02T14:06:41.500000Z",
+      "request": "{\"changed_paths\":[\"postedAt\",\"status\"],\"command_id\":\"5fc0e210-38e7-543e-8197-ee58a2d5b058\",\"created_at\":null,\"endpoint_id\":\"5f0d2c4b-1a3e-4b6f-8c7d-9e0f1a2b3c4d\",\"event_id\":\"1c7f4d2f-9b3e-4a6c-8d8f-2e3b4c5d6e7f\",\"mercury_body_sha256\":\"9284e16cd67ef726027b0366a89286cb3480e280bae146d8d35793260b902fed\",\"mercury_t\":1793628401,\"occurred_at\":\"2026-11-02T14:06:40.000000Z\",\"operation_type\":\"update\",\"posted_at\":\"2026-11-02T14:06:40.000000Z\",\"received_at\":\"2026-11-02T14:06:41.500000Z\",\"resource_id\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"resource_type\":\"transaction\",\"resource_version\":2,\"schema_version\":1}",
+      "request_bytes": 603,
+      "request_sha256": "d0c453236f4f0d9c1ecab2202fdd03428960beb6d4a994f8641f57eb345d72ca",
+      "bridge_signature": "b93717089aafc65b3349699d3b96c7d08fb26390eb1992a3951638c01c2d533f",
+      "command_id": "5fc0e210-38e7-543e-8197-ee58a2d5b058",
+      "envelope_bytes": 1747,
+      "envelope_sha256": "ec1339ec5ab49c4059eeac28c83e34e3160f12459baf88cf733032a8b4de4319",
+      "result_event_ids": {
+        "recorded": "57f0c0e4-5466-5a8e-bc4b-50b7a77bfc77",
+        "denied": "0bd2b85b-3c21-5b0d-85f3-00a82b364207",
+        "failed": "cd87b96b-0048-55ee-b513-5ecc5d7c9ea4"
+      }
+    }
+  ],
+  "tampered_body": "{\"id\":\"0b6f3c1e-8a2d-4f5b-9c7e-1d2a3b4c5d6e\",\"resourceType\":\"transaction\",\"resourceId\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"operationType\":\"create\",\"resourceVersion\":1,\"occurredAt\":\"2026-11-02T14:05:08.654321Z\",\"changedPaths\":[\"status\",\"amount\",\"bankDescription\"],\"mergePatch\":{\"amount\":-125.6,\"bankDescription\":\"FIXTURE VENDOR INC\",\"status\":\"pending\"},\"previousValues\":null}",
+  "signature_cases": [
+    {
+      "name": "valid",
+      "body": "create",
+      "header": "t=1793628309,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628309,
+      "verdict": "ok",
+      "endpoint_id": "5f0d2c4b-1a3e-4b6f-8c7d-9e0f1a2b3c4d"
+    },
+    {
+      "name": "valid-spaces",
+      "body": "create",
+      "header": "t=1793628309, v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628309,
+      "verdict": "ok",
+      "endpoint_id": "5f0d2c4b-1a3e-4b6f-8c7d-9e0f1a2b3c4d"
+    },
+    {
+      "name": "valid-uppercase-hex",
+      "body": "create",
+      "header": "t=1793628309,v1=D0CC7E0B1808451F0665467890FAF3E724CDBC210CE96C67AF7ABE82A6A0F067",
+      "now": 1793628309,
+      "verdict": "ok",
+      "endpoint_id": "5f0d2c4b-1a3e-4b6f-8c7d-9e0f1a2b3c4d"
+    },
+    {
+      "name": "valid-two-v1-rotation",
+      "body": "create",
+      "header": "t=1793628309,v1=4e538b2ac66d4782ebc3f71791eb302bbc5ea16e2bc797b0e93789f2d54ac561,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628309,
+      "verdict": "ok",
+      "endpoint_id": "5f0d2c4b-1a3e-4b6f-8c7d-9e0f1a2b3c4d"
+    },
+    {
+      "name": "valid-previous-endpoint-secret",
+      "body": "create",
+      "header": "t=1793628309,v1=4e538b2ac66d4782ebc3f71791eb302bbc5ea16e2bc797b0e93789f2d54ac561",
+      "now": 1793628309,
+      "verdict": "ok",
+      "endpoint_id": "6a1e3d5c-2b4f-4c7a-9d8e-0f1a2b3c4d5e"
+    },
+    {
+      "name": "valid-unknown-scheme-ignored",
+      "body": "create",
+      "header": "t=1793628309,v0=abc,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628309,
+      "verdict": "ok",
+      "endpoint_id": "5f0d2c4b-1a3e-4b6f-8c7d-9e0f1a2b3c4d"
+    },
+    {
+      "name": "window-edge-past",
+      "body": "create",
+      "header": "t=1793628309,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628609,
+      "verdict": "ok",
+      "endpoint_id": "5f0d2c4b-1a3e-4b6f-8c7d-9e0f1a2b3c4d"
+    },
+    {
+      "name": "window-edge-future",
+      "body": "create",
+      "header": "t=1793628309,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628009,
+      "verdict": "ok",
+      "endpoint_id": "5f0d2c4b-1a3e-4b6f-8c7d-9e0f1a2b3c4d"
+    },
+    {
+      "name": "expired",
+      "body": "create",
+      "header": "t=1793628309,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628610,
+      "verdict": "SIGNATURE_EXPIRED",
+      "endpoint_id": null
+    },
+    {
+      "name": "ahead",
+      "body": "create",
+      "header": "t=1793628309,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628008,
+      "verdict": "SIGNATURE_EXPIRED",
+      "endpoint_id": null
+    },
+    {
+      "name": "tampered-body",
+      "body": "create-tampered",
+      "header": "t=1793628309,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628309,
+      "verdict": "SIGNATURE_INVALID",
+      "endpoint_id": null
+    },
+    {
+      "name": "wrong-secret",
+      "body": "create",
+      "header": "t=1793628309,v1=e938cc71a74293fd36d10a8f9afb7347f41a725a01b773cff862c524d0b987c2",
+      "now": 1793628309,
+      "verdict": "SIGNATURE_INVALID",
+      "endpoint_id": null
+    },
+    {
+      "name": "t-not-the-signed-one",
+      "body": "create",
+      "header": "t=1793628310,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628309,
+      "verdict": "SIGNATURE_INVALID",
+      "endpoint_id": null
+    },
+    {
+      "name": "no-header",
+      "body": "create",
+      "header": null,
+      "now": 1793628309,
+      "verdict": "SIGNATURE_MISSING",
+      "endpoint_id": null
+    },
+    {
+      "name": "no-t",
+      "body": "create",
+      "header": "v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628309,
+      "verdict": "SIGNATURE_MISSING",
+      "endpoint_id": null
+    },
+    {
+      "name": "two-t",
+      "body": "create",
+      "header": "t=1793628309,t=1793628309,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628309,
+      "verdict": "SIGNATURE_MISSING",
+      "endpoint_id": null
+    },
+    {
+      "name": "no-v1",
+      "body": "create",
+      "header": "t=1793628309",
+      "now": 1793628309,
+      "verdict": "SIGNATURE_MISSING",
+      "endpoint_id": null
+    },
+    {
+      "name": "short-v1",
+      "body": "create",
+      "header": "t=1793628309,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f06",
+      "now": 1793628309,
+      "verdict": "SIGNATURE_MISSING",
+      "endpoint_id": null
+    },
+    {
+      "name": "t-not-digits",
+      "body": "create",
+      "header": "t=17936283O9,v1=d0cc7e0b1808451f0665467890faf3e724cdbc210ce96c67af7abe82a6a0f067",
+      "now": 1793628309,
+      "verdict": "SIGNATURE_MISSING",
+      "endpoint_id": null
+    }
+  ],
+  "since_margin_days": 3,
+  "max_lookups": 16,
+  "since_cases": [
+    {
+      "name": "create-unknown",
+      "deliveries": [
+        {
+          "operation_type": "create",
+          "resource_id": "r1",
+          "occurred_at": "2026-11-02T14:05:08.654321Z",
+          "created_at": null,
+          "ledger_created_at": null,
+          "mercury_created_at": null
+        }
+      ],
+      "lookups": [],
+      "since": "2026-10-30"
+    },
+    {
+      "name": "create-created-at-wins",
+      "deliveries": [
+        {
+          "operation_type": "create",
+          "resource_id": "r1",
+          "occurred_at": "2026-11-01T00:00:01.000000Z",
+          "created_at": "2026-10-31T23:59:59.999999Z",
+          "ledger_created_at": null,
+          "mercury_created_at": null
+        }
+      ],
+      "lookups": [],
+      "since": "2026-10-28"
+    },
+    {
+      "name": "update-known",
+      "deliveries": [
+        {
+          "operation_type": "update",
+          "resource_id": "r2",
+          "occurred_at": "2026-11-02T14:06:40.000000Z",
+          "created_at": null,
+          "ledger_created_at": "2026-09-14T23:59:59.000000Z",
+          "mercury_created_at": null
+        }
+      ],
+      "lookups": [],
+      "since": "2026-09-11"
+    },
+    {
+      "name": "ledger-wins-over-payload",
+      "deliveries": [
+        {
+          "operation_type": "update",
+          "resource_id": "r2",
+          "occurred_at": "2026-11-02T14:06:40.000000Z",
+          "created_at": "2026-11-01T00:00:00.000000Z",
+          "ledger_created_at": "2026-10-05T00:00:01.000000Z",
+          "mercury_created_at": null
+        }
+      ],
+      "lookups": [],
+      "since": "2026-10-02"
+    },
+    {
+      "name": "batch-earliest",
+      "deliveries": [
+        {
+          "operation_type": "create",
+          "resource_id": "r1",
+          "occurred_at": "2026-11-02T14:05:08.654321Z",
+          "created_at": null,
+          "ledger_created_at": null,
+          "mercury_created_at": null
+        },
+        {
+          "operation_type": "update",
+          "resource_id": "r2",
+          "occurred_at": "2026-11-02T14:06:40.000000Z",
+          "created_at": null,
+          "ledger_created_at": "2026-10-05T00:00:01.000000Z",
+          "mercury_created_at": null
+        }
+      ],
+      "lookups": [],
+      "since": "2026-10-02"
+    },
+    {
+      "name": "create-and-update-same-batch",
+      "deliveries": [
+        {
+          "operation_type": "create",
+          "resource_id": "r1",
+          "occurred_at": "2026-11-02T14:05:08.654321Z",
+          "created_at": null,
+          "ledger_created_at": null,
+          "mercury_created_at": null
+        },
+        {
+          "operation_type": "update",
+          "resource_id": "r1",
+          "occurred_at": "2026-11-02T14:06:40.000000Z",
+          "created_at": null,
+          "ledger_created_at": null,
+          "mercury_created_at": null
+        }
+      ],
+      "lookups": [],
+      "since": "2026-10-30"
+    },
+    {
+      "name": "update-unknown-fetched",
+      "deliveries": [
+        {
+          "operation_type": "update",
+          "resource_id": "r3",
+          "occurred_at": "2026-11-02T14:06:40.000000Z",
+          "created_at": null,
+          "ledger_created_at": null,
+          "mercury_created_at": "2026-08-01T10:00:00.000000Z"
+        }
+      ],
+      "lookups": [
+        "r3"
+      ],
+      "since": "2026-07-29"
+    },
+    {
+      "name": "create-without-occurred-at-fetched",
+      "deliveries": [
+        {
+          "operation_type": "create",
+          "resource_id": "r5",
+          "occurred_at": null,
+          "created_at": null,
+          "ledger_created_at": null,
+          "mercury_created_at": "2026-11-02T03:00:00.000000Z"
+        }
+      ],
+      "lookups": [
+        "r5"
+      ],
+      "since": "2026-10-30"
+    },
+    {
+      "name": "update-unknown-reads-everything",
+      "deliveries": [
+        {
+          "operation_type": "create",
+          "resource_id": "r1",
+          "occurred_at": "2026-11-02T14:05:08.654321Z",
+          "created_at": null,
+          "ledger_created_at": null,
+          "mercury_created_at": null
+        },
+        {
+          "operation_type": "update",
+          "resource_id": "r3",
+          "occurred_at": "2026-11-02T14:06:40.000000Z",
+          "created_at": null,
+          "ledger_created_at": null,
+          "mercury_created_at": null
+        }
+      ],
+      "lookups": [
+        "r3"
+      ],
+      "since": null
+    },
+    {
+      "name": "delete-known",
+      "deliveries": [
+        {
+          "operation_type": "delete",
+          "resource_id": "r4",
+          "occurred_at": "2026-11-02T14:06:40.000000Z",
+          "created_at": null,
+          "ledger_created_at": "2026-10-20T12:00:00.000000Z",
+          "mercury_created_at": null
+        }
+      ],
+      "lookups": [],
+      "since": "2026-10-17"
+    }
+  ],
+  "cover_margin_s": 5,
+  "cover_cases": [
+    {
+      "name": "arrived-before-read",
+      "last_read": {
+        "started_at": "2026-11-02T14:05:16.000000Z",
+        "since": "2026-10-02"
+      },
+      "received_at": "2026-11-02T14:05:10.123456Z",
+      "since": "2026-10-30",
+      "covered": true
+    },
+    {
+      "name": "inside-margin",
+      "last_read": {
+        "started_at": "2026-11-02T14:05:15.000000Z",
+        "since": "2026-10-02"
+      },
+      "received_at": "2026-11-02T14:05:10.123456Z",
+      "since": "2026-10-30",
+      "covered": false
+    },
+    {
+      "name": "margin-edge",
+      "last_read": {
+        "started_at": "2026-11-02T14:05:15.123456Z",
+        "since": "2026-10-02"
+      },
+      "received_at": "2026-11-02T14:05:10.123456Z",
+      "since": "2026-10-30",
+      "covered": true
+    },
+    {
+      "name": "arrived-during-read",
+      "last_read": {
+        "started_at": "2026-11-02T14:05:16.000000Z",
+        "since": "2026-10-02"
+      },
+      "received_at": "2026-11-02T14:05:17.000000Z",
+      "since": "2026-10-30",
+      "covered": false
+    },
+    {
+      "name": "older-window",
+      "last_read": {
+        "started_at": "2026-11-02T14:05:16.000000Z",
+        "since": "2026-10-30"
+      },
+      "received_at": "2026-11-02T14:05:10.123456Z",
+      "since": "2026-10-02",
+      "covered": false
+    },
+    {
+      "name": "last-read-full",
+      "last_read": {
+        "started_at": "2026-11-02T14:05:16.000000Z",
+        "since": null
+      },
+      "received_at": "2026-11-02T14:05:10.123456Z",
+      "since": null,
+      "covered": true
+    },
+    {
+      "name": "needs-full-last-partial",
+      "last_read": {
+        "started_at": "2026-11-02T14:05:16.000000Z",
+        "since": "2026-01-01"
+      },
+      "received_at": "2026-11-02T14:05:10.123456Z",
+      "since": null,
+      "covered": false
+    }
+  ],
+  "batch": {
+    "command_ids": [
+      "251f81c0-76eb-5307-a780-b18b82df1986",
+      "5fc0e210-38e7-543e-8197-ee58a2d5b058"
+    ],
+    "batch_id": "eebd54e8-de3d-59e8-8f26-b3aa00b0e160",
+    "actor": "mercury-hook:eebd54e8-de3d-59e8-8f26-b3aa00b0e160"
+  }
+}

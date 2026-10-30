@@ -59,10 +59,74 @@ code; never `args` (a reason is free text), a key or a signature.
 vectors, the 1569-byte envelope of `squeeze-plan`, and 47 `args_cases`; `test_bridge.py` asserts
 all three.
 
+### `POST /v1/mercury-webhooks` (Mercury transaction webhooks, Milkshake Story 9.6)
+
+A second trust source on the same container: Mercury POSTs its `transaction.created|updated`
+deliveries to `https://mercury-hooks.delo.sh/v1/mercury-webhooks` (Traefik router `mercury-hooks`,
+Host and Path). The contract is Milkshake's `docs/farm-commands.md` section 16; the schemas are
+`schemas/bloodbank/billing/transaction.*.json` and `schemas/_common/mercury_hook.v1.json`. The rule
+behind the order: **only a body that is not authentic is answered 4xx**. Mercury does not retry a
+4xx and counts it toward disabling the endpoint, so once the HMAC matches every outcome is a 2xx
+or a 503 Mercury retries.
+
+0. `Host` (port stripped, lowercased) is `mercury-hooks.delo.sh`, else 404; the Farm paths answer
+   404 on that host. No endpoint secret or no `mercury-hook-` key configured: `503 HOOK_UNCONFIGURED`;
+1. the body: `Content-Length` 1 to 65536, or `Transfer-Encoding: chunked` decoded here (cloudflared
+   may forward that way) up to 65536 bytes; more is `413 BODY_TOO_LARGE`; no length, a zero,
+   negative or non-numeric one, broken chunk framing or a 3 s stall is `503 BODY_UNREADABLE`.
+   `Content-Type` is not checked;
+2. `verify_mercury`: `Mercury-Signature: t=<unix s>,v1=<hex>` (exactly one `t`, one or more `v1`,
+   other keys ignored; else `401 SIGNATURE_MISSING`), HMAC-SHA256 with each endpoint secret
+   (`_1`, then `_2`) over `<t>.<raw body>` in constant time (`401 SIGNATURE_INVALID`). The
+   five-minute window is evaluated here and answered at step 5;
+3. `read_mercury_event`: only `id`, `resourceId` (uuids, lowercased), `resourceType` and
+   `operationType` (`create|update|delete`) are required; `occurredAt`, `resourceVersion`,
+   `changedPaths`, `mergePatch.createdAt|postedAt` become null when absent or unreadable. A body
+   that fails a required rule is archived `ignored` `EVENT_UNREADABLE`, `200`;
+4. dedupe by Mercury's event id, inside one archive transaction with a **1.5 s** busy timeout
+   (a lock or disk error is `503 ARCHIVE_UNAVAILABLE`): same body, `200 duplicate` whatever `t`
+   says (a still-pending delivery is published now); different body, `200 conflict`, kept in
+   `mercury_conflicts`, nothing published;
+5. `t` outside 300 s: archived `ignored` `SIGNATURE_EXPIRED`, `200`, nothing published (a later
+   in-window attempt of the same event still publishes);
+6. `resourceType` other than `transaction`: archived `ignored` `RESOURCE_IGNORED`, `200`;
+7. the minimal request (ids, types and instants; never an amount, a name, a note or the patch) is
+   built, signed with the greatest `mercury-hook-*` key id in `keys_json`, wrapped and validated
+   before one insert (`mercury_events` plus a `pending` `mercury_delivery`). A validation failure is
+   a bridge bug: archived `ignored` `ENVELOPE_INVALID`, `200`;
+8. publish `bloodbank.cmd.billing.transaction.receive` with `Nats-Msg-Id: <command_id>`
+   (`command_id = uuid5(NS_MERCURY_HOOK, "event:" + event_id)`), waiting at most 2 s for the
+   PubAck; a miss leaves the row `pending` for the 15 s sweep;
+9. `202 {success, duplicate:false, command_id, published}`: after the durable archive, not after
+   the PubAck, because Mercury only needs to stop retrying.
+
+The raw Mercury body is evidence (it holds amounts and names): kept in the archive volume only,
+never published, never logged. `/healthz` and `/readyz` add `mercury_configured`,
+`mercury_archived`, `mercury_unpublished`, `mercury_ignored` (counts by code),
+`mercury_last_received_at` and `mercury_alarm`; `ready` also needs every hook delivery published
+and no alarm, which is an `EVENT_UNREADABLE`, `ENVELOPE_INVALID` or `SIGNATURE_EXPIRED` row in the
+last 24 hours (an authentic Mercury event dropped until Milkshake's nightly backstop).
+`RESOURCE_IGNORED` never alarms. `fixtures/mercury-hook-vectors.json` is the contract's golden file,
+byte for byte (sha256 `d0617a1d...213d`, copied from Milkshake `tests/fixtures/`, never regenerated
+here).
+
+Configuration (`.env.op`, references only, after `ms mercury webhook register --apply`):
+`MERCURY_WEBHOOK_ENDPOINT_1` (the endpoint id, a plain uuid) with `MERCURY_WEBHOOK_SECRET_1`
+(`op://DeLoSecrets/<item-uuid>/credential`), and `_2` only during a rotation; half a pair stops the
+start. `keys_json` must also hold a `mercury-hook-<yyyy-mm>` key, which the Farm's Worker never
+holds. Re-send one archived hook envelope:
+
+```sh
+op run --env-file .env.op -- docker compose --env-file /dev/null exec farm-command-bridge \
+  python /app/services/farm-command-bridge/main.py republish --event-id <mercury event uuid>
+```
+
 The bridge authorizes nobody. Milkshake's `milkshake-farm-consumer` (durable
 `milkshake-farm-invoice`) re-verifies the signature, checks its own ledger allow-list and answers
 with `bloodbank.evt.billing.invoice.generated|denied|failed` (Create Invoice) or
-`bloodbank.evt.billing.farm_command.completed|denied|failed` (the palette).
+`bloodbank.evt.billing.farm_command.completed|denied|failed` (the palette). A separate durable,
+`milkshake-mercury-hook`, takes `bloodbank.cmd.billing.transaction.receive` and answers with
+`bloodbank.evt.billing.transaction.recorded|denied|failed`.
 
 Run from this directory with the keys resolved only in process memory:
 
@@ -87,11 +151,11 @@ op run --env-file .env.op -- docker compose --env-file /dev/null exec farm-comma
   python /app/services/farm-command-bridge/main.py republish --command-id <uuid>
 ```
 
-Key purpose: `keys_json` holds `farm-invoice-<yyyy-mm>` keys (Create Invoice) and `farm-command-<yyyy-mm>` keys (the palette);
-each prefix signs its own route only. Key rotation: add the new key to the item's `keys_json` (bridge and consumer accept both),
+Key purpose: `keys_json` holds `farm-invoice-<yyyy-mm>` keys (Create Invoice), `farm-command-<yyyy-mm>` keys (the palette)
+and `mercury-hook-<yyyy-mm>` keys (the bridge's own signature on hook requests); each prefix signs its own route only. Key rotation: add the new key to the item's `keys_json` (bridge and consumer accept both),
 restart both, switch the Worker's `MILKSHAKE_COMMAND_HMAC_KEY` and `MILKSHAKE_COMMAND_KEY_ID`, then
 drop the old key after five minutes. The `farm-command-archive` volume is permanent evidence:
 back it up with the platform volumes and never delete it on an upgrade.
 
 Tests: `python -m unittest discover -s services/farm-command-bridge -p 'test_*.py'` (asserts the
-contract's golden vector).
+contracts' golden vectors: the palette's and the Mercury hook's).

@@ -1,4 +1,5 @@
-# farm-command-bridge: the Farm's signed Create Invoice command -> bloodbank.cmd.billing.invoice.generate.
+# farm-command-bridge: the Farm's signed commands (Create Invoice, the palette) and Mercury's transaction
+# webhooks (mercury-hooks.delo.sh, Milkshake Story 9.6) -> BLOODBANK_COMMANDS.
 # Start (secrets resolved into this process only):
 #   op run --env-file .env.op -- docker compose --env-file /dev/null up -d --build
 name: bloodbank-farm-command-bridge
@@ -12,6 +13,12 @@ services:
     environment:
       NATS_URL: nats://bloodbank-nats:4222
       FARM_COMMAND_KEYS: ${FARM_COMMAND_KEYS:?FARM_COMMAND_KEYS comes from .env.op via op run}
+      # Mercury webhook endpoints (contract 16.3.1), optional: with none, POST /v1/mercury-webhooks
+      # answers 503 HOOK_UNCONFIGURED and the Farm routes are unaffected. _2 only during a rotation.
+      MERCURY_WEBHOOK_ENDPOINT_1: ${MERCURY_WEBHOOK_ENDPOINT_1:-}
+      MERCURY_WEBHOOK_SECRET_1: ${MERCURY_WEBHOOK_SECRET_1:-}
+      MERCURY_WEBHOOK_ENDPOINT_2: ${MERCURY_WEBHOOK_ENDPOINT_2:-}
+      MERCURY_WEBHOOK_SECRET_2: ${MERCURY_WEBHOOK_SECRET_2:-}
     volumes: [farm-command-archive:/data]
     networks: [bloodbank-network, proxy]
     labels:
@@ -21,6 +28,12 @@ services:
       traefik.http.routers.farm-commands.entrypoints: websecure
       traefik.http.routers.farm-commands.tls.certresolver: letsencrypt
       traefik.http.services.farm-commands.loadbalancer.server.port: "8080"
+      # Mercury's webhooks: their own host and path on the same container and service. The handler
+      # also refuses the path on any other Host, and the Farm paths on this one.
+      traefik.http.routers.mercury-hooks.rule: Host(`mercury-hooks.delo.sh`) && Path(`/v1/mercury-webhooks`)
+      traefik.http.routers.mercury-hooks.entrypoints: websecure
+      traefik.http.routers.mercury-hooks.tls.certresolver: letsencrypt
+      traefik.http.routers.mercury-hooks.service: farm-commands
     # Liveness only: /healthz answers 200 whenever the process serves (readiness, NATS connected
     # and archive drained, is in its body and on /readyz). A NATS blip must not mark the container
     # unhealthy, or Traefik stops routing and the Farm gets a 404 instead of 503 BUS_UNAVAILABLE.
