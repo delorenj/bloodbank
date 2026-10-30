@@ -645,17 +645,18 @@ def _ensure_bloodbank_hook_link() -> int:
         try:
             current = BLOODBANK_HOOK_LINK.resolve(strict=True)
         except OSError:
-            current = Path(os.readlink(BLOODBANK_HOOK_LINK))
-            if not current.is_absolute():
-                current = (BLOODBANK_HOOK_LINK.parent / current).resolve()
+            current = None
         if current == SERVICE_DIR:
             print(f"hooks-sync: bloodbank hook link up to date ({BLOODBANK_HOOK_LINK})")
             return 0
-        print(
-            "hooks-sync: WARN "
-            f"{BLOODBANK_HOOK_LINK} points to {current}, expected {SERVICE_DIR}; skipping"
-        )
-        return 0
+        if current is None:
+            BLOODBANK_HOOK_LINK.unlink(missing_ok=True)
+        else:
+            print(
+                "hooks-sync: WARN "
+                f"{BLOODBANK_HOOK_LINK} points to {current}, expected {SERVICE_DIR}; skipping"
+            )
+            return 0
 
     if BLOODBANK_HOOK_LINK.exists():
         try:
@@ -1029,7 +1030,7 @@ def _install_hermes_one(
     return changed, ("changed" if changed else "ok")
 
 
-def _install_hermes_fleet(name: str, agent: dict) -> int:
+def _install_hermes_fleet(name: str, agent: dict, master: dict | None = None, lock: dict | None = None) -> int:
     """Fleet-wide hermes install: read the registry and deploy into every agent.
 
     Each agent runs with HERMES_HOME=<role_dir>/<runtime_subdir>, so its shell-hooks
@@ -1041,11 +1042,15 @@ def _install_hermes_fleet(name: str, agent: dict) -> int:
     except ImportError:
         print(f"hooks-sync: WARN {name}: PyYAML unavailable — cannot deploy hermes fleet.")
         return 0
-    src = SERVICE_DIR / agent["config_target"]
-    if not src.exists():
-        print(f"hooks-sync: WARN {name}: generated {src} missing; run --apply first")
-        return 0
-    gen_hooks = _load_json(src).get("hooks", {})
+    if master is not None:
+        rendered = render_config(agent, master["lifecycle"], lock or load_lock()) or {}
+        gen_hooks = rendered.get("hooks", {})
+    else:
+        src = SERVICE_DIR / agent["config_target"]
+        if not src.exists():
+            print(f"hooks-sync: WARN {name}: generated {src} missing; run --apply first")
+            return 0
+        gen_hooks = _load_json(src).get("hooks", {})
     markers = _publisher_markers(name, agent)
     alw_name = agent.get("allowlist_filename", "shell-hooks-allowlist.json")
     targets = [(label, path.parent) for label, path, _ in discover_hermes_configs(agent)]
@@ -1104,6 +1109,7 @@ def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None)
     changed = _ensure_bloodbank_hook_link()
     if any(a.get("publisher") == "bb-hook" for a in master["agents"].values()):
         changed += _ensure_hub_client_link()
+    lock = load_lock() if "lifecycle" in master else None
     installs = []
     for name, agent in master["agents"].items():
         if name == "codex" and agent.get("discover_runtime_homes"):
@@ -1114,9 +1120,15 @@ def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None)
     for name, agent in installs:
         dialect = agent.get("dialect")
         cfg = agent.get("config_target")
+        use_rendered = "lifecycle" in master and isinstance(agent.get("bindings"), list)
         if dialect == "hermes_config":
             if cfg:
-                changed += _install_hermes_fleet(name, agent)
+                changed += _install_hermes_fleet(
+                    name,
+                    agent,
+                    master=master if use_rendered else None,
+                    lock=lock,
+                )
             continue
         live = agent.get("live_target")
         if not live or not cfg:
@@ -1125,11 +1137,19 @@ def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None)
             continue
         src = SERVICE_DIR / cfg
         dest = _expand(live)
-        if not src.exists():
+        if not use_rendered and not src.exists():
             print(f"hooks-sync: WARN {name}: generated {src} missing; run --apply first")
             continue
+        rendered_cfg = (
+            render_config(agent, master["lifecycle"], lock or load_lock())
+            if use_rendered
+            else None
+        )
 
         if dialect == "copilot":
+            if not src.exists():
+                print(f"hooks-sync: WARN {name}: generated {src} missing; run --apply first")
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             if dest.is_symlink() and Path(os.readlink(dest)).resolve() == src.resolve():
                 print(f"hooks-sync: {name} symlink up to date ({dest})")
@@ -1143,7 +1163,7 @@ def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None)
 
         if dialect in ("claude_settings", "codex", "gemini_settings"):
             markers = _publisher_markers(name, agent)
-            gen_hooks = _load_json(src).get("hooks", {})
+            gen_hooks = (rendered_cfg if rendered_cfg is not None else _load_json(src)).get("hooks", {})
             if dest.exists():
                 try:
                     liveobj = _load_json(dest)
@@ -1184,7 +1204,8 @@ def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None)
 
         if dialect == "kimi_toml":
             raw = dest.read_text() if dest.exists() else ""
-            merged = _merge_kimi_toml(raw, _load_json(src)["hooks"], _publisher_markers(name, agent))
+            kimi_hooks = (rendered_cfg if rendered_cfg is not None else _load_json(src))["hooks"]
+            merged = _merge_kimi_toml(raw, kimi_hooks, _publisher_markers(name, agent))
             # Parsing the full result protects unrelated config section placement.
             tomllib.loads(merged)
             if raw != merged:
@@ -1215,7 +1236,7 @@ def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None)
             # preserved. Orca's own installer likewise only rewrites its
             # 'orca-status' key, so the two managers do not fight.
             bundle = agent.get("bundle_name", "bloodbank")
-            gen_bundle = _load_json(src).get(bundle, {})
+            gen_bundle = (rendered_cfg if rendered_cfg is not None else _load_json(src)).get(bundle, {})
             if dest.exists():
                 try:
                     liveobj = _load_json(dest)

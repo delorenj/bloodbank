@@ -168,7 +168,16 @@ def socket_path() -> str:
     explicit = os.environ.get("BB_HOOK_SOCKET")
     if explicit:
         return explicit
-    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        candidate = f"/run/user/{os.getuid()}"
+        runtime = (
+            candidate
+            if os.path.isdir(candidate)
+            else os.path.join(
+                os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+            )
+        )
     return os.path.join(runtime, "33god", "hook-hub.sock")
 
 

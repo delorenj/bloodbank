@@ -86,6 +86,10 @@ class AutomaticAIHookTests(unittest.TestCase):
             self.assertNotIn("private user request", json.dumps(self.load()))
 
     def test_probe_worker_and_missing_session_do_not_recurse(self):
+        with mock.patch.dict(os.environ, {"AUTOMATICAI_ROUTING_CHECK": "0"}):
+            output = automaticai.dispatch("start", self.payload)
+        self.assertEqual(output["_hook_hub"]["reason"], "routing_check_disabled")
+        self.assertFalse(automaticai.STATE_ROOT.exists())
         with mock.patch.dict(os.environ, {"AUTOMATICAI_PROOF_PROBE": "1"}):
             output = automaticai.dispatch("start", self.payload)
         self.assertEqual(output["_hook_hub"]["reason"], "separate_proof_probe")

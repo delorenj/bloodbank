@@ -9,8 +9,22 @@ from pathlib import Path
 def find_cli_binary(name: str) -> str | None:
     aliases = (name, "agy") if name == "antigravity" else (name,)
     home = Path.home()
-    bins = [home / ".local/bin", home / ".kimi-code/bin", home / ".opencode/bin",
-            home / ".bun/bin", home / ".cargo/bin", home / ".npm-global/bin"]
+    bins = [
+        home / ".local/bin",
+        Path("/opt/homebrew/bin"),
+        Path("/usr/local/bin"),
+        home / ".kimi-code/bin",
+        home / ".opencode/bin",
+        home / ".bun/bin",
+        home / ".cargo/bin",
+        home / ".npm-global/bin",
+    ]
+    if name == "codex":
+        bins.append(
+            Path(
+                "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+            )
+        )
     data = Path(os.environ.get("MISE_DATA_DIR") or
                 (Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share") / "mise"))
     for alias in aliases:

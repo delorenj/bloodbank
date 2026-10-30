@@ -419,7 +419,7 @@ require_env = ["BMAD_LOOP_RUN_DIR", "BMAD_LOOP_TASK_ID"]
 command = [
   "/bin/sh",
   "-c",
-  'case "$BB_HOOK_NATIVE" in PreCompact) ev=PreCompact;; Stop) ev=Stop;; *) case "$BB_HOOK_ROLE" in session_start) ev=SessionStart;; turn_completed) ev=Stop;; session_end) ev=SessionEnd;; *) exit 0;; esac;; esac; exec /home/delorenj/.local/bin/bmad-loop relay "$ev"'
+  'case "$BB_HOOK_NATIVE" in PreCompact) ev=PreCompact;; Stop) ev=Stop;; *) case "$BB_HOOK_ROLE" in session_start) ev=SessionStart;; turn_completed) ev=Stop;; session_end) ev=SessionEnd;; *) exit 0;; esac;; esac; exec "$HOME/.local/bin/bmad-loop" relay "$ev"'
 ]
 timeout_ms = 5000
 order = 90

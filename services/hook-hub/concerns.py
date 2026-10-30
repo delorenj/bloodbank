@@ -371,7 +371,13 @@ def dispatch(concern: str, raw: dict) -> dict:
             return result("skipped", "not_a_git_repository")
         if root == Path.home() / "code/intelliforia":
             return result("skipped", "project_checkpoint_opt_out")
-        return invoke([str(Path.home() / "code/GitMark/bin/git-checkpoint"), str(root)], payload, timeout=120)
+        checkpoint_bin = (
+            executable("git-checkpoint")
+            or executable("~/.local/bin/git-checkpoint")
+            or executable("~/GitMark/bin/git-checkpoint")
+            or str(Path.home() / "code/GitMark/bin/git-checkpoint")
+        )
+        return invoke([checkpoint_bin, str(root)], payload, timeout=120)
     return result("failed", "unknown_concern", exit_code=1)
 
 

@@ -281,10 +281,18 @@ def _failed(payload: object) -> bool:
 # --- dispatch --------------------------------------------------------------
 
 def _hub_socket() -> str:
-    return os.environ.get("BB_HOOK_SOCKET") or str(
-        Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
-        / "33god/hook-hub.sock"
-    )
+    explicit = os.environ.get("BB_HOOK_SOCKET")
+    if explicit:
+        return explicit
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        candidate = f"/run/user/{os.getuid()}"
+        runtime = (
+            candidate
+            if os.path.isdir(candidate)
+            else os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))
+        )
+    return str(Path(runtime) / "33god/hook-hub.sock")
 
 
 def dispatch(transition: dict, cli: str, cwd: str) -> None:

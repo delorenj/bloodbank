@@ -918,6 +918,21 @@ def listener() -> socket.socket | None:
     return sock
 
 
+def default_socket_path() -> str:
+    explicit = os.environ.get("BB_HOOK_SOCKET")
+    if explicit:
+        return explicit
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        candidate = f"/run/user/{os.getuid()}"
+        runtime = (
+            candidate
+            if os.path.isdir(candidate)
+            else os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))
+        )
+    return str(Path(runtime) / "33god/hook-hub.sock")
+
+
 async def main() -> int:
     server_obj = Server()
     server_obj.cfg.maybe_reload()
@@ -944,11 +959,8 @@ async def main() -> int:
         server = await asyncio.start_unix_server(server_obj.handle, sock=sock, **kwargs)
         log("listening on systemd-activated socket")
     else:
-        path = os.environ.get("BB_HOOK_SOCKET") or str(
-            Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
-            / "33god/hook-hub.sock"
-        )
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        path = default_socket_path()
+        Path(path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if Path(path).exists():
             Path(path).unlink()        # stale socket from an unclean exit
         server = await asyncio.start_unix_server(server_obj.handle, path=path)
