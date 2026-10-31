@@ -256,7 +256,7 @@
             "null"
           ],
           "pattern": "^[A-Z][A-Z0-9_]*$",
-          "description": "The refusal or failure code (docs/farm-commands.md 16.12); on synced, the failure that followed the committed sync, else null."
+          "description": "The refusal or failure code (docs/farm-commands.md 16.12); on synced, the failure that followed the committed sync (a JEV_* code when only Jev did not finish: the sync still stands and nothing pages), else null."
         },
         "message": {
           "type": "string",
@@ -331,6 +331,22 @@
           ],
           "minimum": 0,
           "description": "Autotag proposals appended (0 when autotag did not run); null when covered, refused or failed."
+        },
+        "categorized": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Optional (added 2026-10-31, Milkshake 9.6 W10 superseded). tx.tagged with source=jev that this batch's tx categorize recorded (0 when it asked nothing or Jev did not answer); null when covered, refused or failed. Absent from results published before that date."
+        },
+        "unfit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Optional (added 2026-10-31). tx.unfit that tx categorize recorded: Jev answered and the transaction stays untagged for a person; null when covered, refused or failed. Absent from results published before that date."
         },
         "pushed": {
           "type": [

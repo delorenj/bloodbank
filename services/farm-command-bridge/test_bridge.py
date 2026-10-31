@@ -987,6 +987,13 @@ class MercurySchemaTest(unittest.TestCase):
         b.validate_envelope(self.result('recorded'))
         b.validate_envelope(self.result('recorded', code='FARM_PUSH_FAILED', message='synced, then FARM_PUSH_FAILED', pushed=False))
         b.validate_envelope(self.result('recorded', since=None))  # a full read
+        # Jev's counts (2026-10-31) are optional: a result published before them still validates
+        b.validate_envelope(self.result('recorded', categorized=2, unfit=1))
+        b.validate_envelope(self.result('recorded', code='JEV_UNAVAILABLE', message='synced, then JEV_UNAVAILABLE', categorized=0, unfit=0))
+        b.validate_envelope(self.result('recorded', categorized=None, unfit=None))
+        old = self.result('recorded')
+        self.assertNotIn('categorized', old['data'])
+        b.validate_envelope(old)
         b.validate_envelope(self.result('recorded', status='covered', batch_size=None, **none))
         b.validate_envelope(self.result('denied', status='refused', code='MERCURY_HOOK_ENDPOINT_UNKNOWN', message='endpoint not registered',
                                         batch_id=None, since=None, read_at=None, batch_size=None, **none))
@@ -1010,6 +1017,9 @@ class MercurySchemaTest(unittest.TestCase):
             self.result('recorded', read_at='2026-11-02T14:06:46Z'),
             self.result('recorded', pushed_clients=['Not A Slug']),
             self.result('recorded', pushed='yes'),
+            self.result('recorded', categorized=-1),
+            self.result('recorded', unfit='1'),
+            self.result('recorded', categorised=1),  # an unknown key is still refused
         ]
         missing = self.result('recorded')
         del missing['data']['tagged']
