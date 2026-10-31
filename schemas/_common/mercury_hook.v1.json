@@ -179,7 +179,7 @@
     "hook_result": {
       "type": "object",
       "additionalProperties": false,
-      "description": "The data of billing.transaction.recorded, .denied and .failed (docs/farm-commands.md 16.7.6): one shape, every key present. Never an amount, a counterparty, a note or a category.",
+      "description": "The data of billing.transaction.recorded, .denied and .failed (docs/farm-commands.md 16.7.6): one shape, every key present except the optional categorized and unfit (2026-10-31, absent on a result published before them). Never an amount, a counterparty, a note or a category.",
       "properties": {
         "schema_version": {
           "const": 1
