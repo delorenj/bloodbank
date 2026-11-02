@@ -496,7 +496,7 @@ export class Fleet implements INodeType {
             );
           }
         }
-        const route = resolveFleetAgentForBoard(registry.value, facts.boardId, facts.repo);
+        const route = resolveFleetAgentForBoard(registry.value, facts.boardId, facts.repo, facts.labels);
 
         if (!route.eligible) {
           if (this.getNodeParameter('onIneligible', i, 'skip') === 'error' && route.code !== 'no_route') {

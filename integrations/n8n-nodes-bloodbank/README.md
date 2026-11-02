@@ -219,6 +219,29 @@ modules) stay on the main output as `unsupported`.
 `repo.board.created` for a board no project claims carries `repo: null`; the
 workspace is always the slug (`workspace_slug`), never its UUID.
 
+### Shared boards
+
+Several projects (or agents) may own one Plane board, for example the TOLT
+monorepo's root, game and forge projects. Routing is then decided per ticket
+from the ticket's labels, never from the order rows were read in:
+
+| Where | Field | Meaning |
+| --- | --- | --- |
+| a project's `.project.json` `ticket_provider` (served by pjangler) | `scope_label` | the label this project takes, e.g. `repo:game` (a string) |
+| same | `scope_default` | `true` on at most one project: it takes tickets whose labels match no project's `scope_label` |
+| a Hermes registry row's `plane` block | `scope_label` | the label(s) this agent drives (a string or a list) |
+| same | `scope_default` | `true` on at most one agent: it drives unlabeled and unknown-label tickets |
+
+pjangler rows decide `data.repo` (the project the fact belongs to); Hermes rows
+decide which agent the Fleet node invokes. A ticket that carries a label an
+owner declares goes to that owner; otherwise to the owner flagged
+`scope_default`. If nothing is flagged, or several are, the owner whose repo
+slug (agent id for Fleet) sorts first wins, so the answer is still stable.
+Labels are compared case-insensitively. A board with a single owner ignores
+all of this. Plane's comment webhook carries no labels, so a comment lands on
+the board default. Trello boards shared by several projects (the
+IntelliForia `INT` board) are not Plane routes and are unaffected.
+
 ### Event ids and Nats-Msg-Id
 
 Every Plane fact's event id is `uuid5` of a dedupe key, so a redelivered

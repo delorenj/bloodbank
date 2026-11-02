@@ -1,5 +1,7 @@
 import { deterministicUuid } from './nats';
 import { bloodbankActivation, describeActivation } from './registry';
+import { labelNames, orderOwners, pickOwner, scopeFields } from './scope';
+import type { Scoped } from './scope';
 
 /** Where a ticket's owning agent came from, and whether the bus may address it.
  *
@@ -35,6 +37,8 @@ export interface TicketFacts {
   previousPhase: string;
   providerEventType: string;
   url: string;
+  /** The ticket's label names, lowercased: what picks the owner on a shared board. */
+  labels: string[];
 }
 
 function mapping(value: unknown): Record<string, unknown> | undefined {
@@ -51,6 +55,12 @@ function text(value: unknown): string {
 
 /** Resolve the agent that owns a board, board id first and repo slug second.
  *
+ * Several agents may share one board. Each then declares the label(s) it takes
+ * (`plane.scope_label`, a string or a list) and at most one declares
+ * `plane.scope_default: true`. A ticket goes to the agent whose scope label it
+ * carries, else to the default agent; with no default declared the choice is
+ * still deterministic (agent id order), never registry file order.
+ *
  * Board id is the primary key on purpose: it is the one identifier a provider
  * webhook always carries, and it is what tells a multi-tenant Plane which
  * workspace to answer as. The `<repo>-pm` fallback keeps a project that has not
@@ -60,7 +70,9 @@ export function resolveFleetAgentForBoard(
   registryValue: unknown,
   boardIdValue: string,
   repoValue: string,
+  ticketLabels: unknown = [],
 ): FleetRoute {
+  const labels = labelNames(ticketLabels);
   const boardId = text(boardIdValue);
   const repo = text(repoValue);
   const fallback = repo ? `${repo}-pm` : '';
@@ -82,17 +94,19 @@ export function resolveFleetAgentForBoard(
   let matchedBy: FleetRoute['matchedBy'] = 'none';
 
   if (boardId) {
+    const owners: Array<Scoped & { id: string; entry: Record<string, unknown> }> = [];
     for (const [candidateId, rawEntry] of Object.entries(agents)) {
       const candidate = mapping(rawEntry);
       const plane = candidate && mapping(candidate.plane);
-      if (!plane) continue;
+      if (!candidate || !plane) continue;
       const ids = [text(plane.project_id), text(plane.board_id)].filter(Boolean);
-      if (ids.includes(boardId)) {
-        agentId = candidateId;
-        entry = candidate;
-        matchedBy = 'board';
-        break;
-      }
+      if (ids.includes(boardId)) owners.push({ id: candidateId, entry: candidate, ...scopeFields(plane) });
+    }
+    if (owners.length) {
+      const owner = pickOwner(orderOwners(owners, (candidate) => candidate.id), labels);
+      agentId = owner.id;
+      entry = owner.entry;
+      matchedBy = 'board';
     }
   }
 
@@ -227,6 +241,7 @@ export function ticketFactsFromEnvelope(value: unknown): TicketFacts {
     previousPhase: text(data.previous_phase),
     providerEventType: text(data.provider_event_type),
     url: text(data.url),
+    labels: labelNames(ticket.labels ?? data.labels),
   };
 }
 

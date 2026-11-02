@@ -49,10 +49,12 @@ export {
   planeBindingMatches,
   planeEventBindings,
   planeRoutesFromRegistry,
+  routeForLabels,
   unboundRegistryProjectPaths,
   updateDedupeKey,
 } from './plane';
 export type { PlaneClassification, PlaneProjectRoute } from './plane';
+export { labelNames, orderOwners, pickOwner, scopeFields } from './scope';
 export {
   candidateTicketKey,
   CREATED_SUBJECT,
