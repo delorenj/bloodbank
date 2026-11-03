@@ -46,6 +46,9 @@ const llmRequest = {
   model: 'automaticai/auto/fast',
   messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
   response_format: { type: 'json_object' }, temperature: 0, max_tokens: 10000,
+  // Streamed: a full journal takes ~200 s on auto/fast, and a non-streaming answer is cut at the
+  // gateway's 115 s header backstop. The stream's heartbeats carry it; process-report reads the SSE text.
+  stream: true,
 };
 return [{ json: { report_key: row.report_key, source_candidates: sourceCandidates,
   known_finding_count: knownFindings.length, llm_request: llmRequest } }];

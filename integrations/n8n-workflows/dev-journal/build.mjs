@@ -86,7 +86,8 @@ const extractor = node('Extract and classify findings', 'n8n-nodes-base.httpRequ
   authentication: 'genericCredentialType', genericAuthType: 'httpHeaderAuth',
   sendBody: true, contentType: 'json', specifyBody: 'json',
   jsonBody: '={{ JSON.stringify($json.llm_request) }}',
-  options: { timeout: 180000 },
+  // The request streams for ~200 s on auto/fast; finish before the next 5-minute tick.
+  options: { timeout: 290000 },
 }, 480, 0, { credentials: newApiCredential, onError: 'continueRegularOutput' });
 const resend = (name, x, y) => node(name, 'n8n-nodes-base.httpRequest', {
   method: 'POST', url: 'https://api.resend.com/emails',

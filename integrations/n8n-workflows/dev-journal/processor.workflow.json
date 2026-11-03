@@ -65,7 +65,7 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.llm_request) }}",
         "options": {
-          "timeout": 180000
+          "timeout": 290000
         }
       },
       "credentials": {

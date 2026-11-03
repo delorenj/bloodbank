@@ -308,6 +308,31 @@ test('uncovered collector caveat stays in triage without Plane ticket or inciden
   assert.deepEqual(await execute('incident-outbox', env, [{}]), []);
 });
 
+test('streamed extractor answer is read from the SSE text n8n hands over', async () => {
+  const date = '2026-09-23';
+  const run = async (llm) => {
+    const env = store(['reports', 'findings', 'occurrences']);
+    env.data.get('dev_journal_reports').push({ report_key: `${date}:gen`, report_date: date,
+      source_event_id: 'evt-1', status: 'processing', backfill: false,
+      payload: JSON.stringify({ markdown: '# Journal', report: {}, collector_facts: [] }), errors: '[]' });
+    const result = await execute('process-report', env, [llm], { selected: {
+      report_key: `${date}:gen`, source_candidates: [{ id: 'needs-you:1', text: 'nothing to do' }],
+    } });
+    return result[0].json;
+  };
+  const answer = JSON.stringify({ findings: [], non_issues: [{ source_id: 'needs-you:1', reason: 'informational' }] });
+  const chunk = (delta) => `data: ${JSON.stringify({ object: 'chat.completion.chunk', choices: [{ index: 0, delta }] })}`;
+  const sse = [': heartbeat', chunk({ role: 'assistant', reasoning_content: 'thinking' }),
+    chunk({ content: answer.slice(0, 20) }), '', chunk({ content: answer.slice(20) }), 'data: [DONE]', ''].join('\n');
+  const streamed = await run({ data: sse });
+  assert.equal(streamed.status, 'complete');
+  assert.doesNotMatch(streamed.final_markdown, /extraction pending/i);
+  const errored = await run({ data: `data: ${JSON.stringify({ error: { message: 'upstream gone' } })}\n\n` });
+  assert.match(errored.final_markdown, /Issue extraction pending: .*upstream gone/);
+  const jsonText = await run({ data: JSON.stringify({ choices: [{ message: { content: answer } }] }) });
+  assert.equal(jsonText.status, 'complete');
+});
+
 test('07:00 deadline targets yesterday and sends one missing-report alert', async () => {
   const env = store(['reports', 'occurrences']);
   const fixed = new Date('2026-09-24T11:00:00Z').getTime();
