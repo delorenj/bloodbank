@@ -2,7 +2,11 @@
 # Unified agent heartbeat: continuous board-reconciliation sentinel pass +
 # board-reconciliation pass.
 #
-# Runs often (systemd timer, ~1 min). Only invokes Hermes for a full
+# RETIRED AS A SCHEDULE (2026-09-17 the per-agent systemd timer; 2026-10-11 the
+# single-clock rule): nothing installs a heartbeat timer, cron entry or loop for
+# this script any more. Recurring work is a Candybar manifest (the one clock);
+# this script only runs when something invokes it on purpose. Do not create a
+# second clock for it. Historical behaviour follows. Only invokes Hermes for a full
 # reconciliation pass when local state says no worker is active, the worker
 # heartbeat is stale, or the last full run is outside the cooldown window. The
 # full pass executes the role's sentinel.prompt.md, which reasons about tickets
