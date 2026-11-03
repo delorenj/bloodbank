@@ -108,7 +108,7 @@ test('extractor receives full report and covers Needs you plus collector caveats
   assert.equal(JSON.parse(out[0].json.llm_request.messages[1].content).known_findings[0].fingerprint,
     'infra:report-delivery:old-wording');
   assert.match(out[0].json.llm_request.messages[0].content, /existing_fingerprint/);
-  assert.equal(out[0].json.llm_request.model, 'openai/gpt-4.1-mini');
+  assert.equal(out[0].json.llm_request.model, 'automaticai/auto/fast');
   assert.equal(env.data.get('dev_journal_reports')[0].status, 'processing');
 });
 

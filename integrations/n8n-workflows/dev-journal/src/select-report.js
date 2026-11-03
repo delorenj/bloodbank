@@ -41,7 +41,9 @@ const user = JSON.stringify({ report_date: row.report_date, source_candidates: s
   collector_facts: content.collector_facts, known_findings: knownFindings,
   full_report_markdown: content.markdown });
 const llmRequest = {
-  model: 'openai/gpt-4.1-mini',
+  // auto/fast: the cheap tier, on the operator's subscription and free pools (2026-11-03).
+  // The metered OpenRouter route this used ran out of credit and failed every 5 minutes.
+  model: 'automaticai/auto/fast',
   messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
   response_format: { type: 'json_object' }, temperature: 0, max_tokens: 10000,
 };
