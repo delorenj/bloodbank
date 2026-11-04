@@ -21,7 +21,14 @@ WorkingDirectory=%h/code/33GOD/bloodbank/services/target-watch
 Environment=NATS_URL=nats://127.0.0.1:4222
 Environment=TARGET_WATCH_STATE_DIR=%h/.local/state/target-watch
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/uv run --project %h/code/33GOD/bloodbank/services/target-watch --frozen --no-dev target-watch sink
+# Run the synced venv's entry point, never `uv run`: uv here is a mise shim, and
+# mise applies bloodbank's mise.toml, whose PATH puts agents/hermes/pm/hermes (a
+# wrapper pinned to the bloodbank-pm profile, Telegram disabled) ahead of the real
+# hermes. Every notification failed that way on 2026-11-04. Re-run `uv sync` after a pull.
+Environment=TARGET_WATCH_HERMES=%h/.local/bin/hermes
+Environment=TARGET_WATCH_PX=%h/.local/bin/px
+Environment=TARGET_WATCH_GOG=/usr/local/bin/gog
+ExecStart=%h/code/33GOD/bloodbank/services/target-watch/.venv/bin/target-watch sink
 Restart=always
 RestartSec=5s
 RestartSteps=8

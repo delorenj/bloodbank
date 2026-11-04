@@ -231,9 +231,7 @@ async def test_dry_run_touches_nothing(registry, index, runner, clock, tmp_path,
 
 
 async def test_notify_runs_from_home_not_the_service_checkout(sink, index, registry, runner):
-    """hermes resolves its profile from the working directory; from inside the
-    bloodbank checkout it picks bloodbank-pm (Telegram disabled) and every
-    notification fails silently. Live on 2026-11-04: notified=0."""
+    """Notifications run outside the service checkout (2026-11-04: notified=0)."""
     import os
 
     from target_watch import sink as sink_module
@@ -242,3 +240,19 @@ async def test_notify_runs_from_home_not_the_service_checkout(sink, index, regis
     [(argv, cwd)] = [(a, c) for a, c in runner.calls if a[1:2] == ["send"]]
     assert cwd == sink_module.NOTIFY_CWD
     assert cwd and not cwd.startswith(os.path.dirname(os.path.dirname(os.path.abspath(sink_module.__file__))))
+
+
+def test_deploy_artefacts_never_go_through_the_mise_uv_shim_and_pin_binaries():
+    """bloodbank's mise PATH shadows hermes with a bloodbank-pm wrapper, so the
+    units and the Candybar runner call the venv entry point and absolute binaries."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for unit in ("systemd/target-watch-sink.service", "systemd/target-watch-match.service"):
+        text = (root / unit).read_text()
+        [exec_line] = [l for l in text.splitlines() if l.startswith("ExecStart=")]
+        assert "/.venv/bin/target-watch" in exec_line and "uv run" not in exec_line
+        assert "TARGET_WATCH_HERMES=%h/.local/bin/hermes" in text and "TARGET_WATCH_PX=%h/.local/bin/px" in text
+    manifest = (root / ".candybars/target-watch-gmail-poll.candybar.toml").read_text()
+    [argv] = [l for l in manifest.splitlines() if l.startswith("argv")]
+    assert "/.venv/bin/target-watch" in argv and "uv" not in argv.split("[", 1)[1].split(",")[0]

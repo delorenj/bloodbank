@@ -99,7 +99,7 @@ def test_candybar_manifest():
     bar, runner = doc["candybar"], doc["candybar"]["runner"]
     assert bar["name"] == path.name.removesuffix(".candybar.toml")
     assert bar["schedule"] == "*/5 * * * *" and bar["timezone"] == "America/New_York" and bar["enabled"] is False
-    assert runner["kind"] == "exec" and runner["argv"][-2:] == ["target-watch", "gmail-poll"]
+    assert runner["kind"] == "exec" and runner["argv"][0].endswith("/.venv/bin/target-watch") and runner["argv"][1:] == ["gmail-poll"]
     assert all(Path(p).is_absolute() for p in (runner["argv"][0], runner["workdir"]))
     assert "ntfy-alert" in " ".join(runner["on_failure"]) and "$CANDYBAR_FAILURE_MESSAGE" in runner["on_failure"][-1]
 
