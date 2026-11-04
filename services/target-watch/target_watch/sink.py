@@ -26,6 +26,8 @@ from .targets import Target, TargetRegistry
 CREATED = re.compile(r"^created ([A-Z][A-Z0-9]*-[0-9]+)\b")
 COMMENTED = re.compile(r"^commented on ([A-Z][A-Z0-9]*-[0-9]+)\b")
 TEXT_DUPLICATE_S = 60.0
+# The carrier delivers one text as sms and rcs (and mms, iMessage) twins; no other providers are folded by text.
+CARRIER_TWINS = frozenset({"sms", "mms", "rcs", "imessage"})
 PX_TIMEOUT_S = 90
 NOTIFY_TIMEOUT_S = 30
 FOOTER = "Filed automatically by target-watch from a {provider} message. Do not invent a ticket number."
@@ -161,7 +163,8 @@ class SinkService:
         notify = list(target.sink.notify)
         digest = text_hash(data["content"].get("text") or "")
         if digest:
-            twin = self.state.recent_text_route(data["watch_id"], digest, epoch(data["received_at"]), detection_id, TEXT_DUPLICATE_S)
+            twin = self.state.recent_text_route(data["watch_id"], digest, epoch(data["received_at"]), detection_id, TEXT_DUPLICATE_S,
+                                                 conv_key, CARRIER_TWINS)
             if twin:
                 return Plan(detection_id, target.id, "skipped_duplicate", conv_key,
                             reason=f"same text as detection {twin} within {int(TEXT_DUPLICATE_S)}s")

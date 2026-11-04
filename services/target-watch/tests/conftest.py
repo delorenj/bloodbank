@@ -3,8 +3,8 @@
 The schemas track (feat/watch-domain-schemas) registers the watch domain and adds
 x-sender to the inbound schemas. Until it is on main, the tree used here is the
 repo's own schemas overlaid with tests/fixtures (the watch schemas and x-sender
-blocks copied from that branch); once it lands, the real files win and the
-overlay is a no-op. The validator allowlists are patched the same way.
+blocks copied from that branch); once it lands, the x-sender overlay switches itself
+off (real_tree_has_x_sender) so the real files are what the suite checks. The validator allowlists are patched the same way.
 """
 from __future__ import annotations
 
@@ -26,6 +26,11 @@ JANE_PHONE = "+12155550100"
 JANE_LABEL = "Jane Doe"
 
 
+def real_tree_has_x_sender() -> bool:
+    """True once the schemas track has landed: the repo's own inbound schemas carry x-sender."""
+    return any('"x-sender"' in p.read_text() for p in (repo_root() / "schemas" / "bloodbank").rglob("*.json"))
+
+
 @pytest.fixture(scope="session")
 def schema_tree(tmp_path_factory) -> Path:
     root = tmp_path_factory.mktemp("schemas")
@@ -36,6 +41,8 @@ def schema_tree(tmp_path_factory) -> Path:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(fixture, dest)
     blocks = json.loads((FIXTURES / "x-sender.json").read_text())
+    if real_tree_has_x_sender():
+        blocks = {}  # the real files win and are tested as they are: no overlay can mask a missing block
     for ce_type, block in blocks.items():
         _, domain, entity, action = ce_type.split(".")
         path = root / "bloodbank" / domain / f"{entity}.{action}.json"

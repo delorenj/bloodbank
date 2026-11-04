@@ -105,6 +105,21 @@ def text_hash(text: str) -> str | None:
     return hashlib.sha256(folded.encode()).hexdigest() if folded else None
 
 
+def _source_key(source_type: str, message_id: object, thread: object, source_event_id: str) -> str:
+    """The source message id, else the call id, else the event id (the dedupe_key contract).
+
+    Live n8n sends call.ended and call.recorded twice per call with fresh event
+    ids, so a telephony event is keyed by its call id (the x-sender thread) and
+    its twin folds into the same detection. Only telephony falls back to the
+    thread: elsewhere a thread holds many messages.
+    """
+    if isinstance(message_id, str) and message_id:
+        return message_id
+    if source_type.split(".")[1] == "telephony" and isinstance(thread, (str, int)) and str(thread):
+        return str(thread)
+    return source_event_id
+
+
 def extract(event: dict, xs: XSender) -> Extracted | None:
     """None when the event is not an inbound message or names no sender."""
     data = event.get("data")
@@ -124,7 +139,7 @@ def extract(event: dict, xs: XSender) -> Extracted | None:
     subject_values = _strings(event, [xs.subject_path]) if xs.subject_path else []
     thread = get_path(event, xs.thread_path)
     message_id = data.get("message_id")
-    dedupe = f"{source_type}:{message_id}" if isinstance(message_id, str) and message_id else f"{source_type}:{source_event_id}"
+    dedupe = f"{source_type}:{_source_key(source_type, message_id, thread, source_event_id)}"
     return Extracted(
         source_type=source_type,
         source_event_id=source_event_id,

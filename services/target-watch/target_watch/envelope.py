@@ -7,7 +7,8 @@ from datetime import UTC, datetime
 
 from .paths import repo_root
 
-NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://33god.dev/bloodbank/target-watch")
+# The published contract (watch schemas, smoketest-watch-contracts.py): uuid5(NAMESPACE_URL, ...).
+NAMESPACE = uuid.NAMESPACE_URL
 SERVICE = "target-watch"
 SOURCE = "urn:33god:service:target-watch"
 ACTOR = {"type": "service", "agent_id": "bloodbank.service.target-watch"}

@@ -183,15 +183,25 @@ class State:
                 (*values, time.time(), detection_id),
             )
 
-    def recent_text_route(self, watch_id: str, text_hash: str, received_epoch: float, detection_id: str, window_s: float) -> str | None:
-        """A different detection of the same target and text already routed inside the window."""
+    def recent_text_route(
+        self, watch_id: str, text_hash: str, received_epoch: float, detection_id: str, window_s: float,
+        conv_key: str, twin_providers: frozenset[str] = frozenset(),
+    ) -> str | None:
+        """A detection of the same target and text on a different twin provider (sms vs rcs), already acted
+        on inside the window. Same-provider repeats are the matcher's 2 s rule; a failed or skipped route
+        never counts, because it did nothing for the message."""
+        own = conv_key.split(":", 1)[0]
         with self.connect() as db:
-            row = db.execute(
-                "SELECT detection_id FROM routes WHERE watch_id=? AND text_hash=? AND detection_id<>? "
-                "AND abs(received_epoch-?)<=? AND action IS NOT NULL AND action<>'skipped_duplicate' LIMIT 1",
+            rows = db.execute(
+                "SELECT detection_id, conv_key FROM routes WHERE watch_id=? AND text_hash=? AND detection_id<>? "
+                "AND abs(received_epoch-?)<=? AND action IS NOT NULL AND action NOT IN ('skipped_duplicate','failed')",
                 (watch_id, text_hash, detection_id, received_epoch, window_s),
-            ).fetchone()
-        return row[0] if row else None
+            ).fetchall()
+        for row_id, row_conv in rows:
+            other = row_conv.split(":", 1)[0]
+            if own in twin_providers and other in twin_providers and other != own:
+                return row_id
+        return None
 
     def coalesce_ticket(self, watch_id: str, conv_key: str, since_epoch: float) -> str | None:
         with self.connect() as db:

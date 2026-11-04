@@ -156,6 +156,35 @@ async def test_same_text_on_another_provider_is_skipped(sink, index, registry, r
     assert len(runner.of("task")) == 1 and len(runner.of("send")) == 1
 
 
+async def test_failed_first_detection_does_not_swallow_its_twin(sink, index, registry, runner):
+    runner.create_output, runner.create_code = "boom\n", 1
+    first = await sink.handle(detect(index, registry, rcs(text="Need you Tuesday")))
+    assert first["data"]["action"] == "failed"
+    runner.create_output = None
+    sms = rcs(message_id="sms-1", text="Need you Tuesday", event_id="0b9c6a62-1111-4d0e-8f5f-0000000000c2")
+    sms["type"] = "bloodbank.messaging.sms.received"
+    routed = await sink.handle(detect(index, registry, sms))
+    assert routed["data"]["action"] == "ticket_created"
+
+
+async def test_same_text_outside_carrier_twins_is_not_skipped(sink, index, registry, runner):
+    await sink.handle(detect(index, registry, rcs(text="On my way")))
+    other = rcs(message_id="rcs-2", text="On my way", thread_id="thread-other", event_id="0b9c6a62-1111-4d0e-8f5f-0000000000c3")
+    routed = await sink.handle(detect(index, registry, other))
+    assert routed["data"]["action"] != "skipped_duplicate"
+    assert len(runner.of("task")) + len(runner.of("comment")) == 2
+
+
+async def test_twin_call_ended_events_make_one_ticket_and_no_comment(sink, index, registry, runner):
+    first = await sink.handle(detect(index, registry, call_ended()))
+    again = call_ended(event_id="0b9c6a62-1111-4d0e-8f5f-0000000000c4")
+    detection = detect(index, registry, again)
+    assert detection["id"] == first["causationid"]
+    await sink.handle(detection)
+    assert len(runner.of("task")) == 1 and runner.of("comment") == []
+    assert len(runner.of("send")) == 1
+
+
 async def test_notify_only_target(tmp_path, index, state, publisher, runner, clock):
     write_target(tmp_path / "w", "self", '[target]\nid="watch-selftest"\ndisplay_name="Watch Selftest"\n'
                  '[target.handles]\nemail=["watch-selftest@delo.sh"]\n[sink]\nkind="notify_only"\nnotify=["telegram:1000","telegram:2000"]')

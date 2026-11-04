@@ -15,7 +15,11 @@ INBOUND_TELEPHONY = {
 
 
 def test_every_inbound_schema_carries_a_valid_x_sender(schema_tree):
-    """The guarantee 'add a provider and every watch picks it up' rests on this."""
+    """The guarantee 'add a provider and every watch picks it up' rests on this.
+
+    Before the schemas track lands the tree is a fixture overlay and this checks
+    only that the fixtures are well formed; afterwards it checks the real schemas.
+    """
     index, errors = scan(schema_tree)
     assert errors == []
     received = {
@@ -143,9 +147,36 @@ def test_every_live_family_builds_a_valid_detection(index, registry):
         env.validate(detection_envelope(det))
 
 
-def test_non_uuid_source_ids_still_validate(index, registry):
-    event = rcs(event_id="n8n-not-a-uuid")
-    [det] = match(event, index.get(event["type"]), registry.current())
-    envelope = detection_envelope(det)
-    env.validate(envelope)
-    assert envelope["causationid"] is None and envelope["data"]["source_event_id"] == "n8n-not-a-uuid"
+async def test_non_uuid_source_id_is_a_permanent_refusal(index, registry, state, publisher, fake_js):
+    from target_watch.bus import Permanent
+    from target_watch.match_service import MatchService
+
+    service = MatchService(index, registry, state, publisher)
+    with pytest.raises(Permanent, match="not a UUID"):
+        await service.handle(rcs(event_id="n8n-not-a-uuid"))
+    assert fake_js.events == []
+
+
+def test_ids_use_the_published_namespace():
+    import uuid
+
+    key = "jim:bloodbank.messaging.rcs.received:msg-1"
+    assert env.detection_id("jim", "bloodbank.messaging.rcs.received:msg-1") == str(uuid.uuid5(uuid.NAMESPACE_URL, key))
+    assert env.routed_id("abc", "ticket_created") == str(uuid.uuid5(uuid.NAMESPACE_URL, "abc:ticket_created"))
+
+
+def test_telephony_twins_share_one_dedupe_key_per_type(index, registry):
+    """Live n8n sends call.ended twice per call with different event ids; the call id is the key."""
+    ended = index.get("bloodbank.telephony.call.ended")
+    a = match(call_ended(event_id="0b9c6a62-1111-4d0e-8f5f-0000000000a1"), ended, registry.current())[0]
+    b = match(call_ended(event_id="0b9c6a62-1111-4d0e-8f5f-0000000000a2"), ended, registry.current())[0]
+    other_call = match(call_ended(call_id="call-78"), ended, registry.current())[0]
+    spoken = match(transcription(), index.get("bloodbank.telephony.transcription.completed"), registry.current())[0]
+    assert a.extracted.dedupe_key == b.extracted.dedupe_key == "bloodbank.telephony.call.ended:call-77"
+    assert a.event_id == b.event_id != other_call.event_id
+    assert spoken.extracted.dedupe_key == "bloodbank.telephony.transcription.completed:call-77"
+    # a messaging type without message_id never keys on its thread
+    msg = rcs()
+    msg["data"]["message_id"] = None
+    [det] = match(msg, index.get(msg["type"]), registry.current())
+    assert det.extracted.dedupe_key == f"{msg['type']}:{msg['id']}"

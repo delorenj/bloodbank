@@ -36,6 +36,9 @@ class MatchService:
             raise Permanent(f"cannot read sender: {type(exc).__name__}") from exc
         published = []
         for det in detections:
+            if not env.is_uuid(det.extracted.source_event_id):
+                # The watch contract pins causationid to the source id, and a CloudEvents id here is a UUID.
+                raise Permanent(f"source event id {det.extracted.source_event_id!r} is not a UUID")
             envelope = detection_envelope(det)
             try:
                 self.validate(envelope)

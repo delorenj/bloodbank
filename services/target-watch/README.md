@@ -63,13 +63,17 @@ envelopes from a file instead of the bus, plus `--since <ISO>` and `--once`.
 - Near-duplicates are dropped by the matcher: same target, same provider, same
   normalised text, received within 2 s. The same text sometimes arrives twice
   about 10 ms apart. The sink also skips a detection whose text matches another
-  of the same target's detections within 60 s on any provider (the SMS copy of
-  an RCS text), and records it as `skipped_duplicate`.
+  of the same target's already-acted-on detections within 60 s on a different
+  carrier provider (sms, mms, rcs, imessage: the SMS copy of an RCS text), and
+  records it as `skipped_duplicate`. A failed route never counts as the twin.
 - Event ids are deterministic and also sent as `Nats-Msg-Id`. A detection's id
-  is `uuid5(ns, "<watch_id>:<dedupe_key>")`, where `dedupe_key` is
-  `<source type>:<message_id>` (falling back to the source event id). A routed
-  event's id is `uuid5(ns, "<detection id>:<action>")`. A Gmail message's id is
-  `uuid5(ns, "gmail:<id>")`.
+  is `uuid5(NAMESPACE_URL, "<watch_id>:<dedupe_key>")`, where `dedupe_key` is
+  `<source type>:<message_id>`; telephony events have no message id, so they
+  use the call id (live n8n sends call.ended and call.recorded twice per call),
+  and anything else falls back to the source event id. A routed event's id is
+  `uuid5(NAMESPACE_URL, "<detection id>:<action>")`. A Gmail message's id is
+  `uuid5(NAMESPACE_URL, "gmail:<id>")`. A source event whose id is not a UUID
+  is refused permanently (the watch contract pins causationid to it).
 
 ### Sink rules
 
