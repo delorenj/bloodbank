@@ -228,3 +228,17 @@ async def test_dry_run_touches_nothing(registry, index, runner, clock, tmp_path,
     assert printed["action"] == "ticket_created" and printed["px"]["argv"][:3] == ["px", "task", "create"]
     assert printed["notify"][0]["text"].endswith("-> ticket_created <new>")
     assert routed["data"]["action"] == "ticket_created"
+
+
+async def test_notify_runs_from_home_not_the_service_checkout(sink, index, registry, runner):
+    """hermes resolves its profile from the working directory; from inside the
+    bloodbank checkout it picks bloodbank-pm (Telegram disabled) and every
+    notification fails silently. Live on 2026-11-04: notified=0."""
+    import os
+
+    from target_watch import sink as sink_module
+
+    await sink.handle(detect(index, registry, rcs()))
+    [(argv, cwd)] = [(a, c) for a, c in runner.calls if a[1:2] == ["send"]]
+    assert cwd == sink_module.NOTIFY_CWD
+    assert cwd and not cwd.startswith(os.path.dirname(os.path.dirname(os.path.abspath(sink_module.__file__))))
