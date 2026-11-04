@@ -158,10 +158,13 @@ A subject names *where a fact is delivered*. It does not carry a contract
 version, and the five-token head above is fixed for the life of the system.
 This is the rule that replaced versioning, and it is the whole of it:
 
-- **A breaking payload change gets a new `action`, or a new `entity` — never
-  a version segment.** If the fact genuinely changed, it is a different fact
-  and deserves its own name. If it did not change, the address must not move
-  underneath the consumers bound to it.
+- **A semantic fact change gets a new `action`, or a new `entity` — never
+  a version segment.** A breaking payload change normally follows that rule.
+  The explicit CAND-51 governance decision (§13.1) permits the SAME candybar
+  registration fact to gain a finite-only representation through `dataschema`,
+  with closed, preserved cron v1 and separately governed finite v2 branches.
+  This is not generic permission for ungated breaking changes. The address
+  must not move underneath the consumers bound to it.
 - **Payload compatibility lives in `dataschema` (§13), not in the subject.**
   The schema revision is a separate axis that evolves independently and is
   read from the envelope, not from the routing layer.
@@ -393,7 +396,7 @@ Segment 4 of `type` MUST be one of:
 | `alert`            | `crank`                  | One line Wingman said to the operator about crank tabs (a tab waiting, finished, broken, waiting too long, or the focused tab's progress); the signals behind it live in data. |
 | `call`             | `telephony`              | One phone call on an operator line, from setup to hangup; recordings and voicemails are `call.recorded`. |
 | `tick`             | `cron`                   | One UTC minute boundary fired by the Candybar heartbeat publisher; `tick:<unix_epoch_minute>` is both the ordering bucket and `data.tick_id`. |
-| `candybar`         | `cron`                   | One registered scheduled unit in the Candybar cron framework: registration (`created`/`updated`), invocation lifecycle (`invoked`/`completed`/`failed`), suppressed fires (`skipped`), and the `candybar.invoke` dispatch command. |
+| `candybar`         | `cron`                   | One registered scheduled unit in the Candybar cron framework: registration (`created`/`updated`), real deletion (`deleted`, not archive/pause), invocation lifecycle (`invoked`/`completed`/`failed`), suppressed fires (`skipped`), and the `candybar.invoke` dispatch command. |
 | `steward_task`     | `cron`                   | One Candybar steward task (enrich, fix, evaluate or refactor) for a registered candybar: `queued` -> `started` -> `completed` or `failed`; the `candybar.steward` command runs it (candybar `steward-contract.md`). `data` is the task; `ordering_key = candybar:<candybar_id>`, so a task orders with its candybar's facts. |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
@@ -438,6 +441,7 @@ covers every inbound human message, texts included.
 `delegated`, `raised`, `released`, `expired`, `skipped`, `notified`,
 `revoked` (`billing.rule.revoked`: a rule was revoked; the rule's recording stays), `issued` (`billing.invoice.issued`: a statement was frozen on the ledger), `delivered` (`billing.invoice.delivered`: an issued statement was raised on a delivery rail),
 `fired` (`cron.tick.fired`: the UTC minute heartbeat every candybar schedule keys off),
+`deleted` (`cron.candybar.deleted`: a registered unit was really deleted, not archived or paused; §13.1),
 `queued` (`cron.steward_task.queued`: a steward task was accepted and waits for the steward),
 `uploaded`, `transcribed`, `dispatched`, `replied`, `played` (the `audio.memo.*`
 journey stages: a voice memo that is uploaded, transcribed, dispatched to an agent,
@@ -768,6 +772,64 @@ subject are not.
 The Apicurio registry's artifact ID is the 4-token type string, not the
 filesystem path. Holyfields' registration script (`scripts/register-schemas.sh`
 or equivalent) uses the type as the key when uploading.
+
+### 13.1 CAND-51 candybar registration and deletion
+
+Governance: `t_ff84ad7e`, PM comment 72. Canonical review and landing precede
+downstream mirroring and any publication; schema authoring is not emission
+authorization. Both facts use `kind: event`, `domain: cron`, and exactly
+`ordering_key == "candybar:" + data.candybar_id`.
+
+| Fact | Type | Subject | Schema handles |
+| --- | --- | --- | --- |
+| Registration (cron or finite) | `bloodbank.cron.candybar.created` | `bloodbank.evt.cron.candybar.created` | `apicurio://holyfields/bloodbank.cron.candybar.created/versions/<n>` and `bloodbank.cron.candybar.created.v<n>` |
+| Real deletion | `bloodbank.cron.candybar.deleted` | `bloodbank.evt.cron.candybar.deleted` | `apicurio://holyfields/bloodbank.cron.candybar.deleted/versions/1` and `bloodbank.cron.candybar.deleted.v1` |
+
+Registration has ONE canonical file, `schemas/bloodbank/cron/candybar.created.json`,
+dispatching closed revision-conditioned branches. `data.schema_version`,
+`dataschema`, and `schemaref` MUST agree exactly; unknown revisions fail.
+
+- **v1 (cron), preserved:** required `schema_version: 1`, UUID `candybar_id`,
+  lowercase slug `name`, string `description`, string-array `tags`, nonempty
+  string `schedule`, boolean `noise`. Optional nonempty string `timezone`
+  (default UTC) and boolean `enabled` retain their original allowances,
+  including no new IANA lookup on v1. `dates` and unknown keys are rejected;
+  `schedule` remains required.
+- **v2 (finite only):** required `schema_version: 2`, the same required
+  `candybar_id`, `name`, `description`, `tags`, `noise`, a nonempty `dates`
+  array, and an actual IANA `timezone`; optional boolean `enabled`.
+  `schedule` and unknown keys are forbidden. Each local wall time is exactly
+  `YYYY-MM-DDTHH:MM` or `YYYY-MM-DDTHH:MM:00`: real calendar dates only,
+  no offsets, Z, fractions, or nonzero seconds. Duplicate dates, including
+  equivalent minute / `:00` spellings, fail. Runtime validation uses local
+  zoneinfo lookup, never network schema retrieval.
+
+No DST gap/fold resolution, past-date rejection, missed-date, pause, edit,
+or settlement policy is chosen here. Those are exclusively owner gate
+`t_7204a764`; accepting a wall-time representation is not selecting its
+resolved UTC instant or authorizing a schedule. Downstream finite edits
+must replace the schedule variant atomically, omitting the obsolete field:
+cron keeps `schedule` and omits `dates`; finite keeps `dates` plus `timezone`
+and omits `schedule`. `candybar.updated.json` remains byte-identical v1;
+this decision does not introduce an updated revision.
+
+Deletion v1 is a closed payload with ALL fields required:
+`schema_version: 1`, UUID `candybar_id`, lowercase slug `name`, UTC RFC3339
+`deleted_at`, `reason: manual | schedule_exhausted`, and
+`last_invocation_id: UUID | null`. No last invocation means an explicit null,
+not omission. `deleted_at` uses `Z` or `+00:00`, never a non-UTC offset.
+
+**Producer obligations (not Bloodbank application implementation):** perform
+real active-definition removal, retained identity/history/dedupe state, and
+a durable deletion outbox entry in ONE transaction. Persist a stable envelope
+UUID in that outbox. Commit before publishing; retries reuse that UUID.
+A rolled-back deletion produces no fact. Archive/pause are reversible states,
+not deletion. `schedule_exhausted` asserts the producer's owner-governed
+settlement decision; elapsed wall time or publication alone does not establish it.
+
+**Consumer and mirror handoff:** see [candybar-event-contract.md](candybar-event-contract.md)
+for exact local lookup/revision handling, generator limits, and post-landing
+copy/hash instructions. No `.v2.json` sibling or subject/type version token.
 
 ---
 

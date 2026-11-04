@@ -37,6 +37,53 @@ function scalarType(t) {
   return t || 'string';
 }
 
+function fieldsFor(data) {
+  const props = data?.properties || {};
+  const required = data?.required || [];
+  return Object.entries(props).map(([name, def]) => ({
+    name,
+    jsonType: scalarType(def.type ?? (def.const === undefined ? undefined
+      : Number.isInteger(def.const) ? 'integer' : typeof def.const)),
+    required: required.includes(name),
+    description: (def.description || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+  }));
+}
+
+function revisionData(schema, file) {
+  if (!schema.oneOf) return { dataFields: fieldsFor(schema.properties?.data) };
+  // CAND-51 is the one governed multi-revision registration fact. Refuse
+  // other layouts rather than silently reducing branches/$refs to no fields.
+  if (schema.properties?.type?.const !== 'bloodbank.cron.candybar.created') {
+    throw new Error(`${file}: unsupported envelope revision union`);
+  }
+  const dataRevisions = schema.oneOf.map((branch) => {
+    const p = branch.properties;
+    const schemaVersion = p?.data?.properties?.schema_version?.const;
+    const type = schema.properties.type.const;
+    if (!Number.isInteger(schemaVersion) || !p?.data?.properties
+      || p.data.additionalProperties !== false
+      || p.dataschema?.const !== `apicurio://holyfields/${type}/versions/${schemaVersion}`
+      || p.schemaref?.const !== `${type}.v${schemaVersion}`) {
+      throw new Error(`${file}: unsupported or inconsistent revision branch`);
+    }
+    return {
+      schemaVersion,
+      dataschema: p.dataschema.const,
+      schemaref: p.schemaref.const,
+      dataFields: fieldsFor(p.data),
+    };
+  });
+  if (dataRevisions.map((r) => r.schemaVersion).sort().join(',') !== '1,2') {
+    throw new Error(`${file}: expected exactly the governed CAND-51 revisions 1,2`);
+  }
+  const names = [...new Set(dataRevisions.flatMap((r) => r.dataFields.map((f) => f.name)))];
+  const dataFields = names.map((name) => {
+    const fields = dataRevisions.map((r) => r.dataFields.find((f) => f.name === name));
+    return { ...fields.find(Boolean), required: fields.every((f) => f?.required === true) };
+  });
+  return { dataFields, dataRevisions };
+}
+
 // Tokens that read wrong in Title Case. A label is for a human scanning a long
 // dropdown: "Cli Session Started" and "Llm Request Sent" look like typos.
 const ACRONYMS = {
@@ -118,13 +165,7 @@ for (const file of walk(eventSchemasRoot)) {
   const [, typeDomain, entity, action] = type.split('.');
   const domain = (props.domain && props.domain.const) || typeDomain;
   const dataProps = (props.data && props.data.properties) || {};
-  const dataRequired = (props.data && props.data.required) || [];
-  const dataFields = Object.entries(dataProps).map(([name, def]) => ({
-    name,
-    jsonType: scalarType(def.type),
-    required: dataRequired.includes(name),
-    description: (def.description || '').replace(/\s+/g, ' ').trim().slice(0, 200),
-  }));
+  const dataMetadata = revisionData(schema, file);
   const label = typeof schema['x-n8n-label'] === 'string' && schema['x-n8n-label'].trim()
     ? schema['x-n8n-label'].trim()
     : derivedLabel(kind, entity, action);
@@ -168,7 +209,7 @@ for (const file of walk(eventSchemasRoot)) {
     label,
     group,
     description: cleanDescription(schema.description).slice(0, 240),
-    dataFields,
+    ...dataMetadata,
     providerAliases: aliases,
   });
 }
@@ -191,6 +232,8 @@ const iface =
   'export interface EventSchema {\n' +
   "  type: string;\n  kind: 'event' | 'command';\n  domain: string;\n  schemaId: string;\n  title: string;\n" +
   '  label: string;\n  group: string;\n  description: string;\n  dataFields: EventDataField[];\n' +
+  '  /** Exact branch metadata; flat required fields are only the common intersection. */\n' +
+  '  dataRevisions?: { schemaVersion: number; dataschema: string; schemaref: string; dataFields: EventDataField[] }[];\n' +
   '  providerAliases: ProviderAlias[];\n}\n\n';
 const body =
   'export type CanonicalSchemaDocument = Record<string, unknown>;\n\n' +

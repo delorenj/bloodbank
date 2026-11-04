@@ -2,6 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
+import {
+  assertCandybarConsumer, candybarHandles, CANDYBAR_CREATED, CANDYBAR_DELETED,
+} from './candybar-revisions';
 import { headers as natsHeaders } from '@nats-io/nats-core';
 import {
   connect,
@@ -114,7 +117,10 @@ export function validateEnvelope(type: string, envelope: Record<string, unknown>
   const ajv = validator();
   const validate = ajv.getSchema(schema.schemaId);
   if (!validate) throw new Error(`generated canonical schema is unavailable for ${type}`);
-  if (validate(envelope)) return;
+  if (validate(envelope)) {
+    assertCandybarConsumer(envelope);
+    return;
+  }
   throw new Error(
     `Bloodbank schema validation failed for ${type}: ${ajv.errorsText(validate.errors, {
       dataVar: 'envelope',
@@ -211,6 +217,8 @@ function deriveOrderingKey(
   identity: string,
   eventId: string,
 ): string {
+  if ((type === CANDYBAR_CREATED || type === CANDYBAR_DELETED)
+    && typeof data.candybar_id === 'string') return `candybar:${data.candybar_id}`;
   const rule = ENTITY_BUCKET_RULES[type];
   for (const source of rule?.sources ?? []) {
     const value = data[source];
@@ -243,6 +251,7 @@ export function buildEnvelope(opts: EmitOptions): {
     : opts.causationId;
   const observedAt = opts.observedAt || new Date().toISOString();
   const actor = opts.actor || { type: 'service', agent_id: 'bloodbank.integration.n8n' };
+  const handles = candybarHandles(opts.type, opts.data);
   const envelope: Record<string, unknown> = {
     specversion: '1.0',
     id: eventId,
@@ -251,13 +260,13 @@ export function buildEnvelope(opts: EmitOptions): {
     subject,
     time: observedAt,
     datacontenttype: 'application/json',
-    dataschema: `apicurio://holyfields/${opts.type}/versions/1`,
+    dataschema: handles?.dataschema ?? `apicurio://holyfields/${opts.type}/versions/1`,
     correlationid,
     causationid,
     producer: opts.producer || 'n8n',
     service: opts.service || 'n8n',
     domain,
-    schemaref: `${opts.type}.v1`,
+    schemaref: handles?.schemaref ?? `${opts.type}.v1`,
     traceparent: '00-00000000000000000000000000000000-0000000000000000-00',
     kind,
     actor,
@@ -391,7 +400,10 @@ export async function publish(
 ): Promise<{ subject: string; correlationid: string; eventId: string; commandId?: string }> {
   const { subject, envelope } = buildEnvelope(opts);
   const commandType = commandSchemas.some((schema) => schema.type === opts.type);
-  if (opts.kind === 'command' || commandType || opts.validate) validateEnvelope(opts.type, envelope);
+  const candybarType = opts.type === CANDYBAR_CREATED || opts.type === CANDYBAR_DELETED;
+  if (opts.kind === 'command' || commandType || opts.validate || candybarType) {
+    validateEnvelope(opts.type, envelope);
+  }
   const connection = await (connectNats ?? connect)({
     servers: serverUrl(opts.host, opts.port),
     name: 'n8n-bloodbank-publisher',

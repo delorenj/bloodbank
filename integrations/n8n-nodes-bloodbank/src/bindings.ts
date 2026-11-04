@@ -7,6 +7,7 @@ import {
   eventSchemas,
 } from './nodes/Bloodbank/eventSchemas';
 import { aliasFor } from './options';
+import { candybarRevision } from './candybar-revisions';
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -87,6 +88,7 @@ function sampleValue(schemaValue: unknown, name: string, depth: number): unknown
   if (typeof schema.$ref === 'string') {
     schema = { ...(resolveRef(schema.$ref) || {}), ...schema, $ref: undefined };
   }
+  if (Array.isArray(schema.oneOf)) return sampleValue(schema.oneOf[0], name, depth);
   if (schema.const !== undefined) return schema.const;
   if (Array.isArray(schema.examples) && schema.examples.length) return schema.examples[0];
   if (schema.default !== undefined) return schema.default;
@@ -134,7 +136,10 @@ export function sampleEnvelope(binding: string, kind: 'event' | 'command'): Reco
   const document = schema
     ? canonicalSchemaDocuments.find((candidate) => candidate.$id === schema.schemaId)
     : undefined;
-  const dataSchema = record(record(document?.properties)?.data);
+  // Samples intentionally select the preserved cron branch. The canonical
+  // document and generated metadata still retain the full v1/v2 union.
+  const sampleDocument = document ? candybarRevision(document, 1) : undefined;
+  const dataSchema = record(record(sampleDocument?.properties)?.data);
   const data = (record(sampleValue(dataSchema, 'data', 0)) || {}) as Record<string, unknown>;
   const alias = aliasFor(binding);
   if (alias) {

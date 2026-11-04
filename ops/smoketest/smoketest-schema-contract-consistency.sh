@@ -107,6 +107,10 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
             # captured (assert_project_invariants); bind the envelope to the
             # fixture's source_event.id the way the sidecar producer does.
             env["causationid"] = payload["origin"]["source_event"]["id"]
+    if ce_type in {"bloodbank.cron.candybar.created", "bloodbank.cron.candybar.deleted"}:
+        fixtures = json.loads(Path("ops/fixtures/cron-candybar-contracts.json").read_text())
+        key = "created_v1" if ce_type.endswith(".created") else "deleted"
+        env.update(fixtures[key])
     return env
 
 

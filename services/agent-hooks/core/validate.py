@@ -27,10 +27,12 @@ import hashlib
 import json
 import os
 import re
+from copy import deepcopy
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # --------------------------------------------------------------------------
 # §2 - type regex
@@ -137,6 +139,8 @@ EVENT_ACTIONS = frozenset({
     "fired",
     # cron.steward_task.queued: a steward task was accepted and waits for the steward
     "queued",
+    # CAND-51: real deletion, distinct from archive/pause
+    "deleted",
 })
 
 COMMAND_ACTIONS = frozenset({
@@ -743,6 +747,142 @@ def assert_project_invariants(envelope: dict) -> None:
             raise ContractViolation(f"project internal report must carry {missing}")
 
 
+CRON_CREATED_TYPE = "bloodbank.cron.candybar.created"
+CRON_DELETED_TYPE = "bloodbank.cron.candybar.deleted"
+_CRON_SLUG = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
+_CRON_UUID = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_CRON_LOCAL_MINUTE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:00)?"
+)
+_CRON_UTC_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(\.[0-9]+)?(Z|\+00:00)"
+)
+
+
+def assert_cron_invariants(envelope: dict) -> None:
+    """CAND-51 only: closed representations, local semantics, handles and identity.
+
+    Do not resolve local dates to UTC here: gap/fold, past/missed and control
+    policies belong to the Candybar owner gate, not this wire validator.
+    """
+    ce_type = envelope.get("type")
+    if ce_type not in {CRON_CREATED_TYPE, CRON_DELETED_TYPE}:
+        return
+
+    def refuse(message: str) -> None:
+        raise ContractViolation(f"{ce_type}: {message}")
+
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        refuse("data must be an object")
+    version = data.get("schema_version")
+    supported = (1, 2) if ce_type == CRON_CREATED_TYPE else (1,)
+    if isinstance(version, bool) or version not in supported:
+        refuse(f"unsupported data.schema_version; expected {supported}")
+    revision = int(version)
+    for field, expected in (
+        ("dataschema", f"apicurio://holyfields/{ce_type}/versions/{revision}"),
+        ("schemaref", f"{ce_type}.v{revision}"),
+    ):
+        if envelope.get(field) != expected:
+            refuse(f"{field} must agree with data.schema_version ({revision})")
+
+    required = {"schema_version", "candybar_id", "name"}
+    optional: set[str] = set()
+    if ce_type == CRON_CREATED_TYPE:
+        required |= {"description", "tags", "noise"}
+        optional.add("enabled")
+        if revision == 1:
+            required.add("schedule")
+            optional.add("timezone")
+        else:
+            required |= {"dates", "timezone"}
+    else:
+        required |= {"deleted_at", "reason", "last_invocation_id"}
+    missing = required - data.keys()
+    unknown = data.keys() - required - optional
+    if missing or unknown:
+        refuse(f"data missing fields {sorted(missing)}; unknown fields {sorted(unknown)}")
+    candybar_id = data["candybar_id"]
+    if not isinstance(candybar_id, str) or not _CRON_UUID.fullmatch(candybar_id):
+        refuse("data.candybar_id must be a UUID")
+    if envelope.get("ordering_key") != f"candybar:{candybar_id}":
+        refuse("ordering_key must equal candybar:<data.candybar_id> exactly")
+    name = data["name"]
+    # v1 retains even the original JSON Schema regex's terminal-newline
+    # allowance ($ versus fullmatch); new representations use strict slugs.
+    legacy_name = ce_type == CRON_CREATED_TYPE and revision == 1
+    valid_name = isinstance(name, str) and (
+        re.match(_CRON_SLUG.pattern + "$", name) if legacy_name else _CRON_SLUG.fullmatch(name)
+    )
+    if not valid_name:
+        refuse("data.name must be a lowercase slug")
+    if ce_type == CRON_DELETED_TYPE:
+        last = data["last_invocation_id"]
+        if last is not None and (not isinstance(last, str) or not _CRON_UUID.fullmatch(last)):
+            refuse("data.last_invocation_id must be a UUID or explicit null")
+        if data["reason"] not in ("manual", "schedule_exhausted"):
+            refuse("data.reason must be manual or schedule_exhausted")
+        deleted_at = data["deleted_at"]
+        if (
+            not isinstance(deleted_at, str)
+            or not _CRON_UTC_TIMESTAMP.fullmatch(deleted_at)
+            or not _is_rfc3339_datetime(deleted_at)
+        ):
+            refuse("data.deleted_at must be a real UTC RFC3339 timestamp")
+        try:
+            datetime(
+                int(deleted_at[0:4]), int(deleted_at[5:7]), int(deleted_at[8:10]),
+                int(deleted_at[11:13]), int(deleted_at[14:16]), int(deleted_at[17:19]),
+            )
+        except ValueError:
+            refuse("data.deleted_at must be a real UTC RFC3339 timestamp")
+        return
+
+    if not isinstance(data["description"], str):
+        refuse("data.description must be a string")
+    tags = data["tags"]
+    if not isinstance(tags, list) or any(not isinstance(t, str) or not t for t in tags):
+        refuse("data.tags must be an array of nonempty strings")
+    for field in ("noise", "enabled"):
+        if field in data and not isinstance(data[field], bool):
+            refuse(f"data.{field} must be boolean")
+    if "timezone" in data and (not isinstance(data["timezone"], str) or not data["timezone"]):
+        refuse("data.timezone must be a nonempty string")
+    if revision == 1:
+        if not isinstance(data["schedule"], str) or not data["schedule"]:
+            refuse("data.schedule must be a nonempty string")
+        return  # Preserve v1's optional free-string timezone, not new IANA rules.
+
+    zone = data["timezone"]
+    try:
+        if zone in {"localtime", "posixrules"} or zone.startswith(("posix/", "right/")):
+            raise ValueError("not an IANA zone key")
+        ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError):
+        refuse("data.timezone must name an actual locally available IANA timezone")
+    dates = data["dates"]
+    if not isinstance(dates, list) or not dates:
+        refuse("data.dates must be a nonempty array")
+    seen: set[datetime] = set()
+    for value in dates:
+        if not isinstance(value, str) or not _CRON_LOCAL_MINUTE.fullmatch(value):
+            refuse("data.dates entries must be local YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:00")
+        try:
+            minute = datetime(
+                int(value[0:4]), int(value[5:7]), int(value[8:10]),
+                int(value[11:13]), int(value[14:16]),
+            )
+        except ValueError:
+            refuse("data.dates entries must be real calendar minutes")
+        if minute in seen:
+            refuse("data.dates contains duplicate/equivalent local minutes")
+        seen.add(minute)
+
+
 def assert_contract(envelope: dict) -> None:
     """Run all stdlib-only contract checks on an envelope. Raises ContractViolation on first failure."""
     if not isinstance(envelope, dict):
@@ -805,6 +945,7 @@ def assert_contract(envelope: dict) -> None:
 
     assert_portfolio_invariants(envelope)
     assert_project_invariants(envelope)
+    assert_cron_invariants(envelope)
 
 
 # --------------------------------------------------------------------------
@@ -957,9 +1098,41 @@ def validate_envelope(envelope: dict) -> None:
         )
 
 
+def load_event_schema(ce_type: str, *, schema_version: int | None = None) -> dict:
+    """Local canonical schema, dispatching all revisions unless one is explicit.
+
+    Exact selection is deliberately limited to CAND-51's governed created
+    branches. Never infer a revision from a filename or fetch a schema URI.
+    """
+    schema = _load_schema(str(_schema_path_for(ce_type)))
+    if schema_version is None:
+        return schema
+    if ce_type != CRON_CREATED_TYPE:
+        raise ValueError(f"exact revision selection is unsupported for {ce_type}")
+    if type(schema_version) is not int or schema_version not in (1, 2):
+        raise ValueError(f"unsupported {ce_type} schema revision {schema_version!r}")
+    selected = deepcopy(schema)
+    branches = selected.pop("oneOf")
+    branch = next(
+        b for b in branches
+        if b["properties"]["data"]["properties"]["schema_version"]["const"] == schema_version
+    )
+    selected["allOf"] = branch["allOf"]
+    selected["properties"].update(branch["properties"])
+    return selected
+
+
 def load_schema_for(ce_type: str) -> dict:
-    """Read the schema for a Bloodbank type as a dict."""
-    return _load_schema(str(_schema_path_for(ce_type)))
+    """Backward-compatible canonical lookup; retains the full revision union."""
+    return load_event_schema(ce_type)
+
+
+def load_event_data_schema(ce_type: str, *, schema_version: int | None = None) -> dict:
+    """Flat-payload consumers must explicitly select a governed revision."""
+    schema = load_event_schema(ce_type, schema_version=schema_version)
+    if ce_type == CRON_CREATED_TYPE and schema_version is None:
+        raise ValueError(f"{ce_type} has multiple revisions; select schema_version explicitly")
+    return schema.get("properties", {}).get("data", {})
 
 
 __all__ = [
@@ -969,6 +1142,8 @@ __all__ = [
     "RETIRED_PAIRS",
     "COMMAND_ACTIONS",
     "ContractViolation",
+    "CRON_CREATED_TYPE",
+    "CRON_DELETED_TYPE",
     "EVENT_ACTIONS",
     "EnvelopeInvalid",
     "KIND_MARKERS",
@@ -983,12 +1158,15 @@ __all__ = [
     "assert_action_tense",
     "assert_banned_tokens",
     "assert_contract",
+    "assert_cron_invariants",
     "assert_portfolio_invariants",
     "assert_project_invariants",
     "assert_subject_matches",
     "assert_terminal_receipt_retry",
     "assert_type_shape",
     "load_schema_for",
+    "load_event_schema",
+    "load_event_data_schema",
     "portfolio_terminal_receipt_digest",
     "subject_for",
     "validate_envelope",

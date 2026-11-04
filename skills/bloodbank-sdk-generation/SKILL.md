@@ -15,6 +15,19 @@ Deterministic recipe for generating typed bindings from `bloodbank/schemas/blood
 
 ## Python (Pydantic v2 models)
 
+### CAND-51 exception: registration/deletion
+
+Do not feed `cron/candybar.created.json` directly into the generic recipe.
+Some generators silently drop an envelope `oneOf` beside `allOf`; modular
+base inheritance can also produce invalid import order. For these two facts
+only, use `python3 scripts/candybar_codegen_schema.py created|deleted` to
+produce a local self-contained codegen view first. Created defaults to the
+complete preserved v1 / finite v2 union; `--schema-version 1|2` is explicit
+selection, never inferred v1. Unknown layouts/refs fail. Keep the generated
+union and run positive/negative fixture checks, not merely a compiler exit
+check. Exact commands and consumer limits: `docs/candybar-event-contract.md`.
+This exception neither revises other schemas nor replaces runtime semantics.
+
 ```bash
 uvx --from 'datamodel-code-generator>=0.25' datamodel-codegen \
   --input schemas/bloodbank \
