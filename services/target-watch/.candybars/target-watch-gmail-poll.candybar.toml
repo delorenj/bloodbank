@@ -18,8 +18,9 @@ enabled = false
 
 [candybar.runner]
 kind = "exec"
-argv = ["/home/delorenj/.local/bin/uv", "run", "--project", "/home/delorenj/code/33GOD/bloodbank/services/target-watch", "--frozen", "--no-dev", "target-watch", "gmail-poll"]
+# The venv entry point, not `uv run` (a mise shim that applies bloodbank's PATH; see the systemd units).
+argv = ["/home/delorenj/code/33GOD/bloodbank/services/target-watch/.venv/bin/target-watch", "gmail-poll"]
 workdir = "/home/delorenj/code/33GOD/bloodbank/services/target-watch"
-env = { NATS_URL = "nats://127.0.0.1:4222", PATH = "/home/delorenj/.local/bin:/usr/local/bin:/usr/bin:/bin" }
+env = { NATS_URL = "nats://127.0.0.1:4222", TARGET_WATCH_GOG = "/usr/local/bin/gog", PATH = "/home/delorenj/.local/bin:/usr/local/bin:/usr/bin:/bin" }
 timeout_s = 240
 on_failure = ["/bin/sh", "-c", "\"$HOME/.local/bin/ntfy-alert\" --title \"[candybar] target-watch-gmail-poll failed\" -- \"$CANDYBAR_FAILURE_MESSAGE\" || true"]

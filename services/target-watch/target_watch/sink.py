@@ -205,10 +205,8 @@ class SinkService:
         return "failed", plan.ticket_ref, f"px comment did not confirm (exit {code}); not retried"
 
     def _notify(self, channels: list[str], line: str) -> tuple[list[str], list[str]]:
-        # hermes picks its profile from the working directory: run from the service
-        # checkout (inside bloodbank) it resolves bloodbank-pm, whose Telegram is
-        # disabled, and exits 1 with no output. The home directory resolves the
-        # default profile, which owns the operator's Telegram DM (2026-11-04).
+        # Run from home, outside any repo whose tooling could pick a hermes profile.
+        # The 2026-11-04 failure was a PATH shadow, not cwd: see the systemd units.
         sent, failed = [], []
         for channel in channels:
             code, _, stderr = self.runner([self.hermes, "send", "--to", channel, "--quiet", "--", line],
