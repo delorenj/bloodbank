@@ -300,7 +300,7 @@ Segment 3 of `type` MUST be one of:
 | `telephony`    | Phone calls on the operator's lines (Telnyx numbers and the forwarded personal cell): calls, recordings, voicemail transcripts, and call commands executed through Telnyx. Text messages are `messaging` (one entity per transport: `sms`, `mms`, `rcs`, `imessage`). | active   |
 | `messaging`    | Human messages and platform alerts on every channel — email, chat platforms, messaging apps, and carrier texts (SMS/MMS/RCS/iMessage). The entity segment names the platform (`messaging.<platform>.<action>`: `received` for a message, `notified` for a mention/reaction/activity alert); see the platform rows in §7. | active   |
 | `crank`        | Desk-mode crank sessions: the operator's circuit of agent tabs in the zellij Workspace and Wingman, the voice pair programmer that watches it (`duty.started`, `duty.ended`, `alert.raised`). | active   |
-| `cron`         | Time-driven scheduling facts from the Candybar cron framework: the UTC minute heartbeat every schedule keys off (`tick.fired`) and the registered-unit lifecycle (`candybar.*`), plus the `candybar.invoke` dispatch command. | active   |
+| `cron`         | Time-driven scheduling facts from the Candybar cron framework: the UTC minute heartbeat every schedule keys off (`tick.fired`) and the registered-unit lifecycle (`candybar.*`), plus the `candybar.invoke` dispatch command; and the Candybar steward's task lifecycle (`steward_task.*`) with its `candybar.steward` command. | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
@@ -394,6 +394,7 @@ Segment 4 of `type` MUST be one of:
 | `call`             | `telephony`              | One phone call on an operator line, from setup to hangup; recordings and voicemails are `call.recorded`. |
 | `tick`             | `cron`                   | One UTC minute boundary fired by the Candybar heartbeat publisher; `tick:<unix_epoch_minute>` is both the ordering bucket and `data.tick_id`. |
 | `candybar`         | `cron`                   | One registered scheduled unit in the Candybar cron framework: registration (`created`/`updated`), invocation lifecycle (`invoked`/`completed`/`failed`), suppressed fires (`skipped`), and the `candybar.invoke` dispatch command. |
+| `steward_task`     | `cron`                   | One Candybar steward task (enrich, fix, evaluate or refactor) for a registered candybar: `queued` -> `started` -> `completed` or `failed`; the `candybar.steward` command runs it (candybar `steward-contract.md`). `data` is the task; `ordering_key = candybar:<candybar_id>`, so a task orders with its candybar's facts. |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -437,6 +438,7 @@ covers every inbound human message, texts included.
 `delegated`, `raised`, `released`, `expired`, `skipped`, `notified`,
 `revoked` (`billing.rule.revoked`: a rule was revoked; the rule's recording stays), `issued` (`billing.invoice.issued`: a statement was frozen on the ledger), `delivered` (`billing.invoice.delivered`: an issued statement was raised on a delivery rail),
 `fired` (`cron.tick.fired`: the UTC minute heartbeat every candybar schedule keys off),
+`queued` (`cron.steward_task.queued`: a steward task was accepted and waits for the steward),
 `uploaded`, `transcribed`, `dispatched`, `replied`, `played` (the `audio.memo.*`
 journey stages: a voice memo that is uploaded, transcribed, dispatched to an agent,
 answered aloud, and played back on the device), `progressed` (`agent.invocation.progressed`:
@@ -451,7 +453,8 @@ file publishes one, chunk 1 of 1, when that file is up), `mirrored`
 
 `create`, `resume`, `start`, `end`, `complete`, `fail`, `cancel`, `generate`,
 `append`, `receive`, `send`, `grant`, `deny`, `open`, `close`, `spawn`,
-`kill`, `checkout`, `invoke`, `request`, `toggle`, `clock_in`, `clock_out`.
+`kill`, `checkout`, `invoke`, `request`, `toggle`, `clock_in`, `clock_out`,
+`steward` (`cron.candybar.steward`: run one steward task for a candybar).
 
 Pairing across kinds is by semantic intent, not lexical: command `start`
 yields event `started`; command `kill` yields event `exited`; command
@@ -569,7 +572,7 @@ projection:liquid                # finance: single household-wide projection buc
 clock:<clock_system>:<principal> # attendance: one worker/system time-clock state bucket
 duty:<duty_id>                   # crank: every fact of one Wingman duty session (duty.*, alert.raised)
 tick:<tick_id>                   # cron: the minute heartbeat itself (tick_id = tick:<unix_epoch_minute>)
-candybar:<candybar_id>           # cron: every lifecycle fact of one registered candybar
+candybar:<candybar_id>           # cron: every lifecycle fact of one registered candybar, its steward tasks included
 project:<project_slug>           # project: one bucket per pjangler project; activity audiences and deployments share it
 call:<call_id>                   # telephony: every event of one phone call, recording and transcript included
 line:<line>                      # messaging carrier texts (sms/mms/rcs/imessage) on one line ("cell", "imessage" or a Telnyx E.164)
@@ -613,6 +616,7 @@ billing.snapshot.send  : client:<client>:command:<command_id>
 billing.transaction.receive : mercury_event:<event_id>:command:<command_id>
 cron.candybar.invoke   : candybar:<candybar_id>:tick:<tick_id>    # scheduled fire
                        : candybar:<candybar_id>:manual:<uuid>     # manual invoke
+cron.candybar.steward  : <task_id>                                # one steward task (its row id)
 ```
 
 A retry of the same command MUST present the same `idempotency_key`. Bloodbank

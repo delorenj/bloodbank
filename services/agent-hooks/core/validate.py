@@ -107,6 +107,8 @@ ALLOWED_ENTITIES = frozenset({
     "sms", "mms", "rcs", "imessage",
     # cron: the heartbeat minute and one registered candybar
     "tick", "candybar",
+    # cron: one candybar steward task (enrich, fix, evaluate, refactor)
+    "steward_task",
 })
 
 EVENT_ACTIONS = frozenset({
@@ -133,6 +135,8 @@ EVENT_ACTIONS = frozenset({
     "revoked", "issued", "delivered",
     # cron.tick.fired: the UTC minute heartbeat every candybar schedule keys off
     "fired",
+    # cron.steward_task.queued: a steward task was accepted and waits for the steward
+    "queued",
 })
 
 COMMAND_ACTIONS = frozenset({
@@ -140,6 +144,8 @@ COMMAND_ACTIONS = frozenset({
     "generate", "append", "receive", "send", "grant", "deny",
     "open", "close", "spawn", "kill", "checkout", "invoke",
     "request", "toggle", "clock_in", "clock_out",
+    # cron.candybar.steward: run one steward task (enrich, fix, evaluate) for a candybar
+    "steward",
 })
 
 # (domain, entity) pairs that are allowlisted individually but retired together.
