@@ -55,6 +55,10 @@ docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
 description = "Manifest-driven scaffold check (no Docker, no network)"
 run = "python3 cli/bb.py doctor"
 
+[tasks."target-watch:test"]
+description = "target-watch service tests (fakes only: no bus, board or Telegram)"
+run = "uv run --project services/target-watch --extra test pytest services/target-watch/tests -q"
+
 [tasks."repo-health"]
 description = "Read-only git/issue/PR/check snapshot for BMAD evidence"
 run = "python3 cli/bb.py repo-health"

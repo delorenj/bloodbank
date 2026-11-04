@@ -1,0 +1,25 @@
+# target-watch Gmail ingress: one pass every five minutes, Candybar the only clock
+# (never an n8n Gmail Trigger or Schedule Trigger, never a .timer). It publishes
+# bloodbank.messaging.email.received for mail from watched targets' addresses,
+# so it is registered disabled; the first scheduled fire is the proof.
+#
+#   candybar register --dry-run ~/code/33GOD/bloodbank/services/target-watch
+#   candybar register ~/code/33GOD/bloodbank/services/target-watch
+#   uv run candybar show target-watch-gmail-poll -n 5     # from ~/code/33GOD/candybar
+#   uv run candybar resume target-watch-gmail-poll
+[candybar]
+name = "target-watch-gmail-poll"
+description = "target-watch: publish mail from watched targets (gog, jaradd@gmail.com) as messaging.email.received"
+tags = ["bloodbank", "target-watch", "gmail", "ingress"]
+schedule = "*/5 * * * *"
+timezone = "America/New_York"
+noise = false
+enabled = false
+
+[candybar.runner]
+kind = "exec"
+argv = ["/home/delorenj/.local/bin/uv", "run", "--project", "/home/delorenj/code/33GOD/bloodbank/services/target-watch", "--frozen", "--no-dev", "target-watch", "gmail-poll"]
+workdir = "/home/delorenj/code/33GOD/bloodbank/services/target-watch"
+env = { NATS_URL = "nats://127.0.0.1:4222", PATH = "/home/delorenj/.local/bin:/usr/local/bin:/usr/bin:/bin" }
+timeout_s = 240
+on_failure = ["/bin/sh", "-c", "\"$HOME/.local/bin/ntfy-alert\" --title \"[candybar] target-watch-gmail-poll failed\" -- \"$CANDYBAR_FAILURE_MESSAGE\" || true"]

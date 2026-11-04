@@ -1,0 +1,259 @@
+{
+  "bloodbank.messaging.email.received": {
+    "handle_paths": [
+      "data.sender.handle"
+    ],
+    "name_paths": [
+      "data.sender.display_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.content.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": {
+      "path": "data.direction",
+      "equals": [
+        "inbound"
+      ]
+    },
+    "handle_kinds": [
+      "email"
+    ]
+  },
+  "bloodbank.messaging.google_chat.received": {
+    "handle_paths": [
+      "data.sender.handle"
+    ],
+    "name_paths": [
+      "data.sender.display_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.content.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": {
+      "path": "data.direction",
+      "equals": [
+        "inbound"
+      ]
+    },
+    "handle_kinds": [
+      "platform_user",
+      "email"
+    ]
+  },
+  "bloodbank.messaging.imessage.received": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [
+      "data.from_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": null,
+    "handle_kinds": [
+      "e164",
+      "email",
+      "label"
+    ]
+  },
+  "bloodbank.messaging.mms.received": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [
+      "data.from_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": null,
+    "handle_kinds": [
+      "e164",
+      "label"
+    ]
+  },
+  "bloodbank.messaging.rcs.received": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [
+      "data.from_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": null,
+    "handle_kinds": [
+      "e164",
+      "label"
+    ]
+  },
+  "bloodbank.messaging.slack.received": {
+    "handle_paths": [
+      "data.sender.handle"
+    ],
+    "name_paths": [
+      "data.sender.display_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.content.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": {
+      "path": "data.direction",
+      "equals": [
+        "inbound"
+      ]
+    },
+    "handle_kinds": [
+      "platform_user",
+      "email"
+    ]
+  },
+  "bloodbank.messaging.sms.received": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [
+      "data.from_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": null,
+    "handle_kinds": [
+      "e164",
+      "label"
+    ]
+  },
+  "bloodbank.messaging.teams.received": {
+    "handle_paths": [
+      "data.sender.handle"
+    ],
+    "name_paths": [
+      "data.sender.display_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.content.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": {
+      "path": "data.direction",
+      "equals": [
+        "inbound"
+      ]
+    },
+    "handle_kinds": [
+      "platform_user",
+      "email"
+    ]
+  },
+  "bloodbank.messaging.telegram.received": {
+    "handle_paths": [
+      "data.sender.handle"
+    ],
+    "name_paths": [
+      "data.sender.display_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.content.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": {
+      "path": "data.direction",
+      "equals": [
+        "inbound"
+      ]
+    },
+    "handle_kinds": [
+      "platform_user"
+    ]
+  },
+  "bloodbank.messaging.whatsapp.received": {
+    "handle_paths": [
+      "data.sender.handle"
+    ],
+    "name_paths": [
+      "data.sender.display_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.content.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": {
+      "path": "data.direction",
+      "equals": [
+        "inbound"
+      ]
+    },
+    "handle_kinds": [
+      "platform_user",
+      "e164"
+    ]
+  },
+  "bloodbank.telephony.call.ended": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [
+      "data.remote_name"
+    ],
+    "thread_path": "data.call_id",
+    "text_paths": [],
+    "time_path": "data.ended_at",
+    "inbound_when": {
+      "path": "data.direction",
+      "equals": [
+        "inbound"
+      ]
+    },
+    "handle_kinds": [
+      "e164"
+    ]
+  },
+  "bloodbank.telephony.call.recorded": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [],
+    "thread_path": "data.call_id",
+    "text_paths": [],
+    "time_path": "data.recorded_at",
+    "inbound_when": null,
+    "handle_kinds": [
+      "e164"
+    ]
+  },
+  "bloodbank.telephony.transcription.completed": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [],
+    "thread_path": "data.call_id",
+    "text_paths": [
+      "data.text"
+    ],
+    "time_path": "data.completed_at",
+    "inbound_when": null,
+    "handle_kinds": [
+      "e164"
+    ]
+  }
+}
