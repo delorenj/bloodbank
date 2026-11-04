@@ -1,19 +1,14 @@
 const mail = ctx.mail;
 if (!mail) throw new Error('No prepared journal mail in this execution');
 const response = $input.first().json || {};
-const row = await one('reports', 'report_key', mail.report_key);
-if (!row) throw new Error(`Report disappeared after email: ${mail.report_key}`);
 if (response.error || !response.id) {
   const reason = `Resend pending: ${JSON.stringify(response.error || response).slice(0, 240)}`;
-  const errors = [...new Set([...(JSON.parse(row.errors || '[]')), reason])];
-  await upsert('reports', 'report_key', mail.report_key, { report_key: mail.report_key,
-    status: 'partial', errors: JSON.stringify(errors),
-    next_attempt_at: new Date(Date.now() + 10 * 60 * 1000).toISOString() });
-  return [{ json: { report_key: mail.report_key, delivered: false, reason,
+  const owned = await helpers.journalSettleMail(mail, null, reason);
+  return [{ json: { report_key: mail.report_key, delivered: false, reason, stale: !owned,
     candybar: { status: 'fail', message: reason } } }];
 }
-await upsert('reports', 'report_key', mail.report_key, { report_key: mail.report_key,
-  email_id: response.id, email_hash: mail.email_hash, email_phase: mail.email_phase || 'partial',
-  pending_email: '', email_sent_at: isoNow() });
+const owned = await helpers.journalSettleMail(mail, response.id, '');
+if (!owned) return [{ json: { report_key: mail.report_key, delivered: false, stale: true,
+  candybar: { status: 'fail', message: 'Stale journal mail receipt; current reservation preserved' } } }];
 return [{ json: { report_key: mail.report_key, delivered: true, resend_id: response.id,
   candybar: { status: 'success' } } }];

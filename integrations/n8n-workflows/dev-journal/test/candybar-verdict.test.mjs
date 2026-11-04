@@ -51,19 +51,23 @@ test('actual Candybar verdict parser sees failed provider, accepted provider and
   const writes = [];
   const helpers = {
     journalOne: async () => report,
-    journalUpsert: async (_kind, _key, _value, update) => {
+    journalSettleMail: async (mail, id, reason) => {
+      if (report.pending_email !== JSON.stringify(mail)) return false;
+      const update = id ? { pending_email: '', email_id: id } : { errors: JSON.stringify([reason]) };
       writes.push(update);
       Object.assign(report, update);
-      return report;
+      return true;
     },
   };
   const record = node(wf, 'Store Resend receipt');
   const fn = new AsyncFunction('helpers', '$input', 'ctx', record.parameters.operation === 'recordEmail'
     ? `${read('src/common.js')}\n${read('src/record-email.js')}` : 'throw Error("wrong operation")');
   const mail = { report_key: report.report_key, email_hash: 'hash', email_phase: 'partial', mail_key: 'stable-key' };
+  report.pending_email = JSON.stringify(mail);
+  const frozen = report.pending_email;
   const failed = (await fn(helpers, { first: () => ({ json: { error: 'timeout' } }) }, { mail }))[0].json;
   assert.equal(failed.delivered, false);
-  assert.equal(report.pending_email, 'frozen-payload-and-key');
+  assert.equal(report.pending_email, frozen);
   assert.ok(writes.every((write) => !Object.hasOwn(write, 'pending_email')));
   const accepted = (await fn(helpers, { first: () => ({ json: { id: 'accepted' } }) }, { mail }))[0].json;
   assert.equal(accepted.delivered, true);

@@ -26,6 +26,21 @@ function store(names) {
       else { row = { ...update }; rows.push(row); }
       return row;
     },
+    async journalReserveMail(key, mail) {
+      const row = await helpers.journalOne('reports', 'report_key', key);
+      if (row.pending_email) return JSON.parse(row.pending_email);
+      if (!mail || (row.email_id && (mail.email_phase === 'partial' || row.email_phase === 'complete'))) return null;
+      row.pending_email = JSON.stringify(mail);
+      return mail;
+    },
+    async journalSettleMail(mail, id, reason) {
+      const row = await helpers.journalOne('reports', 'report_key', mail.report_key);
+      if (row.pending_email !== JSON.stringify(mail)) return false;
+      if (id) Object.assign(row, { email_id: id, email_hash: mail.email_hash,
+        email_phase: mail.email_phase, pending_email: '' });
+      else Object.assign(row, { errors: JSON.stringify([reason]), next_attempt_at: new Date().toISOString() });
+      return true;
+    },
     async httpRequest(options) {
       calls.http.push(options);
       if (options.url.includes('/v1/registry')) return { projects: { infra: { ticket_provider: {

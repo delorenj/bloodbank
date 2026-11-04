@@ -105,6 +105,10 @@ export class DevJournal implements INodeType {
         journalOne: (kind: string, key: string, value: string) => storage.one(kind, key, value),
         journalUpsert: (kind: string, key: string, value: string, data: Record<string, unknown>) =>
           storage.upsert(kind, key, value, data),
+        journalReserveMail: (key: string, candidate: Record<string, unknown> | null) =>
+          storage.reserveMail(key, candidate),
+        journalSettleMail: (mail: Record<string, unknown>, id: string | null, reason: string) =>
+          storage.settleMail(mail, id, reason),
         httpRequest: (options: unknown) => this.helpers.httpRequest(options as never),
         httpRequestWithAuthentication: (credential: string, options: unknown) =>
           this.helpers.httpRequestWithAuthentication.call(this, credential, options as never),

@@ -13,7 +13,7 @@ const columns: Record<Kind, Record<string, string>> = {
     status: 'TEXT', note_id: 'TEXT', email_id: 'TEXT', email_hash: 'TEXT', email_sent_at: 'TEXT',
     processing_lease_until: 'TEXT', next_attempt_at: 'TEXT', attempts: 'INTEGER',
     errors: 'TEXT', processed_at: 'TEXT', received_at: 'TEXT',
-    email_phase: 'TEXT', pending_email: 'TEXT',
+    email_phase: 'TEXT', pending_email: 'TEXT', email_receipts: 'TEXT',
   },
   findings: {
     fingerprint: 'TEXT PRIMARY KEY', project_id: 'TEXT', board_id: 'TEXT', ticket_id: 'TEXT',
@@ -62,27 +62,29 @@ export class JournalStore {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
     chmodSync(path, 0o600);
-    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;');
-    for (const [kind, fields] of Object.entries(columns)) {
-      this.db.exec(`CREATE TABLE IF NOT EXISTS ${kind} (${Object.entries(fields)
-        .map(([name, type]) => `${name} ${type}`).join(', ')})`);
-    }
-    const reportColumns = new Set(this.db.prepare('PRAGMA table_info(reports)').all()
-      .map((column) => column.name));
-    for (const name of ['email_phase', 'pending_email']) {
-      if (!reportColumns.has(name)) this.db.exec(`ALTER TABLE reports ADD COLUMN ${name} TEXT`);
-    }
-    // Infer old receipts before processing can overwrite status; never remove history.
-    this.db.exec(`UPDATE reports SET email_phase = CASE WHEN status = 'complete'
-      THEN 'complete' ELSE 'partial' END
-      WHERE email_id IS NOT NULL AND email_id != '' AND email_phase IS NULL`);
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS reports_by_date ON reports(report_date);
-      CREATE INDEX IF NOT EXISTS occurrences_by_date ON occurrences(report_date);
-      CREATE INDEX IF NOT EXISTS occurrences_by_fingerprint ON occurrences(fingerprint);
-      CREATE INDEX IF NOT EXISTS findings_by_last_seen ON findings(last_seen);
-      CREATE INDEX IF NOT EXISTS rollups_by_kind_start ON rollups(kind, start_date);
-    `);
+    this.db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+    this.mailTransaction(() => {
+      for (const [kind, fields] of Object.entries(columns)) {
+        this.db.exec(`CREATE TABLE IF NOT EXISTS ${kind} (${Object.entries(fields)
+          .map(([name, type]) => `${name} ${type}`).join(', ')})`);
+      }
+      const reportColumns = new Set(this.db.prepare('PRAGMA table_info(reports)').all()
+        .map((column) => column.name));
+      for (const name of ['email_phase', 'pending_email', 'email_receipts']) {
+        if (!reportColumns.has(name)) this.db.exec(`ALTER TABLE reports ADD COLUMN ${name} TEXT`);
+      }
+      // Infer old receipts before processing can overwrite status; never remove history.
+      this.db.exec(`UPDATE reports SET email_phase = CASE WHEN status = 'complete'
+        THEN 'complete' ELSE 'partial' END
+        WHERE email_id IS NOT NULL AND email_id != '' AND email_phase IS NULL`);
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS reports_by_date ON reports(report_date);
+        CREATE INDEX IF NOT EXISTS occurrences_by_date ON occurrences(report_date);
+        CREATE INDEX IF NOT EXISTS occurrences_by_fingerprint ON occurrences(fingerprint);
+        CREATE INDEX IF NOT EXISTS findings_by_last_seen ON findings(last_seen);
+        CREATE INDEX IF NOT EXISTS rollups_by_kind_start ON rollups(kind, start_date);
+      `);
+    });
   }
 
   rows(kindInput: string): JournalRow[] {
@@ -94,6 +96,72 @@ export class JournalStore {
     const kind = checkKind(kindInput);
     if (!(field in columns[kind])) throw new Error(`Unknown ${kind} column ${field}`);
     return rowFromSql(this.db.prepare(`SELECT * FROM ${kind} WHERE ${field} = ?`).get(value));
+  }
+
+  /** Serialize the decision and persisted bytes, not just the subsequent write. */
+  reserveMail(reportKey: string, candidate: JournalRow | null): JournalRow | null {
+    return this.mailTransaction(() => {
+      const row = this.one('reports', 'report_key', reportKey);
+      if (!row) throw new Error(`Missing mail report ${reportKey}`);
+      if (row.pending_email) return JSON.parse(String(row.pending_email)) as JournalRow;
+      if (!candidate) return null;
+      const phase = candidate.email_phase;
+      const identity = `dev-journal-v2:${reportKey}:${row.content_sha256 || ''}:${phase}`;
+      if (!['partial', 'complete'].includes(String(phase)) || candidate.report_key !== reportKey ||
+          candidate.mail_key !== identity || candidate.email_hash !== identity) {
+        throw new Error('Invalid journal mail identity');
+      }
+      // Historical receipts consume partial; completion permanently closes both slots.
+      if (row.email_id && (phase === 'partial' || row.email_phase === 'complete' ||
+          row.email_hash === `dev-journal-v2:${reportKey}:${row.content_sha256 || ''}:complete`)) return null;
+      this.db.prepare('UPDATE reports SET pending_email = ? WHERE report_key = ?')
+        .run(JSON.stringify(candidate), reportKey);
+      return candidate;
+    });
+  }
+
+  /** Only the exact frozen reservation may settle or schedule its retry. */
+  settleMail(mail: JournalRow, receiptId: string | null, reason = ''): boolean {
+    return this.mailTransaction(() => {
+      const row = this.one('reports', 'report_key', String(mail.report_key));
+      if (!row) throw new Error(`Missing mail report ${mail.report_key}`);
+      if (!row.pending_email || JSON.stringify(JSON.parse(String(row.pending_email))) !== JSON.stringify(mail)) {
+        // Repeated acknowledgement of an already recorded provider receipt is a no-op success.
+        const receipts = JSON.parse(String(row.email_receipts || '[]')) as JournalRow[];
+        return Boolean(receiptId && receipts.some((item) => item.id === receiptId &&
+          item.key === mail.mail_key && item.phase === mail.email_phase));
+      }
+      if (!receiptId) {
+        const errors = [...new Set([...JSON.parse(String(row.errors || '[]')), reason])];
+        this.db.prepare('UPDATE reports SET errors = ?, next_attempt_at = ? WHERE report_key = ?')
+          .run(JSON.stringify(errors), new Date(Date.now() + 10 * 60 * 1000).toISOString(), String(mail.report_key));
+        return true;
+      }
+      const receipts = JSON.parse(String(row.email_receipts || '[]')) as JournalRow[];
+      // Preserve the pre-migration receipt before replacing the legacy summary fields.
+      if (row.email_id && !receipts.some((item) => item.id === row.email_id)) {
+        receipts.push({ id: row.email_id, key: row.email_hash, phase: row.email_phase, at: row.email_sent_at });
+      }
+      const at = new Date().toISOString();
+      receipts.push({ id: receiptId, key: mail.mail_key, phase: mail.email_phase, at });
+      this.db.prepare(`UPDATE reports SET email_id = ?, email_hash = ?, email_phase = ?,
+        email_sent_at = ?, pending_email = '', email_receipts = ? WHERE report_key = ?`)
+        .run(receiptId, String(mail.email_hash), String(mail.email_phase), at,
+          JSON.stringify(receipts), String(mail.report_key));
+      return true;
+    });
+  }
+
+  private mailTransaction<T>(operation: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = operation();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   upsert(kindInput: string, field: string, value: string, data: JournalRow): JournalRow {
@@ -121,6 +189,12 @@ export class JournalStore {
       `ON CONFLICT(${field}) DO UPDATE SET ${assignments || `${field} = excluded.${field}`}`;
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      if (kind === 'reports' && this.one(kind, field, value)) {
+        const protectedFields = ['email_id', 'email_hash', 'email_phase', 'email_sent_at', 'pending_email', 'email_receipts'];
+        if (names.some((name) => protectedFields.includes(name))) {
+          throw new Error('Existing mail state requires reserveMail/settleMail');
+        }
+      }
       this.db.prepare(statement).run(...values);
       const row = this.one(kind, field, value);
       this.db.exec('COMMIT');
@@ -132,7 +206,7 @@ export class JournalStore {
     }
   }
 
-  close(): void { this.db.close(); }
+  close(): void { if (this.db.isOpen) this.db.close(); }
 }
 
 let singleton: JournalStore | undefined;

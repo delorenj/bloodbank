@@ -43,6 +43,6 @@ try {
   noteId = note.note_id || noteId;
 } catch (error) { pending.push(`Infra OpenNotebook pending: ${String(error.message || error).slice(0, 200)}`); }
 await upsert('reports', 'report_key', report.report_key, { report_key: report.report_key,
-  status: missing ? 'missing' : 'partial', note_id: noteId, errors: JSON.stringify(pending) });
+  note_id: noteId, errors: JSON.stringify(pending) });
 return stageMail(report, 'partial',
   `Dev Journal — ${date} (${missing ? 'report missing' : 'processing pending'})`, text);
