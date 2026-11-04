@@ -1,0 +1,35 @@
+# target-watch matcher: systemd --user unit TEMPLATE. NOT installed by the repo.
+#
+#   uv sync --project ~/code/33GOD/bloodbank/services/target-watch --frozen --no-dev
+#   ln -sf ~/code/33GOD/bloodbank/services/target-watch/systemd/target-watch-match.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now target-watch-match
+#
+# Durable JetStream consumer target-watch-matcher on bloodbank.evt.messaging.>
+# and bloodbank.evt.telephony.>. A NEW durable starts at new messages only; to
+# backfill once, run `target-watch match --since <ISO>` by hand before enabling.
+# Start target-watch-sink first so no detection waits for its consumer.
+[Unit]
+Description=target-watch matcher (inbound messages -> bloodbank.watch.target.detected)
+Documentation=file:%h/code/33GOD/bloodbank/services/target-watch/README.md
+After=network-online.target
+Wants=network-online.target
+# Never give up: the bus or the schemas may be down for a while.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/33GOD/bloodbank/services/target-watch
+Environment=NATS_URL=nats://127.0.0.1:4222
+Environment=TARGET_WATCH_STATE_DIR=%h/.local/state/target-watch
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/uv run --project %h/code/33GOD/bloodbank/services/target-watch --frozen --no-dev target-watch match
+Restart=always
+# Backoff: 5 s, growing to 5 min over 8 consecutive failures.
+RestartSec=5s
+RestartSteps=8
+RestartMaxDelaySec=5min
+TimeoutStopSec=20s
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,14 @@
+# Self-test target for live proofs of the whole path without touching anyone's
+# real conversations. Send an email from watch-selftest@delo.sh (or label a test
+# text "Watch Selftest") and the operator gets one Telegram line; no ticket.
+[target]
+id = "watch-selftest"
+display_name = "Watch Selftest"
+
+[target.handles]
+email = ["watch-selftest@delo.sh"]
+label = ["Watch Selftest"]
+
+[sink]
+kind = "notify_only"
+notify = ["telegram:7564050286"]

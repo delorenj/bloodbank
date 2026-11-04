@@ -1,0 +1,35 @@
+# target-watch sink: systemd --user unit TEMPLATE. NOT installed by the repo.
+#
+#   uv sync --project ~/code/33GOD/bloodbank/services/target-watch --frozen --no-dev
+#   ln -sf ~/code/33GOD/bloodbank/services/target-watch/systemd/target-watch-sink.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now target-watch-sink
+#
+# Durable JetStream consumer target-watch-sink on bloodbank.evt.watch.target.detected.
+# Runs `px` (cwd = the target's sink repo) and `hermes send`, both from ~/.local/bin.
+# Every JIMB ticket it files dispatches the james-brennan PM to groom it, so the
+# sink coalesces follow-ups into one ticket per conversation (sink.coalesce_hours).
+[Unit]
+Description=target-watch sink (detections -> tickets, notifications, bloodbank.watch.target.routed)
+Documentation=file:%h/code/33GOD/bloodbank/services/target-watch/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/33GOD/bloodbank/services/target-watch
+Environment=NATS_URL=nats://127.0.0.1:4222
+Environment=TARGET_WATCH_STATE_DIR=%h/.local/state/target-watch
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/uv run --project %h/code/33GOD/bloodbank/services/target-watch --frozen --no-dev target-watch sink
+Restart=always
+RestartSec=5s
+RestartSteps=8
+RestartMaxDelaySec=5min
+# A px create in flight is allowed to finish (it is never retried after a kill).
+TimeoutStopSec=120s
+KillMode=mixed
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
