@@ -26,6 +26,7 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # wrapper pinned to the bloodbank-pm profile, Telegram disabled) ahead of the real
 # hermes. Every notification failed that way on 2026-11-04. Re-run `uv sync` after a pull.
 Environment=TARGET_WATCH_HERMES=%h/.local/bin/hermes
+Environment=TARGET_WATCH_HERMES_PROFILE=33god-pm
 Environment=TARGET_WATCH_PX=%h/.local/bin/px
 Environment=TARGET_WATCH_GOG=/usr/local/bin/gog
 ExecStart=%h/code/33GOD/bloodbank/services/target-watch/.venv/bin/target-watch sink
