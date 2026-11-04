@@ -21,6 +21,13 @@ const code = (name, file, x, y, extra = {}) => node(name, 'n8n-nodes-base.code',
 }, x, y, extra);
 const journal = (name, operation, x, y, parameters = {}, extra = {}) =>
   node(name, 'n8n-nodes-bloodbank.devJournal', { operation, ...parameters }, x, y, extra);
+const hasItem = (name, field, x, y) => node(name, 'n8n-nodes-base.if', {
+  conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict', version: 2 },
+    combinator: 'and', conditions: [{ id: uuid(`condition:${name}`),
+      leftValue: `={{ !!$json.${field} }}`,
+      operator: { type: 'boolean', operation: 'true', singleValue: true } }] },
+}, x, y, { typeVersion: 2 });
+const noWork = (name, x, y) => code(name, 'no-work', x, y);
 // Candybar is the sole recurring clock. Exports remain inactive until reviewed cutover.
 const scheduledWebhook = (name, lane, x = 0, y = 0) => node(name, 'n8n-nodes-base.webhook', {
   httpMethod: 'POST', path: `candybar/dev-journal-${lane}`, responseMode: 'lastNode',
@@ -38,14 +45,15 @@ const trigger = (name, x, y) => node(name, 'n8n-nodes-bloodbank.bloodbankTrigger
 const planeCredential = { httpHeaderAuth: { id: 'TpxVVgOnmjHaE6h7', name: 'Plane API (33GOD + AutomaticAI)' } };
 const newApiCredential = { httpHeaderAuth: { id: 'DjNewApiN8n2026', name: 'Dev Journal NewAPI n8n' } };
 const resendCredential = { httpHeaderAuth: { id: 'ZYgVKEU9w9je0Jt4', name: 'Resend HTTP' } };
-const link = (connections, from, to) => {
+const link = (connections, from, to, index = 0) => {
   const entry = connections[from] ?? { main: [[]] };
-  entry.main[0].push({ node: to, type: 'main', index: 0 });
+  entry.main[index] ??= [];
+  entry.main[index].push({ node: to, type: 'main', index: 0 });
   connections[from] = entry;
 };
 const workflow = (name, nodes, edges, description) => {
   const connections = {};
-  for (const [from, to] of edges) link(connections, from, to);
+  for (const [from, to, index] of edges) link(connections, from, to, index);
   return { id: uuid(`workflow:${name}`), name, nodes, connections,
     settings: { executionOrder: 'v1', timezone: 'America/New_York' },
     active: false, pinData: {}, meta: { templateCredsSetupCompleted: true },
@@ -103,12 +111,16 @@ const resend = (name, x, y) => node(name, 'n8n-nodes-base.httpRequest', {
 const processorNodes = [
   scheduledWebhook('Find reports to process', 'processor'),
   manual('Process next report manually', 0, 120),
-  journal('Claim one report and prepare extraction', 'selectReport', 240, 0),
+  journal('Claim one report and prepare extraction', 'selectReport', 240, 0, {}, { alwaysOutputData: true }),
+  hasItem('Report selected?', 'report_key', 360, 0),
+  noWork('No report due', 480, 180),
   extractor,
   journal('Track issues and publish Infra note', 'processReport', 720, 0, {
     selected: "={{ $('Claim one report and prepare extraction').first().json }}",
   }, { credentials: planeCredential }),
-  journal('Only live mail not yet sent', 'prepareEmail', 960, 0),
+  journal('Only live mail not yet sent', 'prepareEmail', 960, 0, {}, { alwaysOutputData: true }),
+  hasItem('Mail prepared?', 'mail_key', 1080, 0),
+  noWork('Mail already sent or suppressed', 1200, 180),
   resend('Send daily journal', 1200, 0),
   journal('Store Resend receipt', 'recordEmail', 1440, 0, {
     mail: "={{ $('Only live mail not yet sent').first().json }}",
@@ -116,7 +128,9 @@ const processorNodes = [
 ];
 const deadlineNodes = [
   scheduledWebhook('Daily 07:00 deadline', 'deadline'),
-  journal('Prepare honest partial if pending', 'deadlineMail', 240, 0),
+  journal('Prepare honest partial if pending', 'deadlineMail', 240, 0, {}, { alwaysOutputData: true }),
+  hasItem('Deadline mail prepared?', 'mail_key', 360, 0),
+  noWork('Deadline mail already sent', 480, 180),
   resend('Send pending daily journal', 480, 0),
   journal('Store deadline receipt', 'recordEmail', 720, 0, {
     mail: "={{ $('Prepare honest partial if pending').first().json }}",
@@ -125,17 +139,23 @@ const deadlineNodes = [
 const incidentNodes = [
   scheduledWebhook('Retry incident outbox', 'incidents', 0, -100),
   manual('Replay incident outbox manually', 0, 100),
-  journal('Load unsent incidents', 'incidentOutbox', 240, 0),
+  journal('Load unsent incidents', 'incidentOutbox', 240, 0, {}, { alwaysOutputData: true }),
+  hasItem('Incidents pending?', 'occurrence_id', 360, 0),
+  noWork('No incidents pending', 480, 180),
   bloodbank('Publish observed incident', 'bloodbank.reporting.incident.observed',
     '={{ $json.event }}', 480, 0),
   journal('Record incident publication', 'recordIncident', 720, 0, {
     incidents: "={{ $('Load unsent incidents').all().map(item => item.json) }}",
   }),
+  code('Incident publication complete', 'work-complete', 960, 0),
 ];
 const rollupNodes = [
   scheduledWebhook('Refresh closed rollups', 'rollups', 0, -100),
   manual('Backfill rollups', 0, 100),
-  journal('Upsert weekly and monthly Infra notes', 'rollup', 240, 0),
+  journal('Upsert weekly and monthly Infra notes', 'rollup', 240, 0, {}, { alwaysOutputData: true }),
+  hasItem('Rollup finished?', 'closed_through', 360, 0),
+  noWork('No reports for rollup', 480, 180),
+  code('Rollup complete', 'work-complete', 480, 0),
 ];
 const backfillFinalizerNodes = [
   manual('Reconcile unresolved backfill findings'),
@@ -157,26 +177,38 @@ const bundles = {
   'processor.workflow.json': workflow('Dev Journal — Process Reports', processorNodes,
     [['Find reports to process', 'Claim one report and prepare extraction'],
       ['Process next report manually', 'Claim one report and prepare extraction'],
-      ['Claim one report and prepare extraction', 'Extract and classify findings'],
+      ['Claim one report and prepare extraction', 'Report selected?'],
+      ['Report selected?', 'Extract and classify findings', 0],
+      ['Report selected?', 'No report due', 1],
       ['Extract and classify findings', 'Track issues and publish Infra note'],
       ['Track issues and publish Infra note', 'Only live mail not yet sent'],
-      ['Only live mail not yet sent', 'Send daily journal'],
+      ['Only live mail not yet sent', 'Mail prepared?'],
+      ['Mail prepared?', 'Send daily journal', 0],
+      ['Mail prepared?', 'Mail already sent or suppressed', 1],
       ['Send daily journal', 'Store Resend receipt']],
     'Extracts every actionable issue, maintains one active Plane ticket per fingerprint, upserts Infra notes, and sends live mail.'),
   'deadline.workflow.json': workflow('Dev Journal — 07:00 Partial Mail', deadlineNodes,
     [['Daily 07:00 deadline', 'Prepare honest partial if pending'],
-      ['Prepare honest partial if pending', 'Send pending daily journal'],
+      ['Prepare honest partial if pending', 'Deadline mail prepared?'],
+      ['Deadline mail prepared?', 'Send pending daily journal', 0],
+      ['Deadline mail prepared?', 'Deadline mail already sent', 1],
       ['Send pending daily journal', 'Store deadline receipt']],
     'Sends an explicit pending report if the scheduled issue processor has not completed by 07:00 New York time.'),
   'incidents.workflow.json': workflow('Dev Journal — Incident Outbox', incidentNodes,
     [['Retry incident outbox', 'Load unsent incidents'],
       ['Replay incident outbox manually', 'Load unsent incidents'],
-      ['Load unsent incidents', 'Publish observed incident'],
-      ['Publish observed incident', 'Record incident publication']],
+      ['Load unsent incidents', 'Incidents pending?'],
+      ['Incidents pending?', 'Publish observed incident', 0],
+      ['Incidents pending?', 'No incidents pending', 1],
+      ['Publish observed incident', 'Record incident publication'],
+      ['Record incident publication', 'Incident publication complete']],
     'Retries schema-validated incident facts independently of Plane, notebook, and mail.'),
   'rollups.workflow.json': workflow('Dev Journal — Calendar Rollups', rollupNodes,
     [['Refresh closed rollups', 'Upsert weekly and monthly Infra notes'],
-      ['Backfill rollups', 'Upsert weekly and monthly Infra notes']],
+      ['Backfill rollups', 'Upsert weekly and monthly Infra notes'],
+      ['Upsert weekly and monthly Infra notes', 'Rollup finished?'],
+      ['Rollup finished?', 'Rollup complete', 0],
+      ['Rollup finished?', 'No reports for rollup', 1]],
     'Calendar weeks and months in America/New_York; monthly notes use per-day slices from completed weekly rollups.'),
   'backfill-finalize.workflow.json': workflow('Dev Journal — Backfill Unresolved Tickets',
     backfillFinalizerNodes,

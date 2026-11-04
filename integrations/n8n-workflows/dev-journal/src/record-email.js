@@ -9,9 +9,11 @@ if (response.error || !response.id) {
   await upsert('reports', 'report_key', mail.report_key, { report_key: mail.report_key,
     status: 'partial', errors: JSON.stringify(errors),
     next_attempt_at: new Date(Date.now() + 10 * 60 * 1000).toISOString() });
-  return [{ json: { report_key: mail.report_key, delivered: false, reason } }];
+  return [{ json: { report_key: mail.report_key, delivered: false, reason,
+    candybar: { status: 'fail', message: reason } } }];
 }
 await upsert('reports', 'report_key', mail.report_key, { report_key: mail.report_key,
   email_id: response.id, email_hash: mail.email_hash, email_phase: mail.email_phase || 'partial',
   pending_email: '', email_sent_at: isoNow() });
-return [{ json: { report_key: mail.report_key, delivered: true, resend_id: response.id } }];
+return [{ json: { report_key: mail.report_key, delivered: true, resend_id: response.id,
+  candybar: { status: 'success' } } }];
