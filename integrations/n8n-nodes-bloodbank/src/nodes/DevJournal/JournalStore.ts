@@ -13,6 +13,7 @@ const columns: Record<Kind, Record<string, string>> = {
     status: 'TEXT', note_id: 'TEXT', email_id: 'TEXT', email_hash: 'TEXT', email_sent_at: 'TEXT',
     processing_lease_until: 'TEXT', next_attempt_at: 'TEXT', attempts: 'INTEGER',
     errors: 'TEXT', processed_at: 'TEXT', received_at: 'TEXT',
+    email_phase: 'TEXT', pending_email: 'TEXT',
   },
   findings: {
     fingerprint: 'TEXT PRIMARY KEY', project_id: 'TEXT', board_id: 'TEXT', ticket_id: 'TEXT',
@@ -66,6 +67,15 @@ export class JournalStore {
       this.db.exec(`CREATE TABLE IF NOT EXISTS ${kind} (${Object.entries(fields)
         .map(([name, type]) => `${name} ${type}`).join(', ')})`);
     }
+    const reportColumns = new Set(this.db.prepare('PRAGMA table_info(reports)').all()
+      .map((column) => column.name));
+    for (const name of ['email_phase', 'pending_email']) {
+      if (!reportColumns.has(name)) this.db.exec(`ALTER TABLE reports ADD COLUMN ${name} TEXT`);
+    }
+    // Infer old receipts before processing can overwrite status; never remove history.
+    this.db.exec(`UPDATE reports SET email_phase = CASE WHEN status = 'complete'
+      THEN 'complete' ELSE 'partial' END
+      WHERE email_id IS NOT NULL AND email_id != '' AND email_phase IS NULL`);
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS reports_by_date ON reports(report_date);
       CREATE INDEX IF NOT EXISTS occurrences_by_date ON occurrences(report_date);

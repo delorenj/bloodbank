@@ -5,22 +5,19 @@
     {
       "id": "48450ea0-6f00-4a81-a373-2fa635adcfbe",
       "name": "Refresh closed rollups",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "position": [
         0,
         -100
       ],
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "30 8 * * *"
-            }
-          ]
-        }
-      }
+        "httpMethod": "POST",
+        "path": "candybar/dev-journal-rollups",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "e6be00d7-2430-44f1-a86d-eddc3b18ed98"
     },
     {
       "id": "127faade-c3e4-442e-ac03-cc5512add971",

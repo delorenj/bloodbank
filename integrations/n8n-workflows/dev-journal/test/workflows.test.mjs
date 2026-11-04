@@ -348,6 +348,119 @@ test('07:00 deadline targets yesterday and sends one missing-report alert', asyn
   assert.match(first[0].json.email.subject, /report missing/);
   assert.equal(env.data.get('dev_journal_reports')[0].report_key, '2026-09-23:missing');
   assert.ok(env.calls.http.some((request) => request.url.endsWith('/daily/2026-09-23')));
-  env.data.get('dev_journal_reports')[0].email_id = 'resend-id';
+  await execute('record-email', env, [{ id: 'resend-id' }], { mail: first[0].json });
   assert.deepEqual(await fn(env.helpers, input, {}, FixedDate), []);
+});
+
+test('partial mail slot ignores diagnostic churn (observed executions 583338/583558)', async () => {
+  const env = store(['reports']);
+  const row = { report_key: '2026-10-24:c3fe75fa68ad44fba61754384e9d8320',
+    report_date: '2026-10-24', content_sha256: '7029aa34259045adf31e7cda992d3768924001620ba65a45d8bb17fca005b38a',
+    email_id: '01a1a3cb-c2d3-7039-857e-58a25efcfe96', email_hash: 'bff04773', errors: '[]' };
+  env.data.get('dev_journal_reports').push(row);
+  assert.deepEqual(await execute('prepare-email', env, [{ ...row, status: 'partial',
+    final_markdown: 'Changed rate-limit errors/order', email_hash: 'c9f370b2' }]), []);
+});
+
+test('one initial partial, one completion; different generation remains deliverable', async () => {
+  const env = store(['reports']);
+  const row = { report_key: '2026-10-24:gen1', report_date: '2026-10-24',
+    content_sha256: 'abc', errors: '[]', status: 'partial' };
+  env.data.get('dev_journal_reports').push(row);
+  const prepare = (status, text = status) => execute('prepare-email', env,
+    [{ report_key: row.report_key, report_date: row.report_date, status, final_markdown: text }]);
+  const first = (await prepare('partial'))[0].json;
+  await execute('record-email', env, [{ id: 'partial-id' }], { mail: first });
+  assert.deepEqual(await prepare('partial', 'different'), []);
+  const completion = (await prepare('complete'))[0].json;
+  assert.notEqual(first.mail_key, completion.mail_key);
+  assert.match(completion.email.subject, /^Updated:/);
+  await execute('record-email', env, [{ id: 'complete-id' }], { mail: completion });
+  assert.deepEqual(await prepare('complete', 'model reordered same outcome'), []);
+  assert.deepEqual(await prepare('partial', 'later transient failure'), []);
+  const correction = { ...row, report_key: '2026-10-24:gen2', content_sha256: 'def',
+    email_id: '', email_hash: '', email_phase: '', pending_email: '' };
+  env.data.get('dev_journal_reports').push(correction);
+  const newMail = await execute('prepare-email', env, [{ ...correction, status: 'complete', final_markdown: 'Correction' }]);
+  assert.equal(newMail.length, 1);
+  assert.notEqual(newMail[0].json.mail_key, completion.mail_key);
+});
+
+test('provider failure/restart replays frozen payload and key, not changing markdown', async () => {
+  let env = store(['reports']);
+  const row = { report_key: '2026-10-24:gen1', report_date: '2026-10-24', errors: '[]' };
+  env.data.get('dev_journal_reports').push(row);
+  const processed = { ...row, status: 'partial', final_markdown: 'original' };
+  const first = (await execute('prepare-email', env, [processed]))[0].json;
+  assert.ok(row.pending_email);
+  await execute('record-email', env, [{ error: 'timeout' }], { mail: first });
+  assert.equal(row.email_id, undefined);
+  const saved = structuredClone(env.data.get('dev_journal_reports'));
+  env = store(['reports']); env.data.set('dev_journal_reports', saved);
+  const retry = (await execute('prepare-email', env, [{ ...processed, status: 'complete', final_markdown: 'changed' }]))[0].json;
+  assert.deepEqual(retry, first);
+  await execute('record-email', env, [{ id: 'accepted' }], { mail: retry });
+  assert.equal(env.data.get('dev_journal_reports')[0].pending_email, '');
+});
+
+test('legacy completion and backfill remain quiet; completed partial receipt gets selected', async () => {
+  const env = store(['reports', 'findings']);
+  const row = { report_key: '2026-10-24:gen1', report_date: '2026-10-24',
+    generation_id: 'gen1', email_id: 'old', email_phase: 'complete', status: 'complete',
+    payload: JSON.stringify({ markdown: '# Journal', report: {}, collector_facts: [] }) };
+  env.data.get('dev_journal_reports').push(row);
+  assert.deepEqual(await execute('select-report', env, [{}]), []);
+  assert.deepEqual(await execute('prepare-email', env, [{ ...row, final_markdown: 'same' }]), []);
+  row.email_phase = 'partial';
+  assert.equal((await execute('select-report', env, [{}])).length, 1);
+  assert.deepEqual(await execute('prepare-email', env, [{ ...row, backfill: true }]), []);
+});
+
+test('all four journal clocks are inactive POST webhooks paired with disabled Candybar manifests', () => {
+  for (const lane of ['processor', 'deadline', 'incidents', 'rollups']) {
+    const wf = JSON.parse(read(`${lane}.workflow.json`));
+    assert.equal(wf.active, false);
+    assert.ok(!wf.nodes.some(n => /scheduleTrigger|\.cron$/.test(n.type)));
+    const webhook = wf.nodes.find(n => n.type === 'n8n-nodes-base.webhook');
+    assert.equal(webhook.parameters.httpMethod, 'POST');
+    assert.equal(webhook.parameters.path, `candybar/dev-journal-${lane}`);
+    assert.equal(webhook.parameters.responseMode, 'lastNode');
+    assert.match(read(`candybar/${lane}/candybar.toml`), /enabled = false/);
+    assert.match(read(`candybar/${lane}/candybar.toml`), /kind = "n8n"/);
+  }
+  const processor = JSON.parse(read('processor.workflow.json'));
+  assert.equal(processor.nodes.find(n => n.name === 'Claim one report and prepare extraction').parameters.operation, 'selectReport');
+});
+
+test('deadline and processor share a frozen partial slot, then allow completion', async () => {
+  const env = store(['reports', 'occurrences']);
+  const row = { report_key: '2026-09-23:gen', report_date: '2026-09-23', generation_id: 'gen',
+    content_sha256: 'a', status: 'partial', errors: '["old error"]',
+    payload: JSON.stringify({ markdown: '# Journal', report: {} }) };
+  env.data.get('dev_journal_reports').push(row);
+  const RealDate = Date;
+  const FixedDate = class extends RealDate {
+    constructor(...args) { super(...(args.length ? args : ['2026-09-24T11:00:00Z'])); }
+    static now() { return new RealDate('2026-09-24T11:00:00Z').getTime(); }
+  };
+  const fn = new AsyncFunction('helpers', '$input', 'ctx', 'Date', code('deadline-mail'));
+  const deadline = await fn(env.helpers, { first: () => ({ json: {} }) }, {}, FixedDate);
+  const processed = { ...row, status: 'partial', final_markdown: '# Changed diagnostics' };
+  const processor = await execute('prepare-email', env, [processed]);
+  assert.deepEqual(processor, deadline);
+  await execute('record-email', env, [{ id: 'deadline-id' }], { mail: deadline[0].json });
+  assert.deepEqual(await execute('prepare-email', env, [processed]), []);
+  assert.equal((await execute('prepare-email', env, [{ ...processed, status: 'complete' }])).length, 1);
+});
+
+test('direct complete delivery needs no partial and retries neither complete nor partial', async () => {
+  const env = store(['reports']);
+  const row = { report_key: '2026-10-24:gen', report_date: '2026-10-24', errors: '[]' };
+  env.data.get('dev_journal_reports').push(row);
+  const result = { ...row, status: 'complete', final_markdown: 'Done' };
+  const first = (await execute('prepare-email', env, [result]))[0].json;
+  assert.doesNotMatch(first.email.subject, /pending|Updated:/);
+  await execute('record-email', env, [{ id: 'done-id' }], { mail: first });
+  assert.deepEqual(await execute('prepare-email', env, [result]), []);
+  assert.deepEqual(await execute('prepare-email', env, [{ ...result, status: 'partial' }]), []);
 });

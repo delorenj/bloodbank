@@ -12,5 +12,6 @@ if (response.error || !response.id) {
   return [{ json: { report_key: mail.report_key, delivered: false, reason } }];
 }
 await upsert('reports', 'report_key', mail.report_key, { report_key: mail.report_key,
-  email_id: response.id, email_hash: mail.email_hash, email_sent_at: isoNow() });
+  email_id: response.id, email_hash: mail.email_hash, email_phase: mail.email_phase || 'partial',
+  pending_email: '', email_sent_at: isoNow() });
 return [{ json: { report_key: mail.report_key, delivered: true, resend_id: response.id } }];

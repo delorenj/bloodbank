@@ -21,9 +21,11 @@ const code = (name, file, x, y, extra = {}) => node(name, 'n8n-nodes-base.code',
 }, x, y, extra);
 const journal = (name, operation, x, y, parameters = {}, extra = {}) =>
   node(name, 'n8n-nodes-bloodbank.devJournal', { operation, ...parameters }, x, y, extra);
-const schedule = (name, expression, x = 0, y = 0) => node(name, 'n8n-nodes-base.scheduleTrigger', {
-  rule: { interval: [{ field: 'cronExpression', expression }] },
-}, x, y);
+// Candybar is the sole recurring clock. Exports remain inactive until reviewed cutover.
+const scheduledWebhook = (name, lane, x = 0, y = 0) => node(name, 'n8n-nodes-base.webhook', {
+  httpMethod: 'POST', path: `candybar/dev-journal-${lane}`, responseMode: 'lastNode',
+  options: {},
+}, x, y, { typeVersion: 2, webhookId: uuid(`webhook:${lane}`) });
 const manual = (name, x = 0, y = 0) => node(name, 'n8n-nodes-base.manualTrigger', {}, x, y);
 const bloodbank = (name, event, data, x, y) => node(name, 'n8n-nodes-bloodbank.bloodbank', {
   mode: 'event', event, data, service: 'n8n-dev-journal', connection: {},
@@ -99,7 +101,7 @@ const resend = (name, x, y) => node(name, 'n8n-nodes-base.httpRequest', {
   options: { timeout: 30000 },
 }, x, y, { credentials: resendCredential, onError: 'continueRegularOutput' });
 const processorNodes = [
-  schedule('Find reports to process', '*/5 * * * *'),
+  scheduledWebhook('Find reports to process', 'processor'),
   manual('Process next report manually', 0, 120),
   journal('Claim one report and prepare extraction', 'selectReport', 240, 0),
   extractor,
@@ -113,7 +115,7 @@ const processorNodes = [
   }),
 ];
 const deadlineNodes = [
-  schedule('Daily 07:00 deadline', '0 7 * * *'),
+  scheduledWebhook('Daily 07:00 deadline', 'deadline'),
   journal('Prepare honest partial if pending', 'deadlineMail', 240, 0),
   resend('Send pending daily journal', 480, 0),
   journal('Store deadline receipt', 'recordEmail', 720, 0, {
@@ -121,7 +123,7 @@ const deadlineNodes = [
   }),
 ];
 const incidentNodes = [
-  schedule('Retry incident outbox', '*/5 * * * *', 0, -100),
+  scheduledWebhook('Retry incident outbox', 'incidents', 0, -100),
   manual('Replay incident outbox manually', 0, 100),
   journal('Load unsent incidents', 'incidentOutbox', 240, 0),
   bloodbank('Publish observed incident', 'bloodbank.reporting.incident.observed',
@@ -131,7 +133,7 @@ const incidentNodes = [
   }),
 ];
 const rollupNodes = [
-  schedule('Refresh closed rollups', '30 8 * * *', 0, -100),
+  scheduledWebhook('Refresh closed rollups', 'rollups', 0, -100),
   manual('Backfill rollups', 0, 100),
   journal('Upsert weekly and monthly Infra notes', 'rollup', 240, 0),
 ];

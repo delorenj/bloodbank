@@ -5,22 +5,19 @@
     {
       "id": "fc6b7184-d4bc-4c8e-aeb2-ab6ba739e353",
       "name": "Find reports to process",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "position": [
         0,
         0
       ],
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "*/5 * * * *"
-            }
-          ]
-        }
-      }
+        "httpMethod": "POST",
+        "path": "candybar/dev-journal-processor",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "5c33bd5b-b0e8-4374-a3b8-33557d01ceb3"
     },
     {
       "id": "99c37ae3-899e-4aea-aefa-d825d500cd77",

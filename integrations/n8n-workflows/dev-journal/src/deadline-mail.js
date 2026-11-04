@@ -14,6 +14,8 @@ if (!report) {
     processed_at: '', received_at: isoNow(),
   });
 }
+const pendingMailItem = await pendingMail(report);
+if (pendingMailItem) return pendingMailItem;
 if (report.email_id) return [];
 if (report.backfill) await upsert('reports', 'report_key', report.report_key, {
   report_key: report.report_key, backfill: false, status: 'pending',
@@ -30,7 +32,7 @@ const suffix = ['## Dev Journal pipeline — 07:00 processing status',
   ...incidentLines,
   '### Pending or failed steps',
   ...(pending.length ? pending.map((error) => `- ${error}`) : ['- Issue extraction or delivery has not finished.']),
-  '- The pipeline will retry incomplete work and send a clearly marked update when it changes.'].join('\n');
+  '- The pipeline will retry incomplete work and send one clearly marked update when processing completes.'].join('\n');
 const text = `${content.markdown.trimEnd()}\n\n${suffix}\n`;
 let noteId = report.note_id || '';
 try {
@@ -42,10 +44,5 @@ try {
 } catch (error) { pending.push(`Infra OpenNotebook pending: ${String(error.message || error).slice(0, 200)}`); }
 await upsert('reports', 'report_key', report.report_key, { report_key: report.report_key,
   status: missing ? 'missing' : 'partial', note_id: noteId, errors: JSON.stringify(pending) });
-const hash = digest(text);
-return [{ json: { report_key: report.report_key, report_date: date,
-  email_hash: hash, mail_key: `dev-journal-${date}-${hash}`,
-  email: { from: 'Dev Journal <dev-journal@delo.sh>', to: ['jaradd@gmail.com'],
-    subject: `Dev Journal — ${date} (${missing ? 'report missing' : 'processing pending'})`, text,
-    html: `<pre style="font:14px/1.5 system-ui;white-space:pre-wrap">${escapeHtml(text)}</pre>` },
-} }];
+return stageMail(report, 'partial',
+  `Dev Journal — ${date} (${missing ? 'report missing' : 'processing pending'})`, text);

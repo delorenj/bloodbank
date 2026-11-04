@@ -81,3 +81,26 @@ test('SQLite journal tables preserve keyed merges and indexed query fields', (t)
   assert.ok(indexes.includes('occurrences_by_fingerprint'));
   db.close();
 });
+
+test('legacy receipt migration is additive, infers phases and survives reopen', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'dev-journal-legacy-'));
+  const path = join(directory, 'state.sqlite');
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const db = new DatabaseSync(path);
+  db.exec(`CREATE TABLE reports (report_key TEXT PRIMARY KEY, report_date TEXT,
+    status TEXT, email_id TEXT, email_hash TEXT, payload TEXT);
+    INSERT INTO reports VALUES ('partial', '2026-10-24', 'partial', 'id1', 'bff04773', 'keep');
+    INSERT INTO reports VALUES ('complete', '2026-10-23', 'complete', 'id2', 'oldhash', 'keep2');`);
+  db.close();
+  const store = new JournalStore(path);
+  assert.equal(store.one('reports', 'report_key', 'partial').email_phase, 'partial');
+  assert.equal(store.one('reports', 'report_key', 'complete').email_phase, 'complete');
+  assert.equal(store.one('reports', 'report_key', 'partial').email_hash, 'bff04773');
+  assert.equal(store.one('reports', 'report_key', 'complete').payload, 'keep2');
+  store.upsert('reports', 'report_key', 'partial', { pending_email: '{"frozen":true}' });
+  store.close();
+  const reopened = new JournalStore(path);
+  assert.equal(reopened.one('reports', 'report_key', 'partial').pending_email, '{"frozen":true}');
+  assert.equal(reopened.rows('reports').length, 2);
+  reopened.close();
+});

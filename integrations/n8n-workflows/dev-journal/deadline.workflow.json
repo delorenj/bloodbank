@@ -5,22 +5,19 @@
     {
       "id": "bdd1ffc7-592e-4d32-aacd-10ec4c3210a9",
       "name": "Daily 07:00 deadline",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "position": [
         0,
         0
       ],
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "0 7 * * *"
-            }
-          ]
-        }
-      }
+        "httpMethod": "POST",
+        "path": "candybar/dev-journal-deadline",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "df72d11b-faab-4cb0-ab14-5743f755cf96"
     },
     {
       "id": "d1b8ef31-635b-43e4-a253-449923650d5c",

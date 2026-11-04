@@ -5,22 +5,19 @@
     {
       "id": "478f3efb-de23-494f-a3b0-0f62356fa4cb",
       "name": "Retry incident outbox",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "position": [
         0,
         -100
       ],
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "*/5 * * * *"
-            }
-          ]
-        }
-      }
+        "httpMethod": "POST",
+        "path": "candybar/dev-journal-incidents",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "9fb25092-99eb-4d65-a5b7-100070c8e937"
     },
     {
       "id": "e9e10839-6faf-42c2-ab33-bb3498569341",

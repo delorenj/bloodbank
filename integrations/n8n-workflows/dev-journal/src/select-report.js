@@ -2,7 +2,8 @@ const now = Date.now();
 const candidates = (await rows('reports')).filter((r) => {
   const retry = r.next_attempt_at && Date.parse(r.next_attempt_at) > now;
   const lease = r.processing_lease_until && Date.parse(r.processing_lease_until) > now;
-  const done = r.status === 'complete' && (r.backfill || r.email_id);
+  const done = r.status === 'complete' && !r.pending_email &&
+    (r.backfill || (r.email_id && r.email_phase === 'complete'));
   return r.generation_id !== 'missing' && !retry && !lease && !done;
 });
 candidates.sort((a, b) => {
