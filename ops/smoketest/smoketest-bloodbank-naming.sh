@@ -169,6 +169,7 @@ assert d("messaging", "sms", {"line": "cell"}, None) == "line:cell"
 assert d("messaging", "imessage", {"line": "imessage"}, None) == "line:imessage"
 assert d("messaging", "telegram", {"thread_id": "t1"}, None) == "messaging:telegram:t1"
 assert d("messaging", "slack", {"notification_id": "n1"}, None) == "messaging:slack:n1"
+assert d("watch", "target", {"watch_id": "example-person"}, None) == "watch:example-person"
 PY
 then
   pass_count=$((pass_count + 1)); echo "PASS bb-emit messaging ordering derivation"

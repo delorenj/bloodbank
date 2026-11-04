@@ -301,6 +301,7 @@ Segment 3 of `type` MUST be one of:
 | `messaging`    | Human messages and platform alerts on every channel — email, chat platforms, messaging apps, and carrier texts (SMS/MMS/RCS/iMessage). The entity segment names the platform (`messaging.<platform>.<action>`: `received` for a message, `notified` for a mention/reaction/activity alert); see the platform rows in §7. | active   |
 | `crank`        | Desk-mode crank sessions: the operator's circuit of agent tabs in the zellij Workspace and Wingman, the voice pair programmer that watches it (`duty.started`, `duty.ended`, `alert.raised`). | active   |
 | `cron`         | Time-driven scheduling facts from the Candybar cron framework: the UTC minute heartbeat every schedule keys off (`tick.fired`) and the registered-unit lifecycle (`candybar.*`), plus the `candybar.invoke` dispatch command; and the Candybar steward's task lifecycle (`steward_task.*`) with its `candybar.steward` command. | active   |
+| `watch`        | Target-focused alerts: an inbound message on any provider (email, chat, carrier text, call, voicemail) matched to a watched target (`target.detected`), and what the sink did about it (`target.routed`). Provider-agnostic: the fact names the target, not the channel; provider identity is data (see §10.1). | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
@@ -395,6 +396,7 @@ Segment 4 of `type` MUST be one of:
 | `tick`             | `cron`                   | One UTC minute boundary fired by the Candybar heartbeat publisher; `tick:<unix_epoch_minute>` is both the ordering bucket and `data.tick_id`. |
 | `candybar`         | `cron`                   | One registered scheduled unit in the Candybar cron framework: registration (`created`/`updated`), invocation lifecycle (`invoked`/`completed`/`failed`), suppressed fires (`skipped`), and the `candybar.invoke` dispatch command. |
 | `steward_task`     | `cron`                   | One Candybar steward task (enrich, fix, evaluate or refactor) for a registered candybar: `queued` -> `started` -> `completed` or `failed`; the `candybar.steward` command runs it (candybar `steward-contract.md`). `data` is the task; `ordering_key = candybar:<candybar_id>`, so a task orders with its candybar's facts. |
+| `target`           | `watch`                  | One watched target (a person or organisation the operator keeps watch on): `detected` (an inbound message of any provider was matched to it) and `routed` (the sink filed or updated a ticket, only notified, skipped a duplicate, or failed). `data.watch_id` is the target's slug; `ordering_key = watch:<watch_id>`. |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -439,6 +441,7 @@ covers every inbound human message, texts included.
 `revoked` (`billing.rule.revoked`: a rule was revoked; the rule's recording stays), `issued` (`billing.invoice.issued`: a statement was frozen on the ledger), `delivered` (`billing.invoice.delivered`: an issued statement was raised on a delivery rail),
 `fired` (`cron.tick.fired`: the UTC minute heartbeat every candybar schedule keys off),
 `queued` (`cron.steward_task.queued`: a steward task was accepted and waits for the steward),
+`detected` (`watch.target.detected`: an inbound message was matched to a watched target), `routed` (`watch.target.routed`: the watch sink acted on a detection),
 `uploaded`, `transcribed`, `dispatched`, `replied`, `played` (the `audio.memo.*`
 journey stages: a voice memo that is uploaded, transcribed, dispatched to an agent,
 answered aloud, and played back on the device), `progressed` (`agent.invocation.progressed`:
@@ -526,6 +529,31 @@ fields continue to apply per `cloudevent_base.v1.json`. Conceptually:
 - `actor` — who/what generated this fact, normalized for downstream agnostic
   consumption.
 
+### 10.1 Provider identity of an inbound message (`x-sender`)
+
+Inbound messages name their sender in provider-specific places: an email
+schema keeps it in `data.sender.handle`, a carrier text in `data.from`, a call
+in `data.from`. So that a consumer can match a sender without knowing the
+provider, every inbound schema carries a top-level `x-sender` annotation (a
+JSON Schema annotation keyword that validators ignore) saying where the sender
+lives: `handle_paths` (dotted paths into the envelope, for example
+`data.sender.handle`), `name_paths`, `thread_path`, `text_paths` (empty when
+the event has no text), `time_path`, `inbound_when` (`{"path": ..., "equals": [...]}`
+for types that carry a direction, `null` for types inbound by definition) and
+`handle_kinds` (`email`, `e164`, `label` or `platform_user`: what the handle may
+look like). Every `messaging.*.received` schema and the inbound `telephony` types
+(`call.ended`, `call.recorded`, `transcription.completed`) MUST carry one; every
+path must resolve to a property of the schema's `data`, and a type whose `data`
+has a `direction` MUST set `inbound_when`.
+
+The consumer is the `watch` domain (`watch.target.detected`): it reads `x-sender`
+from the schemas directory at runtime and matches the extracted handle against
+every watched target. Adding a provider therefore means adding `x-sender` to
+that provider's inbound schema and nothing else; every existing watch picks the
+provider up. `ops/smoketest/smoketest-watch-contracts.py`
+(`mise run smoketest:watch-contracts`) fails when a `messaging.*.received`
+schema or a listed telephony inbound schema lacks a valid `x-sender`.
+
 ---
 
 ## 11. Required envelope fields beyond the CloudEvents base
@@ -573,6 +601,7 @@ clock:<clock_system>:<principal> # attendance: one worker/system time-clock stat
 duty:<duty_id>                   # crank: every fact of one Wingman duty session (duty.*, alert.raised)
 tick:<tick_id>                   # cron: the minute heartbeat itself (tick_id = tick:<unix_epoch_minute>)
 candybar:<candybar_id>           # cron: every lifecycle fact of one registered candybar, its steward tasks included
+watch:<watch_id>                 # watch: every detection and routing outcome of one watched target
 project:<project_slug>           # project: one bucket per pjangler project; activity audiences and deployments share it
 call:<call_id>                   # telephony: every event of one phone call, recording and transcript included
 line:<line>                      # messaging carrier texts (sms/mms/rcs/imessage) on one line ("cell", "imessage" or a Telnyx E.164)
@@ -618,6 +647,11 @@ cron.candybar.invoke   : candybar:<candybar_id>:tick:<tick_id>    # scheduled fi
                        : candybar:<candybar_id>:manual:<uuid>     # manual invoke
 cron.candybar.steward  : <task_id>                                # one steward task (its row id)
 ```
+
+`watch.target.*` events carry no idempotency key; they are deduplicated by a
+deterministic CloudEvents id sent as `Nats-Msg-Id`: a detection is
+`uuid5(watch_id + ":" + dedupe_key)` and a routing outcome is
+`uuid5(detection_event_id + ":" + action)`.
 
 A retry of the same command MUST present the same `idempotency_key`. Bloodbank
 deduplicates on `(idempotency_key, command_id)` before forwarding.
@@ -719,10 +753,10 @@ JSON Schema documents with their own revision line (§13's `<n>`), not event
 types. Everything under `bloodbank/<domain>/` is named for the fact it
 describes and nothing else.
 
-There are 21 live domains — `agent`, `attendance`, `audio`, `billing`,
+There are 22 live domains — `agent`, `attendance`, `audio`, `billing`,
 `cli`, `conversation`, `crank`, `cron`, `curator`, `finance`, `lifecycle`, `llm`,
 `messaging`, `portfolio`, `project`, `repo`, `reporting`, `review`,
-`system`, `telephony`, `workflow` — matching the active half of
+`system`, `telephony`, `watch`, `workflow` — matching the active half of
 `ALLOWED_DOMAINS` in `services/agent-hooks/core/validate.py`. A domain
 directory appears when its first schema does.
 

@@ -3,6 +3,28 @@
   "$id": "https://33god.dev/schemas/bloodbank/messaging/email.received.json",
   "title": "Messaging Email Received Event",
   "description": "A human chat message arrived on an email inbox. One type per platform: the platform is the entity segment (messaging.<platform>.received), so subscribers bind to exactly the platforms they care about, or to bloodbank.evt.messaging.*.received for all of them. ordering_key is messaging:email:<thread_id>: every event of one platform-native conversation thread orders together. Consumers deduplicate on message_id. Carrier texts (SMS, MMS, RCS, iMessage) are their own messaging entities, ordered per operator line. See bloodbank/docs/event-naming.md (messaging).",
+  "x-sender": {
+    "handle_paths": [
+      "data.sender.handle"
+    ],
+    "name_paths": [
+      "data.sender.display_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.content.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": {
+      "path": "data.direction",
+      "equals": [
+        "inbound"
+      ]
+    },
+    "handle_kinds": [
+      "email"
+    ]
+  },
   "type": "object",
   "allOf": [
     {

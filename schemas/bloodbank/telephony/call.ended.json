@@ -3,6 +3,26 @@
   "$id": "https://33god.dev/schemas/bloodbank/telephony/call.ended.json",
   "title": "Telephony Call Ended Event",
   "description": "The call is over, with its disposition and duration. ordering_key is call:<call_id>. See bloodbank/docs/event-naming.md (telephony).",
+  "x-sender": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [
+      "data.remote_name"
+    ],
+    "thread_path": "data.call_id",
+    "text_paths": [],
+    "time_path": "data.ended_at",
+    "inbound_when": {
+      "path": "data.direction",
+      "equals": [
+        "inbound"
+      ]
+    },
+    "handle_kinds": [
+      "e164"
+    ]
+  },
   "type": "object",
   "allOf": [
     {
@@ -81,6 +101,20 @@
           "type": "string",
           "description": "When the call ended.",
           "format": "date-time"
+        },
+        "remote_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The far party's name as the carrier's caller-ID lookup (CNAM) or the phone's contact book reports it, when known. Optional; x-sender.name_paths reads it."
+        },
+        "forwarded_from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The number that forwarded the call to the operator's line (E.164), when the call arrived by forwarding. Optional."
         },
         "cost": {
           "type": [

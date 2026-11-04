@@ -62,6 +62,8 @@ ALLOWED_DOMAINS = frozenset({
     "workflow", "telephony", "messaging", "review", "crank",
     # candybar cron framework: minute tick + registered-unit lifecycle
     "cron",
+    # watch: target-focused alerts over inbound messages of any provider
+    "watch",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "memory",
 })
@@ -109,6 +111,8 @@ ALLOWED_ENTITIES = frozenset({
     "tick", "candybar",
     # cron: one candybar steward task (enrich, fix, evaluate, refactor)
     "steward_task",
+    # watch: one watched target (a person or organisation) and what was seen or done about it
+    "target",
 })
 
 EVENT_ACTIONS = frozenset({

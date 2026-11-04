@@ -193,6 +193,10 @@ run = "python3 ops/smoketest/smoketest-project-contracts.py"
 description = "Schema, discovery, pipeline and vault-projector tests for project artifact events"
 run = "python3 ops/smoketest/smoketest-project-artifact-contracts.py"
 
+[tasks."smoketest:watch-contracts"]
+description = "x-sender coverage of every inbound schema, plus full-envelope tests for watch.target.detected/routed"
+run = "python3 ops/smoketest/smoketest-watch-contracts.py"
+
 [tasks."smoketest:llm-contracts"]
 description = "Schema and cross-field tests for LLM usage and allowance observability events"
 run = "python3 ops/smoketest/smoketest-llm-contracts.py"

@@ -3,6 +3,25 @@
   "$id": "https://33god.dev/schemas/bloodbank/messaging/imessage.received.json",
   "title": "Messaging iMessage Received Event",
   "description": "An inbound iMessage text reached one of the operator's lines. Producers: the BlueBubbles bridge. Consumers deduplicate on message_id: the same text can be observed twice (SMS broadcast and its notification). One entity per transport (messaging.<transport>.<action>), the same split as the chat platforms; carrier texts order per operator line, ordering_key line:<line>, so one conversation stays ordered when it switches SMS/MMS or falls back from RCS. Calls and voicemail stay in telephony. See bloodbank/docs/event-naming.md (messaging).",
+  "x-sender": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [
+      "data.from_name"
+    ],
+    "thread_path": "data.thread_id",
+    "text_paths": [
+      "data.text"
+    ],
+    "time_path": "data.received_at",
+    "inbound_when": null,
+    "handle_kinds": [
+      "e164",
+      "email",
+      "label"
+    ]
+  },
   "type": "object",
   "allOf": [
     {

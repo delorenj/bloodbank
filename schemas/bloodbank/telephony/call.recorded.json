@@ -3,6 +3,19 @@
   "$id": "https://33god.dev/schemas/bloodbank/telephony/call.recorded.json",
   "title": "Telephony Call Recorded Event",
   "description": "A recording of a call is available: a voicemail left for the operator, or a recorded conversation. Telnyx recording URLs expire about 10 minutes after the call; consumers that need the audio copy it at once. ordering_key is call:<call_id>. See bloodbank/docs/event-naming.md (telephony).",
+  "x-sender": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [],
+    "thread_path": "data.call_id",
+    "text_paths": [],
+    "time_path": "data.recorded_at",
+    "inbound_when": null,
+    "handle_kinds": [
+      "e164"
+    ]
+  },
   "type": "object",
   "allOf": [
     {
