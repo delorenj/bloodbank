@@ -12,6 +12,7 @@ Safety rules, each paid for elsewhere:
 from __future__ import annotations
 
 import re
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -30,6 +31,7 @@ TEXT_DUPLICATE_S = 60.0
 CARRIER_TWINS = frozenset({"sms", "mms", "rcs", "imessage"})
 PX_TIMEOUT_S = 90
 NOTIFY_TIMEOUT_S = 30
+NOTIFY_CWD = os.environ.get("TARGET_WATCH_NOTIFY_CWD") or os.path.expanduser("~")
 FOOTER = "Filed automatically by target-watch from a {provider} message. Do not invent a ticket number."
 
 
@@ -203,10 +205,19 @@ class SinkService:
         return "failed", plan.ticket_ref, f"px comment did not confirm (exit {code}); not retried"
 
     def _notify(self, channels: list[str], line: str) -> tuple[list[str], list[str]]:
+        # hermes picks its profile from the working directory: run from the service
+        # checkout (inside bloodbank) it resolves bloodbank-pm, whose Telegram is
+        # disabled, and exits 1 with no output. The home directory resolves the
+        # default profile, which owns the operator's Telegram DM (2026-11-04).
         sent, failed = [], []
         for channel in channels:
-            code, _, _ = self.runner([self.hermes, "send", "--to", channel, "--quiet", "--", line], cwd=None, timeout=NOTIFY_TIMEOUT_S)
-            (sent if code == 0 else failed).append(channel)
+            code, _, stderr = self.runner([self.hermes, "send", "--to", channel, "--quiet", "--", line],
+                                          cwd=NOTIFY_CWD, timeout=NOTIFY_TIMEOUT_S)
+            if code == 0:
+                sent.append(channel)
+            else:
+                failed.append(channel)
+                log("notify_failed", channel=channel, exit=code, stderr=(stderr or "").strip()[-400:])
         return sent, failed
 
     def _routed(self, detection: dict, action: str, ticket_ref, channels, reason) -> dict:
