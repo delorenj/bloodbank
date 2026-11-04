@@ -143,6 +143,62 @@ class LLMContractTests(unittest.TestCase):
     def test_usage_validates(self) -> None:
         validate_envelope(usage_envelope())
 
+    def test_usage_old_event_without_input_estimated_validates(self) -> None:
+        env = usage_envelope()
+        self.assertNotIn("input_estimated", env["data"]["usage"])
+        validate_envelope(env)
+
+    def test_usage_client_channel_event_validates(self) -> None:
+        usage = {
+            "input_tokens": 900, "uncached_input_tokens": 900,
+            "cache_read_input_tokens": 0, "cache_write_input_tokens": 0,
+            "output_tokens": 40, "reasoning_output_tokens": 0,
+            "input_estimated": False,
+        }
+        for provider, account in (("openai", "channel-26"), ("openrouter", "channel-1")):
+            with self.subTest(provider=provider):
+                validate_envelope(usage_envelope(**{
+                    "data.provider": provider,
+                    "data.account_id": account,
+                    "data.billing_class": "client",
+                    "data.route": "deepseek/deepseek-chat",
+                    "data.requested_model": "deepseek/deepseek-chat",
+                    "data.native_model": "deepseek/deepseek-chat",
+                    "data.usage": usage,
+                }))
+
+    def test_usage_estimated_event_validates(self) -> None:
+        usage = dict(usage_payload()["usage"], input_estimated=True)
+        validate_envelope(usage_envelope(**{
+            "data.provider": "gateway",
+            "data.account_id": "channel-24",
+            "data.billing_class": "client",
+            "data.route": "hyper/some-model",
+            "data.usage": usage,
+        }))
+
+    def test_usage_input_estimated_must_be_boolean(self) -> None:
+        for value in (None, 1, 0, "true", "false", [], {}):
+            with self.subTest(value=value):
+                usage = dict(usage_payload()["usage"], input_estimated=value)
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(usage_envelope(**{"data.usage": usage}))
+
+    def test_usage_input_estimated_belongs_to_usage_only(self) -> None:
+        with self.assertRaises(EnvelopeInvalid):
+            validate_envelope(usage_envelope(**{"data.input_estimated": True}))
+
+    def test_usage_existing_billing_classes_still_validate(self) -> None:
+        for billing in ("subscription", "metered", "client"):
+            with self.subTest(billing=billing):
+                validate_envelope(usage_envelope(**{"data.billing_class": billing}))
+
+    def test_usage_rejects_invalid_billing_class(self) -> None:
+        for billing in ("Client", "clients", "dedicated", "", None, 1, ["client"]):
+            with self.subTest(billing=billing):
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(usage_envelope(**{"data.billing_class": billing}))
+
     def test_allowance_validates(self) -> None:
         validate_envelope(allowance_envelope())
 

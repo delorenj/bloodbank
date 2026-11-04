@@ -3,7 +3,7 @@
   "$id": "https://33god.dev/schemas/bloodbank/llm/usage.recorded.json",
   "title": "LLM Usage Recorded Event",
   "description": "One settled AutomaticAI gateway request, successful or failed, normalized for subscription and agent observability.",
-  "$comment": "The gateway ledger is authoritative for this fact. usage_id must be stable across exporter retries and backfill; the envelope id should be UUIDv5 derived from the gateway identity. usage.input_tokens is the normalized total input (uncached plus cache reads and writes), matching OpenTelemetry gen_ai.usage.input_tokens semantics; the component counts preserve NewAPI accounting. Prompts, prompt hashes, proof markers and credentials are forbidden.",
+  "$comment": "The gateway ledger is authoritative for this fact. usage_id must be stable across exporter retries and backfill; the envelope id should be UUIDv5 derived from the gateway identity. usage.input_tokens is the normalized total input (uncached plus cache reads and writes), matching OpenTelemetry gen_ai.usage.input_tokens semantics; the component counts preserve NewAPI accounting. A row with no catalog route and no automaticai account (a client dedicated channel, or AAI relay traffic) uses account_id channel-<channel_id>, the raw model name as route, provider from the channel type (openai, openrouter, else gateway), and usage.input_estimated true when the input count cannot be known exactly. Prompts, prompt hashes, proof markers and credentials are forbidden.",
   "type": "object",
   "allOf": [
     {
@@ -73,9 +73,11 @@
         },
         "billing_class": {
           "type": "string",
+          "description": "Who bears the upstream cost. subscription: a flat-rate plan account. metered: pay-per-token upstream. client: a client's dedicated channel, whose upstream cost the client's own agreement bears (account_id is channel-<channel_id>).",
           "enum": [
             "subscription",
-            "metered"
+            "metered",
+            "client"
           ]
         },
         "route": {
@@ -274,6 +276,10 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
+            },
+            "input_estimated": {
+              "type": "boolean",
+              "description": "true means input_tokens (and its uncached/cache split) is not an exact upstream count; a consumer must not treat it as exact. false or absent means exact. Optional, so every event published before this field existed stays valid."
             }
           },
           "required": [
