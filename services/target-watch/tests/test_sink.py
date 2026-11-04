@@ -54,7 +54,7 @@ async def test_creates_a_ticket_then_notifies_then_publishes_routed(sink, index,
     assert create[create.index("--priority") + 1] == "medium"
 
     [send] = runner.of("send")
-    assert send[:4] == ["hermes", "send", "--to", "telegram:1000"]
+    assert send[:6] == ["hermes", "-p", "33god-pm", "send", "--to", "telegram:1000"] and "--json" in send
     assert send[-1] == "Jane Doe via rcs: Can you come by Tuesday? -> ticket_created JIMB-450"
 
     assert routed["data"]["action"] == "ticket_created" and routed["data"]["ticket_ref"] == "JIMB-450"
@@ -194,7 +194,7 @@ async def test_notify_only_target(tmp_path, index, state, publisher, runner, clo
     detection = detect(index, registry, email(sender="watch-selftest@delo.sh", text="Selftest\n\nhello"))
     routed = await sink.handle(detection)
     assert runner.of("task") == [] and runner.of("comment") == []
-    assert [s[3] for s in runner.of("send")] == ["telegram:1000", "telegram:2000"]
+    assert [s[s.index("--to") + 1] for s in runner.of("send")] == ["telegram:1000", "telegram:2000"]
     assert routed["data"]["action"] == "notified_only" and routed["data"]["ticket_ref"] is None
 
 
@@ -237,7 +237,7 @@ async def test_notify_runs_from_home_not_the_service_checkout(sink, index, regis
     from target_watch import sink as sink_module
 
     await sink.handle(detect(index, registry, rcs()))
-    [(argv, cwd)] = [(a, c) for a, c in runner.calls if a[1:2] == ["send"]]
+    [(argv, cwd)] = [(a, c) for a, c in runner.calls if runner.verb(a) == "send"]
     assert cwd == sink_module.NOTIFY_CWD
     assert cwd and not cwd.startswith(os.path.dirname(os.path.dirname(os.path.abspath(sink_module.__file__))))
 
@@ -256,3 +256,16 @@ def test_deploy_artefacts_never_go_through_the_mise_uv_shim_and_pin_binaries():
     manifest = (root / ".candybars/target-watch-gmail-poll.candybar.toml").read_text()
     [argv] = [l for l in manifest.splitlines() if l.startswith("argv")]
     assert "/.venv/bin/target-watch" in argv and "uv" not in argv.split("[", 1)[1].split(",")[0]
+
+
+async def test_notify_names_the_hermes_profile_and_trusts_only_a_json_verdict(sink, index, registry, runner):
+    """2026-11-04: without -p, hermes found a profile with no Telegram token and
+    the sink routed notified=0. An exit 0 without a success verdict is not a send."""
+    routed = await sink.handle(detect(index, registry, rcs()))
+    [send] = runner.of("send")
+    assert send[1:3] == ["-p", "33god-pm"]
+    assert routed["data"]["notify_channels"] == ["telegram:1000"]
+
+    from target_watch.sink import confirmed
+    assert not confirmed("") and not confirmed('{"error": "x"}') and not confirmed('{"success": true, "skipped": true}')
+    assert confirmed('{"success": true, "message_id": "1"}')

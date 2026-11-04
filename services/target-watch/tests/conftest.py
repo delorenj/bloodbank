@@ -175,22 +175,30 @@ class FakeRunner:
         self.create_code = 0
         self.hermes_code = 0
 
+    @staticmethod
+    def verb(argv) -> str:
+        # hermes is called as `hermes -p <profile> send ...`
+        return argv[3] if len(argv) > 3 and argv[1] == "-p" else argv[1]
+
     def __call__(self, argv, cwd=None, timeout=None):
         self.calls.append((list(argv), cwd))
-        if argv[1] == "task":
+        verb = self.verb(argv)
+        if verb == "task":
             if self.create_output is not None:
                 return self.create_code, self.create_output, ""
             ref = f"JIMB-{self.next_ticket}"
             self.next_ticket += 1
             return 0, f"created {ref} [Todo] {argv[3]}\n  https://plane.example/ws/projects/x/issues/abc\n", ""
-        if argv[1] == "comment":
+        if verb == "comment":
             return 0, f"commented on {argv[2]}\n  {argv[2]} title\n  https://plane.example/x\n", ""
-        if argv[1] == "send":
-            return self.hermes_code, "", ""
+        if verb == "send":
+            if self.hermes_code:
+                return self.hermes_code, '{"error": "Platform not configured"}', ""
+            return 0, '{"success": true, "platform": "telegram", "message_id": "1"}', ""
         raise AssertionError(f"unexpected command {argv}")
 
     def of(self, verb: str) -> list[list[str]]:
-        return [argv for argv, _ in self.calls if argv[1] == verb]
+        return [argv for argv, _ in self.calls if self.verb(argv) == verb]
 
 
 @pytest.fixture

@@ -31,6 +31,7 @@ TEXT_DUPLICATE_S = 60.0
 CARRIER_TWINS = frozenset({"sms", "mms", "rcs", "imessage"})
 PX_TIMEOUT_S = 90
 NOTIFY_TIMEOUT_S = 30
+HERMES_PROFILE = os.environ.get("TARGET_WATCH_HERMES_PROFILE") or "33god-pm"
 NOTIFY_CWD = os.environ.get("TARGET_WATCH_NOTIFY_CWD") or os.path.expanduser("~")
 FOOTER = "Filed automatically by target-watch from a {provider} message. Do not invent a ticket number."
 
@@ -43,6 +44,27 @@ def run_command(argv: list[str], cwd: str | None = None, timeout: float = 60) ->
     except OSError as exc:
         return 127, "", f"{type(exc).__name__}"
     return done.returncode, done.stdout or "", done.stderr or ""
+
+
+def confirmed(stdout: str) -> bool:
+    """hermes send --json printed a success verdict (no error, not skipped)."""
+    import json
+
+    try:
+        result = json.loads(stdout or "")
+    except ValueError:
+        return False
+    return isinstance(result, dict) and result.get("success") is True and not result.get("error") and not result.get("skipped")
+
+
+def notify_error(stdout: str) -> str | None:
+    import json
+
+    try:
+        result = json.loads(stdout or "")
+    except ValueError:
+        return None
+    return str(result.get("error"))[:300] if isinstance(result, dict) and result.get("error") else None
 
 
 def first_match(pattern: re.Pattern, stdout: str) -> str | None:
@@ -205,17 +227,20 @@ class SinkService:
         return "failed", plan.ticket_ref, f"px comment did not confirm (exit {code}); not retried"
 
     def _notify(self, channels: list[str], line: str) -> tuple[list[str], list[str]]:
-        # Run from home, outside any repo whose tooling could pick a hermes profile.
-        # The 2026-11-04 failure was a PATH shadow, not cwd: see the systemd units.
+        # Name the hermes profile, as Candybar's pager does: without -p, hermes
+        # resolves a profile from its surroundings, and from a service process on
+        # 2026-11-04 it found one with no Telegram token and exited 1. Success is
+        # the JSON verdict, not the exit code alone.
         sent, failed = [], []
         for channel in channels:
-            code, _, stderr = self.runner([self.hermes, "send", "--to", channel, "--quiet", "--", line],
-                                          cwd=NOTIFY_CWD, timeout=NOTIFY_TIMEOUT_S)
-            if code == 0:
+            argv = [self.hermes, "-p", HERMES_PROFILE, "send", "--to", channel, "--json", "--", line]
+            code, stdout, stderr = self.runner(argv, cwd=NOTIFY_CWD, timeout=NOTIFY_TIMEOUT_S)
+            if code == 0 and confirmed(stdout):
                 sent.append(channel)
             else:
                 failed.append(channel)
-                log("notify_failed", channel=channel, exit=code, stderr=(stderr or "").strip()[-400:])
+                log("notify_failed", channel=channel, exit=code, profile=HERMES_PROFILE,
+                    error=notify_error(stdout) or (stderr or "").strip()[-300:])
         return sent, failed
 
     def _routed(self, detection: dict, action: str, ticket_ref, channels, reason) -> dict:
