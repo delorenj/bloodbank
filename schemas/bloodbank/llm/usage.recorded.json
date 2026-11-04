@@ -73,10 +73,11 @@
         },
         "billing_class": {
           "type": "string",
-          "description": "Who bears the upstream cost. subscription: a flat-rate plan account. metered: pay-per-token upstream. client: a client's dedicated channel, whose upstream cost the client's own agreement bears (account_id is channel-<channel_id>).",
+          "description": "Who bears the upstream cost. subscription: a flat-rate plan account. metered: pay-per-token upstream. free: a zero-cost upstream route (an OpenRouter ':free' catalog route). client: a client's dedicated channel, whose upstream cost the client's own agreement bears (account_id is channel-<channel_id>).",
           "enum": [
             "subscription",
             "metered",
+            "free",
             "client"
           ]
         },

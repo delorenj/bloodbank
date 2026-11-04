@@ -189,9 +189,16 @@ class LLMContractTests(unittest.TestCase):
             validate_envelope(usage_envelope(**{"data.input_estimated": True}))
 
     def test_usage_existing_billing_classes_still_validate(self) -> None:
-        for billing in ("subscription", "metered", "client"):
+        for billing in ("subscription", "metered", "free", "client"):
             with self.subTest(billing=billing):
                 validate_envelope(usage_envelope(**{"data.billing_class": billing}))
+
+    def test_usage_free_openrouter_catalog_route_validates(self) -> None:
+        validate_envelope(usage_envelope(**{
+            "data.provider": "openrouter",
+            "data.billing_class": "free",
+            "data.route": "automaticai/deepseek-chat:free",
+        }))
 
     def test_usage_rejects_invalid_billing_class(self) -> None:
         for billing in ("Client", "clients", "dedicated", "", None, 1, ["client"]):
