@@ -198,6 +198,12 @@ const ENTITY_BUCKET_RULES: Record<
         { sources: ['line'], bucket: (line: string) => `line:${line}` },
       ]),
     ),
+  ).concat(
+    // watch.target.*: every fact about one watched target orders together (watch:<watch_id>)
+    ['detected', 'routed'].map((action) => [
+      `bloodbank.watch.target.${action}`,
+      { sources: ['watch_id'], bucket: (id: string) => `watch:${id}` },
+    ]),
   ),
 );
 

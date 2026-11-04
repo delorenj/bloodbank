@@ -62,6 +62,8 @@ ALLOWED_DOMAINS = frozenset({
     "workflow", "telephony", "messaging", "review", "crank",
     # candybar cron framework: minute tick + registered-unit lifecycle
     "cron",
+    # watch: target-focused alerts over inbound messages of any provider
+    "watch",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "memory",
 })
@@ -109,6 +111,8 @@ ALLOWED_ENTITIES = frozenset({
     "tick", "candybar",
     # cron: one candybar steward task (enrich, fix, evaluate, refactor)
     "steward_task",
+    # watch: one watched target (a person or organisation) and what was seen or done about it
+    "target",
 })
 
 EVENT_ACTIONS = frozenset({
@@ -614,6 +618,40 @@ def _project_refuse_paths_anywhere(value: object, where: str) -> None:
             _project_refuse_paths_anywhere(item, f"{where}[{index}]")
 
 
+def assert_watch_invariants(envelope: dict) -> None:
+    """Enforce cross-field invariants for the watch domain (§11.1, §11.2).
+
+    JSON Schema fixes the shape; this fixes what it cannot see across fields:
+    the ordering bucket is the target's own id, and the envelope causationid is
+    the id of the event the fact answers (the matched source event for a
+    detection, the detection for a routing outcome).
+    """
+    if envelope.get("domain") != "watch":
+        return
+
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        raise ContractViolation("watch event data must be an object")
+    watch_id = data.get("watch_id")
+    if not isinstance(watch_id, str) or not watch_id:
+        raise ContractViolation("watch data.watch_id must be a non-empty string")
+    if envelope.get("ordering_key") != f"watch:{watch_id}":
+        raise ContractViolation(
+            f"watch envelope.ordering_key must be 'watch:{watch_id}' (§11.1), "
+            f"got {envelope.get('ordering_key')!r}"
+        )
+
+    parent_field = {
+        "bloodbank.watch.target.detected": "source_event_id",
+        "bloodbank.watch.target.routed": "detection_event_id",
+    }.get(envelope.get("type"))
+    if parent_field and envelope.get("causationid") != data.get(parent_field):
+        raise ContractViolation(
+            f"watch envelope.causationid must equal data.{parent_field}, "
+            f"got {envelope.get('causationid')!r} vs {data.get(parent_field)!r}"
+        )
+
+
 def assert_project_invariants(envelope: dict) -> None:
     """Enforce cross-field invariants for the project domain (§11.4).
 
@@ -805,6 +843,7 @@ def assert_contract(envelope: dict) -> None:
 
     assert_portfolio_invariants(envelope)
     assert_project_invariants(envelope)
+    assert_watch_invariants(envelope)
 
 
 # --------------------------------------------------------------------------
@@ -985,6 +1024,7 @@ __all__ = [
     "assert_contract",
     "assert_portfolio_invariants",
     "assert_project_invariants",
+    "assert_watch_invariants",
     "assert_subject_matches",
     "assert_terminal_receipt_retry",
     "assert_type_shape",

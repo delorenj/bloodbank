@@ -3,6 +3,21 @@
   "$id": "https://33god.dev/schemas/bloodbank/telephony/transcription.completed.json",
   "title": "Telephony Transcription Completed Event",
   "description": "Speech-to-text of a call recording or voicemail finished. ordering_key is call:<call_id> (distinct from audio.transcription.* for inbox audio files). See bloodbank/docs/event-naming.md (telephony).",
+  "x-sender": {
+    "handle_paths": [
+      "data.from"
+    ],
+    "name_paths": [],
+    "thread_path": "data.call_id",
+    "text_paths": [
+      "data.text"
+    ],
+    "time_path": "data.completed_at",
+    "inbound_when": null,
+    "handle_kinds": [
+      "e164"
+    ]
+  },
   "type": "object",
   "allOf": [
     {

@@ -107,6 +107,15 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
             # captured (assert_project_invariants); bind the envelope to the
             # fixture's source_event.id the way the sidecar producer does.
             env["causationid"] = payload["origin"]["source_event"]["id"]
+    if domain == "watch":
+        # data: {} cannot satisfy assert_watch_invariants; bind the ordering
+        # bucket to the target id and causationid to the event answered.
+        parent = {
+            "bloodbank.watch.target.detected": "source_event_id",
+            "bloodbank.watch.target.routed": "detection_event_id",
+        }[ce_type]
+        env["data"] = {"watch_id": "test-target", parent: env["causationid"]}
+        env["ordering_key"] = "watch:test-target"
     return env
 
 

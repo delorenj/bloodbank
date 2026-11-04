@@ -313,3 +313,45 @@ test('carrier send commands validate as messaging commands', () => {
     assert.doesNotThrow(() => validateEnvelope(type, envelope));
   }
 });
+
+test('watch target facts order per target and validate against their generated schemas', () => {
+  const detected = {
+    schema_version: 1,
+    watch_id: 'example-person',
+    target_display_name: 'Example Person',
+    provider: 'email',
+    source_type: 'bloodbank.messaging.email.received',
+    source_event_id: EVENT_ID,
+    matched_on: { kind: 'email', value: 'person@example.test' },
+    sender: { handle: 'Person@Example.test', display_name: null },
+    conversation: { thread_id: 'thread-1', group_label: null },
+    content: { text: 'hello', subject: 'Hi' },
+    received_at: '2026-11-04T12:00:00Z',
+    dedupe_key: 'gmail:abc',
+  };
+  const routed = {
+    schema_version: 1,
+    watch_id: 'example-person',
+    detection_event_id: EVENT_ID,
+    action: 'notified_only',
+    ticket_ref: null,
+    notify_channels: [],
+    reason: null,
+    routed_at: '2026-11-04T12:00:01Z',
+  };
+  for (const [type, data] of [
+    ['bloodbank.watch.target.detected', detected],
+    ['bloodbank.watch.target.routed', routed],
+  ]) {
+    const { subject, envelope } = buildEnvelope({
+      type,
+      kind: 'event',
+      data,
+      eventId: EVENT_ID,
+      observedAt: '2026-11-04T12:00:02.000Z',
+    });
+    assert.equal(subject, `bloodbank.evt.${type.slice('bloodbank.'.length)}`);
+    assert.equal(envelope.ordering_key, 'watch:example-person');
+    assert.doesNotThrow(() => validateEnvelope(type, envelope));
+  }
+});

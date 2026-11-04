@@ -46,6 +46,7 @@ narrowest §11.1 bucket the payload names: transcription:<id> when the data
 carries a transcription_id/id, project:<data.project.slug> for the project
 domain, line:<data.line> for messaging carrier texts (sms/mms/rcs/imessage),
 messaging:<platform>:<thread_id|notification_id> for messaging chat platforms,
+watch:<data.watch_id> for the watch domain,
 else <domain>:<uuid4>.
 
 Every event envelope carries an `actor` (§10, and REQUIRED_EVENT_FIELDS in
@@ -154,6 +155,9 @@ def _derive_ordering_key(domain, entity, data, tid):
         return f"transcription:{tid}"
     if domain == "project" and isinstance(data.get("project"), dict) and data["project"].get("slug"):
         return f"project:{data['project']['slug']}"
+    # watch.target.*: every fact about one watched target orders together
+    if domain == "watch" and isinstance(data.get("watch_id"), str) and data["watch_id"].strip():
+        return f"watch:{data['watch_id'].strip()}"
     # messaging carrier texts order per operator line, whatever the transport
     if domain == "messaging" and entity in CARRIER_TRANSPORTS and isinstance(data.get("line"), str) and data["line"].strip():
         return f"line:{data['line'].strip()}"
