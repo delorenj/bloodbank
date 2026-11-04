@@ -1,0 +1,97 @@
+{
+  "created_v1": {
+    "specversion": "1.0",
+    "id": "c066d60b-015b-4c45-a7ac-ae2ccbc946bf",
+    "source": "urn:33god:test:cand51",
+    "type": "bloodbank.cron.candybar.created",
+    "subject": "bloodbank.evt.cron.candybar.created",
+    "time": "2026-11-03T20:00:00Z",
+    "datacontenttype": "application/json",
+    "dataschema": "apicurio://holyfields/bloodbank.cron.candybar.created/versions/1",
+    "correlationid": "29a28d48-b5dd-4708-85b7-896baf21329a",
+    "causationid": null,
+    "producer": "cand51-fixture",
+    "service": "cand51-fixture",
+    "kind": "event",
+    "domain": "cron",
+    "schemaref": "bloodbank.cron.candybar.created.v1",
+    "actor": {
+      "type": "service",
+      "agent_id": "bloodbank.test.cand51"
+    },
+    "ordering_key": "candybar:b0a1d520-7e67-4fae-ad54-8725725a2503",
+    "data": {
+      "schema_version": 1,
+      "candybar_id": "b0a1d520-7e67-4fae-ad54-8725725a2503",
+      "name": "finite-example",
+      "description": "",
+      "tags": [],
+      "noise": false,
+      "schedule": "* * * * *"
+    }
+  },
+  "created_v2": {
+    "specversion": "1.0",
+    "id": "c066d60b-015b-4c45-a7ac-ae2ccbc946bf",
+    "source": "urn:33god:test:cand51",
+    "type": "bloodbank.cron.candybar.created",
+    "subject": "bloodbank.evt.cron.candybar.created",
+    "time": "2026-11-03T20:00:00Z",
+    "datacontenttype": "application/json",
+    "dataschema": "apicurio://holyfields/bloodbank.cron.candybar.created/versions/2",
+    "correlationid": "29a28d48-b5dd-4708-85b7-896baf21329a",
+    "causationid": null,
+    "producer": "cand51-fixture",
+    "service": "cand51-fixture",
+    "kind": "event",
+    "domain": "cron",
+    "schemaref": "bloodbank.cron.candybar.created.v2",
+    "actor": {
+      "type": "service",
+      "agent_id": "bloodbank.test.cand51"
+    },
+    "ordering_key": "candybar:b0a1d520-7e67-4fae-ad54-8725725a2503",
+    "data": {
+      "schema_version": 2,
+      "candybar_id": "b0a1d520-7e67-4fae-ad54-8725725a2503",
+      "name": "finite-example",
+      "description": "",
+      "tags": [],
+      "noise": false,
+      "dates": [
+        "2028-02-29T12:34"
+      ],
+      "timezone": "America/New_York"
+    }
+  },
+  "deleted": {
+    "specversion": "1.0",
+    "id": "c066d60b-015b-4c45-a7ac-ae2ccbc946bf",
+    "source": "urn:33god:test:cand51",
+    "type": "bloodbank.cron.candybar.deleted",
+    "subject": "bloodbank.evt.cron.candybar.deleted",
+    "time": "2026-11-03T20:00:00Z",
+    "datacontenttype": "application/json",
+    "dataschema": "apicurio://holyfields/bloodbank.cron.candybar.deleted/versions/1",
+    "correlationid": "29a28d48-b5dd-4708-85b7-896baf21329a",
+    "causationid": null,
+    "producer": "cand51-fixture",
+    "service": "cand51-fixture",
+    "kind": "event",
+    "domain": "cron",
+    "schemaref": "bloodbank.cron.candybar.deleted.v1",
+    "actor": {
+      "type": "service",
+      "agent_id": "bloodbank.test.cand51"
+    },
+    "ordering_key": "candybar:b0a1d520-7e67-4fae-ad54-8725725a2503",
+    "data": {
+      "schema_version": 1,
+      "candybar_id": "b0a1d520-7e67-4fae-ad54-8725725a2503",
+      "name": "finite-example",
+      "deleted_at": "2026-11-03T20:00:00Z",
+      "reason": "manual",
+      "last_invocation_id": null
+    }
+  }
+}

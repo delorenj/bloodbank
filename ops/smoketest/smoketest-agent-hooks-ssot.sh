@@ -51,7 +51,7 @@ from core.publisher import (
     build_attention_envelope,
     serialize_attention_envelope,
 )
-from core.validate import load_schema_for
+from core.validate import load_event_data_schema
 
 UUID = "00000000-0000-0000-0000-000000000001"
 
@@ -69,8 +69,7 @@ def _sample(spec):
 
 
 def _data_for(ce_type):
-    schema = load_schema_for(ce_type)
-    data_schema = schema.get("properties", {}).get("data", {})
+    data_schema = load_event_data_schema(ce_type)
     props = data_schema.get("properties", {})
     out = {}
     for key in data_schema.get("required", []):

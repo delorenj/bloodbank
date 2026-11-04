@@ -46,7 +46,7 @@ if str(SERVICE_DIR) not in sys.path:
 
 import sync  # noqa: E402  (SSOT loader + effective_type + fleet enumeration)
 from core.envelope import build_envelope  # noqa: E402
-from core.validate import ValidationUnavailable, load_schema_for  # noqa: E402
+from core.validate import ValidationUnavailable, load_event_data_schema  # noqa: E402
 
 import claude.publish as _cl  # noqa: E402
 import copilot.publish as _cp  # noqa: E402
@@ -103,7 +103,7 @@ def _sample(spec: dict) -> Any:
 
 
 def _data_for(ce_type: str) -> dict:
-    data_schema = load_schema_for(ce_type).get("properties", {}).get("data", {})
+    data_schema = load_event_data_schema(ce_type)
     props = data_schema.get("properties", {})
     return {k: _sample(props.get(k, {})) for k in data_schema.get("required", [])}
 
