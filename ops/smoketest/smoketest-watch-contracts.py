@@ -206,7 +206,7 @@ def detected_envelope(**data_overrides) -> dict:
         "conversation": {"thread_id": "thread-1", "group_label": None},
         "content": {"text": "Can you call me back?", "subject": None},
         "received_at": "2026-11-04T15:00:00Z",
-        "dedupe_key": "msg-1",
+        "dedupe_key": "bloodbank.messaging.rcs.received:msg-1",
     }
     data.update(data_overrides)
     t = "bloodbank.watch.target.detected"
@@ -284,17 +284,17 @@ class WatchEvents(unittest.TestCase):
             provider="telegram", source_type="bloodbank.messaging.telegram.received",
             matched_on={"kind": "platform_user", "value": "telegram:123"},
             conversation={"thread_id": "-100", "group_label": "Example Group"},
-            dedupe_key="msg-2"))
+            dedupe_key="bloodbank.messaging.telegram.received:msg-2"))
         validate_envelope(detected_envelope(
             provider="email", source_type="bloodbank.messaging.email.received",
             matched_on={"kind": "email", "value": "person@example.test"},
-            content={"text": "Subject\n\nBody", "subject": "Subject"}, dedupe_key="gmail:abc"))
+            content={"text": "Subject\n\nBody", "subject": "Subject"}, dedupe_key="bloodbank.messaging.email.received:gmail-abc"))
         validate_envelope(detected_envelope(
             provider="voicemail", source_type="bloodbank.telephony.transcription.completed",
             matched_on={"kind": "e164", "value": "+12155550100"},
             sender={"handle": "+12155550100", "display_name": None},
             conversation={"thread_id": "call-1", "group_label": None},
-            content={"text": "", "subject": None}, dedupe_key="call-1"))
+            content={"text": "", "subject": None}, dedupe_key="bloodbank.telephony.transcription.completed:call-1"))
 
     def test_detected_is_closed(self) -> None:
         env = detected_envelope()
@@ -317,11 +317,44 @@ class WatchEvents(unittest.TestCase):
             with self.assertRaises(FAILS):
                 validate_envelope(env)
 
+    def test_ordering_bucket_must_be_this_targets_own(self) -> None:
+        for env in (detected_envelope(), routed_envelope()):
+            env["ordering_key"] = "watch:someone-else"
+            with self.assertRaises(FAILS):
+                validate_envelope(env)
+
+    def test_causation_is_the_event_answered(self) -> None:
+        env = detected_envelope()
+        env["causationid"] = "6f1c2b0e-0000-5000-8000-0000000000ff"
+        with self.assertRaises(FAILS):
+            validate_envelope(env)
+        env = routed_envelope()
+        env["causationid"] = FAKE_SOURCE_ID
+        with self.assertRaises(FAILS):
+            validate_envelope(env)
+
+    def test_telephony_detections_of_one_call_do_not_collide(self) -> None:
+        ended = detection_id("example-person", "bloodbank.telephony.call.ended:call-1")
+        transcript = detection_id(
+            "example-person", "bloodbank.telephony.transcription.completed:call-1")
+        self.assertNotEqual(ended, transcript)
+
+    def test_source_type_admits_every_type_the_naming_contract_admits(self) -> None:
+        # A provider entity with a digit passes the naming contract (TYPE_REGEX),
+        # so its detections must pass the schema too.
+        t = "bloodbank.messaging.line2.received"
+        validate_envelope(detected_envelope(provider="line2", source_type=t))
+
+    def test_matched_on_kinds_are_the_x_sender_handle_kinds(self) -> None:
+        schema = json.loads((SCHEMAS / "watch" / "target.detected.json").read_text())
+        enum = schema["properties"]["data"]["properties"]["matched_on"]["properties"]["kind"]["enum"]
+        self.assertEqual(frozenset(enum), HANDLE_KINDS)
+
     def test_detection_id_is_deterministic(self) -> None:
         a = detected_envelope()
         b = detected_envelope()
         self.assertEqual(a["id"], b["id"])
-        self.assertNotEqual(a["id"], detected_envelope(dedupe_key="msg-9")["id"])
+        self.assertNotEqual(a["id"], detected_envelope(dedupe_key="bloodbank.messaging.rcs.received:msg-9")["id"])
         self.assertTrue(re.fullmatch(r"[0-9a-f-]{36}", a["id"]))
 
     def test_routed_validates_for_every_action(self) -> None:

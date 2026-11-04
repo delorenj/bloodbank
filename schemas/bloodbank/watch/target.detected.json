@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://33god.dev/schemas/bloodbank/watch/target.detected.json",
   "title": "Watch Target Detected Event",
-  "description": "An inbound message on some channel was matched to a watched target (a person or organisation the operator keeps watch on). The fact is target-focused, not provider-focused: provider names the channel it arrived on (the entity segment of the source type), and any provider whose inbound schema carries an x-sender block (docs/event-naming.md, section 10) is matched without a change here. The event id is deterministic, uuid5(watch_id + ':' + dedupe_key), so a replayed source event or a near-duplicate delivery collapses to one detection; causationid is the source event's id. ordering_key is watch:<watch_id>: every fact about one target orders together. Handles the target matched on (matched_on) and the sender are personal data: a producer never publishes a detection for a target outside its own target files, and the repo never carries real handles.",
+  "description": "An inbound message on some channel was matched to a watched target (a person or organisation the operator keeps watch on). The fact is target-focused, not provider-focused: provider names the channel it arrived on (the entity segment of the source type), and any provider whose inbound schema carries an x-sender block (docs/event-naming.md, section 10) is matched without a change here. The event id is deterministic, uuid5(NAMESPACE_URL, watch_id + ':' + dedupe_key), so a republish of the same detection carries the same id and consumers dedupe on it in their own state; JetStream drops a same-id republish only inside the stream's duplicate window, and near-duplicate deliveries with different message ids (the same RCS text twice) are collapsed by the matcher's own state before it publishes, not by the id. causationid is the source event's id (the envelope validator enforces it). ordering_key is watch:<watch_id>: every fact about one target orders together. Handles the target matched on (matched_on) and the sender are personal data: a producer never publishes a detection for a target outside its own target files, and the repo never carries real handles.",
   "type": "object",
   "allOf": [
     {
@@ -34,7 +34,7 @@
     "ordering_key": {
       "type": "string",
       "pattern": "^watch:[a-z0-9][a-z0-9_-]*$",
-      "description": "Section 11.1 bucket 'watch:<watch_id>', the same value as 'watch:' + data.watch_id."
+      "description": "Section 11.1 bucket 'watch:<watch_id>', the same value as 'watch:' + data.watch_id (enforced by the envelope validator)."
     },
     "data": {
       "type": "object",
@@ -62,7 +62,7 @@
         },
         "source_type": {
           "type": "string",
-          "pattern": "^bloodbank\\.[a-z_]+\\.[a-z_]+\\.[a-z_]+$",
+          "pattern": "^bloodbank\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
           "description": "Full CloudEvents type of the inbound event that was matched, for example bloodbank.messaging.rcs.received."
         },
         "source_event_id": {
@@ -175,7 +175,7 @@
         "dedupe_key": {
           "type": "string",
           "minLength": 1,
-          "description": "Stable key of this (target, message) pair: the event id is uuid5(watch_id + ':' + dedupe_key). Normally the source event's message or call id."
+          "description": "Stable key of this (target, message) pair: the event id is uuid5(NAMESPACE_URL, watch_id + ':' + dedupe_key). Always '<source_type>:<source message id or call id>', for example 'bloodbank.messaging.rcs.received:msg-1' or 'bloodbank.telephony.transcription.completed:call-1'. The source type is part of the key because call.ended, call.recorded and transcription.completed share one call_id: each is its own detection, so a voicemail transcript is not dropped as a duplicate of the earlier call.ended detection."
         }
       },
       "required": [

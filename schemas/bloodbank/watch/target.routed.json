@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://33god.dev/schemas/bloodbank/watch/target.routed.json",
   "title": "Watch Target Routed Event",
-  "description": "The watch sink acted on one detection: it filed or updated a ticket, only notified, skipped a duplicate, or failed. One routed fact per detection and action; the event id is deterministic from the detection id and the action, so a redelivered detection cannot publish a second outcome. causationid is the detection event's id. ordering_key is watch:<watch_id>, the same bucket as the detection, so an outcome orders after the detection it answers. A ticket reference here is the sink's own record of what it did; the board's own repo.task.* facts remain the authority on the ticket.",
+  "description": "The watch sink acted on one detection: it filed or updated a ticket, only notified, skipped a duplicate, or failed. One routed fact per detection and action; the event id is uuid5(NAMESPACE_URL, detection_event_id + ':' + action), so a republish of the same outcome carries the same id. The id alone does not make a detection single-outcome: a redelivered detection can yield a different action (skipped_duplicate after ticket_created) and so a different id, which is why the sink records the first outcome per detection in its own state and publishes at most one routed event for it. causationid is the detection event's id (the envelope validator enforces it). ordering_key is watch:<watch_id>, the same bucket as the detection, so an outcome orders after the detection it answers. A ticket reference here is the sink's own record of what it did; the board's own repo.task.* facts remain the authority on the ticket.",
   "type": "object",
   "allOf": [
     {
@@ -34,7 +34,7 @@
     "ordering_key": {
       "type": "string",
       "pattern": "^watch:[a-z0-9][a-z0-9_-]*$",
-      "description": "Section 11.1 bucket 'watch:<watch_id>', the same value as 'watch:' + data.watch_id."
+      "description": "Section 11.1 bucket 'watch:<watch_id>', the same value as 'watch:' + data.watch_id (enforced by the envelope validator)."
     },
     "data": {
       "type": "object",

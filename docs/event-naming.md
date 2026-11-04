@@ -648,10 +648,25 @@ cron.candybar.invoke   : candybar:<candybar_id>:tick:<tick_id>    # scheduled fi
 cron.candybar.steward  : <task_id>                                # one steward task (its row id)
 ```
 
-`watch.target.*` events carry no idempotency key; they are deduplicated by a
-deterministic CloudEvents id sent as `Nats-Msg-Id`: a detection is
-`uuid5(watch_id + ":" + dedupe_key)` and a routing outcome is
-`uuid5(detection_event_id + ":" + action)`.
+`watch.target.*` events carry no idempotency key. Each has a deterministic
+CloudEvents id, also sent as `Nats-Msg-Id`, over the namespace
+`uuid.NAMESPACE_URL` (6ba7b811-9dad-11d1-80b4-00c04fd430c8): a detection is
+`uuid5(NAMESPACE_URL, watch_id + ":" + dedupe_key)`, where `dedupe_key` is
+`<source_type>:<message id or call id>` (the source type keeps `call.ended`
+and `transcription.completed`, which share a `call_id`, apart), and a routing
+outcome is `uuid5(NAMESPACE_URL, detection_event_id + ":" + action)`.
+
+The id makes a republish of the same fact recognisable; it does not by itself
+deduplicate. JetStream drops a repeated `Nats-Msg-Id` only inside the stream's
+duplicate window (`BLOODBANK_EVENTS` sets none, so the 2-minute default), a
+near-duplicate source delivery with a different message id gets a different
+`dedupe_key`, and a redelivered detection that yields a different `action`
+gets a different routed id. Producers and consumers therefore also dedupe on
+`id` (detections) and on the detection id (outcomes) in their own state; the
+sink records the first outcome per detection and publishes at most one
+`routed` event for it. The envelope validator enforces
+`ordering_key == "watch:" + data.watch_id` and `causationid` equal to
+`data.source_event_id` (detected) or `data.detection_event_id` (routed).
 
 A retry of the same command MUST present the same `idempotency_key`. Bloodbank
 deduplicates on `(idempotency_key, command_id)` before forwarding.
