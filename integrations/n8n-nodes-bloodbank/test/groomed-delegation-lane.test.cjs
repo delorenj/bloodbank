@@ -473,3 +473,95 @@ test('an ineligible owner is a published, paged skip', { skip }, async (t) => {
   const rules = node('Notable Skip?').parameters.conditions.conditions.map((rule) => rule.rightValue).sort();
   assert.deepEqual(rules, ['phase_guard', 'provider_event_guard']);
 });
+
+// ---------------------------------------------------------------------------
+// Failure is paged: the lane's error workflow
+// ---------------------------------------------------------------------------
+
+// The trigger acks after the execution, so a failed run is never redelivered.
+// HEYMA-12 (2026-11-05, execution 632616) died on a Plane 429 and left no trace
+// but the n8n execution. The lane names an error workflow that pages ntfy
+// `lifecycle` with the ticket and the requeue command.
+const ERRORS_NAME = 'Lifecycle Lane Errors';
+
+function locateByName(name) {
+  const dir = process.env.N8N_WORKFLOWS_DIR || join(homedir(), 'code', 'delonet-n8n-workflows', 'workflows');
+  if (!existsSync(dir)) return null;
+  let draft;
+  let published;
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.json')) continue;
+    let workflow;
+    try {
+      workflow = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+    } catch {
+      continue;
+    }
+    if (workflow.name !== name) continue;
+    if (file.endsWith('.published.json')) published = workflow;
+    else draft = workflow;
+  }
+  return published || draft || null;
+}
+
+const ERRORS = WORKFLOW ? locateByName(ERRORS_NAME) : null;
+const errorsSkip = skip || (ERRORS ? false : `no export of "${ERRORS_NAME}"`);
+const errorsNode = (name) => {
+  const found = ERRORS.nodes.find((candidate) => candidate.name === name);
+  assert.ok(found, `the error workflow has a "${name}" node`);
+  return found;
+};
+
+test('the lane names Lifecycle Lane Errors as its error workflow, and it is active', { skip: errorsSkip }, () => {
+  assert.equal(WORKFLOW.settings?.errorWorkflow, ERRORS.id);
+  // n8n refuses to run an inactive error workflow ("is not active and cannot be executed").
+  assert.equal(ERRORS.active, true);
+  const next = (from) => (ERRORS.connections[from]?.main?.[0] || []).map((edge) => edge.node);
+  assert.equal(errorsNode('Lane Failed').type, 'n8n-nodes-base.errorTrigger');
+  assert.deepEqual(next('Lane Failed'), ['Execution Lookup']);
+  assert.deepEqual(next('Execution Lookup'), ['Describe Failure']);
+  assert.deepEqual(next('Describe Failure'), ['Page Lifecycle']);
+  // A failed lookup still pages, just without the ticket.
+  assert.equal(errorsNode('Execution Lookup').onError, 'continueRegularOutput');
+  assert.equal(errorsNode('Page Lifecycle').parameters.topic, 'lifecycle');
+  assert.ok(!ERRORS.nodes.some((candidate) => /schedule|cron|interval/i.test(candidate.type)));
+});
+
+const HEYMA_12_ERROR = Object.freeze({
+  execution: {
+    id: '632616',
+    url: 'https://n8n.delo.sh/workflow/l0J53w0TsS5PwETk/executions/632616',
+    lastNodeExecuted: 'Groomed in Todo?',
+    error: { message: 'Plane read failed: HTTP 429' },
+  },
+  workflow: { id: 'l0J53w0TsS5PwETk', name: NAME },
+});
+
+test('a failed lane run pages the ticket it dropped and how to requeue it', { skip: errorsSkip }, () => {
+  // The failed execution's own data, as the n8n API returns it with includeData.
+  const lookup = {
+    id: '632616',
+    status: 'error',
+    data: { resultData: { runData: {
+      onGroomingCompleted: [{ data: { main: [[{ json: { data: { context: { ticket_key: 'HEYMA-12', workspace: '33god' } } } }]] } }],
+      'Groomed — Target': [{ data: { main: [[{ json: { ws: '33god', ticketKey: 'HEYMA-12', ticketId: HEYMA_TICKET } }]] } }],
+    } } },
+  };
+  const [page] = runCode(errorsNode('Describe Failure'), [{ json: lookup }], { 'Lane Failed': [{ json: HEYMA_12_ERROR }] });
+  assert.equal(page.json.title, 'Lane failed: HEYMA-12');
+  assert.equal(page.json.ticketKey, 'HEYMA-12');
+  assert.match(page.json.message, /failed at Groomed in Todo\?: Plane read failed: HTTP 429/);
+  assert.match(page.json.message, /px move HEYMA-12 Backlog -m "lane failed \(execution 632616\)" && px move HEYMA-12 Todo/);
+  assert.equal(page.json.click, HEYMA_12_ERROR.execution.url);
+});
+
+test('a lookup that failed still pages, without a ticket', { skip: errorsSkip }, () => {
+  const [page] = runCode(errorsNode('Describe Failure'), [{ json: { error: { message: 'ECONNREFUSED' } } }], {
+    'Lane Failed': [{ json: HEYMA_12_ERROR }],
+  });
+  assert.equal(page.json.ticketKey, null);
+  assert.equal(page.json.lookupOk, false);
+  assert.equal(page.json.title, `Lane failed: ${NAME}`);
+  assert.match(page.json.message, /Ticket unknown/);
+  assert.doesNotMatch(page.json.message, /px move/);
+});

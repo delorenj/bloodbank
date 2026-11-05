@@ -134,6 +134,7 @@ groom this ticket?" is answered by querying Candystore for
 | Ticket Grooming (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | Triage Started / Triage Skipped |
 | Ticket Delegation (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` into Todo | Delegation Started / Skipped (not `phase_guard`, `provider_event_guard`) |
 | Ticket Delegation — Groomed in Todo (`l0J53w0TsS5PwETk`) | `agent.invocation.completed` with `data.context.reason = ticket-grooming` and `data.context.phase = Todo` (a ticket *created* in Todo, which never transitions); delegates only if the live Plane state name is exactly `Todo` and the ticket carries `lifecycle:triaged` | Delegation Started / Skipped, tagged `groomed-in-todo` |
+| Lifecycle Lane Errors (`72y5JKBSJqYIjIEv`) | n8n Error Trigger: a failed execution of a workflow that names it as `settings.errorWorkflow` (today the Groomed in Todo lane) | **Lane failed: <ticket>** at priority 4, tagged `lane-error`, with the failing node, the error, and the requeue command |
 | Ticket Pickup Chip (`wWXgCZiiIBWaRRzE`) | `agent.invocation.started/completed/failed` with `data.context.reason` in the two lanes; hourly stale-chip sweep | none |
 
 - **Two ways into delegation.** A ticket created in Backlog is groomed there,
@@ -157,6 +158,9 @@ groom this ticket?" is answered by querying Candystore for
   re-reading it: `px move <REF> Backlog -m "<why>"`, then `px move <REF> Todo`.
   The second move is the transition the delegation lane picks up. On a WIP=1
   board, wait for each delegation turn to finish before the next.
+  A failed run of the groomed lane pages ntfy `lifecycle` (*Lifecycle Lane
+  Errors*), so you see the drop instead of having to find it: the page names
+  the ticket, read back from the failed execution, and gives this exact requeue.
 - **Each trigger has its own durable**, `n8n-<workflow id>-<node id>`, on
   `BLOODBANK_EVENTS`. That stream uses limits retention, so the Pickup Chip
   and the groomed lane both see every `invocation.completed` and neither

@@ -454,6 +454,7 @@ synced every 15 minutes (`workflows/<name>--<id>.json`).
 | **Ticket Grooming** (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | **Groom Ticket** commands the board's agent to enrich the ticket and stamp `lifecycle:triaged` | **Dispatched** → *Triage Started*; **Skipped** → *Triage Skipped*, every skip |
 | **Ticket Delegation** (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` | **Delegate Ticket** (phase guard `Todo,unstarted`) commands the agent to pick the ticket up and delegate it | **Dispatched** → *Delegation Started*; **Skipped** → *Notable Skip?* → *Delegation Skipped* |
 | **Ticket Delegation — Groomed in Todo** (`l0J53w0TsS5PwETk`) | `agent.invocation.completed` with `data.context.reason = ticket-grooming` and `data.context.phase = Todo` (a grooming turn that finished on a ticket *created* in Todo) | **Read Ticket** reads the live issue (`?expand=state,labels`); **Groomed in Todo?** goes on only if its state name is exactly `Todo` and it carries `lifecycle:triaged`, else stops quietly; **Delegate Ticket** (phase guard `Todo`, no provider guard, cause = the completion event) | Same as Ticket Delegation, tagged `groomed-in-todo` |
+| **Lifecycle Lane Errors** (`72y5JKBSJqYIjIEv`) | n8n *Error Trigger*: the lane named it as its `settings.errorWorkflow` and one of its executions failed (today only Groomed in Todo names it) | **Execution Lookup** reads the failed execution with `includeData` from the n8n API (credential *n8n API (lane error lookup)*), continuing on failure; **Describe Failure** finds the ticket key in that run's items; **Page Lifecycle** sends it. It must stay **active**: n8n refuses to run an inactive error workflow | **Lane failed: <ticket>** (priority 4, tags `warning,lane-error,delegation`): workflow, failing node, error, the `px move` requeue, and a link to the execution |
 | **Ticket Pickup Chip** (`wWXgCZiiIBWaRRzE`) | One trigger, *Invocation Lifecycle*, on `agent.invocation.started`, `.completed`, `.failed` with `data.context.reason` in `ticket-grooming,ticket-delegation`; plus *Stale Chip Sweep* hourly | Adds the board's `agent:working` label while the agent's turn runs and removes it when the turn ends, unless the ticket was claimed meanwhile; the sweep removes any chip left on a ticket whose last turn ended | none |
 
 **The handshake.** Grooming finishes by labelling the ticket
@@ -493,6 +494,8 @@ there are two ways a groomed ticket gets there:
   delegation turn to finish before requeuing the next ticket. Re-read the ticket
   before requeuing: an old Todo ticket is often already delivered, and closing
   it with evidence is cheaper than delegating it.
+  The groomed lane pages a failed run (*Lifecycle Lane Errors*), naming the
+  ticket and giving this command, so a drop no longer has to be noticed.
 
 The groomed lane's Delegate Ticket maps a Bloodbank-shaped item built from the
 completion: `data.*` comes from `data.context`, `data.phase` is the *live*
