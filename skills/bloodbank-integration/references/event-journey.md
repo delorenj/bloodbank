@@ -150,6 +150,13 @@ groom this ticket?" is answered by querying Candystore for
   send the same prompt, and its first step is a live re-read that stops on a
   ticket that is no longer in Todo, is In Progress, or is held by another
   worker.
+- **No backfill; requeue by hand.** Durables start at the stream tip and a
+  failed lane execution is acked, never redelivered, so a ticket left in Todo
+  (born there before the groomed lane, or dropped like HEYMA-12 on a Plane 429,
+  execution 632616) stays there. Requeue it one ticket at a time, after
+  re-reading it: `px move <REF> Backlog -m "<why>"`, then `px move <REF> Todo`.
+  The second move is the transition the delegation lane picks up. On a WIP=1
+  board, wait for each delegation turn to finish before the next.
 - **Each trigger has its own durable**, `n8n-<workflow id>-<node id>`, on
   `BLOODBANK_EVENTS`. That stream uses limits retention, so the Pickup Chip
   and the groomed lane both see every `invocation.completed` and neither

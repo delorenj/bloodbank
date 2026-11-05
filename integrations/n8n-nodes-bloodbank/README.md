@@ -480,6 +480,19 @@ there are two ways a groomed ticket gets there:
   without a publish or a page. Plane 404/410 drops the item with the
   execution green, and any other Plane failure, or an unexpanded answer, fails
   the execution.
+- **Requeued by hand.** Neither lane backfills. Each durable starts at the
+  stream tip, and a failed lane execution is acked and never redelivered (the
+  groomed lane's Plane read retries 5 times, 5 s apart, before it fails). So a
+  ticket stuck in Todo stays stuck: it was born in Todo before this lane
+  existed, or its lane execution failed, as HEYMA-12's did on a Plane 429 on
+  2026-11-05 (n8n execution 632616). Requeue it deliberately, one ticket and one
+  board at a time: `px move <REF> Backlog -m "<why>"` then `px move <REF> Todo`.
+  The second move is a `plane.ticket.transitioned` into Todo, so *Ticket
+  Delegation* picks it up, and Delegate Ticket grooms it first if
+  `lifecycle:triaged` is missing. On a board whose PM runs WIP=1, wait for one
+  delegation turn to finish before requeuing the next ticket. Re-read the ticket
+  before requeuing: an old Todo ticket is often already delivered, and closing
+  it with evidence is cheaper than delegating it.
 
 The groomed lane's Delegate Ticket maps a Bloodbank-shaped item built from the
 completion: `data.*` comes from `data.context`, `data.phase` is the *live*
