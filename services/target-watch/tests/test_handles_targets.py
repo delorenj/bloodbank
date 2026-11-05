@@ -135,4 +135,7 @@ def test_repo_ships_no_real_handles():
         for number in re.findall(r"\+\d{10,15}", text):
             assert allowed_numbers.match(number), f"{path.name} carries a real-looking number"
         for address in re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", text):
+            if address.endswith("@sip.telnyx.com"):  # a SIP ring target: only the documented fake user may appear
+                assert address in {"example-user@sip.telnyx.com", "...er@sip.telnyx.com"}, "a real-looking SIP user"
+                continue
             assert address.split("@")[1] in {"example.com", "example.org", "example.net", "delo.sh", "gmail.com"}, address

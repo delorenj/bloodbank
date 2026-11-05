@@ -29,7 +29,7 @@ Environment=TARGET_WATCH_HERMES=%h/.local/bin/hermes
 Environment=TARGET_WATCH_HERMES_PROFILE=33god-pm
 Environment=TARGET_WATCH_PX=%h/.local/bin/px
 Environment=TARGET_WATCH_GOG=/usr/local/bin/gog
-# "ring:<E.164>" notify channel: a Telnyx Call Control outbound call that makes the operator's
+# "ring:<E.164>" / "ring:sip:<user>@<host>" notify channel: a Telnyx Call Control outbound call that makes the operator's
 # phone ring. Ids and numbers of the operator's own Telnyx account, not secrets. The API key is
 # read at use time with `op read` (TARGET_WATCH_TELNYX_KEY_REF, default in sink.py);
 # OP_SERVICE_ACCOUNT_TOKEN is inherited from the user manager, as in delohome.service.

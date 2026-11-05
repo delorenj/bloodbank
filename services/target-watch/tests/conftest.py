@@ -270,3 +270,16 @@ def telegram(handle: str = "4242", text: str = "ping", *, direction: str = "inbo
         "recipient": {"handle": "operator-bot"}, "content": {"text": text, "format": "plain"},
         "received_at": "2026-11-04T15:04:00Z", "message_id": "tg-1", "thread_id": "chat-4242",
     }, event_id=event_id)
+
+
+@pytest.fixture(autouse=True)
+def ring_followers_stay_offline(monkeypatch):
+    """An accepted ring starts a background outcome check. Unless a test opts in (test_ring_outcome), it must
+    neither wait 25 s nor reach the network."""
+    from target_watch import sink as sink_module
+
+    def refuse(url, headers, timeout):
+        raise AssertionError(f"a test reached the Telnyx events API: {url}")
+
+    monkeypatch.setattr(sink_module, "RING_OUTCOME_DELAY_S", 3600)
+    monkeypatch.setattr(sink_module, "telnyx_get", refuse)
