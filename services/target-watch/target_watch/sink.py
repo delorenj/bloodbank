@@ -8,9 +8,12 @@ Safety rules, each paid for elsewhere:
   'commented on JIMB-450'), never from the last line (the URL).
 - Everything is idempotent per detection id: a redelivered detection that was
   already routed only republishes its stored routed event.
-- A "ring:<E.164>" channel places a Telnyx Call Control call so the operator's phone
-  rings like an incoming call. It never carries speech, never logs the API key, rings at
-  most once per cooldown per (watch, channel), and goes after the Telegram line.
+- A "ring:<E.164>" or "ring:sip:<user>@<host>" channel places a Telnyx Call Control call so
+  the operator's phone (or SIP device) rings like an incoming call. It never carries speech,
+  never logs the API key, rings at most once per cooldown per (watch, channel), and goes after
+  the Telegram line. An accepted call is then followed in the background to its terminal
+  outcome (ring_answered / ring_unanswered / ring_rejected), because Telnyx accepting the
+  dial says nothing about the phone ringing.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ import os
 import re
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -43,10 +47,11 @@ HERMES_PROFILE = os.environ.get("TARGET_WATCH_HERMES_PROFILE") or "33god-pm"
 NOTIFY_CWD = os.environ.get("TARGET_WATCH_NOTIFY_CWD") or os.path.expanduser("~")
 
 RING_PREFIX = "ring:"
+SIP_RING_PREFIX = "ring:sip:"
 TELNYX_CALLS_URL = "https://api.telnyx.com/v2/calls"
-# The ring stops after 20 s, before the cell carrier's no-answer forward (about 25-30 s on Verizon).
-# That forward sends an unanswered call back to the same Telnyx number, which would start a loop.
-# Keep this <= 22 and never raise it without changing the cell's forwarding first.
+# The ring stops after 20 s. A SIP target has no carrier in the path, so this is only "long enough to
+# pick up". For an E.164 target it must also stay under the cell carrier's no-answer forward (about
+# 25-30 s on Verizon), which sends an unanswered call back to the same Telnyx number: keep it <= 22.
 RING_TIMEOUT_SECS = 20
 RING_TIME_LIMIT_SECS = 40  # an answered call is silent and ends here
 RING_HTTP_TIMEOUT_S = 15  # urllib applies this to each socket operation, so it is not a wall-clock cap...
@@ -56,6 +61,18 @@ RING_DEADLINE_S = 40  # ...this is: key lookup plus the POST, run off the event 
 # five attempts, about 5 minutes in all) it must not ring the phone as if Jim had just written.
 RING_MAX_AGE_S = 300
 RING_TZ = ZoneInfo("America/New_York")
+TELNYX_CALL_EVENTS_URL = "https://api.telnyx.com/v2/call_events"
+# The outcome lookup starts after the ring has had time to time out (+5 s for Telnyx to write the hangup
+# event), then re-reads a few times for a hangup that has not landed yet. An answered call stays up until
+# RING_TIME_LIMIT_SECS; the answer event is enough to call it answered.
+RING_OUTCOME_DELAY_S = RING_TIMEOUT_SECS + 5
+RING_OUTCOME_POLLS = 3
+RING_OUTCOME_POLL_S = 5
+# A busy phone (the operator is on another call: user_busy, SIP 486/600/603) is retried once. 100 s is long
+# enough for a short call to end and short enough that the news is still fresh; it is a constant, not a
+# loop: the retry never schedules another retry.
+RING_BUSY_RETRY_S = 100
+BUSY_SIP_CODES = frozenset({"486", "600", "603"})
 DEFAULT_KEY_REF = "op://DeLoSecrets/74k7nz3xkryqns4lpf65a323ue/credential"
 # Cloudflare-fronted APIs refuse Python-urllib's default User-Agent.
 RING_USER_AGENT = "target-watch/0.1 (bloodbank)"
@@ -77,8 +94,14 @@ def is_ring(channel: str) -> bool:
 
 
 def mask_channel(channel: str) -> str:
-    """Log form of a channel: a ring target's number is personal data, so keep the last 4 digits only."""
-    return f"{RING_PREFIX}...{channel[-4:]}" if is_ring(channel) else channel
+    """Log form of a channel: a ring target's number or SIP user is personal data. A number keeps its last
+    4 digits; a SIP URI keeps the host and the last 2 characters of a user name of 8 or more characters."""
+    if not is_ring(channel):
+        return channel
+    if channel.startswith(SIP_RING_PREFIX):
+        user, _, host = channel[len(SIP_RING_PREFIX):].partition("@")
+        return f"{SIP_RING_PREFIX}...{user[-2:] if len(user) >= 8 else ''}@{host}"
+    return f"{RING_PREFIX}...{channel[-4:]}"
 
 
 def telnyx_http(url: str, headers: dict, body: bytes, timeout: float) -> tuple[int, bytes]:
@@ -93,6 +116,40 @@ def telnyx_http(url: str, headers: dict, body: bytes, timeout: float) -> tuple[i
             return exc.code, exc.read()
         except Exception:  # noqa: BLE001 - the status is the answer; an unreadable error body is not worth a redelivery
             return exc.code, b""
+
+
+def telnyx_get(url: str, headers: dict, timeout: float) -> tuple[int, bytes]:
+    """GET; (status, body) for any HTTP answer, anything else raises (as telnyx_http)."""
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed https URL
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, exc.read()
+        except Exception:  # noqa: BLE001
+            return exc.code, b""
+
+
+def classify_ring(events: list) -> tuple[str, dict]:
+    """Terminal outcome of one ring leg from its Telnyx call events.
+    ('answered' | 'unanswered' | 'busy' | 'rejected' | 'pending', {hangup_cause, sip_hangup_cause, hangup_source})."""
+    names = {e.get("name") for e in events if isinstance(e, dict)}
+    hangup = next((e for e in events if isinstance(e, dict) and e.get("name") == "call.hangup"), None)
+    detail: dict = {}
+    if hangup:
+        inner = ((hangup.get("payload") or {}).get("payload") or {}) if isinstance(hangup.get("payload"), dict) else {}
+        detail = {k: inner.get(k) for k in ("hangup_cause", "sip_hangup_cause", "hangup_source")}
+    if "call.answered" in names:
+        return "answered", detail
+    if not hangup:
+        return "pending", detail
+    cause, sip = detail.get("hangup_cause"), str(detail.get("sip_hangup_cause") or "")
+    if cause == "timeout":
+        return "unanswered", detail
+    if cause == "user_busy" or sip in BUSY_SIP_CODES:
+        return "busy", detail
+    return "rejected", detail
 
 
 def telnyx_error_title(body: bytes) -> str | None:
@@ -216,7 +273,7 @@ def notify_line(data: dict, action: str, ticket_ref: str | None) -> str:
 class SinkService:
     def __init__(self, registry: TargetRegistry, state: State, publisher, *, runner=run_command,
                  px: str = "px", hermes: str = "hermes", dry_run: bool = False, validate=env.validate, clock=None, out=None,
-                 http=telnyx_http, op: str | None = None):
+                 http=telnyx_http, op: str | None = None, http_get=None):
         self.registry = registry
         self.state = state
         self.publisher = publisher
@@ -228,6 +285,8 @@ class SinkService:
         self.clock = clock or (lambda: datetime.now(UTC))
         self.out = out
         self.http = http
+        self.http_get = http_get or telnyx_get
+        self._bg: set[asyncio.Task] = set()  # outcome followers; held so they are not garbage collected
         self.op = op or os.environ.get("TARGET_WATCH_OP") or os.path.expanduser("~/.local/bin/op")
         self._ring_key: str | None = None  # resolved at first use, held in memory only
 
@@ -300,15 +359,21 @@ class SinkService:
                 elif outcome == "failed":
                     failed.append(channel)
                 continue
-            argv = [self.hermes, "-p", HERMES_PROFILE, "send", "--to", channel, "--json", "--", line]
-            code, stdout, stderr = self.runner(argv, cwd=NOTIFY_CWD, timeout=NOTIFY_TIMEOUT_S)
-            if code == 0 and confirmed(stdout):
+            if self._send(channel, line):
                 sent.append(channel)
             else:
                 failed.append(channel)
-                log("notify_failed", channel=channel, exit=code, profile=HERMES_PROFILE,
-                    error=notify_error(stdout) or (stderr or "").strip()[-300:])
         return sent, failed
+
+    def _send(self, channel: str, line: str) -> bool:
+        """One `hermes send`. Blocking; never raises on a bad verdict."""
+        argv = [self.hermes, "-p", HERMES_PROFILE, "send", "--to", channel, "--json", "--", line]
+        code, stdout, stderr = self.runner(argv, cwd=NOTIFY_CWD, timeout=NOTIFY_TIMEOUT_S)
+        if code == 0 and confirmed(stdout):
+            return True
+        log("notify_failed", channel=channel, exit=code, profile=HERMES_PROFILE,
+            error=notify_error(stdout) or (stderr or "").strip()[-300:])
+        return False
 
     # --- ring ---------------------------------------------------------------------
 
@@ -383,44 +448,186 @@ class SinkService:
         if skip:
             log(f"ring_{skip}", watch_id=watch_id, channel=masked)
             return skip
+        outcome, leg_id = await self._dial(watch_id, channel, masked, record=True)
+        if outcome == "sent" and target is not None:
+            self._follow(target, channel, leg_id, attempt=1)
+        return outcome
+
+    async def _dial(self, watch_id: str, channel: str, masked: str, *, record: bool) -> tuple[str, str | None]:
+        """POST the call. ('sent' | 'failed', call_leg_id). `record` writes the cooldown row; the busy retry
+        passes False because the first ring of the burst already holds the cooldown."""
         connection_id, from_number = self.ring_config()
         if not connection_id or not from_number:
             log("ring_failed", watch_id=watch_id, channel=masked,
                 reason="TARGET_WATCH_TELNYX_CONNECTION_ID and TARGET_WATCH_RING_FROM must both be set")
-            return "failed"
+            return "failed", None
+        mark = (lambda: self._record_ring(watch_id, channel, masked)) if record else (lambda: None)
         try:
             state, status, answer, exc = await asyncio.wait_for(
                 asyncio.to_thread(self._place, channel[len(RING_PREFIX):], connection_id, from_number), RING_DEADLINE_S)
         except TimeoutError:
             # The worker may still finish, and the call may already be placed.
-            self._record_ring(watch_id, channel, masked)
+            mark()
             log("ring_failed", watch_id=watch_id, channel=masked, reason="deadline", seconds=RING_DEADLINE_S)
-            return "failed"
+            return "failed", None
         if state == "nokey":
-            return "failed"
+            return "failed", None
         if state == "error":
             # A refused connection (URLError) never reached Telnyx; a timeout or a broken read may have.
             if not isinstance(exc, urllib.error.URLError):
-                self._record_ring(watch_id, channel, masked)
+                mark()
             log("ring_failed", watch_id=watch_id, channel=masked, reason="transport", error=type(exc).__name__)
-            return "failed"
-        call_id = None
+            return "failed", None
+        call_id = leg_id = None
         if 200 <= status < 300:
             try:
-                call_id = (json.loads(answer or b"").get("data") or {}).get("call_control_id")
+                data = json.loads(answer or b"").get("data") or {}
+                call_id = data.get("call_control_id")
+                leg_id = data.get("call_leg_id") if isinstance(data.get("call_leg_id"), str) else None
             except (ValueError, AttributeError):
                 call_id = None
             if not call_id:
-                self._record_ring(watch_id, channel, masked)  # accepted, so the phone may be ringing
+                mark()  # accepted, so the phone may be ringing
         if not call_id:
             if status in (401, 403):
                 self._ring_key = None  # a rotated key is re-read next time
             log("ring_failed", watch_id=watch_id, channel=masked, status=status, title=telnyx_error_title(answer),
                 reason=None if status >= 300 else "no call_control_id in the answer")
-            return "failed"
-        self._record_ring(watch_id, channel, masked)
-        log("ring_placed", watch_id=watch_id, channel=masked, call_control_id=call_id)
-        return "sent"
+            return "failed", None
+        mark()
+        log("ring_placed", watch_id=watch_id, channel=masked, call_control_id=call_id, call_leg_id=leg_id)
+        return "sent", leg_id
+
+    # --- ring outcome ---------------------------------------------------------------
+    # Telnyx accepting the dial (HTTP 200) is not the phone ringing: on 2026-11-05 two rings were accepted,
+    # declined with SIP 603 in 0.6 s, and nothing said so for a day. Each accepted ring is followed to its
+    # terminal state in a background task: off the detection path and off the bus ack. The task lives in
+    # this process only: a restart inside the ~25 s (or ~150 s, with a busy retry) window loses the check
+    # and the failure line, and the call itself is unaffected.
+
+    def _follow(self, target: Target, channel: str, leg_id: str | None, attempt: int) -> None:
+        try:
+            task = asyncio.get_running_loop().create_task(self._follow_ring(target, channel, leg_id, attempt))
+        except Exception as exc:  # noqa: BLE001 - the ring is placed; failing to watch it must not raise into the bus
+            log("ring_outcome_unknown", watch_id=target.id, channel=mask_channel(channel), reason="not scheduled",
+                error=type(exc).__name__)
+            return
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+
+    async def settle(self) -> None:
+        """Wait for every outcome follower (shutdown and tests)."""
+        while self._bg:
+            await asyncio.gather(*list(self._bg), return_exceptions=True)
+
+    def _get_events(self, leg_id: str) -> tuple[int, bytes]:
+        key = self._key()
+        if key is None:
+            raise RuntimeError("key unavailable")
+        url = f"{TELNYX_CALL_EVENTS_URL}?filter%5Bleg_id%5D={urllib.parse.quote(leg_id, safe='')}"
+        headers = {"Authorization": f"Bearer {key}", "Accept": "application/json", "User-Agent": RING_USER_AGENT}
+        return self.http_get(url, headers, RING_HTTP_TIMEOUT_S)
+
+    async def _lookup_outcome(self, leg_id: str) -> tuple[str, dict]:
+        """(kind, detail) where kind is classify_ring's, or 'unknown' when the events never became readable."""
+        detail: dict = {}
+        for poll in range(RING_OUTCOME_POLLS):
+            if poll:
+                await asyncio.sleep(RING_OUTCOME_POLL_S)
+            try:
+                status, body = await asyncio.wait_for(asyncio.to_thread(self._get_events, leg_id), RING_DEADLINE_S)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - includes the deadline and a missing key
+                detail = {"error": type(exc).__name__}
+                continue
+            if status != 200:
+                if status in (401, 403):
+                    self._ring_key = None
+                detail = {"status": status, "title": telnyx_error_title(body)}
+                continue
+            try:
+                events = json.loads(body or b"").get("data")
+            except (ValueError, AttributeError):
+                events = None
+            if not isinstance(events, list):
+                detail = {"error": "unreadable answer"}
+                continue
+            kind, found = classify_ring(events)
+            if kind != "pending":
+                return kind, found
+            detail = {"error": "no hangup or answer event yet"}
+        return "unknown", detail
+
+    async def _follow_ring(self, target: Target, channel: str, leg_id: str | None, attempt: int) -> None:
+        """Log the ring's terminal outcome; retry a busy phone once; send ONE Telegram line when it never rang
+        through. Never raises."""
+        masked = mask_channel(channel)
+        try:
+            if not leg_id:
+                kind, detail = "unknown", {"error": "the dial answer carried no call_leg_id"}
+            else:
+                await asyncio.sleep(RING_OUTCOME_DELAY_S)
+                kind, detail = await self._lookup_outcome(leg_id)
+            fields = {k: v for k, v in detail.items() if v is not None}
+            base = {"watch_id": target.id, "channel": masked, "call_leg_id": leg_id, "attempt": attempt}
+            if kind == "answered":
+                log("ring_answered", **base)
+                return
+            if kind == "unanswered":
+                log("ring_unanswered", **base, **fields)
+            elif kind in ("busy", "rejected"):
+                log("ring_rejected", **base, **fields, busy=kind == "busy")
+            else:
+                log("ring_outcome_unknown", **base, **fields)
+            if kind == "busy" and attempt == 1:
+                await asyncio.sleep(RING_BUSY_RETRY_S)
+                if await self._busy_retry(target, channel):
+                    return
+                why = "the phone was busy and the retry could not be placed (quiet hours or a Telnyx refusal)"
+            else:
+                why = {"unanswered": "nobody answered", "busy": "the phone was busy",
+                       "rejected": "the call was declined", "unknown": "the outcome could not be read from Telnyx"}[kind]
+                why += self._cause_text(fields)
+                if attempt == 2:
+                    why += "; retried once after a busy signal"
+            await self._tell_ring_failed(target, masked, why)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - nothing in the ring path raises
+            log("ring_outcome_failed", watch_id=target.id, channel=masked, error=type(exc).__name__)
+
+    @staticmethod
+    def _cause_text(fields: dict) -> str:
+        parts = [f"{label} {fields[key]}" for key, label in
+                 (("hangup_cause", "hangup_cause"), ("sip_hangup_cause", "SIP"), ("hangup_source", "by"), ("status", "HTTP"))
+                 if fields.get(key)]
+        return f" ({', '.join(parts)})" if parts else ""
+
+    async def _busy_retry(self, target: Target, channel: str) -> bool:
+        """The one retry. True when a second call was placed (its own follower reports it). Quiet hours still
+        apply; the cooldown is neither checked nor rewritten: the first ring of the burst holds it."""
+        masked = mask_channel(channel)
+        fresh = self.registry.get(target.id) or target
+        local = self.clock().astimezone(RING_TZ)
+        if in_quiet_hours(fresh.sink.ring_quiet_hours, local.hour * 60 + local.minute):
+            log("ring_quiet", watch_id=target.id, channel=masked, retry=True)
+            return False
+        log("ring_busy_retry", watch_id=target.id, channel=masked)
+        outcome, leg_id = await self._dial(target.id, channel, masked, record=False)
+        if outcome != "sent":
+            return False
+        self._follow(target, channel, leg_id, attempt=2)
+        return True
+
+    async def _tell_ring_failed(self, target: Target, masked: str, why: str) -> None:
+        line = f"target-watch: the phone ring for {target.display_name} ({masked}) did not get through: {why}."
+        channels = [c for c in target.sink.notify if not is_ring(c)]
+        if not channels:
+            log("ring_failure_unreported", watch_id=target.id, reason="target has no telegram channel")
+            return
+        for channel in channels:
+            await asyncio.to_thread(self._send, channel, line)
 
     def ring_plan(self, target: Target | None, channel: str, received_at: float | None = None) -> dict:
         connection_id, from_number = self.ring_config()

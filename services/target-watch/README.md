@@ -27,7 +27,8 @@ schema reload. No code changes, no restart.
                        target-watch sink   (durable target-watch-sink)
                          px task create / px comment  (cwd = target's repo)
                          hermes send --to telegram:<chat id>
-                         Telnyx outbound call to ring:<E.164>  (the phone rings)
+                         Telnyx outbound call to ring:<E.164> or ring:sip:<user>@<host>  (the phone rings),
+                         then a background check of the call's outcome (a Telegram line if it did not get through)
                                                                         ▼
                                      bloodbank.evt.watch.target.routed
 ```
@@ -96,11 +97,13 @@ envelopes from a file instead of the bus, plus `--since <ISO>` and `--once`.
 
 ### Ring: make the operator's phone ring like an incoming call
 
-A Telegram ping is quiet. A `ring:<E.164>` entry in `sink.notify` places a real
-phone call, with no speech, so the phone rings like someone is calling.
+A Telegram ping is quiet. A `ring:` entry in `sink.notify` places a real
+call, with no speech, so the phone rings like someone is calling. The target is a
+number (`ring:<E.164>`) or a SIP URI (`ring:sip:<user>@<host>`).
 
 ```toml
-notify = ["telegram:<operator chat id>", "ring:+12155550142"]   # FAKE number
+notify = ["telegram:<operator chat id>", "ring:sip:example-user@sip.telnyx.com"]   # FAKE user
+# or a number: "ring:+12155550142"   (FAKE number)
 ring_cooldown_minutes = 10          # optional, default 10
 ring_quiet_hours = "22:00-07:00"    # optional, America/New_York, may wrap midnight
 ```
@@ -113,10 +116,45 @@ ring_quiet_hours = "22:00-07:00"    # optional, America/New_York, may wrap midni
   secrets. Success is an HTTP 2xx whose body has `data.call_control_id`; anything else (a Telnyx
   4xx, a timeout, no key) is a failed channel, logged as `ring_failed` with the HTTP status and
   Telnyx's error title only.
-- **Why `timeout_secs` is 20.** The phone's carrier forwards an unanswered call after roughly 25-30
-  seconds, and that forward points back at this same Telnyx number, so a ring that outlasts it
-  starts a loop. The ring must stop first: keep it at or under 22. `time_limit_secs` is 40: a call
-  that is answered stays silent and ends there.
+- **Prefer a SIP target (`ring:sip:<user>@<host>`).** The URI is dialled as is: the user is a credential
+  user of a Telnyx SIP connection where the operator's SIP devices register, and the call goes straight to
+  those devices with no carrier in the path. Accepted shape: `sip:` (lowercase), a user of letters, digits
+  and `. _ + -` (1-64 characters), `@`, a dotted hostname. A port, `;parameters`, `?headers`, spaces or a
+  second `@` are refused when the target file loads (the error never echoes the entry). The host is
+  lower-cased. Proven live 2026-11-05: a dial to the credential user from the same ring connection was
+  answered in 4 s.
+- **Do not ring an E.164 cell that forwards to the `from` number.** From 2026-11-04 the operator's cell
+  forwards unconditionally to the Telnyx number the ring dials from (`TARGET_WATCH_RING_FROM`), which routes
+  to the SIP devices. A call to the cell is carried straight back to the number it came from and Telnyx
+  declines the loop at once: `user_busy`, SIP 603, `hangup_source=callee`, about 0.6 s after
+  `call.initiated`. Two rings (2026-11-05 01:10Z and 18:35Z) failed that way while the sink logged
+  `ring_placed` and nothing else. An E.164 target is only right when nothing forwards to the `from` number.
+- **Why `timeout_secs` is 20.** For a SIP target it is only "long enough to pick up". For an E.164 target
+  it must also stay under the carrier's no-answer forward (about 25-30 s) whenever the cell forwards an
+  unanswered call back to the Telnyx number, or the ring starts a loop: keep it at or under 22.
+  `time_limit_secs` is 40: a call that is answered stays silent and ends there.
+- **Outcome.** HTTP 200 from Telnyx only means the dial was accepted. Each accepted ring is followed in a
+  background task (off the detection path and the bus ack): about `timeout_secs + 5` = 25 s after the dial
+  it reads `GET /v2/call_events?filter[leg_id]=<call_leg_id from the dial answer>` (up to 3 reads, 5 s
+  apart, while no hangup or answer is there yet) and logs exactly one of:
+  - `ring_answered`: a `call.answered` event exists.
+  - `ring_unanswered`: hangup_cause `timeout`.
+  - `ring_rejected`: any other hangup, with `hangup_cause`, `sip_hangup_cause`, `hangup_source` and
+    `busy` (true for `user_busy` or SIP 486/600/603).
+  - `ring_outcome_unknown`: the events never became readable (HTTP error, timeout, no key, no
+    `call_leg_id` in the dial answer).
+
+  Anything other than `ring_answered` sends **one** Telegram line to the target's telegram channel(s):
+  `target-watch: the phone ring for <name> (<masked target>) did not get through: <why> (<causes>).` A silent
+  ring cannot recur. The follower never raises and never blocks. It lives in the sink process only: a
+  restart inside the window (about 25 s, or about 150 s with a busy retry) loses the check and its failure
+  line; the call itself is unaffected.
+- **Busy retry, once.** On `user_busy` or SIP 486/600/603 (the operator is on another call) the ring is
+  dialled again after `RING_BUSY_RETRY_S` = 100 s: long enough for a short call to end, short enough that
+  the news is fresh. Quiet hours still apply. The retry is not a new ring for the cooldown: it reads no
+  cooldown and writes none (the first ring of the burst holds it), and it never schedules another retry. Its
+  own outcome is logged as above; the single Telegram line is sent only if the retry also fails (or cannot
+  be placed: quiet hours, a Telnyx refusal), and says so.
 - **The key** is never stored in a file or logged. It is read at first use with
   `op read --no-newline <ref>` (`TARGET_WATCH_TELNYX_KEY_REF`, default
   `op://DeLoSecrets/74k7nz3xkryqns4lpf65a323ue/credential`; binary `TARGET_WATCH_OP`, default
@@ -148,9 +186,14 @@ ring_quiet_hours = "22:00-07:00"    # optional, America/New_York, may wrap midni
 - **No speech.** The ring is the alarm. Speaking a message would need a TeXML app or a webhook
   handler that answers `call.answered` with a `speak` command; neither exists, and `target-watch`
   runs no web server.
-- **Logs and `check`** show a ring number as `ring:...0142` (last four digits).
+- **Logs and `check`** show a ring number as `ring:...0142` (last four digits) and a SIP target as
+  `ring:sip:...er@sip.telnyx.com` (host, and the last two characters of a user of 8+ characters).
+- **Check what happened to a ring**:
+  `journalctl --user -u target-watch-sink --since -1h | grep -E 'ring_(placed|answered|unanswered|rejected|busy_retry|outcome_unknown)'`.
+  `ring_placed` with no outcome line 30 s later means the sink restarted in between; read the call in
+  Telnyx (Reporting, or `GET /v2/call_events?filter[leg_id]=<call_leg_id from ring_placed>`).
 
-One-time phone setup, or the call rings like any other unknown number: save the `from` number
+One-time device setup, or the call rings like any other unknown number: save the `from` number
 (+1 215 449 8437) as a contact, for example "Jim Watch", give that contact a loud custom ringtone,
 and let it through Do Not Disturb (Android: Settings > Notifications > Do Not Disturb > People >
 Calls > starred contacts, then star the contact).

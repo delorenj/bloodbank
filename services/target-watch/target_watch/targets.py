@@ -18,6 +18,7 @@
     priority = "medium"
     coalesce_hours = 24
     notify = ["telegram:<chat id>", "ring:+12155550100"]  # ring = ring that phone like an incoming call
+    # a SIP device instead of a number: "ring:sip:example-user@sip.telnyx.com"
     ring_cooldown_minutes = 10        # one ring per burst; default 10
     ring_quiet_hours = "22:00-07:00"  # America/New_York, may wrap midnight; absent = ring any time
 """
@@ -37,6 +38,9 @@ from .paths import target_globs
 TARGET_ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 CHANNEL = re.compile(r"^[a-z][a-z0-9_]*:\S+$")
 PRIORITIES = {"urgent", "high", "medium", "low", "none"}
+# ring:sip:<user>@<host>: a Telnyx credential-connection user, dialled as sip:<user>@sip.telnyx.com.
+# Nothing but the two parts: no port, no ;parameters, no ?headers, no spaces, no second @.
+SIP_RING = re.compile(r"sip:([A-Za-z0-9._+-]{1,64})@((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63})")
 QUIET_HOURS = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$")
 DEFAULT_RING_COOLDOWN_MINUTES = 10
 SINK_KINDS = {"plane", "notify_only"}
@@ -97,7 +101,15 @@ def _strings(value: object, where: str) -> list[str]:
 
 def _notify_channel(channel: object) -> str:
     if not isinstance(channel, str) or not (channel.startswith("ring:") or CHANNEL.match(channel)):
-        raise TargetError("sink.notify entries look like 'telegram:<chat id>' or 'ring:<E.164 number>'")
+        raise TargetError("sink.notify entries look like 'telegram:<chat id>', 'ring:<E.164 number>' or "
+                          "'ring:sip:<user>@<host>'")
+    if channel.startswith("ring:sip:"):
+        found = SIP_RING.fullmatch(channel[len("ring:"):])
+        if not found:
+            # Never echo the URI: the user name is personal data.
+            raise TargetError("sink.notify has a ring:sip: entry that is not sip:<user>@<host> "
+                              "(user letters, digits and . _ + -; a plain hostname; no port, parameters or spaces)")
+        return f"ring:sip:{found.group(1)}@{found.group(2).lower()}"
     if channel.startswith("ring:"):  # a number may be written with spaces or dashes; the e164 helper normalises it
         number = norm_e164(channel[len("ring:"):])
         if number is None:
