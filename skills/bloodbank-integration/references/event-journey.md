@@ -105,7 +105,7 @@ the same normalizer (`data.trigger_source: plane-reconcile`, same event id and
 `Nats-Msg-Id`, at most 20 per sweep). Updates, transitions and comments made
 during an outage are not recovered.
 
-### The n8n ticket lanes (n8n-nodes-bloodbank 0.7.5)
+### The n8n ticket lanes (n8n-nodes-bloodbank 0.8.0)
 
 ```text
 bloodbank.evt.repo.task.created / .updated
@@ -127,6 +127,23 @@ A skip is a fact on the bus, not a silent green execution: "why did nobody
 groom this ticket?" is answered by querying Candystore for
 `bloodbank.agent.invocation.skipped` with the ticket's `data.context.board_id`.
 
+A **failed lane run is a fact on the bus too**: `bloodbank.evt.workflow.task.failed`,
+published by the Fleet node's **Report Lane Failure** operation from the
+*Lifecycle Lane Errors* workflow. It reuses the existing type (an additive
+schema revision; the four required fields `workflow`, `run_id`, `stage`,
+`reason` are unchanged and `agent.invocation.failed` is NOT used: the Pickup Chip
+listens to it). `data.workflow` is the lane slug (`ticket-grooming`,
+`ticket-delegation`, `ticket-delegation-groomed`, `ticket-pickup-chip`) and the
+rest is typed: `lane {engine, workflow_id, execution_id, execution_url, …}`,
+`context` (same paths as the skip's), `target_agent_id`, `company_identity`
+(null = owner not enrolled), `gateway_consumer`, `error {class, http_status,
+upstream, credential_scope, retry_after_seconds}`, `severity` (`page|low`),
+`recovery {action, hint}`, `links`, `redacted: true`. The id is
+`uuid5("workflow.task.failed:<workflow_id>:<execution_id>")`, ordering key
+`task:<repo|board>:<ticket_id>` (else `workflow:<wf>:<exec>`). "Why did this
+ticket stall?" is answered by querying Candystore for
+`bloodbank.workflow.task.failed` on `data.context.ticket_key`.
+
 | Workflow (id) | Starts on | ntfy `lifecycle` push |
 |---|---|---|
 | Plane → Bloodbank (`iMw484J1ZCqKME2C`) | Plane webhook | Unrouted Board (1/board/24h) |
@@ -134,7 +151,7 @@ groom this ticket?" is answered by querying Candystore for
 | Ticket Grooming (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | Triage Started / Triage Skipped |
 | Ticket Delegation (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` into Todo | Delegation Started / Skipped (not `phase_guard`, `provider_event_guard`) |
 | Ticket Delegation — Groomed in Todo (`l0J53w0TsS5PwETk`) | `agent.invocation.completed` with `data.context.reason = ticket-grooming` and `data.context.phase = Todo` (a ticket *created* in Todo, which never transitions); delegates only if the live Plane state name is exactly `Todo` and the ticket carries `lifecycle:triaged` | Delegation Started / Skipped, tagged `groomed-in-todo` |
-| Lifecycle Lane Errors (`72y5JKBSJqYIjIEv`) | n8n Error Trigger: a failed execution of a workflow that names it as `settings.errorWorkflow` (today the Groomed in Todo lane) | **Lane failed: <ticket>** at priority 4, tagged `lane-error`, with the failing node, the error, and the requeue command |
+| Lifecycle Lane Errors (`72y5JKBSJqYIjIEv`) | n8n Error Trigger: a failed execution of a workflow that names it as `settings.errorWorkflow` (grooming, delegation, groomed; the chip is not attached) | Publishes `workflow.task.failed`, then **Lane failed: <ticket>** at priority 4, tagged `lane-error`, with the failing node, error class, owner, and the recovery (retry URL, requeue command) |
 | Ticket Pickup Chip (`wWXgCZiiIBWaRRzE`) | `agent.invocation.started/completed/failed` with `data.context.reason` in the two lanes; hourly stale-chip sweep | none |
 
 - **Two ways into delegation.** A ticket created in Backlog is groomed there,

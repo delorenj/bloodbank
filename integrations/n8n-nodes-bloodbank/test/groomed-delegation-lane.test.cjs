@@ -512,15 +512,39 @@ const errorsNode = (name) => {
   return found;
 };
 
+// The error workflow describes the failure in one of two ways. Until 0.8.0
+// is deployed and the live export rewired it is the Code node "Describe
+// Failure"; afterwards it is the Fleet node's Report Lane Failure operation,
+// which also publishes bloodbank.workflow.task.failed. These tests assert the
+// wiring that exists, whichever it is.
+const reportNode = () =>
+  ERRORS.nodes.find(
+    (candidate) =>
+      candidate.type === 'n8n-nodes-bloodbank.bloodbankFleet' &&
+      candidate.parameters?.operation === 'reportLaneFailure',
+  );
+const describeCode = () => ERRORS.nodes.find((candidate) => candidate.name === 'Describe Failure');
+const useCode = () => Boolean(describeCode()) && !reportNode();
+const codeOnly = () => (errorsSkip ? errorsSkip : useCode() ? false : 'the live error workflow already reports through the Fleet node');
+
 test('the lane names Lifecycle Lane Errors as its error workflow, and it is active', { skip: errorsSkip }, () => {
   assert.equal(WORKFLOW.settings?.errorWorkflow, ERRORS.id);
   // n8n refuses to run an inactive error workflow ("is not active and cannot be executed").
   assert.equal(ERRORS.active, true);
-  const next = (from) => (ERRORS.connections[from]?.main?.[0] || []).map((edge) => edge.node);
+  const next = (from, output = 0) => (ERRORS.connections[from]?.main?.[output] || []).map((edge) => edge.node);
   assert.equal(errorsNode('Lane Failed').type, 'n8n-nodes-base.errorTrigger');
   assert.deepEqual(next('Lane Failed'), ['Execution Lookup']);
-  assert.deepEqual(next('Execution Lookup'), ['Describe Failure']);
-  assert.deepEqual(next('Describe Failure'), ['Page Lifecycle']);
+  if (useCode()) {
+    assert.deepEqual(next('Execution Lookup'), ['Describe Failure']);
+    assert.deepEqual(next('Describe Failure'), ['Page Lifecycle']);
+  } else {
+    const report = reportNode();
+    assert.ok(report, 'the error workflow has either Describe Failure or a Fleet Report Lane Failure node');
+    assert.deepEqual(next('Execution Lookup'), [report.name]);
+    // Published and Not Published both page: the page is the point.
+    assert.ok(next(report.name, 0).includes('Page Lifecycle'));
+    assert.ok(next(report.name, 1).includes('Page Lifecycle'));
+  }
   // A failed lookup still pages, just without the ticket.
   assert.equal(errorsNode('Execution Lookup').onError, 'continueRegularOutput');
   assert.equal(errorsNode('Page Lifecycle').parameters.topic, 'lifecycle');
@@ -537,7 +561,7 @@ const HEYMA_12_ERROR = Object.freeze({
   workflow: { id: 'l0J53w0TsS5PwETk', name: NAME },
 });
 
-test('a failed lane run pages the ticket it dropped and how to requeue it', { skip: errorsSkip }, () => {
+test('a failed lane run pages the ticket it dropped and how to requeue it', { skip: codeOnly() }, () => {
   // The failed execution's own data, as the n8n API returns it with includeData.
   const lookup = {
     id: '632616',
@@ -555,7 +579,7 @@ test('a failed lane run pages the ticket it dropped and how to requeue it', { sk
   assert.equal(page.json.click, HEYMA_12_ERROR.execution.url);
 });
 
-test('a lookup that failed still pages, without a ticket', { skip: errorsSkip }, () => {
+test('a lookup that failed still pages, without a ticket', { skip: codeOnly() }, () => {
   const [page] = runCode(errorsNode('Describe Failure'), [{ json: { error: { message: 'ECONNREFUSED' } } }], {
     'Lane Failed': [{ json: HEYMA_12_ERROR }],
   });
@@ -564,4 +588,14 @@ test('a lookup that failed still pages, without a ticket', { skip: errorsSkip },
   assert.equal(page.json.title, `Lane failed: ${NAME}`);
   assert.match(page.json.message, /Ticket unknown/);
   assert.doesNotMatch(page.json.message, /px move/);
+});
+
+// The Fleet node's own behaviour is covered by lane-failure.test.cjs; here we
+// only check that the live export, once rewired, hands it the right inputs.
+test('when the error workflow reports through the Fleet node it is wired for the contract', { skip: errorsSkip || (ERRORS && reportNode() ? false : 'the live error workflow still uses Describe Failure') }, () => {
+  const report = reportNode();
+  assert.match(String(report.parameters.errorPayload ?? "={{ $('Lane Failed').first().json }}"), /Lane Failed/);
+  assert.equal(errorsNode('Execution Lookup').onError, 'continueRegularOutput');
+  assert.equal(errorsNode('Page Lifecycle').parameters.topic, 'lifecycle');
+  assert.ok(!ERRORS.nodes.some((candidate) => /schedule|cron|interval/i.test(candidate.type)));
 });

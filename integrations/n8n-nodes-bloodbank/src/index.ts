@@ -39,6 +39,18 @@ export {
 export type { FleetRoute, TicketFacts } from './fleet';
 export { executionMode, stableObservedAt } from './nodes/Fleet/Fleet.node';
 export {
+  companyIdentityOf,
+  DEFAULT_LANE_MAP,
+  gatewayConsumerOf,
+  ownerCompanyIdentity,
+  parseLaneMap,
+  redactText,
+  reportLaneFailure,
+  slugify,
+  TASK_FAILED_TYPE,
+} from './laneFailure';
+export type { CompanyIdentity, LaneFailureInput, LaneFailureReport, LanePage } from './laneFailure';
+export {
   canonicalTypeForProviderEvent,
   classifyPlaneWebhook,
   createdDedupeKey,

@@ -304,7 +304,7 @@ Segment 3 of `type` MUST be one of:
 | `watch`        | Target-focused alerts: an inbound message on any provider (email, chat, carrier text, call, voicemail) matched to a watched target (`target.detected`), and what the sink did about it (`target.routed`). Provider-agnostic: the fact names the target, not the channel; provider identity is data (see §10.1). | active   |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
-| `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`). | active   |
+| `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`), and the n8n ticket lifecycle lanes — Ticket Grooming (`ticket-grooming`), Ticket Delegation (`ticket-delegation`), Ticket Delegation — Groomed in Todo (`ticket-delegation-groomed`) and the Pickup Chip (`ticket-pickup-chip`) — which report a run that died as `task.failed` (typed lane, ticket, owner, error class and recovery in `data`; the lane's slug is `data.workflow`). | active   |
 | `memory`       | Persistent agent memory writes/reads.                              | reserved |
 
 `reserved` means the domain is registered but not yet emitted. Producers
@@ -352,7 +352,7 @@ Segment 4 of `type` MUST be one of:
 | `heartbeat`        | `system`                 | Liveness/health beat.                                       |
 | `decision`         | `repo`                   | PM decision recorded for a repo; repo slug lives in data.    |
 | `intake`           | `repo`, `portfolio`, `audio` | Incoming request awaiting PM triage. `repo`: triaged by a PM (repo slug in data). `portfolio`: Director intake. `audio`: one ticketable task extracted from a transcript (pjangler project in `data.project_id`); `repo.intake.triaged` closes the loop through the same `data.intake_id`. |
-| `task`             | `repo`                   | Repo work item created; repo slug lives in data.             |
+| `task`             | `repo`, `workflow`       | `repo`: repo work item created; repo slug lives in data. `workflow`: one workflow run's task finished (`task.completed`) or stopped without finishing (`task.failed`); the workflow name and run id live in data. |
 | `board`            | `repo`                   | Provider-neutral project board; repo slug and provider identity live in data. |
 | `maintenance`      | `repo`                   | Automated repository maintenance run and merge-gate outcome. |
 | `skill`            | `repo`                   | Repo-scoped agent skill mutation from an automated tuning cycle; repo slug and skill name live in data. |
@@ -371,7 +371,7 @@ Segment 4 of `type` MUST be one of:
 | `roadmap`          | `lifecycle`              | A versioned plan of phases and checkpoints.                 |
 | `status`           | `lifecycle`              | Aggregate lifecycle status and health.                      |
 | `sync`             | `finance`                | One sheet→Postgres sync run (tiller).                       |
-| `account`          | `finance`                | A tracked bank/credit/manual account.                       |
+| `account`          | `finance`, `workflow`    | `finance`: a tracked bank/credit/manual account. `workflow`: a provider account a scheduled workflow signed up for and lost (`workflow.account.expired`). |
 | `transaction`      | `finance`, `billing`     | A posted transaction on an account. `finance`: tiller's household books. `billing`: one transaction on AAI's Mercury account as Milkshake's cash book records it; command `billing.transaction.receive` (a Mercury webhook asks Milkshake to read the bank into its ledger), events `billing.transaction.recorded` (the ledger holds Mercury's current state of what the delivery named), `denied`, `failed`; never an amount or a counterparty on the bus. |
 | `subscription`     | `finance`                | A recurring charge/income series (detected or curated).     |
 | `zombie_charge`    | `finance`                | A charge on a series the owner already canceled.            |
@@ -607,6 +607,8 @@ call:<call_id>                   # telephony: every event of one phone call, rec
 line:<line>                      # messaging carrier texts (sms/mms/rcs/imessage) on one line ("cell", "imessage" or a Telnyx E.164)
 messaging:<platform>:<thread_id> # messaging: one platform-native thread; a threadless notified alert uses its notification_id
 invoice:<client>                 # billing: every invoice fact of one client (billing.invoice.*); `invoice:unverified` while the command was refused before its client was proven
+task:<repo>:<ticket_id>         # workflow.task.failed of a ticket lifecycle lane: <repo> is the repo slug (else the board id), so a failure orders with the ticket's other task facts
+workflow:<workflow_id>:<execution_id> # workflow.task.failed with no ticket known (a trigger-only failure, or a lane that never reached a ticket): one bucket per workflow run
 ledger:<client>                  # billing: every other ledger fact of one client announced by Milkshake (billing.rule.*, billing.cost.recorded, billing.snapshot.sent, billing.line_item.updated) and the outcome of each palette command (billing.farm_command.*), so an outcome orders with the ledger facts it caused; `ledger:global` for a fact of no client (`billing.transaction.*` use `ledger:global`: AAI's bank is no client's), including a `farm_command` event refused before its client was proven (the claimed client is unverified, so it must not name a bucket; `invoice:unverified` stays for the `billing.invoice.*` family). Invoice issued/delivered use `invoice:<client>` so one client's invoice facts stay in order.
 ```
 
