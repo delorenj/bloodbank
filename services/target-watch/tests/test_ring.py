@@ -2,7 +2,10 @@
 
 Fake numbers only (+1215555xxxx): this repo is public. Nothing here touches the network.
 """
+import http.client
 import json
+import sqlite3
+import urllib.error
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -65,6 +68,8 @@ def ring_env(monkeypatch):
     monkeypatch.setenv("TARGET_WATCH_TELNYX_CONNECTION_ID", CONNECTION_ID)
     monkeypatch.setenv("TARGET_WATCH_RING_FROM", RING_FROM)
     monkeypatch.delenv("TARGET_WATCH_TELNYX_KEY_REF", raising=False)
+    # The shared bursts are stamped 15:00 and the clocks wander; staleness has its own tests below.
+    monkeypatch.setattr(sink_module, "RING_MAX_AGE_S", 10**9)
 
 
 @pytest.fixture
@@ -378,6 +383,93 @@ async def test_redelivery_does_not_ring_twice(tmp_path, index, runner, telnyx, c
     clock.now += timedelta(hours=1)
     await sink.handle(detection)
     assert len(telnyx.calls) == 1
+
+
+# --- failures that must never ring twice ---------------------------------------------
+
+
+@pytest.mark.parametrize("error", [
+    http.client.IncompleteRead(b"par"), http.client.BadStatusLine("x"), TimeoutError("timed out"), RuntimeError("boom"),
+])
+async def test_any_http_failure_is_a_failed_channel_and_a_redelivery_does_not_ring_again(
+        tmp_path, index, runner, telnyx, clock, error):
+    telnyx.error = error
+    sink, registry = build(tmp_path, runner, telnyx, clock)
+    detection = detect(index, registry, burst(1))
+    routed = await sink.handle(detection)  # does not raise: the bus would nak it and ring up to five times
+    assert routed["data"]["notify_channels"] == ["telegram:1000"] and "notify failed" in routed["data"]["reason"]
+    clock.now += timedelta(seconds=30)
+    telnyx.error = None
+    await sink.handle(detection)  # redelivery of the same detection
+    await sink.handle(detect(index, registry, burst(2)))  # and the next text of the burst
+    assert len(telnyx.calls) == 1 and len(runner.of("send")) == 2  # the call may have been placed: cooldown holds
+
+
+async def test_a_refused_connection_never_reached_telnyx_so_the_next_text_rings(tmp_path, index, runner, telnyx, clock):
+    telnyx.error = urllib.error.URLError("connection refused")
+    sink, registry = build(tmp_path, runner, telnyx, clock)
+    await sink.handle(detect(index, registry, burst(1)))
+    telnyx.error = None
+    routed = await sink.handle(detect(index, registry, burst(2)))
+    assert f"ring:{RING_TO}" in routed["data"]["notify_channels"] and len(telnyx.calls) == 2
+
+
+async def test_an_unreadable_error_body_is_still_a_status(monkeypatch):
+    class Broken(urllib.error.HTTPError):
+        def read(self, *a):
+            raise http.client.IncompleteRead(b"")
+
+    def refuse(request, timeout):
+        raise Broken("https://x", 503, "unavailable", {}, None)
+
+    monkeypatch.setattr(sink_module.urllib.request, "urlopen", refuse)
+    assert sink_module.telnyx_http("https://x", {}, b"{}", 1) == (503, b"")
+
+
+async def test_a_state_write_error_after_the_post_does_not_escape_or_ring_again(tmp_path, index, runner, telnyx, clock, monkeypatch):
+    sink, registry = build(tmp_path, runner, telnyx, clock)
+
+    def broken(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(sink.state, "record_ring", broken)
+    routed = await sink.handle(detect(index, registry, burst(1)))
+    assert f"ring:{RING_TO}" in routed["data"]["notify_channels"] and len(telnyx.calls) == 1
+    await sink.handle(detect(index, registry, burst(1)))  # redelivery of an already routed detection
+    assert len(telnyx.calls) == 1
+
+
+async def test_the_post_runs_off_the_event_loop_under_a_deadline(tmp_path, index, runner, telnyx, clock, monkeypatch, capsys):
+    import threading, time
+    main = threading.get_ident()
+    seen = []
+
+    def slow(url, headers, body, timeout):
+        seen.append(threading.get_ident())
+        time.sleep(0.5)
+        return 200, FakeTelnyx().body
+
+    monkeypatch.setattr(sink_module, "RING_DEADLINE_S", 0.05)
+    sink, registry = build(tmp_path, runner, slow, clock)
+    routed = await sink.handle(detect(index, registry, burst(1)))
+    assert routed["data"]["notify_channels"] == ["telegram:1000"] and seen and seen[0] != main
+    assert '"reason": "deadline"' in capsys.readouterr().err.replace('":"', '": "')
+    await sink.handle(detect(index, registry, burst(2)))
+    assert len(seen) == 1  # the abandoned call may be live: the cooldown holds
+
+
+# --- stale detections ---------------------------------------------------------------
+
+
+async def test_a_stale_detection_does_not_ring_and_does_not_use_the_cooldown(tmp_path, index, runner, telnyx, clock, monkeypatch, capsys):
+    monkeypatch.setattr(sink_module, "RING_MAX_AGE_S", 300)
+    sink, registry = build(tmp_path, runner, telnyx, clock)  # burst is stamped 15:00, the clock says 15:30
+    routed = await sink.handle(detect(index, registry, burst(1)))
+    assert telnyx.calls == [] and routed["data"]["notify_channels"] == ["telegram:1000"]
+    assert routed["data"]["reason"] is None and capsys.readouterr().err.count('"ring_stale"') == 1
+    clock.now = datetime(2026, 11, 4, 15, 4, 59, tzinfo=UTC)  # 4:59 after 15:00: still live news
+    routed = await sink.handle(detect(index, registry, burst(2)))
+    assert f"ring:{RING_TO}" in routed["data"]["notify_channels"] and len(telnyx.calls) == 1
 
 
 # --- target file validation ---------------------------------------------------------

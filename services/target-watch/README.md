@@ -126,7 +126,17 @@ ring_quiet_hours = "22:00-07:00"    # optional, America/New_York, may wrap midni
 - **Cooldown.** One ring per (target, ring channel) per `ring_cooldown_minutes` (default 10), so a
   burst of 3-5 texts rings once. The time of the last ring is in the sqlite state, so a restart does
   not ring again. A throttled ring is neither sent nor failed: it logs `ring_throttled` and is left
-  out of `notify_channels`. A failed ring does not use up the cooldown.
+  out of `notify_channels`. A ring Telnyx refused (HTTP 4xx/5xx, no key, a refused connection) does not
+  use up the cooldown. A ring whose outcome is uncertain (a timeout, a response that breaks off, a
+  2xx with no `call_control_id`, the 40 s deadline) is reported as failed but counts for the
+  cooldown, because the phone may be ringing: the next text of the burst must not ring again.
+  Nothing in the ring path raises, so the bus never naks and redelivers a detection into a second call.
+- **Stale detections.** A detection older than 5 minutes (a backlog after a sink outage, or a late
+  redelivery) does not ring: it logs `ring_stale`, and Telegram still goes out. It does not use up
+  the cooldown.
+- **Not blocking.** The key lookup and the POST run in a worker thread under a 40 s deadline, so a
+  slow Telnyx cannot stall the event loop. The 15 s HTTP timeout is urllib's per-socket-operation
+  timeout, not a wall-clock cap; the deadline is.
 - **Quiet hours.** `ring_quiet_hours = "HH:MM-HH:MM"` in America/New_York (start inclusive, end
   exclusive; `22:00-07:00` wraps midnight). Inside the window the ring is skipped and logs
   `ring_quiet`; Telegram still goes out. Absent means ring at any hour.
