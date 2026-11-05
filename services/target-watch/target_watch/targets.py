@@ -17,7 +17,9 @@
     labels = ["submitted-by-client"]
     priority = "medium"
     coalesce_hours = 24
-    notify = ["telegram:<chat id>"]
+    notify = ["telegram:<chat id>", "ring:+12155550100"]  # ring = ring that phone like an incoming call
+    ring_cooldown_minutes = 10        # one ring per burst; default 10
+    ring_quiet_hours = "22:00-07:00"  # America/New_York, may wrap midnight; absent = ring any time
 """
 from __future__ import annotations
 
@@ -29,12 +31,14 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .handles import normalise_target_handle
+from .handles import norm_e164, normalise_target_handle
 from .paths import target_globs
 
 TARGET_ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 CHANNEL = re.compile(r"^[a-z][a-z0-9_]*:\S+$")
 PRIORITIES = {"urgent", "high", "medium", "low", "none"}
+QUIET_HOURS = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$")
+DEFAULT_RING_COOLDOWN_MINUTES = 10
 SINK_KINDS = {"plane", "notify_only"}
 HANDLE_KEYS = ("email", "e164", "label", "platform")
 
@@ -52,6 +56,9 @@ class Sink:
     priority: str | None = None
     coalesce_hours: float = 24.0
     notify: tuple[str, ...] = ()
+    ring_cooldown_minutes: int = DEFAULT_RING_COOLDOWN_MINUTES
+    # (start, end) in minutes after midnight, America/New_York; end <= start wraps midnight.
+    ring_quiet_hours: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +95,37 @@ def _strings(value: object, where: str) -> list[str]:
     return value
 
 
+def _notify_channel(channel: object) -> str:
+    if not isinstance(channel, str) or not (channel.startswith("ring:") or CHANNEL.match(channel)):
+        raise TargetError("sink.notify entries look like 'telegram:<chat id>' or 'ring:<E.164 number>'")
+    if channel.startswith("ring:"):  # a number may be written with spaces or dashes; the e164 helper normalises it
+        number = norm_e164(channel[len("ring:"):])
+        if number is None:
+            # Never echo the number: target files hold personal data.
+            raise TargetError("sink.notify has a ring: entry that is not an E.164 number (+<country code><digits>)")
+        return f"ring:{number}"
+    return channel
+
+
+def parse_quiet_hours(value: object) -> tuple[int, int]:
+    """'HH:MM-HH:MM' to (start, end) minutes after midnight. Equal ends are refused: empty or all day is a typo."""
+    found = QUIET_HOURS.match(value.strip()) if isinstance(value, str) else None
+    if not found:
+        raise TargetError("sink.ring_quiet_hours looks like '22:00-07:00' (24-hour HH:MM-HH:MM)")
+    a, b, c, d = (int(g) for g in found.groups())
+    start, end = a * 60 + b, c * 60 + d
+    if start == end:
+        raise TargetError("sink.ring_quiet_hours must not start and end at the same minute")
+    return start, end
+
+
+def in_quiet_hours(window: tuple[int, int] | None, minute_of_day: int) -> bool:
+    if window is None:
+        return False
+    start, end = window
+    return start <= minute_of_day < end if start < end else (minute_of_day >= start or minute_of_day < end)
+
+
 def parse_target(document: dict, path: Path) -> Target:
     target = document.get("target")
     if not isinstance(target, dict):
@@ -122,9 +160,11 @@ def parse_target(document: dict, path: Path) -> Target:
     if kind not in SINK_KINDS:
         raise TargetError(f"sink.kind must be one of {sorted(SINK_KINDS)}")
     notify = tuple(_strings(sink_doc.get("notify"), "sink.notify"))
-    for channel in notify:
-        if not CHANNEL.match(channel):
-            raise TargetError("sink.notify entries look like 'telegram:<chat id>'")
+    notify = tuple(_notify_channel(channel) for channel in notify)
+    cooldown = sink_doc.get("ring_cooldown_minutes", DEFAULT_RING_COOLDOWN_MINUTES)
+    if isinstance(cooldown, bool) or not isinstance(cooldown, int) or cooldown < 1:
+        raise TargetError("sink.ring_cooldown_minutes must be a positive whole number")
+    quiet = parse_quiet_hours(sink_doc["ring_quiet_hours"]) if "ring_quiet_hours" in sink_doc else None
     labels = tuple(_strings(sink_doc.get("labels"), "sink.labels"))
     priority = sink_doc.get("priority")
     if priority is not None and priority not in PRIORITIES:
@@ -157,6 +197,8 @@ def parse_target(document: dict, path: Path) -> Target:
             priority=priority,
             coalesce_hours=float(coalesce),
             notify=notify,
+            ring_cooldown_minutes=cooldown,
+            ring_quiet_hours=quiet,
         ),
     )
 

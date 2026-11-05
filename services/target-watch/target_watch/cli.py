@@ -170,6 +170,7 @@ def cmd_replay(args) -> int:
 
 
 def cmd_check(args) -> int:
+    from .sink import mask_channel
     from .targets import load_targets
     from .xsender import scan
 
@@ -185,7 +186,7 @@ def cmd_check(args) -> int:
             problems.append("sink repo has no .project.json (px cannot bind a board)")
             failures += 1
         print(f"  {t.id:<20} {t.display_name:<24} email={len(t.email)} e164={len(t.e164)} label={len(t.label)} "
-              f"platform={len(t.platform)}  sink={sink.kind} {where} notify={','.join(sink.notify) or '-'}  {t.path}")
+              f"platform={len(t.platform)}  sink={sink.kind} {where} notify={','.join(mask_channel(c) for c in sink.notify) or '-'}  {t.path}")
         for problem in problems:
             print(f"    ! {problem}")
     for error in errors:
