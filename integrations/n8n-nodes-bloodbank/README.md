@@ -369,7 +369,7 @@ everything else on the bus.
 | Operation | What the agent is asked to do |
 | --- | --- |
 | **Groom Ticket** | Enrich one new ticket in place — labels, module, priority, cycle, exposure label, a description someone who just walked in could act on — then stamp the completion label. It is told not to split the ticket or change its state. |
-| **Delegate Ticket** | Pick up a groomed ticket that reached Todo, judge its acceptance criteria, delegate the work to a worker agent, and move it to In Progress with a start date. |
+| **Delegate Ticket** | Pick up a groomed ticket in Todo: re-read it live first and stop if it is no longer in Todo, is In Progress or another worker holds it; then judge its acceptance criteria, delegate the work to a worker agent, and move it to In Progress with a start date. |
 | **Invoke Agent** | Send your own prompt to the agent that owns the board. |
 
 **Outputs.** Output 0, **Dispatched**, carries one item per published command.
@@ -442,7 +442,7 @@ even sees it.
 
 ### The lifecycle lane
 
-Five workflows carry a Plane ticket from webhook to working agent. They live
+Six workflows carry a Plane ticket from webhook to working agent. They live
 in n8n; their exports are in
 [delonet-n8n-workflows](https://github.com/delorenj/delonet-n8n-workflows),
 synced every 15 minutes (`workflows/<name>--<id>.json`).
@@ -453,17 +453,63 @@ synced every 15 minutes (`workflows/<name>--<id>.json`).
 | **Plane Ingress Reconcile** (`U4hYm3BYPPeZNDHQ`) | Every 10 minutes (minute 3, 13, …) | **Reconcile Missed Tickets** publishes the `repo.task.created` fact of any ticket a routed board created in the last 6 h that never reached the bus (see [Reconcile missed tickets](#reconcile-missed-tickets)) | **Recovered** → *Recovered Ticket*: one push per recovered ticket |
 | **Ticket Grooming** (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | **Groom Ticket** commands the board's agent to enrich the ticket and stamp `lifecycle:triaged` | **Dispatched** → *Triage Started*; **Skipped** → *Triage Skipped*, every skip |
 | **Ticket Delegation** (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` | **Delegate Ticket** (phase guard `Todo,unstarted`) commands the agent to pick the ticket up and delegate it | **Dispatched** → *Delegation Started*; **Skipped** → *Notable Skip?* → *Delegation Skipped* |
+| **Ticket Delegation — Groomed in Todo** (`l0J53w0TsS5PwETk`) | `agent.invocation.completed` with `data.context.reason = ticket-grooming` and `data.context.phase = Todo` (a grooming turn that finished on a ticket *created* in Todo) | **Read Ticket** reads the live issue (`?expand=state,labels`); **Groomed in Todo?** goes on only if its state name is exactly `Todo` and it carries `lifecycle:triaged`, else stops quietly; **Delegate Ticket** (phase guard `Todo`, no provider guard, cause = the completion event) | Same as Ticket Delegation, tagged `groomed-in-todo` |
 | **Ticket Pickup Chip** (`wWXgCZiiIBWaRRzE`) | One trigger, *Invocation Lifecycle*, on `agent.invocation.started`, `.completed`, `.failed` with `data.context.reason` in `ticket-grooming,ticket-delegation`; plus *Stale Chip Sweep* hourly | Adds the board's `agent:working` label while the agent's turn runs and removes it when the turn ends, unless the ticket was claimed meanwhile; the sweep removes any chip left on a ticket whose last turn ended | none |
 
 **The handshake.** Grooming finishes by labelling the ticket
-`lifecycle:triaged`. A person then promotes it to Todo, and that transition is
-what Delegate Ticket picks up. Grooming is automatic, promotion to Todo is the
-human decision, and delegation requires both: Delegate Ticket grooms a ticket
-itself when the label is missing rather than delegating unreviewed work.
+`lifecycle:triaged`. Delegation needs that label and the ticket in Todo, and
+there are two ways a groomed ticket gets there:
+
+- **Promoted.** A ticket created in Backlog is groomed there, and a person later
+  moves it into Todo. That transition is what *Ticket Delegation* picks up.
+  Grooming is automatic, promotion is the human decision, and Delegate Ticket
+  grooms a ticket itself when the label is missing rather than delegating
+  unreviewed work.
+- **Born in Todo.** A ticket created straight into Todo never transitions, so
+  *Ticket Delegation* never sees it (105 such tickets were triaged and never
+  delegated in the 30 days before this lane existed; 33GOD-61). *Ticket
+  Delegation — Groomed in Todo* starts on the grooming turn's own
+  `agent.invocation.completed` instead. The gateway echoes the command's
+  `data.context` on it, so the trigger's data filter keeps only
+  `reason = ticket-grooming` with `phase = Todo`. That echoed phase is what
+  the ticket had when grooming was *dispatched* and can be stale (PJAN-202 was
+  claimed In Progress mid-grooming and its completion still said Todo), so
+  the lane re-reads the ticket from Plane and delegates only when its state
+  name is exactly `Todo` now and it carries `lifecycle:triaged` (a grooming
+  pass that stopped to ask a question does not add it). Anything else stops
+  without a publish or a page. Plane 404/410 drops the item with the
+  execution green, and any other Plane failure, or an unexpanded answer, fails
+  the execution.
+
+The groomed lane's Delegate Ticket maps a Bloodbank-shaped item built from the
+completion: `data.*` comes from `data.context`, `data.phase` is the *live*
+state, and `data.labels` holds the live label names, which is what picks the
+owner on a shared board (the completion carries no labels).
+`id`/`time`/`correlationid` are the completion's, so the command id is
+`uuid5(delegateTicket, agent, completion id)` and a redelivered completion
+dedupes at the gateway. The provider guard is empty because it is strict and
+a completion is not a provider event. It cannot trigger itself: its own turn
+completes with `reason = ticket-delegation`. Its trigger has its own durable,
+`n8n-l0J53w0TsS5PwETk-8b302a2c-5f47-5294-88de-9fbd52b2822b`, beside the
+Pickup Chip's on the same subject. `BLOODBANK_EVENTS` uses limits retention,
+so each durable sees every event and neither takes events from the other.
+Both lanes send the same delegation prompt, and its first step is a live
+re-read: if the ticket is no longer in Todo, is In Progress, or another worker
+holds it, the agent stops and says so. That also covers the rare ticket both
+lanes fire for (born in Todo, then moved out of Todo and back in during the
+grooming turn).
+
+**Finding: `unstarted` in the transition lane's phase guard never matches.**
+`Todo,unstarted` reads as "the Todo state or anything in the unstarted group",
+but the item carries only the state *name* (`data.phase`), and the guard
+compares names. `unstarted` only matches a state literally named
+`unstarted`, so in practice the guard is `Todo`. That workflow is unchanged
+and the dead entry is harmless. Remove it, or add a group field to the fact,
+if a board ever names its ready lane something other than Todo.
 
 **No skip is silent.** Every item a Fleet node does not dispatch leaves on
 **Skipped** with its `code` and `reason` (see [33GOD Agent Fleet](#33god-agent-fleet)),
-and — with Publish Skip Events on in both lanes — is also published as
+and — with Publish Skip Events on in every Fleet lane — is also published as
 **`bloodbank.agent.invocation.skipped`**, so Candystore holds the durable record
 and anything on the bus can react to it. The ntfy push is the page on top of that
 record. Grooming pages every skip. Delegation pages every skip except
@@ -602,7 +648,10 @@ the same fixed mtime, so a size-and-mtime comparison skips same-length edits.
 npm test covers schema generation and the shared option shape, trigger and
 publisher configuration, canonical envelopes, fail-closed invocation routing,
 fleet eligibility / skips / skip events / fences / idempotent command ids,
-the lifecycle lane's wiring as exported (skip and unrouted pushes, the
+the Groomed in Todo lane as exported to delonet-n8n-workflows (trigger filter,
+own durable, live gate, Fleet mapping, no self-trigger; it reads the export at
+`N8N_WORKFLOWS_DIR`, default `~/code/delonet-n8n-workflows/workflows`, and skips
+when there is none), the lifecycle lane's wiring as exported (skip and unrouted pushes, the
 once-a-day unrouted gate, the reconcile schedule and push, the chip's single
 ordered trigger, its Code nodes, its deleted-ticket guards, the claim-during-turn
 check and the stale-chip sweep), the reconcile sweep (window, settle, paging

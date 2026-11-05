@@ -221,7 +221,7 @@ export class Fleet implements INodeType {
         default: 'Todo,unstarted',
         displayOptions: { show: { operation: ['delegateTicket'] } },
         description:
-          'Comma-separated state names or groups. The item is skipped unless the ticket landed in one of them. Clear to accept any phase.',
+          'Comma-separated state names, case-insensitive. The item is skipped unless the ticket landed in one of them. The item carries the state name only (data.phase), so a state group such as unstarted matches only a state literally named that. Clear to accept any phase.',
       },
       {
         displayName: 'Only When Provider Event Is',

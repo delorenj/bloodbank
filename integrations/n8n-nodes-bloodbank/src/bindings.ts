@@ -111,8 +111,13 @@ function sampleValue(schemaValue: unknown, name: string, depth: number): unknown
       return Array.from({ length: min }, () => sampleValue(schema.items, name, depth + 1));
     }
     case 'integer':
-    case 'number':
-      return Number.isFinite(Number(schema.minimum)) ? Number(schema.minimum) : 0;
+    case 'number': {
+      if (Number.isFinite(Number(schema.minimum))) return Number(schema.minimum);
+      // `exclusiveMinimum: 0` (invocation.start deadline_seconds) rejects 0 itself.
+      const exclusive = schema.exclusiveMinimum;
+      if (typeof exclusive === 'number' && Number.isFinite(exclusive)) return exclusive + 1;
+      return 0;
+    }
     case 'boolean':
       return false;
     default:

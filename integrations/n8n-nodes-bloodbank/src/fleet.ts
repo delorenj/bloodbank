@@ -328,14 +328,30 @@ export function groomingPrompt(
   );
 }
 
-/** Delegation: a groomed ticket a human promoted to Todo becomes real work. */
+/** Delegation: a groomed ticket in Todo becomes real work.
+ *
+ * Two lanes send this prompt: Ticket Delegation, when a person moves a ticket
+ * into Todo, and Ticket Delegation — Groomed in Todo, when the grooming pass
+ * finishes on a ticket that was created in Todo. Either can arrive after the
+ * ticket moved on (both lanes can even fire for one ticket), so the agent's
+ * first step is a live re-read that stops on a ticket that is no longer
+ * available work.
+ */
 export function delegationPrompt(
   facts: TicketFacts,
   projectPath?: string,
   requiredLabel = 'lifecycle:triaged',
 ): string {
+  const recheck =
+    'Before anything else, re-read the ticket live from Plane: its state, ' +
+    'assignees, labels and latest comments. This request may be older than the ' +
+    'ticket. If it is no longer in Todo, if it is already In Progress, or if ' +
+    'another worker already holds it (an assignee, or a comment saying a ' +
+    'worker has picked it up), stop: say so in your reply and change nothing. ' +
+    'The `agent:working` label alone is not a claim; the pipeline puts it on ' +
+    'for this very turn.\n\n';
   const gate = requiredLabel
-    ? `First check the precondition: the ticket must carry the label ` +
+    ? `Then check the precondition: the ticket must carry the label ` +
       `\`${requiredLabel}\`, which is how the grooming pass records that it ` +
       'finished. If the label is absent, do the grooming pass yourself — labels, ' +
       'module, priority, cycle, and a description someone who just walked in ' +
@@ -343,9 +359,10 @@ export function delegationPrompt(
       'ticket nobody has groomed.\n\n'
     : '';
   return (
-    `${ticketRef(facts)} has moved into Todo on the ${facts.repo || 'project'} ` +
-    'board. Pick it up and get the work moving.\n' +
+    `${ticketRef(facts)} is in Todo on the ${facts.repo || 'project'} ` +
+    'board and ready to be delegated. Pick it up and get the work moving.\n' +
     `${whereThingsAre(facts, projectPath)}\n` +
+    recheck +
     gate +
     'Then decide what happens to it, in this order:\n' +
     '  1. Judge readiness. Acceptance criteria have to be enumerated and ' +

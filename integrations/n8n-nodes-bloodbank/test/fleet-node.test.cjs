@@ -406,8 +406,26 @@ test('delegate fires on a transition into Todo', async (t) => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0].data.context.reason, 'ticket-delegation');
   assert.equal(calls[0].data.context.previous_phase, 'Backlog');
-  assert.match(calls[0].data.prompt, /has moved into Todo/);
+  assert.match(calls[0].data.prompt, /is in Todo on the james-brennan board and ready to be delegated/);
   assert.equal(dispatched[0].json.invoked, true);
+});
+
+test('the delegation prompt is true for both lanes and re-reads the ticket before it acts', () => {
+  // Two lanes send it: a person moving a ticket into Todo, and a grooming pass
+  // finishing on a ticket created in Todo. Neither may assume "a human promoted".
+  const prompt = delegationPrompt(ticketFactsFromEnvelope(MOVED_TO_TODO), '');
+  assert.doesNotMatch(prompt, /has moved into Todo|promoted/);
+  assert.match(prompt, /re-read the ticket live from Plane/);
+  assert.match(prompt, /no longer in Todo/);
+  assert.match(prompt, /already In Progress/);
+  assert.match(prompt, /another worker already holds it/);
+  assert.match(prompt, /stop: say so in your reply and change nothing/);
+  // The chip labels the ticket agent:working for the delegation turn itself.
+  assert.match(prompt, /`agent:working` label alone is not a claim/);
+  // The live re-read comes before the groomed-label gate and the delegation steps.
+  const recheck = prompt.indexOf('re-read the ticket live');
+  assert.ok(recheck >= 0 && recheck < prompt.indexOf('check the precondition'));
+  assert.ok(recheck < prompt.indexOf('1. Judge readiness'));
 });
 
 test('invoke sends the caller prompt verbatim', async (t) => {
