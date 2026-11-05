@@ -8,21 +8,29 @@ Safety rules, each paid for elsewhere:
   'commented on JIMB-450'), never from the last line (the URL).
 - Everything is idempotent per detection id: a redelivered detection that was
   already routed only republishes its stored routed event.
+- A "ring:<E.164>" channel places a Telnyx Call Control call so the operator's phone
+  rings like an incoming call. It never carries speech, never logs the API key, rings at
+  most once per cooldown per (watch, channel), and goes after the Telegram line.
 """
 from __future__ import annotations
 
-import re
+import asyncio
+import json
 import os
+import re
 import subprocess
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from . import envelope as env
 from .bus import Permanent
 from .log import log
 from .matcher import epoch, text_hash
 from .state import State
-from .targets import Target, TargetRegistry
+from .targets import Target, TargetRegistry, in_quiet_hours
 
 CREATED = re.compile(r"^created ([A-Z][A-Z0-9]*-[0-9]+)\b")
 COMMENTED = re.compile(r"^commented on ([A-Z][A-Z0-9]*-[0-9]+)\b")
@@ -33,6 +41,24 @@ PX_TIMEOUT_S = 90
 NOTIFY_TIMEOUT_S = 30
 HERMES_PROFILE = os.environ.get("TARGET_WATCH_HERMES_PROFILE") or "33god-pm"
 NOTIFY_CWD = os.environ.get("TARGET_WATCH_NOTIFY_CWD") or os.path.expanduser("~")
+
+RING_PREFIX = "ring:"
+TELNYX_CALLS_URL = "https://api.telnyx.com/v2/calls"
+# The ring stops after 20 s, before the cell carrier's no-answer forward (about 25-30 s on Verizon).
+# That forward sends an unanswered call back to the same Telnyx number, which would start a loop.
+# Keep this <= 22 and never raise it without changing the cell's forwarding first.
+RING_TIMEOUT_SECS = 20
+RING_TIME_LIMIT_SECS = 40  # an answered call is silent and ends here
+RING_HTTP_TIMEOUT_S = 15  # urllib applies this to each socket operation, so it is not a wall-clock cap...
+OP_TIMEOUT_S = 20
+RING_DEADLINE_S = 40  # ...this is: key lookup plus the POST, run off the event loop and abandoned after this long
+# A detection older than this is not live news: after a sink outage or a nak/redelivery (30 s * attempt,
+# five attempts, about 5 minutes in all) it must not ring the phone as if Jim had just written.
+RING_MAX_AGE_S = 300
+RING_TZ = ZoneInfo("America/New_York")
+DEFAULT_KEY_REF = "op://DeLoSecrets/74k7nz3xkryqns4lpf65a323ue/credential"
+# Cloudflare-fronted APIs refuse Python-urllib's default User-Agent.
+RING_USER_AGENT = "target-watch/0.1 (bloodbank)"
 FOOTER = "Filed automatically by target-watch from a {provider} message. Do not invent a ticket number."
 
 
@@ -46,10 +72,39 @@ def run_command(argv: list[str], cwd: str | None = None, timeout: float = 60) ->
     return done.returncode, done.stdout or "", done.stderr or ""
 
 
+def is_ring(channel: str) -> bool:
+    return channel.startswith(RING_PREFIX)
+
+
+def mask_channel(channel: str) -> str:
+    """Log form of a channel: a ring target's number is personal data, so keep the last 4 digits only."""
+    return f"{RING_PREFIX}...{channel[-4:]}" if is_ring(channel) else channel
+
+
+def telnyx_http(url: str, headers: dict, body: bytes, timeout: float) -> tuple[int, bytes]:
+    """POST; (status, body) for any HTTP answer. Anything else (timeouts, connection errors, a body that
+    breaks off mid-read) raises; the caller decides whether the call may already have been placed."""
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed https URL
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, exc.read()
+        except Exception:  # noqa: BLE001 - the status is the answer; an unreadable error body is not worth a redelivery
+            return exc.code, b""
+
+
+def telnyx_error_title(body: bytes) -> str | None:
+    try:
+        errors = json.loads(body or b"").get("errors")
+        return str(errors[0].get("title"))[:120] if errors else None
+    except (ValueError, AttributeError, IndexError, TypeError):
+        return None
+
+
 def confirmed(stdout: str) -> bool:
     """hermes send --json printed a success verdict (no error, not skipped)."""
-    import json
-
     try:
         result = json.loads(stdout or "")
     except ValueError:
@@ -58,8 +113,6 @@ def confirmed(stdout: str) -> bool:
 
 
 def notify_error(stdout: str) -> str | None:
-    import json
-
     try:
         result = json.loads(stdout or "")
     except ValueError:
@@ -162,7 +215,8 @@ def notify_line(data: dict, action: str, ticket_ref: str | None) -> str:
 
 class SinkService:
     def __init__(self, registry: TargetRegistry, state: State, publisher, *, runner=run_command,
-                 px: str = "px", hermes: str = "hermes", dry_run: bool = False, validate=env.validate, clock=None, out=None):
+                 px: str = "px", hermes: str = "hermes", dry_run: bool = False, validate=env.validate, clock=None, out=None,
+                 http=telnyx_http, op: str | None = None):
         self.registry = registry
         self.state = state
         self.publisher = publisher
@@ -173,6 +227,9 @@ class SinkService:
         self.validate = validate
         self.clock = clock or (lambda: datetime.now(UTC))
         self.out = out
+        self.http = http
+        self.op = op or os.environ.get("TARGET_WATCH_OP") or os.path.expanduser("~/.local/bin/op")
+        self._ring_key: str | None = None  # resolved at first use, held in memory only
 
     # --- planning (pure: reads state, writes nothing) -------------------------
 
@@ -184,7 +241,7 @@ class SinkService:
         if target is None:
             return Plan(detection_id, data["watch_id"], "failed", conv_key,
                         reason="no target file defines this watch_id")
-        notify = list(target.sink.notify)
+        notify = sorted(target.sink.notify, key=is_ring)  # telegram first, then the ring
         digest = text_hash(data["content"].get("text") or "")
         if digest:
             twin = self.state.recent_text_route(data["watch_id"], digest, epoch(data["received_at"]), detection_id, TEXT_DUPLICATE_S,
@@ -226,13 +283,23 @@ class SinkService:
             return "ticket_commented", ref, None
         return "failed", plan.ticket_ref, f"px comment did not confirm (exit {code}); not retried"
 
-    def _notify(self, channels: list[str], line: str) -> tuple[list[str], list[str]]:
+    async def _notify(self, channels: list[str], line: str, target: Target | None = None,
+                      received_at: float | None = None) -> tuple[list[str], list[str]]:
+        """(sent, failed). Telegram first, then the ring: the line the operator reads after the phone
+        rings must already be there. A throttled or quiet ring is neither sent nor failed."""
         # Name the hermes profile, as Candybar's pager does: without -p, hermes
         # resolves a profile from its surroundings, and from a service process on
         # 2026-11-04 it found one with no Telegram token and exited 1. Success is
         # the JSON verdict, not the exit code alone.
         sent, failed = [], []
-        for channel in channels:
+        for channel in sorted(channels, key=is_ring):
+            if is_ring(channel):
+                outcome = await self._ring(target, channel, received_at)
+                if outcome == "sent":
+                    sent.append(channel)
+                elif outcome == "failed":
+                    failed.append(channel)
+                continue
             argv = [self.hermes, "-p", HERMES_PROFILE, "send", "--to", channel, "--json", "--", line]
             code, stdout, stderr = self.runner(argv, cwd=NOTIFY_CWD, timeout=NOTIFY_TIMEOUT_S)
             if code == 0 and confirmed(stdout):
@@ -242,6 +309,124 @@ class SinkService:
                 log("notify_failed", channel=channel, exit=code, profile=HERMES_PROFILE,
                     error=notify_error(stdout) or (stderr or "").strip()[-300:])
         return sent, failed
+
+    # --- ring ---------------------------------------------------------------------
+
+    @staticmethod
+    def ring_config() -> tuple[str | None, str | None]:
+        return os.environ.get("TARGET_WATCH_TELNYX_CONNECTION_ID") or None, os.environ.get("TARGET_WATCH_RING_FROM") or None
+
+    def ring_skip(self, target: Target | None, channel: str, received_at: float | None = None) -> str | None:
+        """'quiet', 'stale' or 'throttled' when this ring must not be placed now, else None. Reads state, writes nothing."""
+        if target is None:
+            return None
+        now = self.clock()
+        local = now.astimezone(RING_TZ)
+        if in_quiet_hours(target.sink.ring_quiet_hours, local.hour * 60 + local.minute):
+            return "quiet"
+        if received_at is not None and now.timestamp() - received_at > RING_MAX_AGE_S:
+            return "stale"
+        last = self.state.last_ring(target.id, channel)
+        if last is not None and now.timestamp() - last < target.sink.ring_cooldown_minutes * 60:
+            return "throttled"
+        return None
+
+    def _key(self) -> str | None:
+        if self._ring_key is None:
+            ref = os.environ.get("TARGET_WATCH_TELNYX_KEY_REF") or DEFAULT_KEY_REF
+            # The argv carries the op:// reference only; the key comes back on stdout and goes nowhere but memory.
+            code, stdout, stderr = self.runner([self.op, "read", "--no-newline", ref], cwd=NOTIFY_CWD, timeout=OP_TIMEOUT_S)
+            key = (stdout or "").strip()
+            if code != 0 or not key:
+                log("ring_failed", reason="key unavailable", exit=code, error=(stderr or "").strip()[-200:])
+                return None
+            self._ring_key = key
+        return self._ring_key
+
+    def _place(self, to: str, connection_id: str, from_number: str) -> tuple[str, int | None, bytes, Exception | None]:
+        """Blocking, so it runs in a worker thread and touches no sqlite. Never raises.
+        ('nokey' | 'answered' | 'error', http status, answer body, the exception for 'error')."""
+        try:
+            key = self._key()
+        except Exception as exc:  # noqa: BLE001
+            log("ring_failed", reason="key unavailable", error=type(exc).__name__)
+            key = None
+        if key is None:
+            return "nokey", None, b"", None
+        body = json.dumps({
+            "connection_id": connection_id, "to": to, "from": from_number,
+            "timeout_secs": RING_TIMEOUT_SECS, "time_limit_secs": RING_TIME_LIMIT_SECS,
+        }).encode()
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                   "Accept": "application/json", "User-Agent": RING_USER_AGENT}
+        try:
+            status, answer = self.http(TELNYX_CALLS_URL, headers, body, RING_HTTP_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 - whatever breaks, it must not escape and get the detection redelivered
+            return "error", None, b"", exc
+        return "answered", status, answer, None
+
+    def _record_ring(self, watch_id: str, channel: str, masked: str) -> None:
+        try:
+            self.state.record_ring(watch_id, channel, self.clock().timestamp())
+        except Exception as exc:  # noqa: BLE001 - a state fault after the POST must not turn into a second ring
+            log("ring_state_write_failed", watch_id=watch_id, channel=masked, error=type(exc).__name__)
+
+    async def _ring(self, target: Target | None, channel: str, received_at: float | None = None) -> str:
+        """Place the call. 'sent' | 'failed' | 'throttled' | 'quiet' | 'stale'.
+
+        Nothing here raises: a ring that fails is a failed channel, and a redelivered detection must never
+        place a second call. When the outcome is uncertain (the request may have been accepted before the
+        answer broke), the ring counts as placed for the cooldown but is reported as failed."""
+        watch_id = target.id if target else "?"
+        masked = mask_channel(channel)
+        skip = self.ring_skip(target, channel, received_at)
+        if skip:
+            log(f"ring_{skip}", watch_id=watch_id, channel=masked)
+            return skip
+        connection_id, from_number = self.ring_config()
+        if not connection_id or not from_number:
+            log("ring_failed", watch_id=watch_id, channel=masked,
+                reason="TARGET_WATCH_TELNYX_CONNECTION_ID and TARGET_WATCH_RING_FROM must both be set")
+            return "failed"
+        try:
+            state, status, answer, exc = await asyncio.wait_for(
+                asyncio.to_thread(self._place, channel[len(RING_PREFIX):], connection_id, from_number), RING_DEADLINE_S)
+        except TimeoutError:
+            # The worker may still finish, and the call may already be placed.
+            self._record_ring(watch_id, channel, masked)
+            log("ring_failed", watch_id=watch_id, channel=masked, reason="deadline", seconds=RING_DEADLINE_S)
+            return "failed"
+        if state == "nokey":
+            return "failed"
+        if state == "error":
+            # A refused connection (URLError) never reached Telnyx; a timeout or a broken read may have.
+            if not isinstance(exc, urllib.error.URLError):
+                self._record_ring(watch_id, channel, masked)
+            log("ring_failed", watch_id=watch_id, channel=masked, reason="transport", error=type(exc).__name__)
+            return "failed"
+        call_id = None
+        if 200 <= status < 300:
+            try:
+                call_id = (json.loads(answer or b"").get("data") or {}).get("call_control_id")
+            except (ValueError, AttributeError):
+                call_id = None
+            if not call_id:
+                self._record_ring(watch_id, channel, masked)  # accepted, so the phone may be ringing
+        if not call_id:
+            if status in (401, 403):
+                self._ring_key = None  # a rotated key is re-read next time
+            log("ring_failed", watch_id=watch_id, channel=masked, status=status, title=telnyx_error_title(answer),
+                reason=None if status >= 300 else "no call_control_id in the answer")
+            return "failed"
+        self._record_ring(watch_id, channel, masked)
+        log("ring_placed", watch_id=watch_id, channel=masked, call_control_id=call_id)
+        return "sent"
+
+    def ring_plan(self, target: Target | None, channel: str, received_at: float | None = None) -> dict:
+        connection_id, from_number = self.ring_config()
+        return {"to": channel[len(RING_PREFIX):], "from": from_number, "connection_id": connection_id,
+                "timeout_secs": RING_TIMEOUT_SECS, "time_limit_secs": RING_TIME_LIMIT_SECS,
+                "skipped": self.ring_skip(target, channel, received_at)}
 
     def _routed(self, detection: dict, action: str, ticket_ref, channels, reason) -> dict:
         data = detection["data"]
@@ -281,11 +466,16 @@ class SinkService:
                 self._print({"detection_id": detection_id, "already_routed": prior["action"], "ticket_ref": prior["ticket_ref"]})
                 return prior["envelope"]
             plan = self.plan(detection)
+            target = self.registry.get(data["watch_id"])
             routed = self._routed(detection, plan.action, plan.ticket_ref, plan.notify, plan.reason)
             self._print({
                 "detection_id": detection_id, "action": plan.action, "ticket_ref": plan.ticket_ref,
                 "px": {"argv": plan.px_argv, "cwd": plan.px_cwd} if plan.px_argv else None,
-                "notify": [{"to": c, "text": notify_line(data, plan.action, plan.ticket_ref or "<new>")} for c in plan.notify],
+                "notify": [
+                    {"to": c, "ring": self.ring_plan(target, c, epoch(data["received_at"]))} if is_ring(c)
+                    else {"to": c, "text": notify_line(data, plan.action, plan.ticket_ref or "<new>")}
+                    for c in plan.notify
+                ],
                 "reason": plan.reason, "routed": routed,
             })
             return routed
@@ -329,9 +519,9 @@ class SinkService:
         channels = list(target.sink.notify) if target and action != "skipped_duplicate" else []
         sent = route["notify_channels"] if route["notified"] else []
         if channels and not route["notified"]:
-            sent, failed = self._notify(channels, notify_line(data, action, ticket_ref))
+            sent, failed = await self._notify(channels, notify_line(data, action, ticket_ref), target, epoch(data["received_at"]))
             if failed:
-                reason = (reason + "; " if reason else "") + "notify failed: " + ",".join(failed)
+                reason = (reason + "; " if reason else "") + "notify failed: " + ",".join(mask_channel(c) for c in failed)
             self.state.update_route(detection_id, notified=1, notify_channels=sent, reason=reason)
 
         routed = self._routed(detection, action, ticket_ref, sent, reason)
@@ -344,6 +534,4 @@ class SinkService:
         return routed
 
     def _print(self, record: dict) -> None:
-        import json
-
         print(json.dumps(record, sort_keys=True, default=str), file=self.out, flush=True)

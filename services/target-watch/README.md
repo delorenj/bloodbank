@@ -27,6 +27,7 @@ schema reload. No code changes, no restart.
                        target-watch sink   (durable target-watch-sink)
                          px task create / px comment  (cwd = target's repo)
                          hermes send --to telegram:<chat id>
+                         Telnyx outbound call to ring:<E.164>  (the phone rings)
                                                                         ▼
                                      bloodbank.evt.watch.target.routed
 ```
@@ -93,6 +94,67 @@ envelopes from a file instead of the bus, plus `--since <ISO>` and `--once`.
 - The notification is one line:
   `<Display name> via <provider>: <snippet> -> <action> <ticket_ref>`.
 
+### Ring: make the operator's phone ring like an incoming call
+
+A Telegram ping is quiet. A `ring:<E.164>` entry in `sink.notify` places a real
+phone call, with no speech, so the phone rings like someone is calling.
+
+```toml
+notify = ["telegram:<operator chat id>", "ring:+12155550142"]   # FAKE number
+ring_cooldown_minutes = 10          # optional, default 10
+ring_quiet_hours = "22:00-07:00"    # optional, America/New_York, may wrap midnight
+```
+
+- **Mechanism.** Telnyx Call Control: `POST https://api.telnyx.com/v2/calls` with
+  `{connection_id, to, from, timeout_secs, time_limit_secs}`. `connection_id` is
+  `TARGET_WATCH_TELNYX_CONNECTION_ID` (the `target-watch-ring` call-control app, which has an
+  outbound voice profile) and `from` is `TARGET_WATCH_RING_FROM` (the operator's Telnyx number). Both
+  are set in `systemd/target-watch-sink.service`; they are ids of the operator's own account, not
+  secrets. Success is an HTTP 2xx whose body has `data.call_control_id`; anything else (a Telnyx
+  4xx, a timeout, no key) is a failed channel, logged as `ring_failed` with the HTTP status and
+  Telnyx's error title only.
+- **Why `timeout_secs` is 20.** The phone's carrier forwards an unanswered call after roughly 25-30
+  seconds, and that forward points back at this same Telnyx number, so a ring that outlasts it
+  starts a loop. The ring must stop first: keep it at or under 22. `time_limit_secs` is 40: a call
+  that is answered stays silent and ends there.
+- **The key** is never stored in a file or logged. It is read at first use with
+  `op read --no-newline <ref>` (`TARGET_WATCH_TELNYX_KEY_REF`, default
+  `op://DeLoSecrets/74k7nz3xkryqns4lpf65a323ue/credential`; binary `TARGET_WATCH_OP`, default
+  `~/.local/bin/op`), held in memory for the life of the process, and dropped after a 401 or 403 so
+  a rotated key is picked up. The unit inherits `OP_SERVICE_ACCOUNT_TOKEN` from the user manager.
+  The HTTP request sets its own User-Agent, because Cloudflare-fronted APIs refuse Python-urllib's.
+- **Cooldown.** One ring per (target, ring channel) per `ring_cooldown_minutes` (default 10), so a
+  burst of 3-5 texts rings once. The time of the last ring is in the sqlite state, so a restart does
+  not ring again. A throttled ring is neither sent nor failed: it logs `ring_throttled` and is left
+  out of `notify_channels`. A ring Telnyx refused (HTTP 4xx/5xx, no key, a refused connection) does not
+  use up the cooldown. A ring whose outcome is uncertain (a timeout, a response that breaks off, a
+  2xx with no `call_control_id`, the 40 s deadline) is reported as failed but counts for the
+  cooldown, because the phone may be ringing: the next text of the burst must not ring again.
+  Nothing in the ring path raises, so the bus never naks and redelivers a detection into a second call.
+- **Stale detections.** A detection older than 5 minutes (a backlog after a sink outage, or a late
+  redelivery) does not ring: it logs `ring_stale`, and Telegram still goes out. It does not use up
+  the cooldown.
+- **Not blocking.** The key lookup and the POST run in a worker thread under a 40 s deadline, so a
+  slow Telnyx cannot stall the event loop. The 15 s HTTP timeout is urllib's per-socket-operation
+  timeout, not a wall-clock cap; the deadline is.
+- **Quiet hours.** `ring_quiet_hours = "HH:MM-HH:MM"` in America/New_York (start inclusive, end
+  exclusive; `22:00-07:00` wraps midnight). Inside the window the ring is skipped and logs
+  `ring_quiet`; Telegram still goes out. Absent means ring at any hour.
+- **What rings.** Every routed action except `skipped_duplicate`, including `failed`: a failed
+  ticket still means the person wrote. The Telegram line goes first and carries the content the
+  operator reads after the phone rings.
+- **Dry run** (`target-watch sink --dry-run`) prints the planned call (to, from, connection id,
+  timeouts, and whether it would be skipped as quiet or throttled) and places nothing.
+- **No speech.** The ring is the alarm. Speaking a message would need a TeXML app or a webhook
+  handler that answers `call.answered` with a `speak` command; neither exists, and `target-watch`
+  runs no web server.
+- **Logs and `check`** show a ring number as `ring:...0142` (last four digits).
+
+One-time phone setup, or the call rings like any other unknown number: save the `from` number
+(+1 215 449 8437) as a contact, for example "Jim Watch", give that contact a loud custom ringtone,
+and let it through Do Not Disturb (Android: Settings > Notifications > Do Not Disturb > People >
+Calls > starred contacts, then star the contact).
+
 State lives in `~/.local/state/target-watch/state.db`, or under
 `$TARGET_WATCH_STATE_DIR`.
 
@@ -125,7 +187,7 @@ state = "Todo"
 labels = ["submitted-by-client"]
 priority = "medium"
 coalesce_hours = 24
-notify = ["telegram:<operator chat id>"]
+notify = ["telegram:<operator chat id>"]       # or add "ring:+1...", see "Ring" below
 ```
 
 Then run `target-watch check`. It must say `ok`.

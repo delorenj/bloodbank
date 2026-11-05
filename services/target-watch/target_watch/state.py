@@ -55,6 +55,12 @@ CREATE TABLE IF NOT EXISTS tickets (
   created_epoch REAL NOT NULL,
   PRIMARY KEY (watch_id, conv_key, ticket_ref)
 );
+CREATE TABLE IF NOT EXISTS rings (
+  watch_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  last_epoch REAL NOT NULL,
+  PRIMARY KEY (watch_id, channel)
+);
 """
 
 ROUTE_FIELDS = (
@@ -218,3 +224,19 @@ class State:
                 "INSERT OR IGNORE INTO tickets VALUES(?,?,?,?)",
                 (watch_id, conv_key, ticket_ref, created_epoch if created_epoch is not None else time.time()),
             )
+
+    # --- ring throttle --------------------------------------------------------
+
+    def last_ring(self, watch_id: str, channel: str) -> float | None:
+        """Epoch of the last ring placed on this (watch, channel); None when never, or on a state file
+        written before the table existed (a read-only dry run cannot create it)."""
+        try:
+            with self.connect() as db:
+                row = db.execute("SELECT last_epoch FROM rings WHERE watch_id=? AND channel=?", (watch_id, channel)).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return row[0] if row else None
+
+    def record_ring(self, watch_id: str, channel: str, epoch: float) -> None:
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO rings VALUES(?,?,?)", (watch_id, channel, epoch))

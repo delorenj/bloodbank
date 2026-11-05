@@ -174,6 +174,8 @@ class FakeRunner:
         self.create_output: str | None = None
         self.create_code = 0
         self.hermes_code = 0
+        self.op_code = 0
+        self.op_key = "fake-telnyx-key-DO-NOT-LEAK"
 
     @staticmethod
     def verb(argv) -> str:
@@ -195,6 +197,10 @@ class FakeRunner:
             if self.hermes_code:
                 return self.hermes_code, '{"error": "Platform not configured"}', ""
             return 0, '{"success": true, "platform": "telegram", "message_id": "1"}', ""
+        if verb == "read":  # fake `op read --no-newline <ref>`
+            if self.op_code:
+                return self.op_code, "", "[ERROR] not signed in"
+            return 0, self.op_key, ""
         raise AssertionError(f"unexpected command {argv}")
 
     def of(self, verb: str) -> list[list[str]]:
