@@ -100,7 +100,7 @@ publishes `repo.task.*` or `repo.board.*`. It writes Plane (`px task create`,
 
 **Missed deliveries.** Plane does not retry an HTTP error, so a ticket created
 while n8n is down never reaches the bus by webhook. *Plane Ingress Reconcile*
-(`U4hYm3BYPPeZNDHQ`, every 10 min) republishes missing creation facts through
+(`U4hYm3BYPPeZNDHQ`, every 10 min, fired by the Candybar `plane-ingress-reconcile`) republishes missing creation facts through
 the same normalizer (`data.trigger_source: plane-reconcile`, same event id and
 `Nats-Msg-Id`, at most 20 per sweep). Updates, transitions and comments made
 during an outage are not recovered.
@@ -147,7 +147,7 @@ ticket stall?" is answered by querying Candystore for
 | Workflow (id) | Starts on | ntfy `lifecycle` push |
 |---|---|---|
 | Plane → Bloodbank (`iMw484J1ZCqKME2C`) | Plane webhook | Unrouted Board (1/board/24h) |
-| Plane Ingress Reconcile (`U4hYm3BYPPeZNDHQ`) | every 10 min | Recovered missed ticket |
+| Plane Ingress Reconcile (`U4hYm3BYPPeZNDHQ`) | every 10 min (Candybar `plane-ingress-reconcile`, webhook) | Recovered missed ticket |
 | Ticket Grooming (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | Triage Started / Triage Skipped |
 | Ticket Delegation (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` into Todo | Delegation Started / Skipped (not `phase_guard`, `provider_event_guard`) |
 | Ticket Delegation — Groomed in Todo (`l0J53w0TsS5PwETk`) | `agent.invocation.completed` with `data.context.reason = ticket-grooming` and `data.context.phase = Todo` (a ticket *created* in Todo, which never transitions); delegates only if the live Plane state name is exactly `Todo` and the ticket carries `lifecycle:triaged` | Delegation Started / Skipped, tagged `groomed-in-todo` |

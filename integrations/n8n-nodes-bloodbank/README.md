@@ -273,7 +273,12 @@ itself keep it.
 
 Operation **Reconcile Missed Tickets** (`operation: reconcile`) is the other half
 of ingress, run by the *Plane Ingress Reconcile* workflow every 10 minutes (at
-minute 3, 13, 23 …). For every board the [routing table](#routing) claims, it
+minute 3, 13, 23 …). Candybar is its clock: the candybar
+`plane-ingress-reconcile` (`bloodbank/.candybars/`) POSTs the webhook
+`candybar/plane-ingress-reconcile`, and *Reconcile — Verdict* answers from the
+Report after the recovery pages (`fail` when any ticket did not publish; a
+sweep that read no board or published nothing throws, and Candybar records the
+empty answer as a failure). The workflow has no Schedule Trigger. For every board the [routing table](#routing) claims, it
 lists the tickets Plane created in the lookback window (default 6 h, newest
 first, at most 3 pages of 100 per board), asks `BLOODBANK_EVENTS` which of them
 already have a `bloodbank.repo.task.created` fact (a throwaway ordered consumer
@@ -548,7 +553,7 @@ synced every 15 minutes (`workflows/<name>--<id>.json`).
 | Workflow (id) | Starts on | Does | Pushes to ntfy `lifecycle` |
 | --- | --- | --- | --- |
 | **Plane → Bloodbank** (`iMw484J1ZCqKME2C`) | Plane webhook | Verifies, normalizes and publishes the `bloodbank.repo.*` fact (see [Plane ingress](#plane-ingress)) | **Unrouted** → *Unrouted — Once a Day* → *Unrouted Board*: a board no enrolled project claims, at most once per board per 24 h |
-| **Plane Ingress Reconcile** (`U4hYm3BYPPeZNDHQ`) | Every 10 minutes (minute 3, 13, …) | **Reconcile Missed Tickets** publishes the `repo.task.created` fact of any ticket a routed board created in the last 6 h that never reached the bus (see [Reconcile missed tickets](#reconcile-missed-tickets)) | **Recovered** → *Recovered Ticket*: one push per recovered ticket |
+| **Plane Ingress Reconcile** (`U4hYm3BYPPeZNDHQ`) | Every 10 minutes (minute 3, 13, …), fired by the Candybar `plane-ingress-reconcile` through webhook *Candybar Tick* | **Reconcile Missed Tickets** publishes the `repo.task.created` fact of any ticket a routed board created in the last 6 h that never reached the bus (see [Reconcile missed tickets](#reconcile-missed-tickets)) | **Recovered** → *Recovered Ticket*: one push per recovered ticket |
 | **Ticket Grooming** (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | **Groom Ticket** commands the board's agent to enrich the ticket and stamp `lifecycle:triaged` | **Dispatched** → *Triage Started*; **Skipped** → *Triage Skipped*, every skip |
 | **Ticket Delegation** (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` | **Delegate Ticket** (phase guard `Todo,unstarted`) commands the agent to pick the ticket up and delegate it | **Dispatched** → *Delegation Started*; **Skipped** → *Notable Skip?* → *Delegation Skipped* |
 | **Ticket Delegation — Groomed in Todo** (`l0J53w0TsS5PwETk`) | `agent.invocation.completed` with `data.context.reason = ticket-grooming` and `data.context.phase = Todo` (a grooming turn that finished on a ticket *created* in Todo) | **Read Ticket** reads the live issue (`?expand=state,labels`); **Groomed in Todo?** goes on only if its state name is exactly `Todo` and it carries `lifecycle:triaged`, else stops quietly; **Delegate Ticket** (phase guard `Todo`, no provider guard, cause = the completion event) | Same as Ticket Delegation, tagged `groomed-in-todo` |
