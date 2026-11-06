@@ -358,7 +358,7 @@ test('groomed: the HEYMA-12 429 shape names the owner, the identity and the shar
   });
   assert.equal(data.recovery.action, 'retry_or_requeue');
   assert.match(data.recovery.hint, /px move HEYMA-12 Backlog -m "lane failed \(execution 632616\)" && px move HEYMA-12 Todo/);
-  assert.match(data.recovery.hint, /one ticket at a time on WIP=1/);
+  assert.match(data.recovery.hint, /px move .* Backlog/);
   assert.ok(data.recovery.hint.length <= 400);
   assert.equal(data.severity, 'page');
   assert.equal(report.orderingKey, `task:transcription-queue:${HEYMA_TICKET}`);

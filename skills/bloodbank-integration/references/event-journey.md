@@ -171,10 +171,9 @@ ticket stall?" is answered by querying Candystore for
 - **No backfill; requeue by hand.** Durables start at the stream tip and a
   failed lane execution is acked, never redelivered, so a ticket left in Todo
   (born there before the groomed lane, or dropped like HEYMA-12 on a Plane 429,
-  execution 632616) stays there. Requeue it one ticket at a time, after
+  execution 632616) stays there. Requeue it after
   re-reading it: `px move <REF> Backlog -m "<why>"`, then `px move <REF> Todo`.
-  The second move is the transition the delegation lane picks up. On a WIP=1
-  board, wait for each delegation turn to finish before the next.
+  The second move is the transition the delegation lane picks up.
   A failed run of the groomed lane pages ntfy `lifecycle` (*Lifecycle Lane
   Errors*), so you see the drop instead of having to find it: the page names
   the ticket, read back from the failed execution, and gives this exact requeue.

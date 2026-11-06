@@ -496,7 +496,7 @@ registry, with that row's `company_identity` and `gateway_consumer` (absent =
 | --- | --- |
 | Grooming, ticket created in Todo | `retry_or_requeue` |
 | Grooming, ticket created in Backlog | `retry_execution` only: bouncing Backlog -> Todo would promote it |
-| Delegation, Delegation — Groomed | `retry_or_requeue` (`px move REF Backlog -m why && px move REF Todo`, one at a time on WIP=1 boards) |
+| Delegation, Delegation — Groomed | `retry_or_requeue` (`px move REF Backlog -m why && px move REF Todo`) |
 | Pickup chip | `none`: the hourly sweep heals it; `severity: low` (every other lane is `page`) |
 
 `recovery.hint` carries the exact `POST <n8n>/api/v1/executions/<id>/retry` (works
@@ -588,8 +588,7 @@ there are two ways a groomed ticket gets there:
   board at a time: `px move <REF> Backlog -m "<why>"` then `px move <REF> Todo`.
   The second move is a `plane.ticket.transitioned` into Todo, so *Ticket
   Delegation* picks it up, and Delegate Ticket grooms it first if
-  `lifecycle:triaged` is missing. On a board whose PM runs WIP=1, wait for one
-  delegation turn to finish before requeuing the next ticket. Re-read the ticket
+  `lifecycle:triaged` is missing. Re-read the ticket
   before requeuing: an old Todo ticket is often already delivered, and closing
   it with evidence is cheaper than delegating it.
   A failed lane run is paged by *Lifecycle Lane Errors* (naming the ticket and
