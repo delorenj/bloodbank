@@ -221,3 +221,47 @@ test('a body that merely contains digits is not a status; n8n\'s "<status> - " p
     /HTTP \?/,
   );
 });
+
+// Candybar is the only clock (bloodbank/.candybars/ticket-pickup-chip-sweep):
+// the sweep starts on its webhook, and answers it only after the chip chain ran.
+const MANIFEST = join(__dirname, '..', '..', '..', '.candybars', 'ticket-pickup-chip-sweep.candybar.toml');
+
+test('the sweep has no clock of its own: Candybar fires its webhook', { skip }, () => {
+  assert.ok(!WORKFLOW.nodes.some((candidate) => /schedule|cron|interval/i.test(candidate.type)), 'no Schedule Trigger');
+  const manifest = readFileSync(MANIFEST, 'utf8');
+  assert.match(manifest, /^kind = "n8n"$/m);
+  assert.match(manifest, /^schedule = "51 \* \* \* \*"$/m);
+  const webhook = manifest.match(/^webhook = "([^"]+)"$/m)?.[1];
+  const trigger = node('Stale Chip Sweep');
+  assert.equal(trigger.type, 'n8n-nodes-base.webhook');
+  assert.equal(trigger.parameters.httpMethod, 'POST');
+  assert.equal(trigger.parameters.path, webhook, 'the webhook path is the one the candybar POSTs');
+  // "Immediately" would make every run read as a success to Candybar.
+  assert.equal(trigger.parameters.responseMode, 'responseNode');
+  assert.deepEqual(next('Stale Chip Sweep'), ['Sweep — Ended Turns']);
+});
+
+test('Candybar is answered after the chip chain, even when nothing ended', { skip }, () => {
+  const ended = node('Sweep — Ended Tickets');
+  assert.equal(ended.alwaysOutputData, true, 'an empty sweep still reaches the verdict');
+  assert.deepEqual(next('Sweep — Ended Tickets'), ['Chip — Target', 'Sweep — Verdict']);
+  // Execution order v1 finishes the upper branch first.
+  assert.equal(WORKFLOW.settings?.executionOrder, 'v1');
+  assert.ok(node('Sweep — Verdict').position[1] > node('Chip — Target').position[1], 'the verdict branch sits below the chip chain');
+  assert.deepEqual(next('Sweep — Verdict'), ['Sweep — Answer Candybar']);
+  assert.equal(node('Sweep — Answer Candybar').type, 'n8n-nodes-base.respondToWebhook');
+  // The empty item an empty sweep emits never becomes a chip write.
+  assert.deepEqual(runCode('Chip — Target', [{ json: {} }]), []);
+
+  const swept = [{ json: { sweep: true } }, { json: { sweep: true } }, { json: { sweep: true } }];
+  const [answer] = runCode('Sweep — Verdict', [swept[0]], {
+    'Sweep — Ended Tickets': swept,
+    'Chip — Needs Write': [{ json: {} }],
+    'Chip — Write Labels': [{ json: {} }],
+  });
+  assert.equal(answer.json.candybar.status, 'success');
+  assert.match(answer.json.candybar.message, /swept 3 ended ticket\(s\): 1 still chipped, 1 chip\(s\) removed/);
+  // A node that never ran (nothing reached it) counts as zero.
+  const [quiet] = runCode('Sweep — Verdict', [{ json: {} }], { 'Sweep — Ended Tickets': [{ json: {} }] });
+  assert.match(quiet.json.candybar.message, /swept 0 ended ticket\(s\): 0 still chipped, 0 chip\(s\) removed/);
+});

@@ -152,7 +152,7 @@ ticket stall?" is answered by querying Candystore for
 | Ticket Delegation (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` into Todo | Delegation Started / Skipped (not `phase_guard`, `provider_event_guard`) |
 | Ticket Delegation — Groomed in Todo (`l0J53w0TsS5PwETk`) | `agent.invocation.completed` with `data.context.reason = ticket-grooming` and `data.context.phase = Todo` (a ticket *created* in Todo, which never transitions); delegates only if the live Plane state name is exactly `Todo` and the ticket carries `lifecycle:triaged` | Delegation Started / Skipped, tagged `groomed-in-todo` |
 | Lifecycle Lane Errors (`72y5JKBSJqYIjIEv`) | n8n Error Trigger: a failed execution of a workflow that names it as `settings.errorWorkflow` (grooming, delegation, groomed, and the Pickup Chip; a chip failure is `severity: low`, paged at priority 2) | Publishes `workflow.task.failed`, then **Lane failed: <ticket>** at priority 4, tagged `lane-error`, with the failing node, error class, owner, and the recovery (retry URL, requeue command) |
-| Ticket Pickup Chip (`wWXgCZiiIBWaRRzE`) | `agent.invocation.started/completed/failed` with `data.context.reason` in the two lanes; hourly stale-chip sweep | none (failures go through Lifecycle Lane Errors) |
+| Ticket Pickup Chip (`wWXgCZiiIBWaRRzE`) | `agent.invocation.started/completed/failed` with `data.context.reason` in the two lanes; stale-chip sweep fired by the Candybar `ticket-pickup-chip-sweep` at :51 hourly (webhook, no n8n Schedule Trigger) | none (failures go through Lifecycle Lane Errors) |
 
 - **Two ways into delegation.** A ticket created in Backlog is groomed there,
   and the transition lane delegates it when a person promotes it to Todo. A

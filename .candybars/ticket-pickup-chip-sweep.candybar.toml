@@ -1,0 +1,11 @@
+[candybar]
+name = "ticket-pickup-chip-sweep"
+description = "Ticket Pickup Chip stale-chip sweep: removes agent:working from tickets whose last gateway turn ended (n8n wWXgCZiiIBWaRRzE, webhook trigger; was an n8n Schedule Trigger)"
+tags = ["n8n", "33god", "lifecycle"]
+schedule = "51 * * * *"
+enabled = false
+
+[candybar.runner]
+kind = "n8n"
+timeout_s = 600
+webhook = "candybar/ticket-pickup-chip-sweep"
