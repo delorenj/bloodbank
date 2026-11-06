@@ -137,7 +137,22 @@ if [[ "$FINAL_HASH" != "$BUILT_HASH" ]]; then
 fi
 echo "[deploy] installed content hash matches the build"
 
-echo "[deploy] restarting n8n (PM2_HOME=/home/delorenj/.pm2)…"
-PM2_HOME=/home/delorenj/.pm2 "$NODE_BIN_DIR/pm2" restart n8n
+# Never `pm2 restart` / `reload --update-env`: pm2 merges the calling shell's
+# whole environment into the process and writes it to dump.pm2 in plaintext,
+# and filter_env only applies on a fresh start. Relaunch from the ecosystem
+# file instead (its launcher strips credential-shaped variables), then save
+# twice so the pre-relaunch dump is not left behind as dump.pm2.bak.
+ECOSYSTEM="${N8N_ECOSYSTEM:-$HOME/.n8n/ecosystem.config.js}"
+export PM2_HOME=/home/delorenj/.pm2
+if [[ -f "$ECOSYSTEM" ]]; then
+  echo "[deploy] relaunching n8n from $ECOSYSTEM (PM2_HOME=$PM2_HOME)…"
+  "$NODE_BIN_DIR/pm2" delete n8n >/dev/null 2>&1 || true
+  env -i HOME="$HOME" PATH="$NODE_BIN_DIR:/usr/bin:/bin" PM2_HOME="$PM2_HOME" \
+    "$NODE_BIN_DIR/pm2" start "$ECOSYSTEM" >/dev/null
+  "$NODE_BIN_DIR/pm2" save >/dev/null && "$NODE_BIN_DIR/pm2" save >/dev/null
+else
+  echo "[deploy] $ECOSYSTEM missing; falling back to pm2 restart n8n" >&2
+  "$NODE_BIN_DIR/pm2" restart n8n
+fi
 
 echo "[deploy] done — n8n-nodes-bloodbank ${EXPECTED_VERSION} (${BUILT_HASH:0:12}) deployed."

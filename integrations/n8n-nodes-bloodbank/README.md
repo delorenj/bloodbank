@@ -761,6 +761,15 @@ The deploy identifies a build by a content hash of `dist/` plus
 against it. It copies with `rsync --checksum`: `npm pack` stamps every file with
 the same fixed mtime, so a size-and-mtime comparison skips same-length edits.
 
+The restart is a relaunch, never `pm2 restart`: `pm2 delete n8n`, then `pm2
+start ~/.n8n/ecosystem.config.js` from an empty environment, then `pm2 save`
+twice. `pm2 restart` / `reload --update-env` merge the calling shell's whole
+environment (every exported key and token) into n8n and write it to
+`dump.pm2` in plaintext; `filter_env` applies only to a fresh start. The
+ecosystem runs `~/.n8n/n8n-launch`, which unsets credential-shaped variables
+and loads only the 1Password service-account token, so n8n resolves its
+`op://` references at runtime and holds no other secret in its environment.
+
 npm test covers schema generation and the shared option shape, trigger and
 publisher configuration, canonical envelopes, fail-closed invocation routing,
 fleet eligibility / skips / skip events / fences / idempotent command ids,
