@@ -193,3 +193,31 @@ test('Needs Write passes only tickets whose chip state the action would change',
   const kept = runCode('Chip — Needs Write', issues, { 'Chip — Resolve Label': items });
   assert.deepEqual(kept.map((item) => item.json.ticketId), ['ticket-1', 'ticket-3']);
 });
+
+test('a connection error on a swept ticket is transient, not "HTTP 127"', { skip }, () => {
+  // n8n's own axios error for a refused connection; plane.delo.sh resolves to
+  // 127.0.0.1 on this host, so the digits of the address must not read as a status.
+  const refused = { json: { error: { message: 'connect ECONNREFUSED 127.0.0.1:443', code: 'ECONNREFUSED' } } };
+  const timedOut = { json: { error: { message: 'connect ETIMEDOUT 192.168.1.20:443', code: 'ETIMEDOUT' } } };
+  const targets = Array.from({ length: 10 }, (_, n) => target(n));
+  const bodies = targets.map((_, n) => (n === 2 ? refused : n === 6 ? timedOut : labelsBody));
+  const out = runCode('Chip — Resolve Label', bodies, { 'Chip — Target': targets });
+  assert.equal(out.length, 8);
+  // A live turn still reports it, with no invented status.
+  assert.throws(
+    () => runCode('Chip — Resolve Label', [refused], { 'Chip — Target': [target(1, { sweep: false })] }),
+    /HTTP \? connect ECONNREFUSED/,
+  );
+});
+
+test('a body that merely contains digits is not a status; n8n\'s "<status> - " prefix is', { skip }, () => {
+  const resolvedItems = [resolved(1), resolved(2)];
+  const odd = { json: { error: { message: 'request to board 404 workers failed' } } }; // no status: transient on a sweep
+  const gone = { json: { error: { message: '404 - "Not found"' } } }; // status from the prefix: deleted, skipped
+  const kept = runCode('Chip — Needs Write', [odd, gone], { 'Chip — Resolve Label': resolvedItems });
+  assert.deepEqual(kept, []);
+  assert.throws(
+    () => runCode('Chip — Needs Write', [odd], { 'Chip — Resolve Label': [resolved(1, { sweep: false })] }),
+    /HTTP \?/,
+  );
+});
