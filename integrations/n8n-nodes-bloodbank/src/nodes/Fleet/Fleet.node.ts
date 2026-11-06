@@ -21,7 +21,6 @@ import type { FleetRoute, TicketFacts } from '../../fleet';
 import {
   DEFAULT_LANE_MAP,
   TASK_FAILED_TYPE,
-  ownerCompanyIdentity,
   reportLaneFailure,
 } from '../../laneFailure';
 import { splitList } from '../../match';
@@ -225,6 +224,71 @@ async function reportFailureItem(
   }
 }
 
+type Connection = { natsHost?: string; natsPort?: number; timeoutMs?: number };
+
+/** The Report Lane Failure operation. Never throws.
+ *
+ * Every parameter read is guarded (an expression that fails to resolve is its
+ * fallback), the registry is optional, and an empty input (no Execution Lookup
+ * item at all) still yields one report, built from the error payload alone:
+ * this is the error path, and a lane that failed must not fail again here.
+ */
+async function reportLaneFailures(
+  ctx: IExecuteFunctions,
+  items: INodeExecutionData[],
+  send: typeof publish,
+): Promise<INodeExecutionData[][]> {
+  const published: INodeExecutionData[] = [];
+  const notPublished: INodeExecutionData[] = [];
+  const inputs: Array<INodeExecutionData | undefined> = items.length ? items : [undefined];
+  let registry: { path: string; value: unknown } | undefined;
+
+  for (let i = 0; i < inputs.length; i++) {
+    const read = (name: string, fallback: unknown): unknown => {
+      try {
+        return ctx.getNodeParameter(name, i, fallback);
+      } catch {
+        return fallback;
+      }
+    };
+    let registryPath = '';
+    try {
+      registryPath = hermesRegistryPath(read('registryFile', ''));
+    } catch {
+      registryPath = '';
+    }
+    if (!registry || registry.path !== registryPath) {
+      let value: unknown;
+      try {
+        value = registryPath ? await loadHermesRegistry(registryPath) : undefined;
+      } catch {
+        value = undefined;
+      }
+      registry = { path: registryPath, value };
+    }
+    const connection = read('connection', {});
+    const conn: Connection =
+      connection !== null && typeof connection === 'object' && !Array.isArray(connection)
+        ? (connection as Connection)
+        : {};
+    const input = inputs[i];
+    const item = await reportFailureItem({
+      send,
+      lookup: input?.json ?? {},
+      errorPayload: read('errorPayload', {}),
+      laneMap: read('laneMap', DEFAULT_LANE_MAP),
+      registry: registry.value,
+      service: optionalText(read('service', '')) || LANE_ERROR_SERVICE,
+      conn,
+    });
+    (item.published ? published : notPublished).push({
+      json: item.json as never,
+      ...(input ? { pairedItem: { item: i } } : {}),
+    });
+  }
+  return [published, notPublished];
+}
+
 const mapping = (
   displayName: string,
   name: string,
@@ -308,10 +372,15 @@ export class Fleet implements INodeType {
         displayName: 'Error Payload',
         name: 'errorPayload',
         type: 'json',
-        default: "={{ $('Lane Failed').first().json }}",
+        // Deliberately no default. n8n drops a parameter equal to its default
+        // from the saved workflow, so a defaulted payload would leave the export
+        // silent about where the Error Trigger item comes from; the wiring has
+        // to name it. Left empty, the report is built from the lookup alone.
+        default: '',
+        placeholder: "={{ $('Lane Failed').first().json }}",
         displayOptions: { show: { operation: ['reportLaneFailure'] } },
         description:
-          'The Error Trigger item: {execution, workflow}, or {trigger} when the trigger itself failed. The input item is the Execution Lookup result (the n8n API execution with data, or {error}).',
+          "The Error Trigger item: {execution, workflow}, or {trigger} when the trigger itself failed. Set it explicitly, e.g. ={{ $('Lane Failed').first().json }}. The input item is the Execution Lookup result (the n8n API execution with data, or {error}).",
       },
       {
         displayName: 'Lane Map',
@@ -466,9 +535,17 @@ export class Fleet implements INodeType {
     publishMessage?: unknown,
   ): Promise<INodeExecutionData[][]> {
     const items = this.getInputData();
+    const send = typeof publishMessage === 'function' ? (publishMessage as typeof publish) : publish;
+    let laneOperation = false;
+    try {
+      laneOperation = this.getNodeParameter('operation', 0, 'groomTicket') === 'reportLaneFailure';
+    } catch {
+      laneOperation = false;
+    }
+    if (laneOperation) return reportLaneFailures(this, items, send);
+
     const dispatched: INodeExecutionData[] = [];
     const skipped: INodeExecutionData[] = [];
-    const send = typeof publishMessage === 'function' ? (publishMessage as typeof publish) : publish;
     let registry: { path: string; value: unknown } | undefined;
 
     for (let i = 0; i < items.length; i++) {
@@ -479,40 +556,6 @@ export class Fleet implements INodeType {
           natsPort?: number;
           timeoutMs?: number;
         };
-        if (operation === 'reportLaneFailure') {
-          // The error path: it reports its own trouble as an item and never throws.
-          const registryPath = hermesRegistryPath(this.getNodeParameter('registryFile', i, ''));
-          if (!registry || registry.path !== registryPath) {
-            let value: unknown;
-            try {
-              value = await loadHermesRegistry(registryPath);
-            } catch {
-              value = undefined;
-            }
-            registry = { path: registryPath, value };
-          }
-          const read = (name: string, fallback: unknown): unknown => {
-            try {
-              return this.getNodeParameter(name, i, fallback);
-            } catch {
-              return fallback;
-            }
-          };
-          const item = await reportFailureItem({
-            send,
-            lookup: items[i].json,
-            errorPayload: read('errorPayload', {}),
-            laneMap: read('laneMap', DEFAULT_LANE_MAP),
-            registry: registry.value,
-            service: optionalText(read('service', '')) || LANE_ERROR_SERVICE,
-            conn,
-          });
-          (item.published ? dispatched : skipped).push({
-            json: item.json as never,
-            pairedItem: { item: i },
-          });
-          continue;
-        }
         const service = optionalText(this.getNodeParameter('service', i, '')) || 'n8n-agent-fleet';
         const param = (name: string): string | undefined =>
           optionalText(this.getNodeParameter(name, i, ''));
@@ -718,13 +761,16 @@ export class Fleet implements INodeType {
         // byte-identical, which is what the gateway's journal keys on (command_id
         // plus an envelope digest): the duplicate is recognised, not rejected.
         const commandId = fleetCommandId(causationId, operation, route.agentId);
-        // An enrolled employee's company identity rides along on the grooming
-        // and delegation commands (context is open for extra keys, so this
-        // needs no schema revision). Not enrolled: nothing is stamped.
-        const identity =
-          operation === 'groomTicket' || operation === 'delegateTicket'
-            ? ownerCompanyIdentity(registry.value, route.agentId)
-            : null;
+        // No registry-derived identity rides on the command. The gateway
+        // journals command_id + sha256(envelope) and terminally rejects (TERM,
+        // log line only) a same-id redelivery whose digest differs
+        // (bloodbank_hermes_gateway/adapter.py, CommandInvalid "command_id
+        // collides with a different command envelope"). A stamp read from the
+        // registry at dispatch time made an enrollment, suspension or handle
+        // change between delivery and redelivery exactly that: the redelivery
+        // was dropped silently, and a journaled-but-orphaned command could no
+        // longer be re-driven by its identical twin. The owner's identity is
+        // reported on bloodbank.workflow.task.failed instead.
         const result = await send({
           type: INVOCATION_COMMAND_TYPE,
           kind: 'command',
@@ -732,7 +778,6 @@ export class Fleet implements INodeType {
             target_agent_id: route.agentId,
             prompt,
             context: {
-              ...(identity ? { employee: { subject: identity.subject, handle: identity.handle } } : {}),
               reason: reasonForInvocation,
               repo: facts.repo,
               ticket_key: facts.ticketKey,

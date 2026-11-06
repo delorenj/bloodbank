@@ -592,10 +592,59 @@ test('a lookup that failed still pages, without a ticket', { skip: codeOnly() },
 
 // The Fleet node's own behaviour is covered by lane-failure.test.cjs; here we
 // only check that the live export, once rewired, hands it the right inputs.
+//
+// errorPayload must be set explicitly in the export. n8n drops a parameter that
+// equals its default from the saved workflow, so "absent" can only mean "never
+// wired"; falling back to a default here would pass an export that hands the
+// node nothing.
+function assertFleetReportWiring(workflow) {
+  const byName = (name) => {
+    const found = workflow.nodes.find((candidate) => candidate.name === name);
+    assert.ok(found, `the error workflow has a "${name}" node`);
+    return found;
+  };
+  const report = workflow.nodes.find(
+    (candidate) =>
+      candidate.type === 'n8n-nodes-bloodbank.bloodbankFleet' &&
+      candidate.parameters?.operation === 'reportLaneFailure',
+  );
+  assert.ok(report, 'the error workflow has a Fleet Report Lane Failure node');
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(report.parameters, 'errorPayload'),
+    `${report.name} sets errorPayload explicitly`,
+  );
+  assert.match(
+    String(report.parameters.errorPayload),
+    /\$\(\s*['"]Lane Failed['"]\s*\)/,
+    `${report.name}'s errorPayload reads the Error Trigger item`,
+  );
+  assert.equal(byName('Execution Lookup').onError, 'continueRegularOutput');
+  assert.equal(byName('Page Lifecycle').parameters.topic, 'lifecycle');
+  assert.ok(!workflow.nodes.some((candidate) => /schedule|cron|interval/i.test(candidate.type)));
+}
+
+test('the Fleet wiring check refuses an export that leaves errorPayload to a default', () => {
+  const wired = {
+    nodes: [
+      { name: 'Lane Failed', type: 'n8n-nodes-base.errorTrigger', parameters: {} },
+      { name: 'Execution Lookup', type: 'n8n-nodes-base.httpRequest', onError: 'continueRegularOutput', parameters: {} },
+      {
+        name: 'Report Lane Failure',
+        type: 'n8n-nodes-bloodbank.bloodbankFleet',
+        parameters: { operation: 'reportLaneFailure', errorPayload: "={{ $('Lane Failed').first().json }}" },
+      },
+      { name: 'Page Lifecycle', type: 'n8n-nodes-ntfy-client.ntfySend', parameters: { topic: 'lifecycle' } },
+    ],
+  };
+  assertFleetReportWiring(wired);
+  const silent = structuredClone(wired);
+  delete silent.nodes[2].parameters.errorPayload;
+  assert.throws(() => assertFleetReportWiring(silent), /sets errorPayload explicitly/);
+  const elsewhere = structuredClone(wired);
+  elsewhere.nodes[2].parameters.errorPayload = '={{ $json }}';
+  assert.throws(() => assertFleetReportWiring(elsewhere), /reads the Error Trigger item/);
+});
+
 test('when the error workflow reports through the Fleet node it is wired for the contract', { skip: errorsSkip || (ERRORS && reportNode() ? false : 'the live error workflow still uses Describe Failure') }, () => {
-  const report = reportNode();
-  assert.match(String(report.parameters.errorPayload ?? "={{ $('Lane Failed').first().json }}"), /Lane Failed/);
-  assert.equal(errorsNode('Execution Lookup').onError, 'continueRegularOutput');
-  assert.equal(errorsNode('Page Lifecycle').parameters.topic, 'lifecycle');
-  assert.ok(!ERRORS.nodes.some((candidate) => /schedule|cron|interval/i.test(candidate.type)));
+  assertFleetReportWiring(ERRORS);
 });

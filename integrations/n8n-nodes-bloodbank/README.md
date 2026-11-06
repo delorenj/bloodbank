@@ -452,12 +452,13 @@ new field is optional and typed).
 
 Wire it in *Lifecycle Lane Errors* after **Execution Lookup**. The input item is
 the lookup (the n8n API execution with data, or `{error}` when the lookup
-failed).
+failed). An empty input (no lookup item at all) still yields one report, built
+from the error payload alone.
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | Operation | | `reportLaneFailure` |
-| Error Payload (`errorPayload`, json) | `={{ $('Lane Failed').first().json }}` | The Error Trigger item: `{execution, workflow}`, or `{trigger}` when the trigger itself failed |
+| Error Payload (`errorPayload`, json) | none: set it, normally to `={{ $('Lane Failed').first().json }}` | The Error Trigger item: `{execution, workflow}`, or `{trigger}` when the trigger itself failed. It has no default on purpose: n8n drops a parameter equal to its default from the saved workflow, so the export would not say where the item comes from. The wiring test requires it to be set explicitly |
 | Lane Map (`laneMap`, json) | the four lane ids -> `ticket-grooming`, `ticket-delegation`, `ticket-delegation-groomed`, `ticket-pickup-chip` | n8n workflow id -> lane slug, which becomes `data.workflow`. An unlisted workflow still reports, as its slugified name |
 | Service Name (`service`) | `n8n-lifecycle-lane-errors` | Recorded as the event's `service` (a separate parameter from the dispatch operations' `n8n-agent-fleet`) |
 
@@ -466,18 +467,27 @@ failed).
 Every item on either output carries `event` (the finished envelope) and
 `page` (`{title, message, click, priority, tags}`), so a downstream ntfy node
 pages from it even when the bus is what broke. It **never throws**: a malformed
-or partial payload degrades to unknown fields and still reports.
+or partial payload, or a parameter expression that fails to resolve (including
+the registry path and the connection), degrades to unknown fields and still
+reports.
 
 **What it works out.** The lane (by workflow id); the ticket, from the trigger
 item of the failed run (`onTicketCreated`, `onTicketTransitioned`,
 `onGroomingCompleted` + the live labels of *Read Ticket*), or on the pickup chip
 from line 1 of the error stack (`... failed for KEY (board <uuid>)` — a sweep
-carries ~98 tickets, so the message is useless); the error class
+carries ~98 tickets, so the message is useless), matched to the sweep item by
+`ticketKey` or `ticketId` (a UUID is reported as `ticket_id`, never as
+`ticket_key`, and gets no browse link), with the repo taken from the owner's
+registry row when the lane carries none; the error class
 (`rate_limited`, `auth_failed`, `not_found`, `no_route`, `ineligible`,
 `invalid_payload`, `upstream_unavailable`, `timeout`, `bus_unavailable`,
-`node_error`, `unknown`) from the HTTP status and text, with the upstream
-(`plane`: every lane Plane read uses the shared n8n credential, so
-`credential_scope` is `fleet_shared`; `nats`) and any `Retry-After`; the owner,
+`node_error`, `unknown`) from the HTTP status and text (without a status:
+"Bad gateway" is 502, "Gateway timeout" 504, "Service unavailable" 503; a JS
+property access such as `(reading 'status 500')` is never a status), with the
+upstream (`plane`: every lane Plane read uses the shared n8n credential, so
+`credential_scope` is `fleet_shared`; `nats`) and any `Retry-After` (delta-seconds,
+or an HTTP-date turned into seconds from now; a date's day or year is never
+read as seconds); the owner,
 by `target_agent_id` (groomed lane) or `resolveFleetAgentForBoard` over the
 registry, with that row's `company_identity` and `gateway_consumer` (absent =
 `null`, i.e. not enrolled); and the recovery:
@@ -492,7 +502,10 @@ registry, with that row's `company_identity` and `gateway_consumer` (absent =
 `recovery.hint` carries the exact `POST <n8n>/api/v1/executions/<id>/retry` (works
 only while the run data exists, about 7 hours) and the `px` commands. An
 `auth_failed` on a known credential is `rotate_credential` (`enroll_identity`
-when the credential is the employee's and the owner is not enrolled); a
+when the credential is the employee's and the owner is not enrolled), except a
+403 whose body names membership, permission or the workspace: the key may be
+fine and its user simply not let in, so that is `fix_route` with a hint naming
+both (add the user to the board, or rotate a revoked key). A
 `no_route`/`ineligible` is `fix_route`.
 
 **Ids and ordering.** `id` = `uuid5("workflow.task.failed:<workflow_id>:<execution_id>")`,
@@ -502,15 +515,28 @@ the trigger envelope's id, and `ordering_key` is `task:<repo|board>:<ticket_id>`
 else `workflow:<workflow_id>:<execution_id>`. A failure inside the trigger has no
 execution; its `run_id` is `trigger-<hash>`, stable for an hour.
 
-**Nothing secret.** `reason` is capped at 500 characters; Bearer values, API
-keys, `op://` references and long token-like strings are redacted; the stack is
-read, never copied; `redacted: true` is constant; the registry is projected down
-to the company identity and gateway consumer, never a credential reference.
+**Nothing secret.** `reason` is capped at 500 characters; every string is
+redacted exactly once (so a redacted value never grows): `op://` references,
+the whole credential of an `Authorization:` header, `Bearer`/`Basic` values,
+JWTs, any `*token`/`*secret`/`password`/`passwd`/api-key/`session` key's value
+(`key=v`, `key: v`, and `x-api-key v` / `password v`), `user:pass@` in any
+scheme's URL, vendor-prefixed keys, and long token-like strings. That last
+backstop does not apply to slug-shaped fields (`data.workflow`, `data.stage`,
+`lane.workflow_name`, `context.reason`, `target_agent_id`), so an unmapped
+workflow keeps a useful slug. The stack is read, never copied; `redacted: true`
+is constant; the registry is projected down to the company identity and gateway
+consumer, never a credential reference.
 
-**Employee stamp.** Groom Ticket and Delegate Ticket commands carry
-`data.context.employee = {subject, handle}` when the owner's registry row has a
-`company_identity` (the context object is open for extra keys, so no schema
-revision); an owner that is not enrolled stamps nothing.
+**No identity stamp on commands.** Groom Ticket and Delegate Ticket commands
+carry nothing read from the owner's `company_identity` (0.8.0 stamped
+`data.context.employee`; 0.8.1 removed it). The Hermes gateway journals each
+command under `command_id` plus a sha256 of the whole envelope and terminally
+rejects a same-id redelivery whose digest differs (TERM, a log line, no event).
+A stamp read from the registry at dispatch time turned an enrollment,
+suspension or handle change between delivery and redelivery into exactly that:
+the redelivery was dropped silently, and a journaled command whose own message
+was lost could no longer be re-driven. The owner's identity is reported on
+`bloodbank.workflow.task.failed` instead.
 
 ### The lifecycle lane
 

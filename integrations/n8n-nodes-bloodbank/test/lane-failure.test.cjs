@@ -3,6 +3,7 @@
 // sanitized from the shapes recon saw on 2026-11-05 (Plane 429 on the groomed
 // lane, Plane 500 on the pickup chip's sweep); none of it is a raw execution.
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const { mkdtemp, rm, writeFile } = require('node:fs/promises');
 const { join } = require('node:path');
 const test = require('node:test');
@@ -773,7 +774,11 @@ test('the node declares Report Lane Failure with the documented parameters and d
   const shown = (name) => description.properties.filter((property) => property.name === name);
   const [errorPayload] = shown('errorPayload');
   assert.equal(errorPayload.type, 'json');
-  assert.equal(errorPayload.default, "={{ $('Lane Failed').first().json }}");
+  // No default: n8n drops a parameter equal to its default from the saved
+  // workflow, so a defaulted Error Payload would leave the export silent about
+  // where the Error Trigger item comes from. The wiring must say it.
+  assert.equal(errorPayload.default, '');
+  assert.equal(errorPayload.placeholder, "={{ $('Lane Failed').first().json }}");
   assert.deepEqual(errorPayload.displayOptions, { show: { operation: ['reportLaneFailure'] } });
   const [laneMap] = shown('laneMap');
   assert.equal(laneMap.type, 'json');
@@ -894,35 +899,305 @@ test('it also lands the item when nothing at all is wired', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// Employee stamp on groom/delegate commands
+// Groom/delegate commands carry no registry-derived identity stamp
 // ---------------------------------------------------------------------------
 
-test('groom and delegate commands carry context.employee only for an enrolled owner', async (t) => {
-  const registryFile = await tempRegistry(t, REGISTRY);
-  const dispatch = async (operation, data) => {
-    const calls = [];
-    const send = async (options) => {
-      calls.push(options);
-      return { subject: 's', correlationid: 'c', eventId: 'e', commandId: options.commandId };
-    };
-    const ctx = context({ operation, registryFile }, [{ json: { id: TRIGGER_EVENT, type: 'bloodbank.repo.task.created', data } }]);
-    await Fleet.prototype.execute.call(ctx, send);
-    return calls.find((call) => call.type === COMMAND);
+function sortKeys(value) {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys(value[key])]));
+  }
+  return value;
+}
+
+/** The Hermes gateway's journal digest: sha256 of the sorted, compact envelope
+ *  (bloodbank_hermes_gateway/execution_state.py envelope_digest). */
+const gatewayDigest = (envelope) => createHash('sha256').update(JSON.stringify(sortKeys(envelope))).digest('hex');
+
+test('a redelivered groom/delegate command is byte-identical whatever the registry now says about the owner identity', async (t) => {
+  // The gateway journals command_id + that digest and terminally rejects
+  // (TERM, no event) a same-id redelivery with another digest. A stamp read
+  // from the registry at dispatch time would turn an enrollment, a suspension
+  // or a handle change between delivery and redelivery into exactly that.
+  const variant = (mutate) => {
+    const registry = structuredClone(REGISTRY);
+    mutate(registry.agents['heyma-pm']);
+    return registry;
   };
-  const enrolled = await dispatch('groomTicket', {
-    repo: 'transcription-queue', board_id: HEYMA_BOARD, ticket_key: 'HEYMA-12', ticket_id: HEYMA_TICKET, workspace: '33god',
+  const registries = {
+    enrolled: REGISTRY,
+    unenrolled: variant((row) => { delete row.company_identity; }),
+    suspended: variant((row) => { row.company_identity.status = 'suspended'; }),
+    retired: variant((row) => { row.company_identity.status = 'retired'; }),
+    renamed: variant((row) => { row.company_identity.handle = 'grolf-2'; }),
+  };
+  const causing = {
+    id: TRIGGER_EVENT,
+    time: '2026-11-05T19:00:00.000Z',
+    type: 'bloodbank.repo.task.created',
+    data: {
+      repo: 'transcription-queue', board_id: HEYMA_BOARD, ticket_key: 'HEYMA-12', ticket_id: HEYMA_TICKET,
+      workspace: '33god', phase: 'Todo',
+    },
+  };
+  for (const operation of ['groomTicket', 'delegateTicket']) {
+    const digests = new Set();
+    for (const [label, registry] of Object.entries(registries)) {
+      const registryFile = await tempRegistry(t, registry);
+      const calls = [];
+      const send = async (options) => {
+        calls.push(options);
+        return { subject: 's', correlationid: 'c', eventId: 'e', commandId: options.commandId };
+      };
+      await Fleet.prototype.execute.call(context({ operation, registryFile }, [{ json: causing }]), send);
+      const command = calls.find((call) => call.type === COMMAND);
+      assert.ok(command, `${operation}/${label} dispatched`);
+      assert.equal('employee' in command.data.context, false, `${operation}/${label} stamps no identity`);
+      const envelope = buildEnvelope(command).envelope;
+      validateEnvelope(COMMAND, envelope);
+      digests.add(gatewayDigest(envelope));
+    }
+    assert.equal(digests.size, 1, `${operation}: one gateway digest across every registry state`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial review of 0.8.0
+// ---------------------------------------------------------------------------
+
+const NOW = new Date('2026-11-05T20:00:00Z');
+const failing = (error, extra = {}) =>
+  reportValid({
+    errorPayload: { execution: { id: '21', error, ...extra }, workflow: { id: WF_GROOMING, name: 'Ticket Grooming' } },
+    lookup: {},
+    now: NOW,
   });
-  assert.deepEqual(enrolled.data.context.employee, { subject: SUBJECT, handle: 'grolf' });
-  assert.equal(enrolled.data.context.reason, 'ticket-grooming');
-  // The command still validates against its schema.
-  validateEnvelope(COMMAND, buildEnvelope(enrolled).envelope);
-  const delegated = await dispatch('delegateTicket', {
-    repo: 'transcription-queue', board_id: HEYMA_BOARD, ticket_key: 'HEYMA-12', ticket_id: HEYMA_TICKET, workspace: '33god', phase: 'Todo',
+
+test('redaction runs once: an op:// ref keeps one bracket and the summary stays within 200', () => {
+  const ref = 'op://DeLoSecrets/Plane/credential';
+  // The ref sits inside the first 199 characters of a summary that is capped.
+  const report = failing({ message: `boom ${ref}` }, { lastNodeExecuted: `${'N'.repeat(100)} ${ref} ${'M'.repeat(100)}` });
+  assert.equal(report.data.reason, 'boom op://[redacted]');
+  assert.ok(report.data.summary.length <= 200, `summary is ${report.data.summary.length} long`);
+  assert.match(report.data.summary, /op:\/\/\[redacted\] /);
+  const text = JSON.stringify(report);
+  assert.doesNotMatch(text, /\[redacted\]\]/);
+  assert.doesNotMatch(report.page.message, /\[redacted\]\]/);
+  assert.match(report.page.message, /boom op:\/\/\[redacted\]$/m);
+});
+
+test('redactText is idempotent', () => {
+  const samples = [
+    'op://DeLoSecrets/x/credential',
+    'Authorization: Bearer abcdef1234567890',
+    'Bearer abcdef1234567890',
+    'Basic dXNlcjpwYXNzd29yZA==',
+    'token=abc123 refresh_token=def456',
+    'https://u:p@plane.delo.sh/x?api_key=zzz',
+    'password hunter2',
+    'session=s3ss10n',
+  ];
+  for (const sample of samples) {
+    const once = redactText(sample);
+    assert.equal(redactText(once), once, sample);
+  }
+});
+
+test('the 32-character backstop leaves slug-shaped fields alone', () => {
+  const name = 'ticket-delegation-groomed-2026-q4-rollout-v2';
+  const stage = 'delegate-groomed-ticket-2026-11-05-retry-v2';
+  const report = reportValid({
+    errorPayload: {
+      execution: { id: '22', lastNodeExecuted: stage, error: { message: 'oops' } },
+      workflow: { id: 'zzzzzzzzzzzzzzzz', name },
+    },
+    lookup: {},
+    now: NOW,
   });
-  assert.deepEqual(delegated.data.context.employee, { subject: SUBJECT, handle: 'grolf' });
-  const unenrolled = await dispatch('groomTicket', {
-    repo: 'james-brennan', board_id: JIMB_BOARD, ticket_key: 'JIMB-9', ticket_id: JIMB_TICKET, workspace: 'automaticai',
+  const { data } = report;
+  assert.equal(data.workflow, name, 'an unmapped workflow keeps a useful slug');
+  assert.equal(data.lane.workflow_name, name);
+  assert.equal(data.stage, stage);
+  assert.equal(data.context.reason, name);
+  assert.equal(data.summary, `${name}: ${name} failed at ${stage} (node_error)`);
+  assert.match(report.page.tags, new RegExp(`,${name}$`));
+  // Explicit credential syntax is still stripped from a slug-shaped field.
+  const keyed = reportValid({
+    errorPayload: {
+      execution: { id: '23', lastNodeExecuted: 'Call token=abc123secret', error: { message: 'oops' } },
+      workflow: { id: WF_GROOMING, name: 'Ticket Grooming' },
+    },
+    lookup: {},
   });
-  assert.equal(unenrolled.data.context.employee, undefined);
-  assert.equal('employee' in unenrolled.data.context, false);
+  assert.equal(keyed.data.stage, 'Call token=[redacted]');
+  // Free text keeps the backstop.
+  assert.equal(redactText('x a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8 y'), 'x [redacted] y');
+});
+
+test('redaction covers *_token keys, x-api-key and password values, URL credentials, session ids and the whole Authorization credential', () => {
+  const cases = [
+    ['refresh_token=rt-abc123', 'rt-abc123'],
+    ['"access_token": "at.abc.123"', 'at.abc.123'],
+    ['id_token: idt0kenvalue', 'idt0kenvalue'],
+    ['client_token=ct-998877', 'ct-998877'],
+    ['x-api-key plane_api_0123', 'plane_api_0123'],
+    ['X-Api-Key: plane_api_4567', 'plane_api_4567'],
+    ['password hunter2', 'hunter2'],
+    ['passwd s3cretpw', 's3cretpw'],
+    ['postgres://wax:pgpass99@db.delo.sh:5432/tx', 'pgpass99'],
+    ['nats://bb:natspw77@nats:4222', 'natspw77'],
+    ['amqp://user:p@ssw0rd@rabbit/vhost', 'ssw0rd'],
+    ['redis://:redispw55@cache:6379', 'redispw55'],
+    ['Cookie: session=sess-42abc; theme=dark', 'sess-42abc'],
+    ['Authorization: Bearer xyz12', 'xyz12'],
+    ['authorization: bearer tok:with:colons', 'with:colons'],
+    ['Authorization: Basic dXNlcjpwYXNzd29yZA==', 'dXNlcjpwYXNzd29yZA'],
+  ];
+  for (const [text, secret] of cases) {
+    const out = redactText(`before ${text} after`);
+    assert.ok(!out.includes(secret), `${text} -> ${out}`);
+    assert.match(out, /^before /, out);
+    assert.match(out, / after$/, out);
+    assert.equal(redactText(out), out, `idempotent: ${out}`);
+  }
+  assert.equal(redactText('Authorization: Bearer xyz12'), 'Authorization: Bearer [redacted]');
+  assert.equal(redactText('postgres://wax:pgpass99@db.delo.sh/tx'), 'postgres://[redacted]@db.delo.sh/tx');
+  // Prose that merely mentions a word is left alone where it has no value shape.
+  assert.equal(redactText('Authorization failed - please check your credentials'), 'Authorization failed - please check your credentials');
+  assert.equal(redactText('skills-sync-maintenance-2026'), 'skills-sync-maintenance-2026');
+});
+
+test('classification without an httpCode: 502 and 504 by name, refused connections, no property-access statuses', () => {
+  const cases = [
+    [{ message: 'Bad gateway' }, 'upstream_unavailable', 502],
+    [{ message: '502 Bad Gateway' }, 'upstream_unavailable', 502],
+    [{ message: 'Gateway timeout' }, 'upstream_unavailable', 504],
+    [{ message: 'Gateway Time-out' }, 'upstream_unavailable', 504],
+    [{ message: 'Service unavailable' }, 'upstream_unavailable', 503],
+    [{ message: 'The service refused the connection - perhaps it is offline' }, 'upstream_unavailable', null],
+    [{ message: "Cannot read properties of undefined (reading 'status 500')" }, 'node_error', null],
+    [{ message: "Cannot read properties of undefined (reading 'timeout')" }, 'node_error', null],
+  ];
+  for (const [error, klass, status] of cases) {
+    const got = classOf(error);
+    assert.equal(got.class, klass, JSON.stringify(error));
+    assert.equal(got.http_status, status, JSON.stringify(error));
+  }
+});
+
+test('Retry-After is delta-seconds or an HTTP-date against now, never a date read as seconds', () => {
+  const after = (error) => failing(error).data.error.retry_after_seconds;
+  assert.equal(after({ message: 'HTTP 429 Retry-After: Thu, 05 Nov 2026 20:01:30 GMT' }), 90);
+  assert.equal(
+    after({ message: 'HTTP 429', cause: { response: { headers: { 'retry-after': 'Thu, 05 Nov 2026 20:00:10 GMT' } } } }),
+    10,
+  );
+  assert.equal(after({ message: 'HTTP 429 Retry-After: Wed, 04 Nov 2026 07:28:00 GMT' }), 0, 'a past date is now');
+  assert.equal(after({ message: 'HTTP 429 Retry-After: 21 Oct 2026' }), null, 'neither form');
+  assert.equal(after({ message: 'HTTP 429', cause: { headers: { 'Retry-After': 'soon' } } }), null);
+  assert.equal(after({ message: 'HTTP 429 Retry-After: 30' }), 30);
+  assert.equal(after({ message: 'HTTP 429 retry after 45 seconds' }), 45);
+  assert.equal(after({ message: 'HTTP 429 {"retry_after": 12}' }), 12);
+  assert.match(failing({ message: 'HTTP 429 Retry-After: Thu, 05 Nov 2026 20:01:30 GMT' }).data.recovery.hint, /Wait 90s first/);
+});
+
+test('a Plane 403 that names membership, permission or workspace is fix_route and names both possibilities', () => {
+  for (const body of [
+    '{"detail":"You do not have permission to perform this action."}',
+    '{"error":"You are not a member of this workspace"}',
+    '{"error":"Only project members can view this issue"}',
+  ]) {
+    const error = structuredClone(GROOMED_ERROR);
+    error.execution.error.message = 'HTTP 403 Forbidden';
+    error.execution.error.description = body;
+    error.execution.error.stack = error.execution.error.stack.replace('HTTP 429', 'HTTP 403');
+    const { data } = reportValid({ errorPayload: error, lookup: GROOMED_LOOKUP });
+    assert.equal(data.error.class, 'auth_failed', body);
+    assert.equal(data.error.http_status, 403, body);
+    assert.equal(data.error.credential_scope, 'fleet_shared', body);
+    assert.equal(data.recovery.action, 'fix_route', body);
+    assert.match(data.recovery.hint, /member/i, body);
+    assert.match(data.recovery.hint, /permission/i, body);
+    assert.match(data.recovery.hint, /rotate/i, body);
+    assert.match(data.recovery.hint, /TpxVVgOnmjHaE6h7/, body);
+    assert.match(data.recovery.hint, new RegExp(HEYMA_BOARD), body);
+    assert.ok(data.recovery.hint.length <= 400);
+  }
+});
+
+test('chip: the owner row fills the repo, so the ordering key is task:<repo>:<ticket_id>', () => {
+  const error = structuredClone(CHIP_ERROR);
+  error.execution.error.stack = `Error: Chip — List Labels failed for HEYMA-1 (board ${HEYMA_BOARD}): HTTP 500\n    at x`;
+  const report = reportValid({ errorPayload: error, lookup: CHIP_LOOKUP });
+  assert.equal(report.data.target_agent_id, 'heyma-pm');
+  assert.equal(report.data.context.repo, 'transcription-queue');
+  assert.equal(report.data.context.ticket_id, HEYMA_TICKET);
+  assert.equal(report.orderingKey, `task:transcription-queue:${HEYMA_TICKET}`);
+});
+
+test('chip: a stack that names the ticket by UUID matches the sweep item by ticketId', () => {
+  const uuid = 'c0ffee00-0000-4000-8000-000000000147';
+  const error = structuredClone(CHIP_ERROR);
+  error.execution.error.stack = `Error: Chip — List Labels failed for ${uuid} (board ${GRUV_BOARD}): HTTP 500\n    at x`;
+  const { data } = reportValid({ errorPayload: error, lookup: CHIP_LOOKUP });
+  assert.equal(data.context.ticket_key, 'GRUV-147');
+  assert.equal(data.context.ticket_id, uuid);
+  assert.equal(data.target_agent_id, 'gruv-pm');
+  assert.equal(data.links[0].url, 'https://plane.delo.sh/automaticai/browse/GRUV-147/');
+});
+
+test('chip: a UUID nobody can name is ticket_id, never ticket_key, with no broken browse link', () => {
+  const uuid = 'deadbeef-0000-4000-8000-000000000001';
+  const error = structuredClone(CHIP_ERROR);
+  error.execution.error.stack = `Error: Chip — List Labels failed for ${uuid} (board ${GRUV_BOARD}): HTTP 500\n    at x`;
+  const report = reportValid({ errorPayload: error, lookup: CHIP_LOOKUP });
+  assert.equal(report.data.context.ticket_key, null);
+  assert.equal(report.data.context.ticket_id, uuid);
+  assert.deepEqual(report.data.links.map((link) => link.rel), ['run']);
+  assert.ok(!JSON.stringify(report).includes(`/browse/${uuid}`));
+  assert.equal(report.page.click, CHIP_ERROR.execution.url);
+  assert.equal(report.page.title, `Lane failed: ${uuid}`);
+  // Same rule off the chip: a stack that names a UUID is the ticket id.
+  const groomed = structuredClone(GROOMED_ERROR);
+  groomed.execution.error.stack = `Error: Read Ticket failed for ${uuid} (board ${HEYMA_BOARD}): HTTP 429\n    at x`;
+  const off = reportValid({ errorPayload: groomed, lookup: { error: { message: 'x' } } }).data;
+  assert.equal(off.context.ticket_key, null);
+  assert.equal(off.context.ticket_id, uuid);
+  assert.ok(!(off.links || []).some((link) => link.rel === 'page'));
+});
+
+test('the lane branch never throws when the registryFile or connection parameter fails to resolve', async (t) => {
+  const fallback = await tempRegistry(t, REGISTRY);
+  const saved = process.env.HERMES_AGENTS_REGISTRY;
+  process.env.HERMES_AGENTS_REGISTRY = fallback;
+  t.after(() => {
+    if (saved === undefined) delete process.env.HERMES_AGENTS_REGISTRY;
+    else process.env.HERMES_AGENTS_REGISTRY = saved;
+  });
+  const rec = recorder();
+  const broken = new Error('ExpressionError: invalid syntax');
+  const [published, notPublished] = await Fleet.prototype.execute.call(
+    context(
+      { operation: 'reportLaneFailure', errorPayload: GROOMED_ERROR, registryFile: broken, connection: broken },
+      [{ json: GROOMED_LOOKUP }],
+    ),
+    rec.send,
+  );
+  assert.equal(published.length + notPublished.length, 1);
+  assert.equal(published[0].json.event.data.context.ticket_key, 'HEYMA-12');
+  assert.equal(published[0].json.event.data.target_agent_id, 'heyma-pm');
+});
+
+test('an empty Execution Lookup input still yields one report, built from the error payload alone', async (t) => {
+  const rec = recorder();
+  const [published, notPublished] = await runNode(t, { errorPayload: GROOMED_ERROR }, [], rec.send);
+  assert.equal(published.length, 1);
+  assert.equal(notPublished.length, 0);
+  const { data } = published[0].json.event;
+  assert.equal(data.run_id, '632616');
+  assert.equal(data.workflow, 'ticket-delegation-groomed');
+  assert.equal(data.context.ticket_key, 'HEYMA-12');
+  assert.equal(data.target_agent_id, 'heyma-pm');
+  assert.equal(published[0].pairedItem, undefined, 'there is no input item to pair with');
+  validateEnvelope(TYPE, published[0].json.event);
 });

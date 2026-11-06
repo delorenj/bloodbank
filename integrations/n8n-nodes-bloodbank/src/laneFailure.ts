@@ -162,37 +162,93 @@ export function parseLaneMap(value: unknown): Record<string, string> {
 // ---------------------------------------------------------------------------
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NOT_YET = '(?!\\[redacted\\])';
 
-/** Strip anything secret-shaped from one string. UUIDs are ids, not secrets. */
-export function redactText(value: string): string {
-  return value
-    .replace(/\bop:\/\/[^\s"'`)\]>,]+/gi, 'op://[redacted]')
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, 'Bearer [redacted]')
-    .replace(/\bBasic\s+[A-Za-z0-9+/=]{8,}/g, 'Basic [redacted]')
-    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, '[redacted]')
-    .replace(
-      /\b(x-api-key|api[_-]?key|authorization|access[_-]?token|auth[_-]?token|token|secret|password|passwd)(["']?\s*[:=]\s*["']?)[^\s"'&,;}]+/gi,
-      '$1$2[redacted]',
-    )
-    .replace(/([?&](?:api[_-]?key|key|token|access_token|secret|sig|signature)=)[^&\s"']+/gi, '$1[redacted]')
-    .replace(/\b(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[redacted]@')
-    .replace(/\b(?:sk|pk|rk|ghp|gho|ghs|github_pat|xox[abprs]|glpat|AKIA)[-_A-Za-z0-9]{12,}/g, '[redacted]')
-    .replace(/[A-Za-z0-9_+=-]{32,}/g, (token) =>
-      UUID.test(token) || !/\d/.test(token) || !/[A-Za-z]/.test(token) ? token : '[redacted]',
-    );
+/** Credential syntax: a value is only ever found because something names it.
+ *
+ * Every quantifier is bounded or runs over a class that cannot overlap what
+ * follows it, so this stays linear on hostile input. Every rule skips a value
+ * that is already `[redacted]`, so redacting twice changes nothing.
+ */
+const EXPLICIT: Array<[RegExp, string | ((...groups: string[]) => string)]> = [
+  [new RegExp(`\\bop:\\/\\/${NOT_YET}[^\\s"'\`)\\]>,]+`, 'gi'), 'op://[redacted]'],
+  // An Authorization header loses its whole credential, whatever it holds;
+  // only the scheme is kept, so the page still says what kind it was.
+  [
+    /\b(authorization["']?\s*[:=]\s*["']?)(?:(bearer|basic|token|digest|negotiate)\s+)?[^\s"',;}]+/gi,
+    (_match, head, scheme) => `${head}${scheme ? `${scheme} ` : ''}[redacted]`,
+  ],
+  [new RegExp(`\\bBearer\\s+${NOT_YET}[^\\s"',;}]+`, 'gi'), 'Bearer [redacted]'],
+  [/\bBasic\s+[A-Za-z0-9+/=]{8,}/g, 'Basic [redacted]'],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, '[redacted]'],
+  // key: value / key=value for any key that names a credential:
+  // *token (refresh_token, access_token, id_token ...), *secret, password,
+  // passwd, api key (x-api-key), session / session_id.
+  [
+    new RegExp(
+      `\\b([A-Za-z0-9_-]{0,32}(?:token|secret|passw(?:or)?d|api[_-]?key|session(?:[_-]?id)?))(["']?\\s*[:=]\\s*["']?)${NOT_YET}[^\\s"'&,;}]+`,
+      'gi',
+    ),
+    '$1$2[redacted]',
+  ],
+  // The same keys that are commonly written with a space instead.
+  [new RegExp(`\\b(x-api-key|passw(?:or)?d)(\\s+)${NOT_YET}[^\\s"'&,;}]+`, 'gi'), '$1$2[redacted]'],
+  [new RegExp(`([?&](?:key|sig|signature)=)${NOT_YET}[^&\\s"']+`, 'gi'), '$1[redacted]'],
+  // user:pass@ in any scheme's URL (postgres://, nats://, amqp://, https:// ...).
+  [/\b([a-z][a-z0-9+.-]{0,15}:\/\/)[^\s/@:]*:[^\s/]*@/gi, '$1[redacted]@'],
+];
+
+/** Shapes that look like a secret with nothing naming them. Free text only. */
+const HEURISTIC: Array<[RegExp, string | ((token: string) => string)]> = [
+  [/\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{16,}/g, '[redacted]'],
+  [/\b(?:gh[oprsu]_|github_pat_|glpat-|xox[abprs]-)[A-Za-z0-9_-]{10,}/g, '[redacted]'],
+  [/\bAKIA[0-9A-Z]{16}\b/g, '[redacted]'],
+  // The backstop: a long run of token characters mixing digits and letters.
+  [
+    /[A-Za-z0-9_+=-]{32,}/g,
+    (token) => (UUID.test(token) || !/\d/.test(token) || !/[A-Za-z]/.test(token) ? token : '[redacted]'),
+  ],
+];
+
+/** Strip anything secret-shaped from one string. UUIDs are ids, not secrets.
+ *
+ * `heuristics: false` keeps only the credential-syntax rules: for slug-shaped
+ * fields (a workflow slug, a node name), where a long hyphenated run of words
+ * and digits is the name itself, not a token.
+ */
+export function redactText(value: string, { heuristics = true }: { heuristics?: boolean } = {}): string {
+  let out = value;
+  for (const [pattern, replacement] of EXPLICIT) out = out.replace(pattern, replacement as never);
+  if (heuristics) for (const [pattern, replacement] of HEURISTIC) out = out.replace(pattern, replacement as never);
+  return out;
 }
+
+const SLUG = { heuristics: false } as const;
+
+/** Fields whose value is a name, never free text: no backstop. */
+const SLUG_FIELDS = new Set(['workflow', 'stage', 'lane.workflow_name', 'context.reason', 'target_agent_id']);
+/** Fields built from already-redacted parts, then capped: never redacted again. */
+const PRE_REDACTED = new Set(['reason', 'summary']);
+
+/** Redaction reads at most this much of one string; a cap is always far below it. */
+const REDACT_WINDOW = 16384;
 
 function cap(value: string, max: number): string {
   const flat = value.replace(/\s+/g, ' ').trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
 }
 
-function redactDeep(value: unknown): unknown {
-  if (typeof value === 'string') return redactText(value);
-  if (Array.isArray(value)) return value.map(redactDeep);
+function redactDeep(value: unknown, path = ''): unknown {
+  if (typeof value === 'string') {
+    if (PRE_REDACTED.has(path)) return value;
+    return redactText(value, { heuristics: !SLUG_FIELDS.has(path) });
+  }
+  if (Array.isArray(value)) return value.map((inner) => redactDeep(inner, `${path}[]`));
   const o = obj(value);
   if (!o) return value;
-  return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, redactDeep(v)]));
+  return Object.fromEntries(
+    Object.entries(o).map(([k, v]) => [k, redactDeep(v, path ? `${path}.${k}` : k)]),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +337,17 @@ function failedTicketFromStack(stack: string): { key: string; board: string } | 
   return match ? { key: match[1], board: match[2] } : undefined;
 }
 
+/** A human ticket key (`HEYMA-12`), as opposed to a provider UUID. */
+function isTicketKey(value: string): boolean {
+  return /^[A-Za-z0-9_]+-\d+$/.test(value);
+}
+
+/** Split what names a ticket into key and id: a UUID is the id, never the key. */
+function ticketRef(named: string, id: string): { ticketKey: string; ticketId: string } {
+  if (UUID.test(named)) return { ticketKey: '', ticketId: id || named };
+  return { ticketKey: named, ticketId: id };
+}
+
 function extractFacts(lane: Lane, runData: Obj, stack: string): Extracted {
   let facts: TicketFacts = { ...EMPTY_FACTS, labels: [] };
   let trigger: Obj | undefined;
@@ -304,17 +371,16 @@ function extractFacts(lane: Lane, runData: Obj, stack: string): Extracted {
   } else if (lane === 'chip') {
     const failing = failedTicketFromStack(stack);
     if (failing) {
+      // The stack names the ticket by key, or by UUID when the chip only had that.
       const item = nodeItems(runData, 'Chip — Target').find(
-        (candidate) => str(candidate.ticketKey) === failing.key,
+        (candidate) => str(candidate.ticketKey) === failing.key || str(candidate.ticketId) === failing.key,
       );
       facts = {
         ...facts,
-        ticketKey: failing.key,
-        boardId: failing.board,
-        ticketId: str(item?.ticketId),
+        ...ticketRef(str(item?.ticketKey) || failing.key, str(item?.ticketId)),
+        boardId: str(item?.board) || failing.board,
         workspace: str(item?.ws),
       };
-      if (item && str(item.board)) facts.boardId = str(item.board);
       targetAgentId = str(item?.agentId);
     }
     return { facts, trigger: undefined, targetAgentId };
@@ -339,7 +405,11 @@ function extractFacts(lane: Lane, runData: Obj, stack: string): Extracted {
   if (!facts.ticketKey) {
     const failing = failedTicketFromStack(stack);
     if (failing) {
-      facts = { ...facts, ticketKey: failing.key, boardId: facts.boardId || failing.board };
+      facts = {
+        ...facts,
+        ...ticketRef(failing.key, facts.ticketId),
+        boardId: facts.boardId || failing.board,
+      };
     }
   }
   return { facts, trigger, targetAgentId };
@@ -379,30 +449,66 @@ function readError(errorPayload: Obj, lookup: Obj): ErrorFacts {
   };
 }
 
+/** The error text with JS property accesses removed.
+ *
+ * "Cannot read properties of undefined (reading 'status 500')" names a field,
+ * not a response; reading a status or a timeout out of it misclassifies a
+ * plain node bug.
+ */
+function signalText(error: ErrorFacts): string {
+  return error.text.replace(/\((?:reading|setting) ['"`][^'"`]{0,200}['"`]\)/gi, ' ');
+}
+
 function httpStatusFrom(error: ErrorFacts): number | null {
   if (error.httpCode) return error.httpCode;
+  const t = signalText(error);
   const patterns = [
     /\bHTTP\s*(?:status\s*)?(?:code\s*)?(\d{3})\b/i,
     /\bstatus(?:\s*code)?\s*[:=]?\s*(\d{3})\b/i,
     /(?:^|\|\s*)(\d{3})\s*[-:]\s/,
   ];
   for (const pattern of patterns) {
-    const match = pattern.exec(error.text);
+    const match = pattern.exec(t);
     const status = match ? Number(match[1]) : NaN;
     if (status >= 100 && status <= 599) return status;
   }
-  const t = error.text;
   if (/too many requests|try spacing your requests/i.test(t)) return 429;
   if (/authorization failed|unauthorized/i.test(t)) return 401;
   if (/forbidden/i.test(t)) return 403;
   if (/could not be found|not found/i.test(t) && /resource|requesting/i.test(t)) return 404;
-  if (/service unavailable|bad gateway|gateway timeout/i.test(t)) return 503;
+  if (/bad gateway/i.test(t)) return 502;
+  if (/gateway time-?out/i.test(t)) return 504;
+  if (/service unavailable/i.test(t)) return 503;
   return null;
 }
 
-function retryAfterSeconds(error: ErrorFacts, errorObject: Obj): number | null {
-  const fromText = /retry[-_ ]?after[^0-9]{0,15}(\d{1,6})\b/i.exec(error.text);
-  if (fromText) return Number(fromText[1]);
+const MONTH = /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i;
+
+/** One Retry-After value as seconds from `now`, or null.
+ *
+ * RFC 9110 allows exactly two forms: delta-seconds, or an HTTP-date. A digit
+ * run is delta-seconds only when nothing date-like follows it ("30", "45
+ * seconds"), so the day or year of a date is never read as seconds. A date is
+ * only taken when it names a month and a time of day, and becomes the seconds
+ * left until it (0 once it has passed).
+ */
+export function parseRetryAfter(raw: string, now: Date): number | null {
+  const value = raw.trim();
+  const delta = /^(\d{1,7})(?:\s*(?:s|secs?|seconds?))?\s*(?:[.,)\]}]|$)/i.exec(value);
+  if (delta) return Number(delta[1]);
+  if (MONTH.test(value) && /\b\d{1,2}:\d{2}:\d{2}\b/.test(value)) {
+    const at = Date.parse(value);
+    if (!Number.isNaN(at)) return Math.max(0, Math.ceil((at - now.getTime()) / 1000));
+  }
+  return null;
+}
+
+function retryAfterSeconds(error: ErrorFacts, errorObject: Obj, now: Date): number | null {
+  const fromText = /retry[-_ ]?after["']?\s*[:=]?\s*["']?([^|"'\n;]{1,64})/i.exec(error.text);
+  if (fromText) {
+    const seconds = parseRetryAfter(fromText[1], now);
+    if (seconds !== null) return seconds;
+  }
   // n8n keeps the response headers on `cause`/`context` for an HTTP failure.
   const seen = new Set<unknown>();
   const find = (value: unknown, depth: number): number | null => {
@@ -411,9 +517,9 @@ function retryAfterSeconds(error: ErrorFacts, errorObject: Obj): number | null {
     seen.add(o);
     for (const [key, inner] of Object.entries(o)) {
       if (key === 'stack') continue;
-      if (key.toLowerCase() === 'retry-after') {
-        const n = Number(str(inner));
-        if (Number.isInteger(n) && n >= 0) return n;
+      if (/^retry[-_]after$/i.test(key)) {
+        const seconds = parseRetryAfter(str(inner), now);
+        if (seconds !== null) return seconds;
       }
       const deeper = find(inner, depth + 1);
       if (deeper !== null) return deeper;
@@ -437,8 +543,9 @@ function classify(
   failingNodeType: string,
   planeNode: boolean,
   scopeHint: CredentialScope | undefined,
+  now: Date,
 ): Classified {
-  const t = error.text;
+  const t = signalText(error);
   const status = httpStatusFrom(error);
   const bloodbankNode = failingNodeType.startsWith('n8n-nodes-bloodbank.');
   const nats =
@@ -457,7 +564,9 @@ function classify(
     else if (status >= 500) klass = 'upstream_unavailable';
     else klass = 'node_error';
   } else if (/ETIMEDOUT|ESOCKETTIMEDOUT|timed? ?out|timeout/i.test(t)) klass = 'timeout';
-  else if (/ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|socket hang up|fetch failed|getaddrinfo/i.test(t)) {
+  else if (
+    /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|socket hang up|fetch failed|getaddrinfo|refused the connection|connection refused/i.test(t)
+  ) {
     klass = 'upstream_unavailable';
   } else if (/no registry entry matches board|no fallback agent|no agent owns|has no agents mapping/i.test(t)) {
     klass = 'no_route';
@@ -484,8 +593,18 @@ function classify(
     http_status: status !== null && status >= 400 ? status : null,
     upstream,
     credential_scope: scope,
-    retry_after_seconds: retryAfterSeconds(error, errorObject),
+    retry_after_seconds: retryAfterSeconds(error, errorObject, now),
   };
+}
+
+/** A 403 whose body talks about access (membership, permission, workspace)
+ *  rather than the key: the key may be fine and its user simply not let in. */
+function accessDenial(error: ErrorFacts, klass: Classified): boolean {
+  return (
+    klass.class === 'auth_failed' &&
+    klass.http_status === 403 &&
+    /\bmembers?(?:hip)?\b|permission|workspace|not allowed|access (?:to|denied)/i.test(signalText(error))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -557,9 +676,12 @@ interface RecoveryInput {
   ticketKey: string;
   phase: string;
   klass: Classified;
+  /** A 403 whose body names membership, permission or the workspace. */
+  accessDenied: boolean;
   identity: CompanyIdentity | null;
   ownerId: string;
   boardId: string;
+  workspace: string;
 }
 
 function recovery(input: RecoveryInput): { action: RecoveryAction; hint: string } {
@@ -576,25 +698,33 @@ function recovery(input: RecoveryInput): { action: RecoveryAction; hint: string 
   });
 
   if (klass.class === 'auth_failed' && klass.credential_scope !== 'unknown' && klass.credential_scope !== 'none') {
-    if (klass.credential_scope === 'employee') {
-      if (!input.identity) {
-        return done(
-          'enroll_identity',
-          `${input.ownerId || 'The owner'} has no company identity, so its own credential cannot be traced: enroll it (role.yaml), then re-drive.`,
-          input.executionReal ? retry : '',
-        );
-      }
+    const employee = klass.credential_scope === 'employee';
+    const key = employee
+      ? input.identity
+        ? `${input.identity.handle}'s key (employee subject ${input.identity.subject})`
+        : `${input.ownerId || 'the owner'}'s own key`
+      : `the shared ${klass.upstream || 'upstream'} key (n8n ${SHARED_PLANE_N8N_ID})`;
+    if (input.accessDenied) {
+      // The body talks about access, so the key may well be valid: say both.
+      const where = input.boardId
+        ? `board ${input.boardId}${input.workspace ? ` in workspace ${input.workspace}` : ''}`
+        : input.workspace
+          ? `workspace ${input.workspace}`
+          : 'this project';
       return done(
-        'rotate_credential',
-        `Rotate ${input.identity.handle}'s credential (employee subject ${input.identity.subject}), then re-drive.`,
+        'fix_route',
+        `HTTP 403 naming access: the user behind ${key} is likely not a member of, or lacks permission on, ${where}. Add it there; if the key itself was revoked, rotate it instead. Then re-drive.`,
         input.executionReal ? retry : '',
       );
     }
-    return done(
-      'rotate_credential',
-      `Rotate the shared ${klass.upstream || 'upstream'} credential (n8n ${SHARED_PLANE_N8N_ID}), then re-drive.`,
-      input.executionReal ? retry : '',
-    );
+    if (employee && !input.identity) {
+      return done(
+        'enroll_identity',
+        `${input.ownerId || 'The owner'} has no company identity, so its own credential cannot be traced: enroll it (role.yaml), then re-drive.`,
+        input.executionReal ? retry : '',
+      );
+    }
+    return done('rotate_credential', `Rotate ${key}, then re-drive.`, input.executionReal ? retry : '');
   }
   if (klass.class === 'no_route' || klass.class === 'ineligible') {
     return done(
@@ -640,8 +770,9 @@ function recovery(input: RecoveryInput): { action: RecoveryAction; hint: string 
 // The report
 // ---------------------------------------------------------------------------
 
+/** The ticket's Plane page. Only a human key browses; a UUID would 404. */
 function ticketPage(workspace: string, key: string): string | undefined {
-  return workspace && key && /^[A-Za-z0-9_.-]+$/.test(workspace) && /^[A-Za-z0-9_.-]+$/.test(key)
+  return workspace && /^[A-Za-z0-9_.-]+$/.test(workspace) && isTicketKey(key)
     ? `${PLANE_BASE}/${workspace}/browse/${key}/`
     : undefined;
 }
@@ -726,7 +857,7 @@ export function reportLaneFailure(input: LaneFailureInput): LaneFailureReport {
     return SCOPES.has(hint) ? hint : undefined;
   }, undefined);
   const klass = safe(
-    () => classify(error, errorObject, failingType, planeNode, scopeHint),
+    () => classify(error, errorObject, failingType, planeNode, scopeHint, now),
     {
       class: 'unknown',
       http_status: null,
@@ -735,6 +866,7 @@ export function reportLaneFailure(input: LaneFailureInput): LaneFailureReport {
       retry_after_seconds: null,
     } as Classified,
   );
+  const accessDenied = safe(() => accessDenial(error, klass), false);
 
   // The owner. The groomed lane's trigger names it; the others resolve by
   // board (then repo), with labels from the run data when known.
@@ -760,6 +892,12 @@ export function reportLaneFailure(input: LaneFailureInput): LaneFailureReport {
   const row = registryRow(registry, ownerId);
   const identity = safe(() => companyIdentityOf(row), null);
   const gatewayConsumer = safe(() => gatewayConsumerOf(row), null);
+  // A lane that names no repo (the pickup chip) takes the owner's, so its
+  // ordering key is task:<repo>:<ticket_id> like every other lane's.
+  if (!facts.repo) {
+    const repo = safe(() => str(row?.repo), '');
+    if (repo) facts = { ...facts, repo };
+  }
   if (!facts.workspace && route?.workspace) facts = { ...facts, workspace: route.workspace };
   if (!facts.workspace) {
     const planeWs = str(obj(row?.plane)?.workspace);
@@ -777,9 +915,11 @@ export function reportLaneFailure(input: LaneFailureInput): LaneFailureReport {
         ticketKey: facts.ticketKey,
         phase: facts.phase,
         klass,
+        accessDenied,
         identity,
         ownerId,
         boardId: facts.boardId,
+        workspace: facts.workspace,
       }),
     { action: 'none' as RecoveryAction, hint: 'No recovery could be derived; open the execution in n8n.' },
   );
@@ -802,14 +942,17 @@ export function reportLaneFailure(input: LaneFailureInput): LaneFailureReport {
     ? `task:${facts.repo || facts.boardId || 'unknown'}:${facts.ticketId}`
     : `workflow:${workflowId || 'unknown'}:${executionId}`;
 
+  // Each string is redacted exactly once: reason and summary here, from their
+  // parts (then capped, so a cap never cuts a secret in half before it is
+  // seen), everything else in the one redactDeep pass below, which skips them.
   const message = error.message || str(error.description) || 'unknown error';
-  const reason = cap(redactText(message), 500) || 'unknown error';
-  const ticketRef = facts.ticketKey || workflowName || slug;
+  const reason = cap(redactText(message.slice(0, REDACT_WINDOW)), 500) || 'unknown error';
+  const ticketName = facts.ticketKey || facts.ticketId;
+  const laneName = redactText(workflowName || slug, SLUG);
+  const stageName = redactText(stage, SLUG);
+  const ticketRefText = ticketName ? redactText(ticketName) : laneName;
   const klassLabel = `${klass.class}${klass.http_status ? `, HTTP ${klass.http_status}` : ''}`;
-  const summary = cap(
-    redactText(`${ticketRef}: ${workflowName || slug} failed at ${stage} (${klassLabel})`),
-    200,
-  );
+  const summary = cap(`${ticketRefText}: ${laneName} failed at ${stageName} (${klassLabel})`, 200);
 
   const links: Array<{ rel: 'page' | 'run'; label: string; url: string }> = [];
   const page = ticketPage(facts.workspace, facts.ticketKey);
@@ -857,28 +1000,29 @@ export function reportLaneFailure(input: LaneFailureInput): LaneFailureReport {
   if (links.length) data.links = links;
   const clean = redactDeep(data) as Record<string, unknown>;
 
-  const ownerLine = ownerId
-    ? identity
-      ? `Owner: ${ownerId} (${identity.handle}, ${identity.email}, ${identity.status})`
-      : `Owner: ${ownerId} (no company identity)`
+  // The page is assembled from the redacted values; nothing is redacted twice.
+  const cleanOwner = str(clean.target_agent_id);
+  const cleanIdentity = obj(clean.company_identity);
+  const ownerLine = cleanOwner
+    ? cleanIdentity
+      ? `Owner: ${cleanOwner} (${str(cleanIdentity.handle)}, ${str(cleanIdentity.email)}, ${str(cleanIdentity.status)})`
+      : `Owner: ${cleanOwner} (no company identity)`
     : 'Owner: unknown';
   const lines = [
-    `${workflowName || slug} failed at ${stage}: ${cap(redactText(message), 200)}`,
-    facts.ticketKey
-      ? `Ticket ${facts.ticketKey}${lane === 'chip' ? '' : ' was NOT handed on'}.`
-      : 'Ticket unknown.',
+    `${laneName} failed at ${stageName}: ${cap(reason, 200)}`,
+    ticketName ? `Ticket ${ticketRefText}${lane === 'chip' ? '' : ' was NOT handed on'}.` : 'Ticket unknown.',
     ownerLine,
     `Error: ${klassLabel}${klass.upstream ? ` via ${klass.upstream}` : ''}${
       klass.retry_after_seconds ? `, retry after ${klass.retry_after_seconds}s` : ''
     }`,
-    `Recovery: ${rec.hint}`,
+    `Recovery: ${str(obj(clean.recovery)?.hint)}`,
   ];
   const pageOut: LanePage = {
-    title: cap(redactText(`Lane failed: ${ticketRef}`), 120),
-    message: redactText(lines.join('\n')),
-    click: page || executionUrl || `${DEFAULT_N8N_BASE}/`,
+    title: cap(`Lane failed: ${ticketRefText}`, 120),
+    message: lines.join('\n'),
+    click: page || str(obj(clean.lane)?.execution_url) || `${DEFAULT_N8N_BASE}/`,
     priority: lane === 'chip' ? '2' : '4',
-    tags: `${lane === 'chip' ? 'information_source' : 'warning'},lane-error,${slug}`,
+    tags: `${lane === 'chip' ? 'information_source' : 'warning'},lane-error,${str(clean.workflow)}`,
   };
 
   return {
