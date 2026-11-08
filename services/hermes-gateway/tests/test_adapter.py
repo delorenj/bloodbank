@@ -189,6 +189,126 @@ async def test_connect_binds_one_bounded_durable_pull_consumer(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_batch_lookahead_admits_other_profile_behind_hot_thread(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path, target_profiles={
+        "bloodbank-pm": "bloodbank-pm", "other-pm": "other-pm",
+    })
+    adapter.config.extra.update(max_inflight=2, queued_capacity=6)
+    adapter = BloodbankAdapter(adapter.config)
+    adapter.profile_resolver.profile_exists = lambda _profile: True
+    adapter._js = FakeJetStream()
+    adapter.ack_progress_seconds = 0.01
+    assert adapter._batch.max_ack_pending == 8
+    assert adapter._needs_ack_pending_update(SimpleNamespace(
+        filter_subject=adapter._batch.spec.subject, ack_policy="explicit",
+        max_ack_pending=2, max_deliver=adapter._batch.max_deliver,
+    ), adapter._batch)
+    commands = []
+    for _ in range(5):
+        command = json.loads(json.dumps(valid_command))
+        command["command_id"] = str(uuid.uuid4())
+        command["id"] = command["command_id"]
+        command["idempotency_key"] = command["command_id"]
+        command["data"]["thread_id"] = "hot"
+        commands.append(command)
+    other = json.loads(json.dumps(valid_command))
+    other["command_id"] = str(uuid.uuid4())
+    other["id"] = other["command_id"]
+    other["idempotency_key"] = other["command_id"]
+    other["data"].update(target_agent_id="other-pm", thread_id="independent")
+    messages = [FakeMessage(command) for command in (*commands, other)]
+    delivered = messages[:]
+    active = asyncio.Event()
+    release = asyncio.Event()
+    independent = asyncio.Event()
+    calls = []
+
+    async def handler(event):
+        calls.append(event.raw_message["command_id"])
+        if event.raw_message["command_id"] == commands[0]["command_id"]:
+            active.set()
+            await release.wait()
+        if event.raw_message["command_id"] == other["command_id"]:
+            independent.set()
+        return "done"
+
+    class Subscription:
+        async def fetch(self, capacity, **_kwargs):
+            result, messages[:] = messages[:capacity], messages[capacity:]
+            return result
+
+    adapter._batch.subscription = Subscription()
+    adapter.set_message_handler(handler)
+    await adapter._consume_once(adapter._batch)
+    try:
+        await asyncio.wait_for(active.wait(), 1)
+        await asyncio.wait_for(independent.wait(), 1)
+        for _ in range(20):
+            if delivered[-1].acked:
+                break
+            await asyncio.sleep(0.01)
+        assert all(msg.acked == 0 for msg in delivered[:-1])
+        assert delivered[-1].acked == 1
+        assert len(calls) == 2  # no second hot-thread turn yet
+        assert adapter._batch.execution_slots._value == 1
+    finally:
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*adapter._batch.queued, *adapter._batch.inflight), 2)
+    assert len(calls) == 6
+    assert adapter._batch.queued == adapter._batch.inflight == set()
+
+
+@pytest.mark.asyncio
+async def test_lookahead_waiting_delivery_replays_after_restart(tmp_path, valid_command):
+    first = make_adapter(tmp_path)
+    first.config.extra.update(max_inflight=1, queued_capacity=2)
+    first = BloodbankAdapter(first.config)
+    first._js = FakeJetStream()
+    first.ack_progress_seconds = 0.01
+    command = json.loads(json.dumps(valid_command))
+    command["command_id"] = str(uuid.uuid4())
+    command["id"] = command["idempotency_key"] = command["command_id"]
+    original = FakeMessage(valid_command)
+    queued = FakeMessage(command)
+    running = asyncio.Event()
+    release = asyncio.Event()
+    executed = []
+
+    async def handler(event):
+        executed.append(event.raw_message["command_id"])
+        running.set()
+        await release.wait()
+        return "done"
+
+    first.set_message_handler(handler)
+    first._batch.subscription = SimpleNamespace(fetch=lambda capacity, **kwargs: asyncio.sleep(0, result=[original, queued]))
+    # Claim both: first enters Hermes; second is journal-pending behind its lock.
+    await first._consume_once(first._batch)
+    await asyncio.wait_for(running.wait(), 1)
+    await asyncio.sleep(0.03)
+    assert queued.progress > 0
+    assert queued.acked == queued.nacked == 0
+    for task in (*first._batch.queued, *first._batch.inflight):
+        task.cancel()
+    await asyncio.gather(*first._batch.queued, *first._batch.inflight, return_exceptions=True)
+    assert queued.nacked == 1
+    assert executed == [valid_command["command_id"]]
+    replay = make_adapter(tmp_path)
+    replay._js = FakeJetStream()
+    replay.set_message_handler(lambda event: asyncio.sleep(0, result="done"))
+    redelivery = FakeMessage(command)
+    await replay._handle_broker_message(redelivery)
+    assert redelivery.acked == 1
+    assert queued.acked == 0
+    assert replay.execution_state.get(command["command_id"]).state == "completed"
+    # A second delivery after the terminal publish/ack is replay-only.
+    duplicate = FakeMessage(command)
+    replay.set_message_handler(lambda _event: pytest.fail("completed command executed twice"))
+    await replay._handle_broker_message(duplicate)
+    assert duplicate.acked == 1
+
+
+@pytest.mark.asyncio
 async def test_consume_loop_treats_asyncio_timeout_as_idle_poll(tmp_path, monkeypatch):
     adapter = make_adapter(tmp_path)
     adapter._running = True

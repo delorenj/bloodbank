@@ -35,8 +35,8 @@ and declares `nats-py`/`PyYAML` in `plugin.yaml` `pip_dependencies` so PM keeps
 them in the shared environment:
 
 ```bash
-services/hermes-gateway/hermes-plugin/install.sh   # links ~/.hermes/plugins/bloodbank-platform, runs `hermes pm install`
-systemctl --user restart hermes-gateway.service
+services/hermes-gateway/hermes-plugin/install.sh   # initial install or changed plugin dependencies only
+hermes-gateway-restart --strict-idle --max-wait 15 --reason "Bloodbank adapter update"
 ```
 
 Verify: `~/.hermes/gateway_state.json` `.platforms.bloodbank.state == "connected"`
@@ -70,6 +70,9 @@ gateway:
         allow_direct_profile_targets: false
         durable_name: bloodbank-hermes-gateway
         max_inflight: 4
+        # Optional batch lookahead: leave 4 turn slots bounded while retaining
+        # up to 64 extra deliveries behind busy conversation threads.
+        queued_capacity: 64
         ack_wait_seconds: 90
         ack_progress_seconds: 20
         # Optional second lane; absent or `enabled: false` = single-lane gateway.
@@ -158,13 +161,47 @@ journal, each has its own fetch loop, and total concurrency is the sum of the
 slots (6 turns). Hermes runs distinct sessions of one profile concurrently, so
 a busy profile does not block an interactive turn on a different `thread_id`.
 
+The batch lane can opt into `queued_capacity` (0 by default, 1–256): the
+consumer's `max_ack_pending` becomes `max_inflight + queued_capacity`, but at
+most `max_inflight` turns execute concurrently. Deliveries waiting for the same
+conversation keep progress acknowledgements and their journal claim; they never
+NAK merely because a predecessor is busy or spend `max_deliver` attempts.
+Independent conversations behind a hot thread can use the spare turn slots as
+long as they fall within the bounded lookahead. A larger uninterrupted hot-thread
+burst than the lookahead can still block an independent command beyond it; this
+is not an unbounded fairness guarantee. On a crash, unacked deliveries replay
+through the journal; completion still owns publication followed by the ack.
+The adapter updates an existing durable's `max_ack_pending` in place on connect;
+never delete the durable to apply lookahead, because doing so discards its
+acknowledgement floor. The host gateway reads the canonical
+`~/.hermes/config.yaml` at `gateway.platforms.bloodbank.extra`; set
+`max_inflight: 4` and `queued_capacity: 64` there. Named profiles' generated
+configs are not the host transport source. The installed plugin is symlinked
+to this Bloodbank source, so with unchanged plugin dependencies there is no
+need to rerun `hermes pm install`. Source and config edits alone do not change
+the running process's old 4/4 window. After the source is reviewed, committed
+and pushed to main, request exactly one idle-safe restart:
+
+```bash
+hermes-gateway-restart --strict-idle --max-wait 15 --reason "BB-35 bounded batch lookahead"
+```
+
+Do not omit `--strict-idle`: the helper's default proceeds with a restart even
+if turns remain busy after 15 minutes; strict mode exits 4 instead. A detached
+request is not proof the restart occurred. Verify the new PID, durable
+`max_ack_pending: 68`, broker ack floor, journal rows and terminal facts before
+claiming activation.
+
 - Enabled only by `extra.interactive.enabled: true` (strict boolean). Absent
   means the single-lane gateway exactly as before, so the code can ship before
   the config. Rollback is `enabled: false` plus a gateway restart.
-- The adapter creates both durables on `connect()` and refuses a stale durable
-  whose filter, `max_ack_pending` or `max_deliver` differs (delete the durable
-  once and restart). If either lane cannot bind, the platform reports
-  `bloodbank_connect_failed` and retries; a half-bound gateway is not accepted.
+- The adapter binds both durables on `connect()` and updates an existing
+  batch durable's mutable `max_ack_pending` in place when lookahead changes.
+  It verifies each durable's filter, `max_ack_pending` and `max_deliver` after
+  binding; an incompatible filter or failed update is a bind error, **not** a
+  reason to delete the durable. If either lane cannot bind, the platform
+  reports `bloodbank_connect_failed` and retries; a half-bound gateway is not
+  accepted.
 - A `start` envelope delivered on the interactive subject, or an `invoke` on
   the batch one, is poison and receives a terminal acknowledgement.
 - The journal is shared and keyed by `command_id`, so a command id can never

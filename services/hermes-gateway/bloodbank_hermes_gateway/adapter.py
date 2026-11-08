@@ -10,6 +10,7 @@ import os
 import time
 import uuid
 import weakref
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -238,6 +239,7 @@ class LaneRuntime:
     ack_wait: float
     ack_progress: float
     nak_delay: float
+    queued_capacity: int = 0
     # Wall-clock budget for one Hermes turn on this lane; None = unlimited.
     turn_timeout: float | None = None
     # fail | retry: a turn Hermes' shutdown interrupted (SHUTDOWN_INTERRUPT_MODES).
@@ -257,6 +259,8 @@ class LaneRuntime:
     subscription: Any = None
     task: asyncio.Task[None] | None = None
     inflight: set[asyncio.Task[None]] = field(default_factory=set)
+    queued: set[asyncio.Task[None]] = field(default_factory=set)
+    execution_slots: asyncio.Semaphore | None = None
     # Handler tasks of detached turns: they hold no slot, but their messages
     # are still un-acked (the consumer's max_ack_pending counts both sets).
     detached: set[asyncio.Task[None]] = field(default_factory=set)
@@ -269,9 +273,9 @@ class LaneRuntime:
 
     @property
     def max_ack_pending(self) -> int:
-        """Messages the durable may have outstanding: the slots plus detached turns."""
+        """Broker ownership: active slots, queued lookahead, detached turns."""
 
-        return self.max_inflight + (self.max_detached if self.detach_on_timeout else 0)
+        return self.max_inflight + self.queued_capacity + (self.max_detached if self.detach_on_timeout else 0)
 
 
 def _batch_attr(name: str) -> property:
@@ -384,6 +388,7 @@ class BloodbankAdapter(BasePlatformAdapter):
             durable=durable_name,
             max_inflight=_bounded_int(extra, "max_inflight", 4, 1, 64),
             max_deliver=_bounded_int(extra, "max_deliver", 5, 1, 100),
+            queued_capacity=_bounded_int(extra, "queued_capacity", 0, 0, 256),
             ack_wait=ack_wait,
             ack_progress=ack_progress,
             nak_delay=_bounded_float(extra, "nak_delay_seconds", 5.0, 0.0, 300.0),
@@ -395,6 +400,8 @@ class BloodbankAdapter(BasePlatformAdapter):
             ),
         )
         self._lanes: list[LaneRuntime] = [self._batch]
+        if self._batch.queued_capacity:
+            self._batch.execution_slots = asyncio.Semaphore(self._batch.max_inflight)
         interactive = self._interactive_lane(extra.get("interactive"))
         if interactive is not None:
             if interactive.durable == self._batch.durable:
@@ -706,7 +713,7 @@ class BloodbankAdapter(BasePlatformAdapter):
         tasks = [
             task
             for lane in self._lanes
-            for task in (*lane.inflight, *lane.detached)
+            for task in (*lane.inflight, *lane.queued, *lane.detached)
         ]
         await self.cancel_background_tasks()
         if tasks:
@@ -721,6 +728,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 await asyncio.gather(*tasks, return_exceptions=True)
         for lane in self._lanes:
             lane.inflight.clear()
+            lane.queued.clear()
             lane.detached.clear()
         await self._close_nats()
         self._release_platform_lock()
@@ -919,15 +927,17 @@ class BloodbankAdapter(BasePlatformAdapter):
             await asyncio.sleep(self.drain_poll_seconds)
             return
         self._resume_lane(lane)
-        capacity = lane.max_inflight - len(lane.inflight)
+        capacity = (
+            lane.max_ack_pending - len(lane.inflight) - len(lane.queued) - len(lane.detached)
+            if lane.queued_capacity else lane.max_inflight - len(lane.inflight)
+        )
         if capacity <= 0:
-            # A slot comes back when a command task ends or when a turn
-            # detaches (its task leaves lane.inflight but keeps running).
             lane.slot_freed.clear()
             freed = asyncio.ensure_future(lane.slot_freed.wait())
             try:
                 await asyncio.wait(
-                    {*lane.inflight, freed}, return_when=asyncio.FIRST_COMPLETED
+                    {*lane.inflight, *lane.queued, freed},
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
             finally:
                 freed.cancel()
@@ -954,8 +964,13 @@ class BloodbankAdapter(BasePlatformAdapter):
 
         for message in messages:
             task = asyncio.create_task(self._handle_broker_message(message, lane))
-            lane.inflight.add(task)
-            task.add_done_callback(lane.inflight.discard)
+            if lane.queued_capacity:
+                lane.queued.add(task)
+                task.add_done_callback(lane.queued.discard)
+                task.add_done_callback(lambda _done, ready=lane.slot_freed: ready.set())
+            else:
+                lane.inflight.add(task)
+                task.add_done_callback(lane.inflight.discard)
             task.add_done_callback(self._log_task_failure)
 
     @staticmethod
@@ -972,6 +987,23 @@ class BloodbankAdapter(BasePlatformAdapter):
                 type(error).__name__,
             )
 
+    @asynccontextmanager
+    async def _execution_slot(self, lane: LaneRuntime):
+        """A hot thread keeps its delivery, but no turn slot while it waits."""
+        if lane.execution_slots is None:
+            yield
+            return
+        await lane.execution_slots.acquire()
+        task = asyncio.current_task()
+        lane.queued.discard(task)
+        lane.inflight.add(task)
+        try:
+            yield
+        finally:
+            lane.inflight.discard(task)
+            lane.execution_slots.release()
+            lane.slot_freed.set()
+
     async def _handle_broker_message(
         self, message: Any, lane: LaneRuntime | None = None
     ) -> None:
@@ -986,6 +1018,8 @@ class BloodbankAdapter(BasePlatformAdapter):
             )
             command_id = envelope["command_id"]
             digest = envelope_digest(envelope)
+            # Broker ownership starts at fetch, before a hot conversation lock.
+            progress_task = asyncio.create_task(self._ack_progress(message, lane))
             # Serialize the short durable-claim section so a concurrent local
             # redelivery cannot observe the same pending row and dispatch a
             # second Hermes turn. Different commands still execute concurrently.
@@ -1043,7 +1077,6 @@ class BloodbankAdapter(BasePlatformAdapter):
                     self._records[invocation.invocation_id] = record
 
             if persisted.state == "completed":
-                progress_task = asyncio.create_task(self._ack_progress(message, lane))
                 await self._publish_many(persisted.started_events)
                 await self._publish_many(persisted.terminal_events)
                 await message.ack()
@@ -1052,7 +1085,6 @@ class BloodbankAdapter(BasePlatformAdapter):
                 await message.term()
                 return
             if persisted.state in {"rejected_closing", "rejected_closed"}:
-                progress_task = asyncio.create_task(self._ack_progress(message, lane))
                 invocation = Invocation.from_envelope(
                     envelope, persisted.profile, lane.name
                 )
@@ -1067,7 +1099,6 @@ class BloodbankAdapter(BasePlatformAdapter):
 
             assert record is not None
             invocation = record.invocation
-            progress_task = asyncio.create_task(self._ack_progress(message, lane))
 
             lock_key = f"{invocation.profile}:{invocation.thread_id}"
             lock = self._conversation_locks.setdefault(lock_key, asyncio.Lock())
@@ -1075,7 +1106,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 self._conversation_lock_refs.get(lock_key, 0) + 1
             )
             try:
-                async with lock:
+                async with lock, self._execution_slot(lane):
                     # A drain that began after this command was fetched (or while
                     # it waited for a same-thread predecessor): publish nothing and
                     # keep the journal row dispatchable, so the next process runs it.
