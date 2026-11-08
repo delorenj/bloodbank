@@ -77,6 +77,8 @@ from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+import tolt_family
+
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
@@ -596,6 +598,8 @@ class NtfyRouter:
     deploy_topic: str = DEPLOY_TOPIC
     # Whether to mirror nested <domain>-<entity> routes back to the parent <domain> topic.
     mirror_domain: bool = MIRROR_DOMAIN
+    # Exact family traffic never falls through to the generic mirrors/buckets.
+    family: tolt_family.FamilyRoute | None = None
 
     digested: Counter = field(default_factory=Counter)
     overflow: Counter = field(default_factory=Counter)
@@ -703,6 +707,14 @@ class NtfyRouter:
     async def handle(self, envelope: dict[str, Any], subject: str) -> str:
         event_type = envelope.get("type") or subject or "unknown"
         self.stats["received"] += 1
+        if tolt_family.matches(envelope.get("type"), subject):
+            try:
+                result = await self.family.handle(envelope, subject) if self.family else "family-disabled"
+            except Exception:
+                result = "family-unavailable"
+            self.stats[result] += 1
+            log.info("family disposition=%s", result)
+            return result
         disposition = self.policy.classify(event_type)
         if disposition == "mute":
             self.muted[event_type] += 1
@@ -808,6 +820,19 @@ class NtfyRouter:
 
     # -- periodic -------------------------------------------------------------
 
+    async def drain_family(self) -> None:
+        if self.family:
+            try:
+                for disposition in await self.family.drain():
+                    self.stats[disposition] += 1
+                for state in ("pending", "sending", "accepted", "uncertain", "exhausted", "conflict", "suppressed"):
+                    self.stats["family-state-" + state] = 0
+                for state, count in (await asyncio.to_thread(self.family.ledger.counts)).items():
+                    self.stats["family-state-" + state] = count
+            except Exception:
+                self.stats["family-unavailable"] += 1
+                log.error("family ledger/drain unavailable; no generic fallback")
+
     def digest_text(self) -> tuple[str, str] | None:
         total = sum(self.digested.values()) + sum(self.overflow.values())
         if not total:
@@ -854,6 +879,20 @@ def preview(envelope: dict[str, Any], subject: str = "", apk_bytes: int | None =
     Nothing is posted, no limit is spent and no size is looked up (pass the
     APK's bytes to see the size line)."""
     event_type = envelope.get("type") or subject or "unknown"
+    if tolt_family.matches(envelope.get("type"), subject):
+        try:
+            config = tolt_family.Config.from_env()
+            tolt_family.CanonicalValidator(config.validator_root)(envelope)
+            return {
+                "method": "POST", "url": config.base_url.rstrip("/") + "/",
+                "headers": {"Content-Type": "application/json", "Authorization": "Bearer <NTFY_TOKEN>"},
+                "body": tolt_family.format_message(envelope, config),
+                "disposition": "preview-only",
+                "delivery_enabled": config.authorized and not tolt_family.suppression_reason(envelope),
+                "lowwater_owner_gate_available": False,
+            }
+        except Exception:
+            return {"disposition": "family-unavailable-or-invalid", "delivery_enabled": False}
     links = usable_links(envelope.get("data"), event_type)
     _, body, headers, message = publication(
         envelope, subject, links, priority=NTFY_PRIORITY, tags=NTFY_TAGS, apk_bytes=apk_bytes,
@@ -924,6 +963,11 @@ async def run() -> None:
         return
 
     async with httpx.AsyncClient(timeout=5.0) as http_client:
+        try:
+            family = tolt_family.FamilyRoute.from_env(http_client, NTFY_TOKEN)
+        except Exception:
+            family = None
+            log.error("family configuration/ledger unavailable; family route stays closed")
         router = NtfyRouter(
             policy=policy,
             post=make_poster(http_client, NTFY_TOKEN),
@@ -935,6 +979,7 @@ async def run() -> None:
             per_type_rate_per_min=_env_float("ROUTE_PER_TYPE_PER_MIN", 6),
             per_type_burst=int(_env_float("ROUTE_PER_TYPE_BURST", 3)),
             sizer=make_sizer(http_client),
+            family=family,
         )
 
         nc = await nats.connect(
@@ -955,10 +1000,12 @@ async def run() -> None:
                 await router.handle(envelope, msg.subject)
 
         async def stats() -> None:
+            await router.drain_family()
             log.info("stats %s", router.stats_line())
 
         sub = await nc.subscribe(SUBJECT, cb=cb)
         log.info("subscribed: %s", SUBJECT)
+        await router.drain_family()
         periodic = [
             asyncio.create_task(_every(router.digest_seconds, router.flush_digest, stop)),
             asyncio.create_task(_every(_env_float("STATS_SECONDS", 60), stats, stop)),

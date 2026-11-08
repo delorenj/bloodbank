@@ -31,10 +31,14 @@ networks:
   bloodbank-network:
     external: true
 
+volumes:
+  tolt-delivery-state:
+
 services:
   ntfy-router:
     build:
-      context: .
+      context: ../..
+      dockerfile: services/ntfy-router/Dockerfile
     container_name: bloodbank-ntfy-router
     environment:
       NATS_URL: "nats://nats:4222"
@@ -49,6 +53,14 @@ services:
       NTFY_PRIORITY: "${BLOODBANK_NTFY_ROUTER_NTFY_PRIORITY:-5}"
       NTFY_TAGS: "${BLOODBANK_NTFY_ROUTER_NTFY_TAGS:-drop_of_blood,zap}"
       NTFY_TOKEN: "${BLOODBANK_NTFY_ROUTER_NTFY_TOKEN:-}"
+      # Source candidate only. Both owner gates remain false until approved cutover.
+      NTFY_TOLT_ENABLED: "${BLOODBANK_NTFY_ROUTER_TOLT_ENABLED:-false}"
+      NTFY_TOLT_CUTOVER_ACCEPTED: "${BLOODBANK_NTFY_ROUTER_TOLT_CUTOVER_ACCEPTED:-false}"
+      NTFY_TOLT_TOPIC: "${BLOODBANK_NTFY_ROUTER_TOLT_TOPIC:-tolt}"
+      NTFY_TOLT_STATE: "/var/lib/ntfy-router/tolt.sqlite3"
+      NTFY_TOLT_LINK_HOSTS: "${BLOODBANK_NTFY_ROUTER_TOLT_LINK_HOSTS:-tolt.delo.sh}"
+      NTFY_FAMILY_VALIDATOR_ROOT: "/opt/bloodbank"
+      BLOODBANK_SCHEMAS_DIR: "/opt/bloodbank/schemas"
       MAX_BODY_CHARS: "${BLOODBANK_NTFY_ROUTER_MAX_BODY_CHARS:-400}"
       # `-` not `:-`: an explicitly empty value turns the list off.
       NTFY_ROUTER_MUTE_TYPES: "${BLOODBANK_NTFY_ROUTER_MUTE_TYPES-bloodbank.agent.hook.updated,bloodbank.system.hook.updated,bloodbank.audio.memo.uploaded,bloodbank.audio.memo.received,bloodbank.audio.memo.transcribed,bloodbank.audio.memo.dispatched,bloodbank.audio.memo.replied,bloodbank.audio.memo.played,bloodbank.agent.invocation.progressed,bloodbank.audio.memo.narrated,bloodbank.audio.memo.notified,bloodbank.audio.memo.voiced,bloodbank.audio.memo.mirrored,bloodbank.agent.invocation.detached,bloodbank.audio.memo.routed,bloodbank.audio.memo.delegated,bloodbank.crank.duty.started,bloodbank.crank.duty.ended,bloodbank.crank.alert.raised}"
@@ -63,4 +75,6 @@ services:
       LOG_LEVEL: "${BLOODBANK_NTFY_ROUTER_LOG_LEVEL:-INFO}"
     networks:
       - bloodbank-network
+    volumes:
+      - tolt-delivery-state:/var/lib/ntfy-router
     restart: unless-stopped
