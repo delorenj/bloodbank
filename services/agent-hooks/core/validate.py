@@ -27,6 +27,7 @@ import hashlib
 import json
 import os
 import re
+import uuid
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -64,6 +65,7 @@ ALLOWED_DOMAINS = frozenset({
     "cron",
     # watch: target-focused alerts over inbound messages of any provider
     "watch",
+    "game",
     # reserved (registered but not yet emitted)
     "approval", "workspace", "memory",
 })
@@ -113,7 +115,20 @@ ALLOWED_ENTITIES = frozenset({
     "steward_task",
     # watch: one watched target (a person or organisation) and what was seen or done about it
     "target",
+    "implementation", "pack", "concept_pool", "item", "app_launch",
 })
+
+GAME_ENTITY_ACTIONS = {
+    "implementation": frozenset({"started"}),
+    "pack": frozenset({"released"}),
+    "concept_pool": frozenset({"breached"}),
+    "item": frozenset({"created"}),
+}
+# New pairs are closed without retroactively changing legacy domain pairings.
+ENTITY_DOMAINS = {entity: frozenset({"game"}) for entity in GAME_ENTITY_ACTIONS}
+ENTITY_DOMAINS["app_launch"] = frozenset({"project"})
+APP_LAUNCH_TYPE = "bloodbank.project.app_launch.recorded"
+GAME_EVENT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://33god.dev/bloodbank/game")
 
 EVENT_ACTIONS = frozenset({
     "created", "resumed", "started", "ended", "completed", "failed", "canceled",
@@ -245,6 +260,13 @@ def assert_type_shape(ce_type: str) -> tuple[str, str, str]:
         raise ContractViolation(
             f"{domain}.{entity} is retired (§7): {retired}; see docs/event-naming.md"
         )
+    domains = ENTITY_DOMAINS.get(entity)
+    if domains is not None and domain not in domains:
+        raise ContractViolation(f"entity {entity!r} is paired only with {sorted(domains)} (§7)")
+    if domain == "game" and action not in GAME_ENTITY_ACTIONS.get(entity, ()):
+        raise ContractViolation(f"unregistered game entity/action pair {entity}.{action} (§11.5)")
+    if entity == "app_launch" and action != "recorded":
+        raise ContractViolation("unregistered project.app_launch action (§11.5)")
     return domain, entity, action
 
 
@@ -663,6 +685,10 @@ def assert_project_invariants(envelope: dict) -> None:
     if envelope.get("domain") != "project":
         return
 
+    if envelope.get("type") == APP_LAUNCH_TYPE:
+        assert_app_launch_invariants(envelope)
+        return
+
     data = envelope.get("data")
     if not isinstance(data, dict):
         raise ContractViolation("project event data must be an object")
@@ -781,6 +807,222 @@ def assert_project_invariants(envelope: dict) -> None:
             raise ContractViolation(f"project internal report must carry {missing}")
 
 
+_GAME_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+_GAME_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_NATIVE_BUNDLE_ID = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\Z")
+_NATIVE_VERSION = re.compile(r"[0-9]+(?:\.[0-9]+){0,2}\Z")
+
+
+def _identity_text(value: object, field: str, pattern: re.Pattern, max_length: int | None = None) -> str:
+    if (not isinstance(value, str) or not value or
+            (max_length is not None and len(value) > max_length) or
+            not pattern.fullmatch(value)):
+        raise ContractViolation(f"{field} must match its identity string shape")
+    return value
+
+
+def _game_identity_parts(ce_type: str, data: dict) -> list:
+    if not isinstance(data, dict):
+        raise ContractViolation("game identity data must be an object")
+    try:
+        parts = [ce_type, _identity_text(data["project_slug"], "project_slug", _GAME_SLUG, 100)]
+        if ce_type == "bloodbank.game.implementation.started":
+            parts.append(data["implementation_id"])
+        elif ce_type == "bloodbank.game.concept_pool.breached":
+            parts += [_identity_text(data["pool_id"], "pool_id", _GAME_SLUG, 100), data["episode_id"]]
+        elif ce_type == "bloodbank.game.item.created":
+            parts.append(_identity_text(data["item_id"], "item_id", _GAME_SLUG, 100))
+        elif ce_type == "bloodbank.game.pack.released":
+            pack = data["pack"]
+            if not isinstance(pack, dict):
+                raise ContractViolation("game identity pack must be an object")
+            version = pack["version"]
+            if type(version) is not int or version < 1:
+                raise ContractViolation("game identity pack.version must be a positive integer")
+            parts += [_identity_text(pack["id"], "pack.id", _GAME_SLUG, 100), version,
+                      _identity_text(pack["sha256"], "pack.sha256", _GAME_SHA256)]
+        else:
+            raise ContractViolation(f"no game identity contract for {ce_type!r}")
+        for field in ("implementation_id", "episode_id", "installation_id"):
+            if field in data:
+                value = data[field]
+                if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+                    raise ValueError(f"{field} must be a canonical UUID")
+        return parts
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise ContractViolation(f"game identity field missing or malformed: {exc}") from exc
+
+
+def game_event_id(ce_type: str, data: dict) -> str:
+    """BB-34 candidate identity: UUID5 over an unambiguous JSON array (§11.5)."""
+    parts = _game_identity_parts(ce_type, data)
+    name = json.dumps(parts, ensure_ascii=True, separators=(",", ":"))
+    return str(uuid.uuid5(GAME_EVENT_NAMESPACE, name))
+
+
+def game_ordering_key(ce_type: str, data: dict) -> str:
+    _game_identity_parts(ce_type, data)
+    try:
+        project = data["project_slug"]
+        if ce_type == "bloodbank.game.implementation.started":
+            scope = f"implementation:{data['implementation_id']}"
+        elif ce_type == "bloodbank.game.concept_pool.breached":
+            scope = f"concept_pool:{data['pool_id']}"
+        elif ce_type == "bloodbank.game.item.created":
+            scope = f"item:{data['item_id']}"
+        elif ce_type == "bloodbank.game.pack.released":
+            scope = f"pack:{data['pack']['id']}"
+        else:
+            raise ContractViolation(f"no game ordering contract for {ce_type!r}")
+    except (KeyError, TypeError) as exc:
+        raise ContractViolation(f"game ordering field missing or malformed: {exc}") from exc
+    return f"game:{project}:{scope}"
+
+
+def assert_game_invariants(envelope: dict) -> None:
+    if envelope.get("domain") != "game":
+        return
+    ce_type = envelope["type"]
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        raise ContractViolation("game data must be an object")
+    if (envelope.get("kind") != "event" or type(data.get("schema_version")) is not int
+            or data["schema_version"] != 1):
+        raise ContractViolation("game contracts are events with data.schema_version == 1")
+    for field, expected in (
+        ("id", game_event_id(ce_type, data)),
+        ("ordering_key", game_ordering_key(ce_type, data)),
+        ("correlationid", data.get("correlation_id")),
+        ("causationid", data.get("cause_event_id")),
+        ("schemaref", f"{ce_type}.v1"),
+        ("dataschema", f"apicurio://holyfields/{ce_type}/versions/1"),
+        ("datacontenttype", "application/json"),
+    ):
+        if field not in envelope or envelope[field] != expected:
+            raise ContractViolation(f"game envelope.{field} must equal {expected!r} (§11.5)")
+    for field in ("correlation_id", "cause_event_id"):
+        value = data.get(field)
+        if field == "cause_event_id" and field in data and value is None:
+            continue
+        try:
+            if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+                raise ValueError()
+        except ValueError as exc:
+            raise ContractViolation(f"game data.{field} must be a canonical UUID") from exc
+    if envelope.get("causationid") == envelope["id"]:
+        raise ContractViolation("a game event cannot cause itself")
+    if ce_type == "bloodbank.game.pack.released":
+        from urllib.parse import urlsplit, parse_qs
+        import ipaddress
+        try:
+            pack = data["pack"]
+            raw_url = data["playable_url"]
+            if not isinstance(raw_url, str) or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in raw_url):
+                raise ValueError("playable_url must not contain whitespace or controls")
+            url = urlsplit(raw_url)
+            host = url.hostname
+            if not host or url.username is not None or url.password is not None or "@" in url.netloc:
+                raise ValueError("playable_url requires an authority without credentials")
+            authority = None
+            if url.netloc.startswith("["):
+                if not re.fullmatch(r"\[[0-9A-Fa-f:.]+\](?::[0-9]+)?", url.netloc):
+                    raise ValueError("playable_url has malformed IPv6 authority")
+                ipaddress.IPv6Address(host)
+            else:
+                authority = re.fullmatch(r"([A-Za-z0-9.-]+)(?::([0-9]+))?", url.netloc)
+                if not authority or len(host) > 253 or any(
+                    not 1 <= len(label) <= 63 or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+                    for label in host.rstrip(".").split(".")
+                ):
+                    raise ValueError("playable_url has malformed DNS authority")
+                if host.replace(".", "").isdigit() and "." in host:
+                    ipaddress.IPv4Address(host)
+            port_suffix = url.netloc.split("]", 1)[1] if url.netloc.startswith("[") else (
+                url.netloc[len(authority.group(1)):] if authority else "")
+            if port_suffix and (not re.fullmatch(r":[0-9]+", port_suffix)
+                                or url.port is None or not 1 <= url.port <= 65535):
+                raise ValueError("playable_url has invalid port")
+            if (url.scheme != "https" or url.path != f"/play/{pack['id']}" or url.fragment
+                    or "#" in raw_url or url.query != f"v={pack['version']}"
+                    or parse_qs(url.query, keep_blank_values=True, strict_parsing=True) != {"v": [str(pack["version"])]}):
+                raise ValueError("playable_url must pin the exact pack/version over HTTPS")
+            channels = [row["channel"] for row in data["channels"]]
+            if len(channels) != len(set(channels)) or "web" not in channels:
+                raise ValueError("channels must be unique and include verified web playback")
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise ContractViolation(f"pack release evidence invalid: {exc}") from exc
+    if ce_type == "bloodbank.game.concept_pool.breached":
+        count = data.get("eligible_count")
+        if type(count) is not int or not 0 <= count <= 5:
+            raise ContractViolation("game low-water count must be a complete integer in [0, 5]")
+        if data.get("complete") is not True or data.get("threshold") != 5:
+            raise ContractViolation("game low-water requires complete=True and threshold=5")
+        try:
+            episode = uuid.UUID(data["episode_id"])
+            if episode.version != 4 or str(episode) != data["episode_id"]:
+                raise ValueError()
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ContractViolation("adopt the existing low-water UUID4 episode_id") from exc
+
+
+def app_launch_event_id(data: dict) -> str:
+    try:
+        installation = data["installation_id"]
+        if str(uuid.UUID(installation)) != installation or uuid.UUID(installation).version != 4:
+            raise ValueError("installation_id must be canonical UUID4")
+        native = data["native_build"]
+        project = data["project"]
+        if not isinstance(native, dict) or not isinstance(project, dict):
+            raise ContractViolation("app launch identity project/native_build must be objects")
+        parts = [APP_LAUNCH_TYPE,
+                 _identity_text(project["slug"], "project.slug", _GAME_SLUG, 100), installation,
+                 _identity_text(native["bundle_id"], "native_build.bundle_id", _NATIVE_BUNDLE_ID, 200),
+                 _identity_text(native["app_version"], "native_build.app_version", _NATIVE_VERSION, 32),
+                 _identity_text(native["build_number"], "native_build.build_number", _NATIVE_VERSION, 32)]
+        return str(uuid.uuid5(GAME_EVENT_NAMESPACE,
+                             json.dumps(parts, ensure_ascii=True, separators=(",", ":"))))
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise ContractViolation(f"app launch identity invalid: {exc}") from exc
+
+
+def assert_app_launch_invariants(envelope: dict) -> None:
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        raise ContractViolation("app launch data must be an object")
+    expected_id = app_launch_event_id(data)
+    expected_key = f"project:{data['project']['slug']}:installation:{data['installation_id']}"
+    for field, expected in (("id", expected_id), ("ordering_key", expected_key),
+                            ("kind", "event"), ("schemaref", APP_LAUNCH_TYPE + ".v1"),
+                            ("dataschema", f"apicurio://holyfields/{APP_LAUNCH_TYPE}/versions/1"),
+                            ("datacontenttype", "application/json")):
+        if envelope.get(field) != expected:
+            raise ContractViolation(f"app launch envelope.{field} must equal {expected!r}")
+    for field in ("correlationid", "causationid"):
+        value = envelope.get(field)
+        if field == "causationid" and field in envelope and value is None:
+            continue
+        try:
+            if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+                raise ValueError()
+        except ValueError as exc:
+            raise ContractViolation(f"app launch {field} must be canonical UUID or root null cause") from exc
+    if envelope.get("causationid") == expected_id:
+        raise ContractViolation("an app launch cannot cause itself")
+    if (data.get("channel") == "testflight") != (data.get("testflight_eligible") is True):
+        raise ContractViolation("unknown/other channel is not TestFlight eligible")
+    evidence_bases = {
+        "testflight": {"verified_testflight_runtime"},
+        "app_store": {"verified_other_distribution"},
+        "private_app": {"verified_other_distribution"},
+        "unknown": {"unverified", "sandbox_receipt_only"},
+    }
+    evidence = data.get("channel_evidence")
+    if (not isinstance(evidence, dict)
+            or evidence.get("basis") not in evidence_bases.get(data.get("channel"), ())):
+        raise ContractViolation("app launch channel evidence basis contradicts the selected channel")
+    _project_refuse_paths_anywhere(data, "data")
+
+
 def assert_contract(envelope: dict) -> None:
     """Run all stdlib-only contract checks on an envelope. Raises ContractViolation on first failure."""
     if not isinstance(envelope, dict):
@@ -844,6 +1086,7 @@ def assert_contract(envelope: dict) -> None:
     assert_portfolio_invariants(envelope)
     assert_project_invariants(envelope)
     assert_watch_invariants(envelope)
+    assert_game_invariants(envelope)
 
 
 # --------------------------------------------------------------------------
@@ -1009,6 +1252,12 @@ __all__ = [
     "COMMAND_ACTIONS",
     "ContractViolation",
     "EVENT_ACTIONS",
+    "ENTITY_DOMAINS",
+    "GAME_ENTITY_ACTIONS",
+    "APP_LAUNCH_TYPE",
+    "app_launch_event_id",
+    "assert_app_launch_invariants",
+    "GAME_EVENT_NAMESPACE",
     "EnvelopeInvalid",
     "KIND_MARKERS",
     "MARKER_TO_KIND",
@@ -1022,6 +1271,7 @@ __all__ = [
     "assert_action_tense",
     "assert_banned_tokens",
     "assert_contract",
+    "assert_game_invariants",
     "assert_portfolio_invariants",
     "assert_project_invariants",
     "assert_watch_invariants",
@@ -1029,6 +1279,8 @@ __all__ = [
     "assert_terminal_receipt_retry",
     "assert_type_shape",
     "load_schema_for",
+    "game_event_id",
+    "game_ordering_key",
     "portfolio_terminal_receipt_digest",
     "subject_for",
     "validate_envelope",

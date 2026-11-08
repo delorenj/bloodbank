@@ -302,6 +302,7 @@ Segment 3 of `type` MUST be one of:
 | `crank`        | Desk-mode crank sessions: the operator's circuit of agent tabs in the zellij Workspace and Wingman, the voice pair programmer that watches it (`duty.started`, `duty.ended`, `alert.raised`). | active   |
 | `cron`         | Time-driven scheduling facts from the Candybar cron framework: the UTC minute heartbeat every schedule keys off (`tick.fired`) and the registered-unit lifecycle (`candybar.*`), plus the `candybar.invoke` dispatch command; and the Candybar steward's task lifecycle (`steward_task.*`) with its `candybar.steward` command. | active   |
 | `watch`        | Target-focused alerts: an inbound message on any provider (email, chat, carrier text, call, voicemail) matched to a watched target (`target.detected`), and what the sink did about it (`target.routed`). Provider-agnostic: the fact names the target, not the channel; provider identity is data (see §10.1). | active   |
+| `game`         | Provider-neutral game production and delivery observations. BB-34 candidate source registration only; scout/producer adoption and production activation are NOT established (§11.5). | candidate |
 | `approval`     | Human-in-the-loop approval grants/denies.                          | reserved |
 | `workspace`    | Working directory / git state mutations.                           | reserved |
 | `workflow`     | Multi-step workflow orchestration: scheduled agent workflows such as the gateway's daily free-provider scout (`account.expired`, `task.completed`, `task.failed`), and the n8n ticket lifecycle lanes — Ticket Grooming (`ticket-grooming`), Ticket Delegation (`ticket-delegation`), Ticket Delegation — Groomed in Todo (`ticket-delegation-groomed`) and the Pickup Chip (`ticket-pickup-chip`) — which report a run that died as `task.failed` (typed lane, ticket, owner, error class and recovery in `data`; the lane's slug is `data.workflow`). | active   |
@@ -397,6 +398,11 @@ Segment 4 of `type` MUST be one of:
 | `candybar`         | `cron`                   | One registered scheduled unit in the Candybar cron framework: registration (`created`/`updated`), invocation lifecycle (`invoked`/`completed`/`failed`), suppressed fires (`skipped`), and the `candybar.invoke` dispatch command. |
 | `steward_task`     | `cron`                   | One Candybar steward task (enrich, fix, evaluate or refactor) for a registered candybar: `queued` -> `started` -> `completed` or `failed`; the `candybar.steward` command runs it (candybar `steward-contract.md`). `data` is the task; `ordering_key = candybar:<candybar_id>`, so a task orders with its candybar's facts. |
 | `target`           | `watch`                  | One watched target (a person or organisation the operator keeps watch on): `detected` (an inbound message of any provider was matched to it) and `routed` (the sink filed or updated a ticket, only notified, skipped a duplicate, or failed). `data.watch_id` is the target's slug; `ordering_key = watch:<watch_id>`. |
+| `implementation`   | `game`                   | Candidate: `started` once per canonical new-game implementation, not per retry, reservation or revision. |
+| `pack`             | `game`                   | Candidate: `released`, one exact immutable pack/version/hash actually playable on verified channels, not upload/registration/deploy. |
+| `app_launch`       | `project`                | Candidate: `recorded`, first actual native app startup per persisted installation + native bundle/version/final iOS build (§11.5). |
+| `concept_pool`     | `game`                   | Candidate: `breached` projects an existing complete low-water episode; never a competing threshold evaluator. |
+| `item`             | `game`                   | Candidate: `created` once per new ready Thing landed in content main; registry status remains explicit and separate. |
 
 Entity additions follow the same PR-first rule as domains. A domain may not
 emit an entity not paired with it here.
@@ -612,6 +618,10 @@ workflow:<workflow_id>:<execution_id> # workflow.task.failed with no ticket know
 ledger:<client>                  # billing: every other ledger fact of one client announced by Milkshake (billing.rule.*, billing.cost.recorded, billing.snapshot.sent, billing.line_item.updated) and the outcome of each palette command (billing.farm_command.*), so an outcome orders with the ledger facts it caused; `ledger:global` for a fact of no client (`billing.transaction.*` use `ledger:global`: AAI's bank is no client's), including a `farm_command` event refused before its client was proven (the claimed client is unverified, so it must not name a bucket; `invoice:unverified` stays for the `billing.invoice.*` family). Invoice issued/delivered use `invoice:<client>` so one client's invoice facts stay in order.
 ```
 
+BB-34 candidates add `game:<project_slug>:<aggregate>:<id>` for the
+implementation, concept_pool, item or pack aggregate; project app launch uses
+`project:<slug>:installation:<uuid>` (§11.5).
+
 Pick the narrowest bucket that captures the event's natural ordering.
 A `conversation.message.appended` uses `turn:<turn_id>`. A
 `cli.stdout.appended` uses `process:<process_id>`. An
@@ -748,6 +758,56 @@ store before the event is published (docs/project-artifact-sidecar.md).
 
 ---
 
+### 11.5 BB-34 five-fact candidate lifecycle contract
+
+**Source candidate, not producer adoption or production activation.** The existing
+scout `wf_0f5bd884-cdb` is completed (`2026-11-08T01:08:00.668Z`, all four
+agents done); its findings are source discovery, not naming approval. Bloodbank
+PM selected these five distinct facts for candidate registration, retaining the
+local `concept_pool` name over the scout's proposed `concept_inventory`:
+
+| Type | Subject |
+| --- | --- |
+| `bloodbank.game.implementation.started` | `bloodbank.evt.game.implementation.started` |
+| `bloodbank.game.pack.released` | `bloodbank.evt.game.pack.released` |
+| `bloodbank.game.concept_pool.breached` | `bloodbank.evt.game.concept_pool.breached` |
+| `bloodbank.game.item.created` | `bloodbank.evt.game.item.created` |
+| `bloodbank.project.app_launch.recorded` | `bloodbank.evt.project.app_launch.recorded` |
+
+Five fact/entity addresses avoid discriminator-dependent consumer semantics and
+unblock the product while dogfooding the platform and reusing narrow source
+facts. The abandoned delivery-observation union is not registered. App launch
+is a project/app fact, not a game, pack or deployment fact. Other project facts
+keep their existing rules; app launch has its own schema, identity and ordering
+exception (`project:<slug>:installation:<uuid>`), with no shared game payload.
+
+Revision 1 uses matching `.v1` and `/versions/1` handles (§13). `GAME_ENTITY_ACTIONS`
+and `ENTITY_DOMAINS` close the new pairs in both directions without rewriting
+legacy pairings. `app_launch` pairs only with project and action `recorded`.
+`bb contract --json` remains flat vocabulary, not a pairing list.
+
+Exact payloads, stable UUID5 arrays/vectors, source boundaries, channel truth,
+outbox/retry requirements and selected-but-not-live ntfy topic are specified in
+[BB-34 producer contract](contracts/bb-34-tolt-producers.md). The namespace remains
+`uuid5(NAMESPACE_URL, "https://33god.dev/bloodbank/game")`, including app launch
+for continuity of this unpublished candidate. Schema revision is not an address
+or event-identity input. IDs are also `Nats-Msg-Id` and durable idempotency keys.
+
+Original `data.observed_at` and immutable envelope `time` remain distinct from
+broker/Candystore receipt time. Game payload lineage twins remain equal to their
+envelope fields; app launch uses envelope lineage only. Root cause is explicit
+null and self-causation is rejected. Retried envelopes are identical saved bytes,
+not newly generated timestamps or refreshed supported channels.
+
+The existing Forge `ltf.concept-low-water/1` UUID4 episode is authoritative:
+complete <=5 (zero included) opens an episode; >5 rearms; unknown neither means
+zero nor rearms. Bloodbank projects that fact, never adds a second detector.
+The direct infra ntfy cutover prohibits dual pushes and retroactive notifications
+for delivered/uncertain episodes. The topic `tolt` is PM-selected, but monitoring
+acceptance/configuration/wake are pending. No publication is authorized here.
+
+---
+
 ## 12. Schema directory layout
 
 Bloodbank schemas live under `bloodbank/schemas/` in this repo. The tree is
@@ -789,6 +849,9 @@ Each schema:
 There is no provider-named subdirectory (for example,
 `bloodbank/schemas/bloodbank/copilot/`) — provider identity does not shape
 the schema tree.
+
+BB-34 adds a candidate `game/` directory alongside the live domains above.
+It is a source contract proposal, not evidence of a deployed producer.
 
 Runtime validator lookup (`services/agent-hooks/core/validate.py`) resolves
 the schema root in this order:
