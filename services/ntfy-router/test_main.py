@@ -61,6 +61,22 @@ class FakeSizer:
         return self.size
 
 
+class ExactFamilyIsolationTest(unittest.TestCase):
+    def test_unconfigured_family_never_uses_generic_poster_or_mirrors(self):
+        router, ntfy, _ = make(mirror_domain=True, deploy_topic="deploys")
+        for event_type in main.tolt_family.TYPES:
+            result = run(router.handle(env(event_type), event_type.replace("bloodbank.", "bloodbank.evt.", 1)))
+            self.assertEqual(result, "family-disabled")
+        self.assertEqual(ntfy.posts, [])
+        self.assertEqual(router.overflow, {})
+
+    def test_nonfamily_game_and_project_types_keep_generic_behavior(self):
+        router, ntfy, _ = make(burst=10)
+        for event_type in ("bloodbank.game.other.created", "bloodbank.project.activity.recorded"):
+            self.assertEqual(run(router.handle(env(event_type, summary="synthetic"), "s")), "routed")
+        self.assertEqual(len(ntfy.posts), 2)
+
+
 def env(event_type: str, **data) -> dict:
     return {"type": event_type, "source": "urn:test", "data": data}
 

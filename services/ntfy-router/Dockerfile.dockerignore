@@ -1,0 +1,15 @@
+**
+!services/
+!services/ntfy-router/
+!services/ntfy-router/Dockerfile
+!services/ntfy-router/main.py
+!services/ntfy-router/tolt_family.py
+!services/agent-hooks/
+!services/agent-hooks/core/
+!services/agent-hooks/core/*.py
+!schemas/
+!schemas/**
+!docs/
+!docs/event-naming.md
+**/__pycache__/
+**/*.pyc
