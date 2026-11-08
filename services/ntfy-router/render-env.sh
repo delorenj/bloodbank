@@ -10,7 +10,10 @@ umask 077
 tmp="$(mktemp .env.XXXXXX)"
 trap 'rm -f "$tmp"' EXIT
 op run --no-masking --env-file=.env.op -- sh -c \
-  'case "$BLOODBANK_NTFY_ROUTER_NTFY_TOKEN" in tk_?*) ;; *) echo "render-env: resolved value is not an ntfy token (tk_...)" >&2; exit 1;; esac; printf "BLOODBANK_NTFY_ROUTER_NTFY_TOKEN=%s\n" "$BLOODBANK_NTFY_ROUTER_NTFY_TOKEN"' >"$tmp"
+  'case "$BLOODBANK_NTFY_ROUTER_NTFY_TOKEN" in tk_?*) ;; *) echo "render-env: resolved value is not an ntfy token (tk_...)" >&2; exit 1;; esac;
+   for ref in $(env | sed -n "s/^\(BLOODBANK_NTFY_ROUTER_[A-Z0-9_]*\)=.*/\1/p" | sort -u); do
+     eval "printf \"%s=%s\\\\n\" \"$ref\" \"\$$ref\""
+   done' >"$tmp"
 test -s "$tmp" || { echo "render-env: token did not resolve" >&2; exit 1; }
 mv -f "$tmp" .env
 trap - EXIT
