@@ -91,6 +91,10 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
         env["causationid"] = payload["causation_id"]
         if ce_type == "bloodbank.portfolio.receipt.recorded":
             env["id"] = payload["receipt_id"]
+    if ce_type == "bloodbank.project.app_launch.recorded":
+        sys.path.insert(0, str(Path("services/agent-hooks/tests").resolve()))
+        from tolt_contract_fixtures import envelope_for
+        return envelope_for("launch")
     if domain == "project":
         # data: {} cannot satisfy assert_project_invariants; use the internal
         # fixture and bind the two cross-field keys the validator checks.
@@ -116,6 +120,11 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
         }[ce_type]
         env["data"] = {"watch_id": "test-target", parent: env["causationid"]}
         env["ordering_key"] = "watch:test-target"
+    if domain == "game":
+        sys.path.insert(0, str(Path("services/agent-hooks/tests").resolve()))
+        from tolt_contract_fixtures import CASES, envelope_for
+        case = next(name for name, (type_name, _, _) in CASES.items() if type_name == ce_type)
+        env = envelope_for(case)
     return env
 
 

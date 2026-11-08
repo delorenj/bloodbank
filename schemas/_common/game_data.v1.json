@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/_common/game_data.v1.json",
+  "title": "BB-34 candidate shared game data, revision 1",
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "maxLength": 100
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "record_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "format": "uri-reference",
+      "pattern": "^(?:urn:|repo://)"
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "basis": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "record_ref": {
+          "$ref": "#/$defs/record_ref"
+        },
+        "source_commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        }
+      },
+      "required": [
+        "basis",
+        "record_ref",
+        "source_commit"
+      ],
+      "additionalProperties": false
+    },
+    "pack": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "native_build": {
+      "type": "object",
+      "properties": {
+        "bundle_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+$",
+          "maxLength": 200
+        },
+        "app_version": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}$",
+          "maxLength": 32
+        },
+        "build_number": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}$",
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "bundle_id",
+        "app_version",
+        "build_number"
+      ],
+      "additionalProperties": false
+    },
+    "observed_at": {
+      "allOf": [
+        {
+          "$ref": "types.v1.json#/$defs/timestamp"
+        }
+      ],
+      "pattern": "Z$",
+      "description": "Source observation time in UTC; never broker receipt time. Frozen with the outbox envelope."
+    }
+  }
+}
