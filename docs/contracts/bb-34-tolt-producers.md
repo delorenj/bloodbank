@@ -131,6 +131,129 @@ from gameplay saves, and retain it through updates. Uninstall normally resets
 it and can count again; backup/restore or copied app data may preserve/clone it.
 This is per installation/build, not per human or physical device forever.
 
+### TOLT-99 launch provenance clarification proposal (November 8, 2026)
+
+**Unreviewed engineering clarification, not producer adoption or device proof.**
+The four required `true` flags name successful checks at their stated source
+boundary; they do not promise independent backend authentication of an earlier
+offline execution. The existing fact is a first native startup **reported by
+its source**, not a remote-attestation certificate. No type, subject, field,
+constant, schema revision, UUID derivation or TestFlight rule changes here.
+The runtime validator checks structural consistency, not truth of observations.
+
+The applicable trust model is **reviewed-source, client-observed telemetry**:
+the TOLT owner trusts its reviewed non-debug iOS startup/identity implementation
+to report its local checks honestly. Anonymous HTTPS input is NOT authenticated
+as that implementation. A forged POST can be indistinguishable from an honest
+one; schema/privacy/rate checks and release matching do not remove this limit.
+Do not use these facts for security, billing, unique-device/person counts or
+proof an individual historical execution/persistence occurred. If a consumer
+requires independently authenticated runtime facts, this clarification cannot
+satisfy it: request a distinct approved fact under naming §3.1, not an in-place
+reinterpretation, `false` branch or invented address.
+
+**Source-local verification is not “server verified because the client said
+true.”** No client verification booleans or canonical envelopes are accepted by
+the narrow observation endpoint. The reviewed capture path must actually
+perform the checks below; the server retains their source-policy basis and
+explicitly labels the runtime portion client-observed. The server independently
+performs only the comparisons it can perform. Publishing an envelope is
+conditional on this honest-source assumption, not evidence that the assumption
+was established for that POST.
+
+| Exact flag | Positive check, verifier and evidence | Limit / withholding condition |
+| --- | --- | --- |
+| `installation_verified` | **Client:** generate UUID4 with CSPRNG only when no identity exists; persist separately from saves; read back the pending and final committed file (or read valid existing identity); fail closed on corrupt/missing persistence. **Server:** check canonical UUID4 and immutable installation/build uniqueness; retain reference to the reviewed identity implementation and original observation digest. | Persistence was checked locally. The server cannot prove a remote file, CSPRNG origin, hardware identity or non-cloning from UUID syntax/POST/release hash. A failed local readback must not produce a sendable observation. Uninstall/restore/copy limitations above remain. |
+| `native_boot_verified` | **Client:** call capture synchronously at actual `app._ready()`/APP_START in a non-debug iOS shell, before deferred transport; require the native bridge to load and return valid runtime metadata. **Server:** bind admission policy to the reviewed capture/bridge implementation shipped by the matched release, not to an arbitrary client's requested flags. | This occurrence and original time remain client-observed; no server-side authentication of past offline `_ready` is claimed. Upload, installation command, pack load, a valid manifest or a release receipt is not startup evidence. Missing/debug/failed native capture is local-only. |
+| `bundle_verified` | **Client:** read/hash the running main bundle's exact installed `Info.plist` bytes. **Server:** match that reported SHA256 AND full native tuple to a trusted release-owner record of the same final artifact/byte definition; retain both observation and release-record digests. | Not a hash of the entire IPA/PCK, code-signature validation or proof the POST came from that bundle. Hash shape alone is insufficient. Missing or mismatched final-artifact evidence withholds canonical publication. |
+| `final_native_identity_verified` | **Client:** obtain actual `CFBundleIdentifier`, `CFBundleShortVersionString` and final `CFBundleVersion` from `NSBundle.mainBundle`. **Server:** compare all three exact strings to release-owned final-build evidence after Mac build reselection, bound to the same manifest hash and reviewed source policy. | Not Linux/Android diagnostics, an intended version, upload success or an archive name. Matching a claimed tuple proves the comparison, not authenticity of the remote installation. Missing/ambiguous/mismatched final-build evidence withholds canonical publication. |
+
+Concrete inspected source at game HEAD
+`a6da78f0379b4fc4f87ba2ac2a01a3d1cd36b976`:
+`game/core/app.gd::_ready`, `native_launch.gd::{capture_startup,native_metadata}`,
+`native_installation.gd::{open,_commit,_read}`, and
+`native/launch/metadata.mm::tolt_native_metadata`.
+The local UUID file uses flush/rename/readback and recoverable pending state;
+this is not proven iOS power-loss persistence or directory fsync.
+The seven-field observation currently contains no runtime attestation material.
+`ops/feedback/launch-{server,contract,ledger}.mjs` implements manual
+exact-observation admission today; this proposal does not claim it is automatic.
+
+#### Automatic constrained admission: game-owner obligations
+
+1. Keep the existing narrow HTTPS route and exact canonical observation
+   allowlist, 4096-byte input cap, real UTC calendar validation, body/time/rate
+   limits and privacy exclusions. No caller-selected producer, project, envelope,
+   verification flags, policy, evidence URI or channel verdict. The server owns
+   those choices. UUID syntax/record lookup is not proof of source authenticity.
+2. Use a **release/source policy**, not a per-observation approval map. Its
+   trusted evidence identifies the reviewed capture, persistence, bridge and
+   normalizer source versions and their positive/negative guard tests. Apply
+   the same policy automatically to new installations/build observations; an
+   observation digest binds immutable bytes, never asks a human to approve them.
+   Policy/evidence refresh is release-owned and recoverable without restarting
+   for each unseen observation.
+3. Select trusted final-build records by exact bundle ID + marketing version +
+   final build + exact installed-manifest SHA256. Records come from release-owner
+   output in an owner-controlled store, not paths/URLs/booleans supplied in POST.
+   Keep the referenced release record and its digest immutable. `tools/ios.mjs`
+   `archive_output` seals the actual archive tuple/plist after Mac reselection;
+   its `ios-receipt.json` initially says not-installed/not-observed. An archive
+   seal alone does not establish delivered/installed byte equality. If later
+   packaging/distribution changes `Info.plist`, do not normalize away a mismatch:
+   the release owner must provide corresponding final-artifact evidence, with
+   the same raw-byte definition. No registry-sync prerequisite is introduced.
+4. For a well-formed new observation, atomically retain original bytes/digest,
+   first receipt, semantic identity and a recoverable **projection intent**.
+   Missing source/release evidence => `observed-only/pending-evidence`;
+   contradictory tuple/hash => `observed-only/held-evidence-mismatch`. These are
+   private ingress dispositions, NOT new bus types/fields or a v1 envelope with
+   false/made-up flags. Durable observed-only acceptance may return the existing
+   receipt shape after the server assumes recovery responsibility; `event_id`
+   then reserves semantic identity, not a claim a canonical event was published.
+   Identical retries return the first receipt; different bytes for the same
+   installation/build identity conflict. Disabled intake still fails closed.
+5. Automatically re-evaluate retained projection intents on bounded existing
+   startup/intake/drain or release-evidence refresh invocations, INCLUDING
+   previously received observations. No per-launch human approval/restart and
+   no new clock. Source-policy absence or evidence mismatch never becomes
+   verified merely through time, retries or operator inactivity. Game-owned
+   per-record fairness must keep one held observation from starving others.
+6. Only after the stated source checks are accepted under this trust model AND
+   exact trusted final-build comparison succeeds may the normalizer construct
+   the first canonical v1 envelope. Its summary must say client-observed
+   startup/release match, not authenticated/attested execution. Set
+   `provenance.record_ref` to the server's durable evidence record, e.g.
+   `urn:tolt:native-launch:receipt:<event_id>`. That record retains original
+   observation SHA/time; source-policy version and reviewed-source references;
+   each flag's verifier/check/result and client-observed versus server-compared
+   scope; trusted final-release reference/digest; and independent distribution
+   decision. No new payload fields are needed.
+7. Freeze that first envelope, source/actor, evidence reference, correlation,
+   ID, ordering and original observation time; never restamp at receipt or
+   reconstruct it using newer release/channel evidence. Persist envelope/outbox
+   with the qualifying transition or recover from the retained projection
+   intent before claiming emitted. Await JetStream PubAck/exact readback with
+   `Nats-Msg-Id=id`; source receipt, broker receipt, HTTP and device proof stay
+   distinct. A later channel discovery cannot mutate/remint this launch.
+
+**Distribution is separate.** The server selects `testflight` only from
+owner-controlled evidence that actually establishes TestFlight **runtime
+distribution**, with a logical evidence reference, bound to the reported
+installation + exact native tuple + manifest and applicable to the original
+observation. A record labelled `verified_testflight_runtime` without underlying
+runtime evidence is insufficient. Client hints, sandbox receipt filename,
+store/bundled-only build settings, ASC upload/availability and final-release
+matching alone are never such evidence. The current seven-field POST supplies
+no independently verifiable distribution proof; with no separately qualifying
+server-owned runtime evidence, output **unknown / eligible=false**, with basis
+`sandbox_receipt_only` for that limited hint, otherwise `unverified`, and null
+evidence reference. Unknown telemetry can qualify once startup provenance and
+final-build requirements above are met; it does not need a TestFlight decision.
+App Store/private selection similarly requires its own qualified distribution
+evidence and remains ineligible. This adds no per-launch operator or phone gate;
+actual installed/native/TestFlight proof remains a separate future acceptance.
+
 ## Exact stable identities and known synthetic vectors
 
 Keep namespace `uuid5(uuid.NAMESPACE_URL, "https://33god.dev/bloodbank/game")`
