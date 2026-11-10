@@ -1,6 +1,5 @@
-# Self-test target for live proofs of the whole path without touching anyone's
-# real conversations. Send an email from watch-selftest@delo.sh (or label a test
-# text "Watch Selftest") and the operator gets one Telegram line; no ticket.
+# Synthetic probe is opt-in via --targets or TARGET_WATCH_PATHS and has no
+# outbound channel by default. Detection/routed facts remain inspectable locally.
 [target]
 id = "watch-selftest"
 display_name = "Watch Selftest"
@@ -11,4 +10,4 @@ label = ["Watch Selftest"]
 
 [sink]
 kind = "notify_only"
-notify = ["telegram:7564050286"]
+# No notify channel: this is a synthetic probe, not an operator escalation.

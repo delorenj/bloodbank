@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from conftest import FakeJS, call_ended, email, rcs, transcription, write_target
-from target_watch import envelope as env
+from target_watch import envelope as env, paths
 from target_watch.bus import Permanent, Publisher
 from target_watch.matcher import detection_envelope, match
 from target_watch.sink import FOOTER, SinkService, first_match, CREATED
@@ -196,6 +196,16 @@ async def test_notify_only_target(tmp_path, index, state, publisher, runner, clo
     assert runner.of("task") == [] and runner.of("comment") == []
     assert [s[s.index("--to") + 1] for s in runner.of("send")] == ["telegram:1000", "telegram:2000"]
     assert routed["data"]["action"] == "notified_only" and routed["data"]["ticket_ref"] is None
+
+
+async def test_builtin_selftest_is_local_even_when_explicitly_loaded(tmp_path, index, state, publisher, runner, clock):
+    registry = TargetRegistry([str(paths.BUILTIN_TARGETS / "selftest.toml")])
+    sink = SinkService(registry, state, publisher, runner=runner, clock=clock)
+    detection = detect(index, registry, email(sender="watch-selftest@delo.sh", text="Synthetic"))
+    routed = await sink.handle(detection)
+    assert routed["data"]["action"] == "notified_only"
+    assert routed["data"]["notify_channels"] == []
+    assert runner.calls == []
 
 
 async def test_failed_notification_is_recorded(sink, index, registry, runner):

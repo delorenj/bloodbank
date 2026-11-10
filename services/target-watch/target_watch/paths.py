@@ -32,11 +32,11 @@ def state_dir() -> Path:
 
 
 def target_globs(override: str | None = None) -> list[str]:
-    """Colon-separated globs. The default also covers this service's own targets/."""
+    """Colon-separated globs. Synthetic built-ins require explicit --targets or env opt-in."""
     raw = override if override is not None else os.environ.get("TARGET_WATCH_PATHS")
     if raw:
         return [p for p in raw.split(":") if p.strip()]
-    return DEFAULT_TARGET_PATHS.split(":") + [str(BUILTIN_TARGETS / "*.toml")]
+    return DEFAULT_TARGET_PATHS.split(":")
 
 
 def get_path(document: object, dotted: str | None) -> object:

@@ -99,16 +99,28 @@ def test_duplicate_ids_keep_the_first(tmp_path):
     assert [t.display_name for t in targets] == ["A"] and "duplicate target id" in errors[0]
 
 
-def test_default_globs_include_the_builtin_selftest(monkeypatch):
+def test_default_globs_exclude_builtin_selftest_but_keep_client_watches(monkeypatch, tmp_path):
     monkeypatch.delenv("TARGET_WATCH_PATHS", raising=False)
     globs = paths.target_globs()
     assert "~/code/*/.watch/*.toml" in globs and "~/code/33GOD/*/.watch/*.toml" in globs
-    assert str(paths.BUILTIN_TARGETS / "*.toml") in globs
+    assert not any(str(paths.BUILTIN_TARGETS) in glob for glob in globs)
     targets, errors = load_targets([str(paths.BUILTIN_TARGETS / "*.toml")])
     assert errors == []
     selftest = next(t for t in targets if t.id == "watch-selftest")
     assert selftest.email == {"watch-selftest@delo.sh"} and selftest.label == {"watch selftest"}
-    assert selftest.sink.kind == "notify_only" and selftest.sink.notify == ("telegram:7564050286",)
+    assert selftest.sink.kind == "notify_only" and selftest.sink.notify == ()
+    assert paths.target_globs(str(paths.BUILTIN_TARGETS / "selftest.toml")) == [
+        str(paths.BUILTIN_TARGETS / "selftest.toml")]
+    # Client targets still resolve under normal discovery; only the built-in path was removed.
+    client = tmp_path / "code" / "james-brennan" / ".watch"
+    client.mkdir(parents=True)
+    write_target(client, "jim-brennan", '[target]\nid="jim-brennan"\ndisplay_name="Jim"\n'
+                 '[target.handles]\nemail=["jim@example.com"]\n[sink]\nkind="notify_only"\n'
+                 'notify=["telegram:1000"]')
+    monkeypatch.setenv("HOME", str(tmp_path))
+    resolved, errors = load_targets(paths.target_globs())
+    assert errors == [] and [t.id for t in resolved] == ["jim-brennan"]
+    assert resolved[0].sink.notify == ("telegram:1000",)
 
 
 def test_env_paths_replace_the_defaults(monkeypatch, tmp_path):
