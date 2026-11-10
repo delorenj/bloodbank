@@ -150,6 +150,12 @@ about Candystore; Candystore itself remains a separate service repo. The
 runtime boundary, per-service Dapr component rationale, and verification probes
 are documented in [`../docs/candystore-integration.md`](../docs/candystore-integration.md).
 
+This profile is legacy: its host port `3603` is intentionally not the canonical
+Candystore API port `8683` (the standalone stack's loopback contract, see the
+"Port contract" section of the integration doc). Consumers default to
+`http://127.0.0.1:8683`; point one at this profile with
+`CANDYSTORE_URL=http://127.0.0.1:3603`.
+
 ### Stream initialization
 
 `nats/streams.json` is applied to the running NATS server by the `nats-init`
