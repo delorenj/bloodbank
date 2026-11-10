@@ -640,6 +640,18 @@ Claude prompt's worst case is skill-reminder (1s), then recall (about 4.5s with
 interpreter start), then codegraph-prompt (2s), then hub-selftest (0.5s). That
 totals about 8s inside the 14.5s budget.
 
+Before it sends the real request the client pings the hub (`{"v":1,"op":"ping"}`,
+answered immediately from the event loop, no journal row). A hub that accepts the
+connection but does not answer the ping within `BB_HOOK_PROBE_BUDGET` (3s by
+default, the ordinary deadline) is wedged: the client exits 0 instead of sitting
+out a 15-second prompt deadline. A busy hub still answers pings while its handler
+subprocesses run, so recall keeps its full deadline. After a stalled probe the
+client writes `<socket>.stalled` and the following probes within 30 seconds use
+`BB_HOOK_STALL_PROBE_BUDGET` (0.25s), so a wedged hub costs one slow hook, not
+one per hook; the marker never skips the probe and is removed on the next
+answered ping. Hosts that do not rely on socket-activation backlog service (macOS
+launchd) should set `BB_HOOK_PROBE_BUDGET` lower (the Mac wrapper uses 1s).
+
 The client fails open on unavailable sockets, malformed replies, or elapsed
 deadlines. A deliberate, valid native denial is preserved. Hung handler process
 groups are terminated and recorded as timed out. A malformed registry retains the
@@ -661,6 +673,8 @@ terminating the remaining process group. Status reports `draining` while it runs
 | `BB_HOOK_HUB` | unset | `off` disables client recursion |
 | `BB_HOOK_SOCKET` | `$XDG_RUNTIME_DIR/33god/hook-hub.sock` | Unix socket |
 | `BB_HOOK_DEADLINE` | `3.0` | Client total deadline, seconds |
+| `BB_HOOK_PROBE_BUDGET` | `3.0` | How long the client waits for a hub ping before treating the hub as wedged |
+| `BB_HOOK_STALL_PROBE_BUDGET` | `0.25` | Ping wait during the 30 s after a stalled probe |
 | `HOOK_HUB_REGISTRY` | `handlers.toml` beside the daemon | Behavioral registry (committed base) |
 | `HOOK_HUB_OVERLAY_DIR` | `~/.config/33god` | Directory holding the optional host overlay |
 | `HOOK_HUB_SYNC_BUDGET` | `2.5` | Default shared synchronous deadline |
@@ -733,3 +747,14 @@ Add a behavioral row to `handlers.toml`, bind it with `on` lifecycle roles or
 `on_native`, and optionally narrow it with `clis`. Sync handlers return context or
 native decisions. Async handlers emit supervised outcomes. Retire any equivalent
 native registration before enabling the new row.
+
+## Host wrapper (interpreter pin)
+
+`bb-hook` starts with `#!/usr/bin/env python3`. Where that resolves to a mise
+shim, any cwd with an untrusted `.mise.toml` makes the shim exit 1 before the
+client's fail-open code runs. A host can replace the `~/.agents/hooks/bb-hook` and
+`~/.local/bin/bb-hook` symlinks with a small `/bin/sh` wrapper that sets
+`MISE_NO_ENV=1` and execs an absolute interpreter on this checkout's client.
+`services/agent-hooks/sync.py --install` keeps a regular file in place only when
+it contains the marker `33god-bb-hook-host-wrapper` and names this checkout's
+client path; any other regular file there still aborts the install.

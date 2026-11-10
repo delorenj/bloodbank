@@ -39,6 +39,36 @@ MAX_PAYLOAD_BYTES = 1 << 20          # 1 MiB, matching forward_envelope
 STDIN_BUDGET = 0.5                   # payload is already buffered by the CLI
 TOTAL_BUDGET = float(os.environ.get("BB_HOOK_DEADLINE", "3.0"))
 
+
+def _env_seconds(name: str, default: float) -> float:
+    try:
+        return min(max(float(os.environ.get(name, default)), 0.05), 15.0)
+    except ValueError:
+        return default
+
+
+# Liveness probe. The full deadline (up to 15 s for prompt hooks that wait on
+# Hindsight recall) is for a hub that is WORKING, not one that is wedged. A
+# wedged hub (stopped process, blocked event loop) still accepts connections
+# into its listen backlog, so connect() and sendall() succeed and the client
+# would otherwise sit out the entire deadline on every hook of every turn.
+# The hub answers any request without `cli`/`native` immediately and without
+# journalling, from the event loop, so a short ping tells a busy hub (handlers
+# run as subprocesses; the loop stays responsive) from a hung one. Works
+# against hubs that predate this client.
+#
+# The default (3 s) is deliberately the ordinary client deadline: a socket-
+# activated hub that is restarting leaves clients in the listen backlog until
+# the replacement serves them (hook-hub.service drains for up to 2 s), and
+# that must keep working. Hosts that do not rely on backlog service (macOS
+# launchd) can tighten it with BB_HOOK_PROBE_BUDGET.
+PROBE_BUDGET = _env_seconds("BB_HOOK_PROBE_BUDGET", 3.0)
+# After a probe times out, the next probes are short for a while so a hung hub
+# costs one slow hook, not one per hook. The marker only shortens the probe;
+# it never skips it, so a recovered hub is used again on the very next call.
+STALL_PROBE_BUDGET = _env_seconds("BB_HOOK_STALL_PROBE_BUDGET", 0.25)
+STALL_COOLDOWN = 30.0
+
 # Never os.environ wholesale, and never by PREFIX. This frame crosses a socket
 # into a long-lived daemon and lands in its request log, so the allowlist is
 # EXACT NAMES ONLY.
@@ -236,8 +266,77 @@ def read_payload() -> object:
     return parsed if isinstance(parsed, dict) else {"raw": parsed}
 
 
+def _stall_marker() -> str:
+    return socket_path() + ".stalled"
+
+
+def _recently_stalled() -> bool:
+    try:
+        return time.time() - os.stat(_stall_marker()).st_mtime < STALL_COOLDOWN
+    except OSError:
+        return False
+
+
+def _mark_stalled(stalled: bool) -> None:
+    try:
+        if stalled:
+            with open(_stall_marker(), "a"):
+                pass
+            os.utime(_stall_marker())
+        else:
+            os.unlink(_stall_marker())
+    except OSError:
+        pass
+
+
+def hub_responsive() -> bool:
+    """True when the hub answers a ping within the probe budget.
+
+    False means "do not wait for this hub": no socket, connection refused, or
+    a connection that is accepted but never answered. Never raises.
+    """
+    budget = STALL_PROBE_BUDGET if _recently_stalled() else PROBE_BUDGET
+    budget = min(budget, max(left(), 0.0))
+    if budget <= 0:
+        return False
+    probe_start = time.monotonic()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(budget)
+        sock.connect(socket_path())
+        sock.sendall(b'{"v":1,"op":"ping"}\n')
+        sock.shutdown(socket.SHUT_WR)
+        buf = bytearray()
+        while b"\n" not in buf:
+            remaining = budget - (time.monotonic() - probe_start)
+            if remaining <= 0:
+                raise socket.timeout()
+            sock.settimeout(remaining)
+            block = sock.recv(4096)
+            if not block:
+                break
+            buf.extend(block)
+        _mark_stalled(False)
+        return True
+    except socket.timeout:
+        _mark_stalled(True)
+        return False
+    except OSError:
+        return False
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+
+
 def exchange(request: bytes) -> dict:
     """Send one request, read one reply. {} on any failure."""
+    remaining = left()
+    if remaining <= 0:
+        return {}
+    if not hub_responsive():
+        return {}
     remaining = left()
     if remaining <= 0:
         return {}

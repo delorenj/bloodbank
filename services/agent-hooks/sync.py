@@ -1048,6 +1048,27 @@ def _merge_kimi_toml(raw: str, generated: list[dict], markers: list[str]) -> str
     return raw.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
 
 
+# A host may replace the bb-hook symlink with a small /bin/sh wrapper that pins
+# the interpreter (a mise shim on PATH exits 1 in any cwd with an untrusted
+# .mise.toml, before the client's fail-open code can run). The wrapper carries
+# this marker and names the client it execs; the installer leaves such a
+# wrapper alone instead of aborting.
+HOST_WRAPPER_MARKER = "33god-bb-hook-host-wrapper"
+
+
+def _is_host_wrapper(dest: Path, source: Path) -> bool:
+    """True for a marked regular-file wrapper that execs this checkout's client."""
+    if dest.is_symlink() or not dest.is_file():
+        return False
+    try:
+        text = dest.read_text(errors="replace")[:4096]
+    except OSError:
+        return False
+    if HOST_WRAPPER_MARKER not in text:
+        return False
+    return str(source) in text or str(source.resolve()) in text
+
+
 def _ensure_hub_client_link() -> int:
     source = SERVICE_DIR.parent / "hook-hub" / "client" / "bb-hook"
     if not source.is_file():
@@ -1055,6 +1076,8 @@ def _ensure_hub_client_link() -> int:
     changed = 0
     for dest in (_hooks_dir() / "bb-hook", Path.home() / ".local/bin/bb-hook"):
         if dest.is_symlink() and dest.resolve() == source.resolve():
+            continue
+        if _is_host_wrapper(dest, source):
             continue
         if dest.exists() and not dest.is_symlink():
             raise FileExistsError(f"refusing to overwrite unrelated executable: {dest}")

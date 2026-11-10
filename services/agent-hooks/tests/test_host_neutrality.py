@@ -201,3 +201,38 @@ class TestOverlay:
         assert by_id["skill-reminder"].timeout_ms == 1000  # inherited from base
         assert by_id["host-only"].command == ["echo", "hi"]
         assert cfg.registry_paths[-1].name == "hook-hub-overlay.toml"
+
+
+class TestHostWrapper:
+    """sync --install must accept a marked host wrapper (mise-immune interpreter pin)."""
+
+    def _setup(self, tmp_path, monkeypatch, body):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(SYNC, "_hooks_dir", lambda: tmp_path / ".agents/hooks")
+        source = SYNC.SERVICE_DIR.parent / "hook-hub" / "client" / "bb-hook"
+        for dest in (tmp_path / ".agents/hooks/bb-hook", tmp_path / ".local/bin/bb-hook"):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(body.replace("@SOURCE@", str(source)))
+            dest.chmod(0o755)
+        return source
+
+    def test_marked_wrapper_is_kept(self, tmp_path, monkeypatch):
+        body = f"#!/bin/sh\n# {SYNC.HOST_WRAPPER_MARKER}\nexec /usr/bin/python3 @SOURCE@ \"$@\"\n"
+        self._setup(tmp_path, monkeypatch, body)
+        before = (tmp_path / ".local/bin/bb-hook").read_text()
+        SYNC._ensure_hub_client_link()
+        assert not (tmp_path / ".local/bin/bb-hook").is_symlink()
+        assert (tmp_path / ".local/bin/bb-hook").read_text() == before
+
+    def test_unmarked_executable_still_refused(self, tmp_path, monkeypatch):
+        import pytest
+        self._setup(tmp_path, monkeypatch, "#!/bin/sh\nexec something-else\n")
+        with pytest.raises(FileExistsError):
+            SYNC._ensure_hub_client_link()
+
+    def test_marked_wrapper_for_another_client_is_refused(self, tmp_path, monkeypatch):
+        import pytest
+        body = f"#!/bin/sh\n# {SYNC.HOST_WRAPPER_MARKER}\nexec /usr/bin/python3 /elsewhere/bb-hook\n"
+        self._setup(tmp_path, monkeypatch, body)
+        with pytest.raises(FileExistsError):
+            SYNC._ensure_hub_client_link()
