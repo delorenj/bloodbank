@@ -19,7 +19,7 @@ enabled = false
 [candybar.runner]
 kind = "exec"
 # The venv entry point, not `uv run` (a mise shim that applies bloodbank's PATH; see the systemd units).
-argv = ["/home/delorenj/code/33GOD/bloodbank/services/target-watch/.venv/bin/target-watch", "gmail-poll"]
+argv = ["/home/delorenj/code/33GOD/bloodbank/services/target-watch/.venv/bin/target-watch", "gmail-poll"]  # host-local: re-point at this host's checkout before enabling
 workdir = "/home/delorenj/code/33GOD/bloodbank/services/target-watch"
 env = { NATS_URL = "nats://127.0.0.1:4222", TARGET_WATCH_GOG = "/usr/local/bin/gog", PATH = "/home/delorenj/.local/bin:/usr/local/bin:/usr/bin:/bin" }
 timeout_s = 240

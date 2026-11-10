@@ -40,6 +40,26 @@ On the host, the default ports are:
 - Candystore app/API: `http://127.0.0.1:8683`
 - Candystore Dapr sidecar: `http://127.0.0.1:3504`
 
+### Port contract
+
+`8683` is canonical, not incidental: **every peer binds the Candystore app/API
+to loopback `8683`** so consumers can carry one hardcoded default and
+cross-host documentation stays truthful. The contract is:
+
+- Loopback only — `127.0.0.1:8683`. No LAN exposure; reach it through the
+  per-peer Dapr sidecar (3504-class ports) or SSH tunnels, never by widening
+  the bind.
+- Same port on every host. Peers do NOT federate stores; each machine queries
+  its own Candystore at the same address.
+- `$CANDYSTORE_URL` overrides the base URL for consumers that must point at a
+  non-default installation (staging copies, restore probes). Consumers take
+  the env var first and fall back to `http://127.0.0.1:8683`
+  (`services/hook-hub/concerns.py::candystore_base` is the reference
+  implementation). Changing the port itself is a contract change: grep the
+  repo for the old default before doing it.
+- W3-2 (candystore) owns the server side; consumers must not invent their own
+  port constants.
+
 Quick probes:
 
 ```bash

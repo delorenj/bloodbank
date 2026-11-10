@@ -661,7 +661,8 @@ terminating the remaining process group. Status reports `draining` while it runs
 | `BB_HOOK_HUB` | unset | `off` disables client recursion |
 | `BB_HOOK_SOCKET` | `$XDG_RUNTIME_DIR/33god/hook-hub.sock` | Unix socket |
 | `BB_HOOK_DEADLINE` | `3.0` | Client total deadline, seconds |
-| `HOOK_HUB_REGISTRY` | `handlers.toml` beside the daemon | Behavioral registry |
+| `HOOK_HUB_REGISTRY` | `handlers.toml` beside the daemon | Behavioral registry (committed base) |
+| `HOOK_HUB_OVERLAY_DIR` | `~/.config/33god` | Directory holding the optional host overlay |
 | `HOOK_HUB_SYNC_BUDGET` | `2.5` | Default shared synchronous deadline |
 | `HOOK_HUB_MAX_SYNC_BUDGET` | `14.0` | Maximum shared synchronous deadline |
 | `HOOK_HUB_ASYNC_SLOTS` | `8` | Concurrent background handlers |
@@ -680,6 +681,47 @@ terminating the remaining process group. Status reports `draining` while it runs
 
 Unset XDG state/runtime paths use the user's standard local state and runtime
 locations. Runtime files remain outside the source checkout.
+
+## Host overlay (`handlers.toml`)
+
+The committed `handlers.toml` is host-neutral and ships the full behavioral
+set. A host that must disable or retarget handlers without forking the repo
+drops a TOML file in `~/.config/33god/` (override the directory with
+`HOOK_HUB_OVERLAY_DIR`):
+
+- `hook-hub-overlay.toml` (generic), or
+- `hook-hub-overlay-<username>.toml` (only the first one found is used).
+
+The overlay must use the same `[[handler]]` row shape. Precedence, per row:
+
+- a row whose `id` matches a committed row **replaces that row field-by-field**
+  (fields you omit inherit the committed row's values — `enabled = false` alone
+  retires a handler; a new `command` alone retargets it);
+- a row with an `id` not in the committed registry is **appended**;
+- the hub re-reads the overlay when its mtime changes (hot reload, same as the
+  base registry) and reports the loaded chain in `GET /status` under
+  `hub.registry`.
+
+Minimal overlay that retires a handler on this host only:
+
+```toml
+[[handler]]
+id = "claude-notify"
+enabled = false
+```
+
+The overlay file is host-local state: never commit it, and create/edit it on
+the host itself.
+
+## Port contract
+
+- Hook hub read-only API: `127.0.0.1:8685` on every host (`HOOK_HUB_HTTP_PORT`
+  overrides). Keep the socket under the user's state dir
+  (`HOOK_HUB_SOCKET` / `$XDG_RUNTIME_DIR/33god/hook-hub.sock`).
+- Candystore query API: `http://127.0.0.1:8683` is the canonical loopback
+  endpoint on EVERY peer; `CANDYSTORE_URL` overrides it where a consumer must
+  point elsewhere. See `../../docs/candystore-integration.md` for the full
+  port map and why loopback-only is the contract.
 
 ## Development
 

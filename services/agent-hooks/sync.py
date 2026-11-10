@@ -53,6 +53,20 @@ LOCK_PATH = SERVICE_DIR / "hooks.mappings.lock.json"
 HOOKS_DIR = Path.home() / ".agents" / "hooks"
 BLOODBANK_HOOK_LINK = HOOKS_DIR / "bloodbank"
 
+
+def _hooks_dir() -> Path:
+    """The hooks dir for the CURRENT process home.
+
+    Computed per call so tests (and any host whose HOME differs from the
+    process start) bind the right directory; the module-level HOOKS_DIR stays
+    as the import-time binding for backward compatibility.
+    """
+    return Path.home() / ".agents" / "hooks"
+
+
+def _bloodbank_hook_link() -> Path:
+    return _hooks_dir() / "bloodbank"
+
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
@@ -285,11 +299,82 @@ def detect_ambiguities(master: dict, lock: dict) -> list[dict]:
 # --------------------------------------------------------------------------
 
 
-def _runner(agent: dict) -> str:
+# Two renderings of the same hook command, and they differ ONLY in how the
+# hooks directory is spelled:
+#
+#   RENDER_INSTALL   the literal path on THIS host (Path.home() resolved at run
+#                    time). What every installer writes into a live agent
+#                    config and what the installed-inventory / health checks
+#                    compare live configs against. A literal is safe for every
+#                    dialect: Hermes launches hooks with shlex argv and no shell
+#                    (it expands only a leading "~", never $HOME), and its
+#                    allowlist is an exact string match.
+#   RENDER_TEMPLATE  the host-neutral spelling ("$HOME/.agents/hooks/..."),
+#                    which is what is COMMITTED under agent-hooks/*/. No host's
+#                    home directory appears in git, so `--check` is green on
+#                    every peer and `--apply` produces the same bytes anywhere.
+#                    Valid verbatim only where a shell runs the command string
+#                    (claude, codex, copilot, gemini, kimi, antigravity); the
+#                    hermes and opencode templates are documentation, never
+#                    installed as-is.
+RENDER_INSTALL = "install"
+RENDER_TEMPLATE = "template"
+HOME_TOKEN = "$HOME"
+
+
+def _portable(path: Path) -> str:
+    """`path` spelled relative to $HOME when it lives under it; else literal."""
+    try:
+        rel = path.relative_to(Path.home())
+    except ValueError:
+        return str(path)
+    return HOME_TOKEN if str(rel) == "." else f"{HOME_TOKEN}/{rel.as_posix()}"
+
+
+def hooks_dir_for(mode: str = RENDER_INSTALL) -> str:
+    hooks_dir = _hooks_dir()
+    return str(hooks_dir) if mode == RENDER_INSTALL else _portable(hooks_dir)
+
+
+def canonical_command(command: object) -> str:
+    """Normalize the spellings of a hook command that mean the same thing here.
+
+    `$HOME/...`, `${HOME}/...` and a leading `~/...` all name this host's home.
+    Used only to COMPARE a live command with a rendered one; never written back.
+    """
+    text = str(command or "")
+    home = str(Path.home())
+    text = re.sub(
+        r"\$\{HOME\}|\$HOME(?![A-Za-z0-9_])", lambda _m: home.replace("\\", "\\\\"), text
+    )
+    return re.sub(
+        r"(?<![^\s'\"=:])~/", lambda _m: home.replace("\\", "\\\\") + "/", text
+    )
+
+
+def localize_template(obj: Any) -> Any:
+    """Turn a committed template (RENDER_TEMPLATE) into this host's install form."""
+    token, literal = _portable(_hooks_dir()), str(_hooks_dir())
+    if isinstance(obj, str):
+        return obj.replace(token, literal)
+    if isinstance(obj, list):
+        return [localize_template(item) for item in obj]
+    if isinstance(obj, dict):
+        return {key: localize_template(value) for key, value in obj.items()}
+    return obj
+
+
+def _runner(agent: dict, mode: str = RENDER_INSTALL) -> str:
+    # {service_dir} is a checkout path. The host-neutral spelling is the stable
+    # symlink `install` maintains at <hooks_dir>/bloodbank, never the checkout.
+    service_dir = (
+        str(SERVICE_DIR) if mode == RENDER_INSTALL
+        else f"{hooks_dir_for(mode)}/bloodbank"
+    )
     return (
         agent["runner"]
-        .replace("{service_dir}", str(SERVICE_DIR))
-        .replace("{hooks_dir}", str(HOOKS_DIR))
+        .replace("{service_dir}", service_dir)
+        .replace("{hooks_dir}", hooks_dir_for(mode))
     )
 
 
@@ -324,8 +409,9 @@ def render_event_map(agent: dict, lifecycle: dict, lock: dict) -> dict:
     return out
 
 
-def _command(agent: dict, b: dict, *, codex_empty_echo: bool) -> str:
-    runner = _runner(agent)
+def _command(agent: dict, b: dict, *, codex_empty_echo: bool,
+             mode: str = RENDER_INSTALL) -> str:
+    runner = _runner(agent, mode)
     if agent.get("publisher") == "bb-hook":
         # Native stdin carries session identity, tool ids and end reasons. The
         # re-trigger reads it directly; no cat process or fabricated {} payload.
@@ -347,7 +433,8 @@ def _command(agent: dict, b: dict, *, codex_empty_echo: bool) -> str:
     return cmd
 
 
-def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
+def render_config(agent: dict, lifecycle: dict, lock: dict,
+                  mode: str = RENDER_INSTALL) -> dict | None:
     dialect = agent["dialect"]
     if dialect in ("watcher", "runtime"):
         return None
@@ -357,7 +444,7 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
         hooks: dict[str, list] = {}
         for b in agent["bindings"]:
             entry: dict[str, Any] = {
-                "command": _command(agent, b, codex_empty_echo=False),
+                "command": _command(agent, b, codex_empty_echo=False, mode=mode),
                 "timeout": b.get("timeout", agent.get("default_timeout", 5)),
             }
             if b.get("matcher") is not None:
@@ -372,7 +459,7 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
             hooks[b["native"]] = [
                 {
                     "type": "command",
-                    "bash": f"exec {_command(agent, b, codex_empty_echo=False)}",
+                    "bash": f"exec {_command(agent, b, codex_empty_echo=False, mode=mode)}",
                     "timeoutSec": b.get(
                         "timeoutSec", agent.get("default_timeout_sec", 5)
                     ),
@@ -382,13 +469,13 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
     if dialect == "kimi_toml":
         return {"hooks": [
             {"event": b["native"],
-             "command": _command(agent, b, codex_empty_echo=False),
+             "command": _command(agent, b, codex_empty_echo=False, mode=mode),
              "timeout": b.get("timeout", agent.get("default_timeout", 4)),
              **({"matcher": b["matcher"]} if "matcher" in b else {})}
             for b in agent["bindings"]
         ]}
     if dialect == "opencode_plugin":
-        return {"hooks": {b["native"]: _command(agent, b, codex_empty_echo=False)
+        return {"hooks": {b["native"]: _command(agent, b, codex_empty_echo=False, mode=mode)
                           for b in agent["bindings"]}}
     if dialect in ("codex", "claude_settings", "gemini_settings"):
         codex_empty_echo = dialect == "codex"
@@ -402,7 +489,7 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
             entry["hooks"] = [
                 {
                     "type": "command",
-                    "command": _command(agent, b, codex_empty_echo=codex_empty_echo),
+                    "command": _command(agent, b, codex_empty_echo=codex_empty_echo, mode=mode),
                     "timeout": b.get("timeout", timeout),
                 }
             ]
@@ -421,7 +508,7 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
         tool_events = {"PreToolUse", "PostToolUse"}
         hooks = {}
         for b in agent["bindings"]:
-            cmd = _command(agent, b, codex_empty_echo=False)
+            cmd = _command(agent, b, codex_empty_echo=False, mode=mode)
             # NB the space before ';' — health/hook_healthcheck.py tokenizes
             # with shlex, which keeps 'Stop;' fused and breaks arg resolution.
             if agent.get("publisher") == "bb-hook":
@@ -446,8 +533,14 @@ def render_config(agent: dict, lifecycle: dict, lock: dict) -> dict | None:
     return None  # unreachable
 
 
-def generate(master: dict, lock: dict) -> dict[Path, dict]:
-    """Return {target_path: content_dict} for every artifact the SSOT produces."""
+def generate(master: dict, lock: dict,
+             mode: str = RENDER_TEMPLATE) -> dict[Path, dict]:
+    """Return {target_path: content_dict} for every artifact the SSOT produces.
+
+    The COMMITTED artifacts are rendered with mode=RENDER_TEMPLATE (host-neutral
+    `$HOME` spellings) so `--check` is green and `--apply` byte-stable on every
+    host; the installers re-render at mode=RENDER_INSTALL for live targets.
+    """
     lifecycle = master["lifecycle"]
     out: dict[Path, dict] = {}
     for agent_name, agent in master["agents"].items():
@@ -456,7 +549,7 @@ def generate(master: dict, lock: dict) -> dict[Path, dict]:
                 agent, lifecycle, lock
             )
         if agent.get("config_target"):
-            cfg = render_config(agent, lifecycle, lock)
+            cfg = render_config(agent, lifecycle, lock, mode=mode)
             if cfg is not None:
                 out[SERVICE_DIR / agent["config_target"]] = cfg
     return out
@@ -636,48 +729,48 @@ def _expand(p: str) -> Path:
 def _ensure_bloodbank_hook_link() -> int:
     """Ensure ~/.agents/hooks/bloodbank resolves to this service directory."""
     try:
-        HOOKS_DIR.mkdir(parents=True, exist_ok=True)
+        _hooks_dir().mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        print(f"hooks-sync: WARN cannot create {HOOKS_DIR}: {exc}")
+        print(f"hooks-sync: WARN cannot create {_hooks_dir()}: {exc}")
         return 0
 
-    if BLOODBANK_HOOK_LINK.is_symlink():
+    if _bloodbank_hook_link().is_symlink():
         try:
-            current = BLOODBANK_HOOK_LINK.resolve(strict=True)
+            current = _bloodbank_hook_link().resolve(strict=True)
         except OSError:
             current = None
         if current == SERVICE_DIR:
-            print(f"hooks-sync: bloodbank hook link up to date ({BLOODBANK_HOOK_LINK})")
+            print(f"hooks-sync: bloodbank hook link up to date ({_bloodbank_hook_link()})")
             return 0
         if current is None:
-            BLOODBANK_HOOK_LINK.unlink(missing_ok=True)
+            _bloodbank_hook_link().unlink(missing_ok=True)
         else:
             print(
                 "hooks-sync: WARN "
-                f"{BLOODBANK_HOOK_LINK} points to {current}, expected {SERVICE_DIR}; skipping"
+                f"{_bloodbank_hook_link()} points to {current}, expected {SERVICE_DIR}; skipping"
             )
             return 0
 
-    if BLOODBANK_HOOK_LINK.exists():
+    if _bloodbank_hook_link().exists():
         try:
-            current = BLOODBANK_HOOK_LINK.resolve()
+            current = _bloodbank_hook_link().resolve()
         except OSError:
-            current = BLOODBANK_HOOK_LINK
+            current = _bloodbank_hook_link()
         if current == SERVICE_DIR:
-            print(f"hooks-sync: bloodbank hook path up to date ({BLOODBANK_HOOK_LINK})")
+            print(f"hooks-sync: bloodbank hook path up to date ({_bloodbank_hook_link()})")
             return 0
         print(
             "hooks-sync: WARN "
-            f"{BLOODBANK_HOOK_LINK} exists and is not the Bloodbank hook link; skipping"
+            f"{_bloodbank_hook_link()} exists and is not the Bloodbank hook link; skipping"
         )
         return 0
 
     try:
-        BLOODBANK_HOOK_LINK.symlink_to(SERVICE_DIR, target_is_directory=True)
+        _bloodbank_hook_link().symlink_to(SERVICE_DIR, target_is_directory=True)
     except OSError as exc:
-        print(f"hooks-sync: WARN cannot link {BLOODBANK_HOOK_LINK}: {exc}")
+        print(f"hooks-sync: WARN cannot link {_bloodbank_hook_link()}: {exc}")
         return 0
-    print(f"hooks-sync: linked {BLOODBANK_HOOK_LINK} -> {SERVICE_DIR}")
+    print(f"hooks-sync: linked {_bloodbank_hook_link()} -> {SERVICE_DIR}")
     return 1
 
 
@@ -766,6 +859,37 @@ def _merge_hooks(
         generated = [copy.deepcopy(g) for g in generated_hooks.get(event, [])
                      if any(_has_marker(h.get("command", ""), markers)
                             for h in g.get("hooks", []) if isinstance(h, dict))]
+        candidate = kept + generated
+        if hooks.get(event) != candidate:
+            # The merge must converge, not toggle. Live configs written by an
+            # older sync spell the same managed command with a different home
+            # prefix ($HOME/${HOME}/~/ vs literal): a generated hook whose
+            # existing sibling differs ONLY by that spelling is dropped from
+            # the re-add set, so spelling changes stop flipping the file.
+            # Content differences (timeout, matcher, added fields) still land.
+            def _canon_hook(h: Any) -> str | None:
+                if not isinstance(h, dict) or not isinstance(h.get("command"), str):
+                    return None
+                return canonical_command(h["command"])
+
+            existing = {canon: hook for g in kept for h in g.get("hooks", []) if isinstance(h, dict)
+                        for canon in [_canon_hook(h)] if canon is not None for hook in [h]}
+            filtered = []
+            for g in generated:
+                same_spelling = False
+                for h in g.get("hooks", []):
+                    canon = _canon_hook(h)
+                    if canon is None:
+                        continue
+                    old = existing.get(canon)
+                    if old is not None and all(
+                        k == "command" or old.get(k) == v for k, v in h.items()
+                    ) and all(k == "command" or v == h.get(k) for k, v in old.items()):
+                        same_spelling = True
+                        break
+                if not same_spelling:
+                    filtered.append(g)
+            generated = filtered
         if kept or generated:
             hooks[event] = kept + generated
         else:
@@ -902,12 +1026,15 @@ def _merge_kimi_toml(raw: str, generated: list[dict], markers: list[str]) -> str
     """Replace managed [[hooks]] sections without rewriting other TOML values."""
     starts = list(re.finditer(r"(?m)^\s*\[\[hooks\]\]\s*(?:#.*)?$", raw))
     spans = []
+    gen_cmds = {canonical_command(row.get("command")) for row in generated
+                if isinstance(row.get("command"), str)}
     for match in starts:
         next_section = re.search(r"(?m)^\s*\[", raw[match.end():])
         end = match.end() + next_section.start() if next_section else len(raw)
         fragment = raw[match.start():end]
         row = tomllib.loads(fragment)["hooks"][0]
-        if _has_marker(row.get("command"), markers):
+        # Managed = one of ours, whatever $HOME spelling an older sync wrote.
+        if _has_marker(row.get("command"), markers) or canonical_command(row.get("command")) in gen_cmds:
             spans.append((match.start(), end))
     for start, end in reversed(spans):
         raw = raw[:start] + raw[end:]
@@ -926,7 +1053,7 @@ def _ensure_hub_client_link() -> int:
     if not source.is_file():
         raise FileNotFoundError(f"hook hub client is missing: {source}")
     changed = 0
-    for dest in (HOOKS_DIR / "bb-hook", Path.home() / ".local/bin/bb-hook"):
+    for dest in (_hooks_dir() / "bb-hook", Path.home() / ".local/bin/bb-hook"):
         if dest.is_symlink() and dest.resolve() == source.resolve():
             continue
         if dest.exists() and not dest.is_symlink():
@@ -935,7 +1062,7 @@ def _ensure_hub_client_link() -> int:
         dest.unlink(missing_ok=True)
         dest.symlink_to(source)
         changed += 1
-    hub_link = HOOKS_DIR / "hub"
+    hub_link = _hooks_dir() / "hub"
     hub_source = SERVICE_DIR.parent / "hook-hub"
     if not (hub_link.is_symlink() and hub_link.resolve() == hub_source.resolve()):
         if hub_link.exists() and not hub_link.is_symlink():
@@ -963,6 +1090,35 @@ def _install_hermes_one(
 
     changed = 0
     # 1) config.yaml `hooks:` block
+    #    Managed entries are compared and merged over canonical_command(): hermes
+    #    launches hooks with shlex argv (no shell, only a leading `~` expanded),
+    #    so an old managed entry written with a different $HOME spelling must
+    #    still be recognized as ours — and spelling-only drift must not toggle
+    #    the file on every run.
+    def _canon(e: Any) -> str:
+        return canonical_command((e or {}).get("command", ""))
+
+    def _content_equal(old: Any, new: Any) -> bool:
+        """True when two managed entries differ only by home spelling.
+
+        `old` is the existing (live) row, `new` the generated row; both the
+        keys the new row requires AND the keys the old row carries must match
+        (modulo the command's home spelling), so added or changed fields count
+        as drift and land.
+        """
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            return old == new
+        for key, value in new.items():
+            if key == "command":
+                if _canon(old) != _canon(new):
+                    return False
+            elif old.get(key) != value:
+                return False
+        for key in old:
+            if key not in new:
+                return False
+        return True
+
     raw = cfg_path.read_text() if cfg_path.exists() else ""
     if raw:
         try:
@@ -985,13 +1141,21 @@ def _install_hermes_one(
             existing = []
         elif not isinstance(existing, list):
             return 0, f"WARN hooks.{event}: not a list"
+        # Drop managed entries whose generated twin exists (whatever spelling
+        # an older sync wrote); keep foreign rows verbatim.
         kept = [
             e
             for e in existing
             if isinstance(e, dict)
-            and not _has_marker((e or {}).get("command", ""), markers)
+            and not any(_canon(e) == _canon(gen) for gen in entries)
         ]
         kept += [e for e in existing if not isinstance(e, dict)]  # preserve foreign non-dict entries verbatim
+        # Re-add every generated row. Hermes launches hooks with shlex argv and
+        # NO shell: a row that differs only by home spelling would never expand
+        # ($HOME is literal there), and `~` only expands at the start of the
+        # whole command string — so any spelling difference is real drift and
+        # the fresh row must land. The twin drop above already removed the old
+        # spelling, keeping foreign rows intact and preventing duplicates.
         kept.extend(entries)
         block[event] = kept
     if not cfg_path.exists() or _norm(block) != _norm(old_block):
@@ -1010,16 +1174,17 @@ def _install_hermes_one(
     except (OSError, json.JSONDecodeError):
         alw = {"approvals": []}
     approvals = alw.setdefault("approvals", [])
-    have = {(e.get("event"), e.get("command")) for e in approvals if isinstance(e, dict)}
+    have = {(e.get("event"), canonical_command(e.get("command")))
+            for e in approvals if isinstance(e, dict)}
     stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     added = 0
     for event, entries in gen_hooks.items():
         for e in entries:
             cmd = e.get("command")
-            if cmd and (event, cmd) not in have:
+            if cmd and (event, canonical_command(cmd)) not in have:
                 approvals.append({"event": event, "command": cmd, "approved_at": stamp,
                                   "approved_by": "bloodbank-hooks-deploy"})
-                have.add((event, cmd))
+                have.add((event, canonical_command(cmd)))
                 added += 1
     if added or not alw_path.exists():
         alw_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1050,7 +1215,7 @@ def _install_hermes_fleet(name: str, agent: dict, master: dict | None = None, lo
         if not src.exists():
             print(f"hooks-sync: WARN {name}: generated {src} missing; run --apply first")
             return 0
-        gen_hooks = _load_json(src).get("hooks", {})
+        gen_hooks = localize_template(_load_json(src)).get("hooks", {})
     markers = _publisher_markers(name, agent)
     alw_name = agent.get("allowlist_filename", "shell-hooks-allowlist.json")
     targets = [(label, path.parent) for label, path, _ in discover_hermes_configs(agent)]
@@ -1145,6 +1310,10 @@ def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None)
             if use_rendered
             else None
         )
+        # The committed config targets are host-neutral templates ($HOME
+        # spellings); live targets always get this host's literal rendering.
+        if rendered_cfg is None:
+            rendered_cfg = localize_template(_load_json(src))
 
         if dialect == "copilot":
             if not src.exists():
@@ -1163,7 +1332,7 @@ def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None)
 
         if dialect in ("claude_settings", "codex", "gemini_settings"):
             markers = _publisher_markers(name, agent)
-            gen_hooks = (rendered_cfg if rendered_cfg is not None else _load_json(src)).get("hooks", {})
+            gen_hooks = (rendered_cfg if rendered_cfg is not None else localize_template(_load_json(src))).get("hooks", {})
             if dest.exists():
                 try:
                     liveobj = _load_json(dest)
@@ -1204,7 +1373,7 @@ def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None)
 
         if dialect == "kimi_toml":
             raw = dest.read_text() if dest.exists() else ""
-            kimi_hooks = (rendered_cfg if rendered_cfg is not None else _load_json(src))["hooks"]
+            kimi_hooks = (rendered_cfg if rendered_cfg is not None else localize_template(_load_json(src)))["hooks"]
             merged = _merge_kimi_toml(raw, kimi_hooks, _publisher_markers(name, agent))
             # Parsing the full result protects unrelated config section placement.
             tomllib.loads(merged)
@@ -1236,7 +1405,7 @@ def cmd_install(master: dict, codex_trust_before: dict[str, dict] | None = None)
             # preserved. Orca's own installer likewise only rewrites its
             # 'orca-status' key, so the two managers do not fight.
             bundle = agent.get("bundle_name", "bloodbank")
-            gen_bundle = (rendered_cfg if rendered_cfg is not None else _load_json(src)).get(bundle, {})
+            gen_bundle = (rendered_cfg if rendered_cfg is not None else localize_template(_load_json(src))).get(bundle, {})
             if dest.exists():
                 try:
                     liveobj = _load_json(dest)

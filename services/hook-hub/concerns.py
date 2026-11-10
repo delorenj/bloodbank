@@ -42,6 +42,17 @@ def value(payload: dict, *names: str, default: Any = "") -> Any:
     return default
 
 
+def candystore_base() -> str:
+    """The Candystore query API base for this host.
+
+    Contract: 8683 is the canonical loopback port of the Candystore app/API on
+    EVERY peer (see docs/candystore-integration.md). Override with
+    CANDYSTORE_URL only when pointing at a non-default installation; a
+    trailing slash is stripped.
+    """
+    return os.environ.get("CANDYSTORE_URL", "http://127.0.0.1:8683").rstrip("/")
+
+
 def normalized(payload: dict) -> dict:
     """Preserve native fields while making the behavioral input portable."""
     data = dict(payload)
@@ -263,7 +274,7 @@ def dispatch(concern: str, raw: dict) -> dict:
             # correlationid) is the one consumer that could hold it.
             base = session_id.removeprefix("claude-")
             with urllib.request.urlopen(
-                f"http://127.0.0.1:8683/events/{urllib.parse.quote(base)}/raw", timeout=0.5
+                f"{candystore_base()}/events/{urllib.parse.quote(base)}/raw", timeout=0.5
             ) as response:
                 if response.status == 200:
                     session_id = base

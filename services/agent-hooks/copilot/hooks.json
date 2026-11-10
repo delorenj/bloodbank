@@ -4,84 +4,84 @@
     "sessionStart": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native sessionStart --deadline 15",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native sessionStart --deadline 15",
         "timeoutSec": 16
       }
     ],
     "sessionEnd": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native sessionEnd",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native sessionEnd",
         "timeoutSec": 4
       }
     ],
     "userPromptSubmitted": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native userPromptSubmitted --deadline 15",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native userPromptSubmitted --deadline 15",
         "timeoutSec": 16
       }
     ],
     "preToolUse": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native preToolUse",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native preToolUse",
         "timeoutSec": 4
       }
     ],
     "postToolUse": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native postToolUse",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native postToolUse",
         "timeoutSec": 4
       }
     ],
     "errorOccurred": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native errorOccurred",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native errorOccurred",
         "timeoutSec": 4
       }
     ],
     "agentStop": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native agentStop",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native agentStop",
         "timeoutSec": 4
       }
     ],
     "permissionRequest": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native permissionRequest",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native permissionRequest",
         "timeoutSec": 4
       }
     ],
     "subagentStart": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native subagentStart",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native subagentStart",
         "timeoutSec": 4
       }
     ],
     "subagentStop": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native subagentStop",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native subagentStop",
         "timeoutSec": 4
       }
     ],
     "postToolUseFailure": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native postToolUseFailure",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native postToolUseFailure",
         "timeoutSec": 4
       }
     ],
     "notification": [
       {
         "type": "command",
-        "bash": "exec /home/delorenj/.agents/hooks/bb-hook --cli copilot --native notification",
+        "bash": "exec $HOME/.agents/hooks/bb-hook --cli copilot --native notification",
         "timeoutSec": 4
       }
     ]

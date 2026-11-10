@@ -2,56 +2,56 @@
   "hooks": {
     "on_session_start": [
       {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native on_session_start --deadline 15",
+        "command": "$HOME/.agents/hooks/bb-hook --cli hermes --native on_session_start --deadline 15",
         "timeout": 16
       }
     ],
     "on_session_end": [
       {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native on_session_end",
+        "command": "$HOME/.agents/hooks/bb-hook --cli hermes --native on_session_end",
         "timeout": 4
       }
     ],
     "pre_llm_call": [
       {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native pre_llm_call --deadline 15",
+        "command": "$HOME/.agents/hooks/bb-hook --cli hermes --native pre_llm_call --deadline 15",
         "timeout": 16
       }
     ],
     "pre_tool_call": [
       {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native pre_tool_call",
+        "command": "$HOME/.agents/hooks/bb-hook --cli hermes --native pre_tool_call",
         "timeout": 4,
         "fail_closed": false
       }
     ],
     "post_tool_call": [
       {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native post_tool_call",
+        "command": "$HOME/.agents/hooks/bb-hook --cli hermes --native post_tool_call",
         "timeout": 4
       }
     ],
     "subagent_stop": [
       {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native subagent_stop",
+        "command": "$HOME/.agents/hooks/bb-hook --cli hermes --native subagent_stop",
         "timeout": 4
       }
     ],
     "pre_approval_request": [
       {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native pre_approval_request",
+        "command": "$HOME/.agents/hooks/bb-hook --cli hermes --native pre_approval_request",
         "timeout": 4
       }
     ],
     "on_session_finalize": [
       {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native on_session_finalize",
+        "command": "$HOME/.agents/hooks/bb-hook --cli hermes --native on_session_finalize",
         "timeout": 4
       }
     ],
     "subagent_start": [
       {
-        "command": "/home/delorenj/.agents/hooks/bb-hook --cli hermes --native subagent_start",
+        "command": "$HOME/.agents/hooks/bb-hook --cli hermes --native subagent_start",
         "timeout": 4
       }
     ]
