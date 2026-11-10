@@ -203,10 +203,14 @@ State lives in `~/.local/state/target-watch/state.db`, or under
 
 ## Add a target
 
-Drop a TOML file where the default globs find it: `~/code/*/.watch/*.toml`,
-`~/code/33GOD/*/.watch/*.toml`, or this service's own `targets/*.toml`. Set
-`TARGET_WATCH_PATHS` (colon-separated) to replace those globs. The matcher and
-the sink reload target files within 30 s, with no restart.
+Drop a TOML file where the default globs find it: `~/code/*/.watch/*.toml`
+or `~/code/33GOD/*/.watch/*.toml`. The built-in `targets/selftest.toml`
+is **not** loaded by default and has no outbound notification channel; include
+its exact path with `--targets` or `TARGET_WATCH_PATHS` for a local synthetic
+probe. Both options replace the default globs, so include the client glob(s)
+when testing alongside real watches. The matcher and sink reload target files
+within 30 s, with no restart. A synthetic probe does not change Jim's client
+watch, Telegram ticket notification, SIP ring or cooldown.
 
 Put real targets in the client's own repo under `.watch/`, never in this one:
 this repo is public.
