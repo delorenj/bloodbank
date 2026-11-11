@@ -14,14 +14,22 @@ Safety rules, each paid for elsewhere:
   the Telegram line. An accepted call is then followed in the background to its terminal
   outcome (ring_answered / ring_unanswered / ring_rejected), because Telnyx accepting the
   dial says nothing about the phone ringing.
+- An "ntfy:<topic>" channel is the loud push: an urgent ntfy message, sent FIRST, before Telegram
+  (which lands in a chat full of agent chatter) and before the ring. Its token comes from 1Password
+  through the op CLI and lives in memory only.
+- Every channel attempt is written to the sqlite `notifications` table, and a ring's row is updated
+  when its follower reaches a terminal outcome: journald keeps almost nothing for these units, so
+  `target-watch status` reads that table to say what each channel did.
 """
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
 import subprocess
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -48,12 +56,17 @@ NOTIFY_CWD = os.environ.get("TARGET_WATCH_NOTIFY_CWD") or os.path.expanduser("~"
 
 RING_PREFIX = "ring:"
 SIP_RING_PREFIX = "ring:sip:"
+NTFY_PREFIX = "ntfy:"
 TELNYX_CALLS_URL = "https://api.telnyx.com/v2/calls"
-# The ring stops after 20 s. A SIP target has no carrier in the path, so this is only "long enough to
-# pick up". For an E.164 target it must also stay under the cell carrier's no-answer forward (about
+# An E.164 ring stops after 20 s: it must stay under the cell carrier's no-answer forward (about
 # 25-30 s on Verizon), which sends an unanswered call back to the same Telnyx number: keep it <= 22.
 RING_TIMEOUT_SECS = 20
 RING_TIME_LIMIT_SECS = 40  # an answered call is silent and ends here
+# A SIP target has no carrier in the path, so no forward to outrun. It is a push-woken softphone, which
+# spends several seconds of the ring waking up: every real ring of 2026-11-05..11 timed out at 20 s
+# unanswered. 45 s gives a person time to look, and the time limit must exceed it.
+RING_SIP_TIMEOUT_SECS = 45
+RING_SIP_TIME_LIMIT_SECS = 60
 RING_HTTP_TIMEOUT_S = 15  # urllib applies this to each socket operation, so it is not a wall-clock cap...
 OP_TIMEOUT_S = 20
 RING_DEADLINE_S = 40  # ...this is: key lookup plus the POST, run off the event loop and abandoned after this long
@@ -63,19 +76,36 @@ RING_MAX_AGE_S = 300
 RING_TZ = ZoneInfo("America/New_York")
 TELNYX_CALL_EVENTS_URL = "https://api.telnyx.com/v2/call_events"
 # The outcome lookup starts after the ring has had time to time out (+5 s for Telnyx to write the hangup
-# event), then re-reads a few times for a hangup that has not landed yet. An answered call stays up until
-# RING_TIME_LIMIT_SECS; the answer event is enough to call it answered.
-RING_OUTCOME_DELAY_S = RING_TIMEOUT_SECS + 5
-RING_OUTCOME_POLLS = 3
+# event), then re-reads for a hangup that has not landed yet. On 2026-11-11 the call_events of a ring that
+# hung up at +20 s were still empty ~37 s after the dial and readable later, so the window is 12 reads
+# 5 s apart: the last is 60 s past the ring's timeout, and the follower is bounded by that. An answered
+# call stays up until the time limit; the answer event is enough to call it answered.
+RING_OUTCOME_LEAD_S = 5
+RING_OUTCOME_DELAY_S = RING_TIMEOUT_SECS + RING_OUTCOME_LEAD_S
+RING_SIP_OUTCOME_DELAY_S = RING_SIP_TIMEOUT_SECS + RING_OUTCOME_LEAD_S
+RING_OUTCOME_POLLS = 12
 RING_OUTCOME_POLL_S = 5
 # A busy phone (the operator is on another call: user_busy, SIP 486/600/603) is retried once. 100 s is long
 # enough for a short call to end and short enough that the news is still fresh; it is a constant, not a
 # loop: the retry never schedules another retry.
 RING_BUSY_RETRY_S = 100
 BUSY_SIP_CODES = frozenset({"486", "600", "603"})
+# Telnyx refuses a dial when the outbound profile has no free channel, which is what "the operator is on
+# another call" looks like from the API (2026-11-11: 90042 "OB profile channel limit exceeded"). It is
+# treated like a busy phone: one retry after RING_BUSY_RETRY_S.
+CHANNEL_LIMIT_CODES = frozenset({"90042"})
+CHANNEL_LIMIT_TEXT = re.compile(r"channel limit|concurren", re.IGNORECASE)
+# Telnyx's from_display_name: at most 128 characters of letters, digits, spaces and - _ ~ ! . +
+DISPLAY_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9 _~!.+-]")
+DISPLAY_NAME_MAX = 128
 DEFAULT_KEY_REF = "op://DeLoSecrets/74k7nz3xkryqns4lpf65a323ue/credential"
 # Cloudflare-fronted APIs refuse Python-urllib's default User-Agent.
 RING_USER_AGENT = "target-watch/0.1 (bloodbank)"
+NTFY_DEFAULT_URL = "https://ntfy.delo.sh"
+NTFY_DEFAULT_ENV_FILE = "~/.config/infra-alerts/env"
+NTFY_HTTP_TIMEOUT_S = 15
+NTFY_DEADLINE_S = 30  # token lookup plus the POST, run off the event loop and abandoned after this long
+URL_LINE = re.compile(r"^https://\S+$")
 FOOTER = "Filed automatically by target-watch from a {provider} message. Do not invent a ticket number."
 
 
@@ -91,6 +121,35 @@ def run_command(argv: list[str], cwd: str | None = None, timeout: float = 60) ->
 
 def is_ring(channel: str) -> bool:
     return channel.startswith(RING_PREFIX)
+
+
+def is_ntfy(channel: str) -> bool:
+    return channel.startswith(NTFY_PREFIX)
+
+
+def channel_rank(channel: str) -> int:
+    """Send order: ntfy (the loud one) first, then the quiet text channels, then the ring. The line the
+    operator reads after the phone rings must already be there."""
+    return 0 if is_ntfy(channel) else 2 if is_ring(channel) else 1
+
+
+def ring_timing(channel: str) -> tuple[int, int]:
+    """(timeout_secs, time_limit_secs) for this ring: a SIP device may ring longer than a cell."""
+    if channel.startswith(SIP_RING_PREFIX):
+        return RING_SIP_TIMEOUT_SECS, RING_SIP_TIME_LIMIT_SECS
+    return RING_TIMEOUT_SECS, RING_TIME_LIMIT_SECS
+
+
+def ring_outcome_delay(channel: str) -> float:
+    return RING_SIP_OUTCOME_DELAY_S if channel.startswith(SIP_RING_PREFIX) else RING_OUTCOME_DELAY_S
+
+
+def ring_display_name(name: str) -> str | None:
+    """The caller name Telnyx shows for the ring: the target's display name cut down to what Telnyx
+    accepts (ASCII letters, digits, spaces and - _ ~ ! . +, at most 128). None when nothing is left."""
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    cleaned = " ".join(DISPLAY_NAME_UNSAFE.sub("", " ".join(ascii_name.split())).split())
+    return cleaned[:DISPLAY_NAME_MAX].strip() or None
 
 
 def mask_channel(channel: str) -> str:
@@ -116,6 +175,11 @@ def telnyx_http(url: str, headers: dict, body: bytes, timeout: float) -> tuple[i
             return exc.code, exc.read()
         except Exception:  # noqa: BLE001 - the status is the answer; an unreadable error body is not worth a redelivery
             return exc.code, b""
+
+
+def ntfy_http_post(url: str, headers: dict, body: bytes, timeout: float) -> tuple[int, bytes]:
+    """POST to ntfy: the same plain POST as the Telnyx dial (status and body for any HTTP answer)."""
+    return telnyx_http(url, headers, body, timeout)
 
 
 def telnyx_get(url: str, headers: dict, timeout: float) -> tuple[int, bytes]:
@@ -160,6 +224,56 @@ def telnyx_error_title(body: bytes) -> str | None:
         return None
 
 
+def telnyx_error_code(body: bytes) -> str | None:
+    try:
+        errors = json.loads(body or b"").get("errors")
+        code = errors[0].get("code") if errors else None
+        return str(code)[:20] if code is not None else None
+    except (ValueError, AttributeError, IndexError, TypeError):
+        return None
+
+
+def is_channel_limit(status: int, body: bytes) -> bool:
+    """A 4xx whose Telnyx error says there is no free channel: the profile's concurrent-call limit (the
+    operator is on another call). Any other refusal stays a plain failure."""
+    if not 400 <= status < 500:
+        return False
+    try:
+        errors = json.loads(body or b"").get("errors") or []
+        return any(str(e.get("code")) in CHANNEL_LIMIT_CODES or CHANNEL_LIMIT_TEXT.search(f"{e.get('title')} {e.get('detail')}")
+                   for e in errors if isinstance(e, dict))
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def ntfy_header(value: str) -> str:
+    """A header value ntfy can read: ASCII as is, anything else as an RFC 2047 word (which ntfy decodes);
+    http.client would refuse a raw non-latin-1 header."""
+    flat = " ".join(value.split())
+    try:
+        flat.encode("ascii")
+        return flat
+    except UnicodeEncodeError:
+        return "=?UTF-8?B?" + base64.b64encode(flat.encode("utf-8")).decode("ascii") + "?="
+
+
+def env_file_value(path: str, name: str) -> str | None:
+    """`NAME=value` from a shell env file (optional `export`, optional quotes); None when absent or unreadable."""
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as handle:
+            for line in handle:
+                found = re.match(rf"^\s*(?:export\s+)?{re.escape(name)}=(.*)$", line.rstrip("\n"))
+                if found:
+                    return found.group(1).strip().strip("'\"") or None
+    except OSError:
+        return None
+    return None
+
+
+def ntfy_base_url() -> str:
+    return (os.environ.get("TARGET_WATCH_NTFY_URL") or NTFY_DEFAULT_URL).rstrip("/")
+
+
 def confirmed(stdout: str) -> bool:
     """hermes send --json printed a success verdict (no error, not skipped)."""
     try:
@@ -185,6 +299,19 @@ def first_match(pattern: re.Pattern, stdout: str) -> str | None:
     return None
 
 
+def url_after(pattern: re.Pattern, stdout: str) -> str | None:
+    """The https URL px prints on its own line after the line that confirmed the ticket, else None. Only a
+    line that is nothing but a URL counts, so a Click link is either px's own or absent."""
+    confirmed_line = False
+    for line in stdout.splitlines():
+        text = line.strip()
+        if not confirmed_line:
+            confirmed_line = bool(pattern.match(text))
+        elif URL_LINE.match(text):
+            return text
+    return None
+
+
 def snippet(text: str, limit: int = 60) -> str:
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
@@ -201,6 +328,7 @@ class Plan:
     px_cwd: str | None = None
     notify: list[str] = field(default_factory=list)
     reason: str | None = None
+    ticket_url: str | None = None  # px's own link to the ticket, once px has confirmed it
 
 
 def conversation_key(data: dict) -> str:
@@ -265,6 +393,10 @@ def comment_body(data: dict, detection_id: str) -> str:
     ])
 
 
+def ntfy_title(data: dict) -> str:
+    return f"{data['target_display_name']} - {data['provider']}"
+
+
 def notify_line(data: dict, action: str, ticket_ref: str | None) -> str:
     tail = f"{action} {ticket_ref}" if ticket_ref else action
     return f"{data['target_display_name']} via {data['provider']}: {headline(data, 120)} -> {tail}"
@@ -273,7 +405,7 @@ def notify_line(data: dict, action: str, ticket_ref: str | None) -> str:
 class SinkService:
     def __init__(self, registry: TargetRegistry, state: State, publisher, *, runner=run_command,
                  px: str = "px", hermes: str = "hermes", dry_run: bool = False, validate=env.validate, clock=None, out=None,
-                 http=telnyx_http, op: str | None = None, http_get=None):
+                 http=telnyx_http, op: str | None = None, http_get=None, ntfy_http=None):
         self.registry = registry
         self.state = state
         self.publisher = publisher
@@ -286,9 +418,11 @@ class SinkService:
         self.out = out
         self.http = http
         self.http_get = http_get or telnyx_get
+        self.ntfy_http = ntfy_http or ntfy_http_post  # its own seam: a Telnyx fake must never see an ntfy POST
         self._bg: set[asyncio.Task] = set()  # outcome followers; held so they are not garbage collected
         self.op = op or os.environ.get("TARGET_WATCH_OP") or os.path.expanduser("~/.local/bin/op")
         self._ring_key: str | None = None  # resolved at first use, held in memory only
+        self._ntfy_key: str | None = None  # likewise
 
     # --- planning (pure: reads state, writes nothing) -------------------------
 
@@ -300,7 +434,7 @@ class SinkService:
         if target is None:
             return Plan(detection_id, data["watch_id"], "failed", conv_key,
                         reason="no target file defines this watch_id")
-        notify = sorted(target.sink.notify, key=is_ring)  # telegram first, then the ring
+        notify = sorted(target.sink.notify, key=channel_rank)  # ntfy first, then telegram, then the ring
         digest = text_hash(data["content"].get("text") or "")
         if digest:
             twin = self.state.recent_text_route(data["watch_id"], digest, epoch(data["received_at"]), detection_id, TEXT_DUPLICATE_S,
@@ -334,46 +468,140 @@ class SinkService:
         if plan.action == "ticket_created":
             ref = first_match(CREATED, stdout)
             if ref:
+                plan.ticket_url = url_after(CREATED, stdout)
                 self.state.record_ticket(plan.watch_id, plan.conv_key, ref, self.clock().timestamp())
                 return "ticket_created", ref, None if code == 0 else f"px exited {code} after creating {ref}"
             return "failed", None, f"px task create did not confirm a ticket (exit {code}); not retried, check the board"
         ref = first_match(COMMENTED, stdout)
         if ref:
+            plan.ticket_url = url_after(COMMENTED, stdout)
             return "ticket_commented", ref, None
         return "failed", plan.ticket_ref, f"px comment did not confirm (exit {code}); not retried"
 
     async def _notify(self, channels: list[str], line: str, target: Target | None = None,
-                      received_at: float | None = None) -> tuple[list[str], list[str]]:
-        """(sent, failed). Telegram first, then the ring: the line the operator reads after the phone
-        rings must already be there. A throttled or quiet ring is neither sent nor failed."""
+                      received_at: float | None = None, *, detection_id: str | None = None,
+                      title: str | None = None, click: str | None = None) -> tuple[list[str], list[str]]:
+        """(sent, failed). ntfy first (the loud one), then Telegram, then the ring: the line the operator
+        reads after the phone rings must already be there. A throttled or quiet ring is neither sent nor
+        failed. Every attempt is written to the notification log."""
         # Name the hermes profile, as Candybar's pager does: without -p, hermes
         # resolves a profile from its surroundings, and from a service process on
         # 2026-11-04 it found one with no Telegram token and exited 1. Success is
         # the JSON verdict, not the exit code alone.
         sent, failed = [], []
-        for channel in sorted(channels, key=is_ring):
+        watch_id = target.id if target else "?"
+        for channel in sorted(channels, key=channel_rank):
             if is_ring(channel):
-                outcome = await self._ring(target, channel, received_at)
+                outcome = await self._ring(target, channel, received_at, detection_id)
                 if outcome == "sent":
                     sent.append(channel)
-                elif outcome == "failed":
+                elif outcome in ("failed", "channel_limit"):
                     failed.append(channel)
                 continue
-            if self._send(channel, line):
-                sent.append(channel)
+            if is_ntfy(channel):
+                ok, detail = await self._ntfy(channel, title or "target-watch", line, click)
             else:
-                failed.append(channel)
+                ok, detail = self._send(channel, line)
+            self._note(detection_id, watch_id, mask_channel(channel), "sent" if ok else "failed", detail)
+            (sent if ok else failed).append(channel)
         return sent, failed
 
-    def _send(self, channel: str, line: str) -> bool:
-        """One `hermes send`. Blocking; never raises on a bad verdict."""
+    def _send(self, channel: str, line: str) -> tuple[bool, str]:
+        """One `hermes send`. Blocking; never raises on a bad verdict. (confirmed, detail for the log)."""
         argv = [self.hermes, "-p", HERMES_PROFILE, "send", "--to", channel, "--json", "--", line]
         code, stdout, stderr = self.runner(argv, cwd=NOTIFY_CWD, timeout=NOTIFY_TIMEOUT_S)
         if code == 0 and confirmed(stdout):
-            return True
-        log("notify_failed", channel=channel, exit=code, profile=HERMES_PROFILE,
-            error=notify_error(stdout) or (stderr or "").strip()[-300:])
-        return False
+            return True, ""
+        error = notify_error(stdout) or (stderr or "").strip()[-300:]
+        log("notify_failed", channel=channel, exit=code, profile=HERMES_PROFILE, error=error)
+        return False, f"hermes exit {code}: {error}"[:300] if error else f"hermes exit {code}"
+
+    # --- notification log -----------------------------------------------------------
+
+    def _note(self, detection_id: str | None, watch_id: str, masked: str, outcome: str, detail: str | None = None,
+              *, attempt: int = 1, ref: str | None = None) -> int | None:
+        """Write one notification row; the row id, or None when there is no detection to attach it to or the
+        write failed. A state fault must never escape into the bus path (nor into a second ring)."""
+        if detection_id is None:
+            return None
+        try:
+            return self.state.record_notification(detection_id, watch_id, masked, outcome, detail or None, attempt=attempt, ref=ref)
+        except Exception as exc:  # noqa: BLE001
+            log("notification_state_write_failed", watch_id=watch_id, channel=masked, error=type(exc).__name__)
+            return None
+
+    def _note_update(self, row_id: int | None, outcome: str, detail: str | None = None) -> None:
+        if row_id is None:
+            return
+        try:
+            self.state.update_notification(row_id, outcome, detail or None)
+        except Exception as exc:  # noqa: BLE001
+            log("notification_state_write_failed", row=row_id, error=type(exc).__name__)
+
+    # --- ntfy ---------------------------------------------------------------------------
+
+    def _ntfy_token(self) -> str | None:
+        if self._ntfy_key is None:
+            ref = (os.environ.get("TARGET_WATCH_NTFY_TOKEN_REF")
+                   or env_file_value(os.environ.get("TARGET_WATCH_NTFY_ENV_FILE") or NTFY_DEFAULT_ENV_FILE, "NTFY_TOKEN_REF"))
+            if not ref or not ref.startswith("op://"):
+                log("ntfy_failed", reason="no op:// token reference (TARGET_WATCH_NTFY_TOKEN_REF, or NTFY_TOKEN_REF in the infra-alerts env file)")
+                return None
+            # The argv carries the op:// reference only; the token comes back on stdout and goes nowhere but memory.
+            code, stdout, stderr = self.runner([self.op, "read", "--no-newline", ref], cwd=NOTIFY_CWD, timeout=OP_TIMEOUT_S)
+            token = (stdout or "").strip()
+            if code != 0 or not token:
+                log("ntfy_failed", reason="token unavailable", exit=code, error=(stderr or "").strip()[-200:])
+                return None
+            self._ntfy_key = token
+        return self._ntfy_key
+
+    def _ntfy_post(self, topic: str, title: str, text: str, click: str | None) -> tuple[bool, str]:
+        """Blocking, so it runs in a worker thread and touches no sqlite. Never raises. (published, detail).
+        Success is HTTP 200 with a JSON body that carries the message "id"."""
+        try:
+            token = self._ntfy_token()
+        except Exception as exc:  # noqa: BLE001
+            log("ntfy_failed", reason="token unavailable", error=type(exc).__name__)
+            token = None
+        if token is None:
+            return False, "no ntfy token"
+        headers = {"Authorization": f"Bearer {token}", "Title": ntfy_header(title), "Priority": "urgent",
+                   "Tags": "rotating_light", "Content-Type": "text/plain; charset=utf-8", "Accept": "application/json",
+                   "User-Agent": RING_USER_AGENT}
+        if click and URL_LINE.match(click):
+            headers["Click"] = click
+        url = f"{ntfy_base_url()}/{urllib.parse.quote(topic, safe='')}"
+        try:
+            status, answer = self.ntfy_http(url, headers, text.encode("utf-8"), NTFY_HTTP_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 - whatever breaks, it must not escape and get the detection redelivered
+            log("ntfy_failed", reason="transport", error=type(exc).__name__)
+            return False, f"transport {type(exc).__name__}"
+        message_id = None
+        try:
+            parsed = json.loads(answer or b"")
+            message_id = parsed.get("id") if isinstance(parsed, dict) else None
+        except ValueError:
+            parsed = None
+        if status == 200 and message_id:
+            return True, f"id {str(message_id)[:40]}"
+        if status in (401, 403):
+            self._ntfy_key = None  # a rotated token is re-read next time
+        error = str(parsed.get("error"))[:100] if isinstance(parsed, dict) and parsed.get("error") else None
+        log("ntfy_failed", status=status, error=error, reason=None if status != 200 else "no message id in the answer")
+        return False, f"HTTP {status}" + (f": {error}" if error else "" if status != 200 else ": no message id in the answer")
+
+    async def _ntfy(self, channel: str, title: str, text: str, click: str | None) -> tuple[bool, str]:
+        """Publish to the channel's topic. (ok, detail); never raises."""
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._ntfy_post, channel[len(NTFY_PREFIX):], title, text, click), NTFY_DEADLINE_S)
+        except TimeoutError:
+            log("ntfy_failed", reason="deadline", seconds=NTFY_DEADLINE_S)
+            return False, f"no answer in {NTFY_DEADLINE_S}s"
+        except Exception as exc:  # noqa: BLE001
+            log("ntfy_failed", reason="unexpected", error=type(exc).__name__)
+            return False, f"unexpected {type(exc).__name__}"
 
     # --- ring ---------------------------------------------------------------------
 
@@ -408,7 +636,8 @@ class SinkService:
             self._ring_key = key
         return self._ring_key
 
-    def _place(self, to: str, connection_id: str, from_number: str) -> tuple[str, int | None, bytes, Exception | None]:
+    def _place(self, to: str, connection_id: str, from_number: str, display_name: str | None,
+               timeout_secs: int, time_limit_secs: int) -> tuple[str, int | None, bytes, Exception | None]:
         """Blocking, so it runs in a worker thread and touches no sqlite. Never raises.
         ('nokey' | 'answered' | 'error', http status, answer body, the exception for 'error')."""
         try:
@@ -418,10 +647,13 @@ class SinkService:
             key = None
         if key is None:
             return "nokey", None, b"", None
-        body = json.dumps({
+        payload = {
             "connection_id": connection_id, "to": to, "from": from_number,
-            "timeout_secs": RING_TIMEOUT_SECS, "time_limit_secs": RING_TIME_LIMIT_SECS,
-        }).encode()
+            "timeout_secs": timeout_secs, "time_limit_secs": time_limit_secs,
+        }
+        if display_name:
+            payload["from_display_name"] = display_name  # the caller name the phone shows, instead of the bare number
+        body = json.dumps(payload).encode()
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                    "Accept": "application/json", "User-Agent": RING_USER_AGENT}
         try:
@@ -436,48 +668,65 @@ class SinkService:
         except Exception as exc:  # noqa: BLE001 - a state fault after the POST must not turn into a second ring
             log("ring_state_write_failed", watch_id=watch_id, channel=masked, error=type(exc).__name__)
 
-    async def _ring(self, target: Target | None, channel: str, received_at: float | None = None) -> str:
-        """Place the call. 'sent' | 'failed' | 'throttled' | 'quiet' | 'stale'.
+    async def _ring(self, target: Target | None, channel: str, received_at: float | None = None,
+                    detection_id: str | None = None) -> str:
+        """Place the call. 'sent' | 'failed' | 'channel_limit' | 'throttled' | 'quiet' | 'stale'.
 
         Nothing here raises: a ring that fails is a failed channel, and a redelivered detection must never
         place a second call. When the outcome is uncertain (the request may have been accepted before the
-        answer broke), the ring counts as placed for the cooldown but is reported as failed."""
+        answer broke), the ring counts as placed for the cooldown but is reported as failed. A dial Telnyx
+        refuses for lack of a free channel (the operator is on another call) is retried once, like a busy
+        phone."""
         watch_id = target.id if target else "?"
         masked = mask_channel(channel)
         skip = self.ring_skip(target, channel, received_at)
         if skip:
             log(f"ring_{skip}", watch_id=watch_id, channel=masked)
+            self._note(detection_id, watch_id, masked, skip)
             return skip
-        outcome, leg_id = await self._dial(watch_id, channel, masked, record=True)
-        if outcome == "sent" and target is not None:
-            self._follow(target, channel, leg_id, attempt=1)
+        display_name = ring_display_name(target.display_name) if target else None
+        outcome, leg_id, detail = await self._dial(watch_id, channel, masked, display_name, record=True)
+        if outcome == "sent":
+            row = self._note(detection_id, watch_id, masked, "placed", detail, ref=leg_id)
+            if target is not None:
+                self._follow(target, channel, leg_id, attempt=1, detection_id=detection_id, row_id=row)
+        elif outcome == "channel_limit":
+            self._note(detection_id, watch_id, masked, "channel_limit", f"{detail}; one retry in {RING_BUSY_RETRY_S}s")
+            if target is not None:
+                self._schedule(lambda: self._retry_after_refusal(target, channel, detection_id), target, channel)
+        else:
+            self._note(detection_id, watch_id, masked, "failed", detail)
         return outcome
 
-    async def _dial(self, watch_id: str, channel: str, masked: str, *, record: bool) -> tuple[str, str | None]:
-        """POST the call. ('sent' | 'failed', call_leg_id). `record` writes the cooldown row; the busy retry
-        passes False because the first ring of the burst already holds the cooldown."""
+    async def _dial(self, watch_id: str, channel: str, masked: str, display_name: str | None, *,
+                    record: bool) -> tuple[str, str | None, str]:
+        """POST the call. ('sent' | 'failed' | 'channel_limit', call_leg_id, detail for the log). `record`
+        writes the cooldown row; the retries pass False because the first ring of the burst already holds
+        the cooldown (a channel_limit refusal writes it too: its pending retry stands for the burst's ring)."""
         connection_id, from_number = self.ring_config()
         if not connection_id or not from_number:
             log("ring_failed", watch_id=watch_id, channel=masked,
                 reason="TARGET_WATCH_TELNYX_CONNECTION_ID and TARGET_WATCH_RING_FROM must both be set")
-            return "failed", None
+            return "failed", None, "ring is not configured (connection id or from number missing)"
         mark = (lambda: self._record_ring(watch_id, channel, masked)) if record else (lambda: None)
+        timeout_secs, time_limit_secs = ring_timing(channel)
         try:
             state, status, answer, exc = await asyncio.wait_for(
-                asyncio.to_thread(self._place, channel[len(RING_PREFIX):], connection_id, from_number), RING_DEADLINE_S)
+                asyncio.to_thread(self._place, channel[len(RING_PREFIX):], connection_id, from_number, display_name,
+                                  timeout_secs, time_limit_secs), RING_DEADLINE_S)
         except TimeoutError:
             # The worker may still finish, and the call may already be placed.
             mark()
             log("ring_failed", watch_id=watch_id, channel=masked, reason="deadline", seconds=RING_DEADLINE_S)
-            return "failed", None
+            return "failed", None, f"no answer from Telnyx in {RING_DEADLINE_S}s (the call may have been placed)"
         if state == "nokey":
-            return "failed", None
+            return "failed", None, "no Telnyx key"
         if state == "error":
             # A refused connection (URLError) never reached Telnyx; a timeout or a broken read may have.
             if not isinstance(exc, urllib.error.URLError):
                 mark()
             log("ring_failed", watch_id=watch_id, channel=masked, reason="transport", error=type(exc).__name__)
-            return "failed", None
+            return "failed", None, f"transport {type(exc).__name__}"
         call_id = leg_id = None
         if 200 <= status < 300:
             try:
@@ -491,29 +740,40 @@ class SinkService:
         if not call_id:
             if status in (401, 403):
                 self._ring_key = None  # a rotated key is re-read next time
-            log("ring_failed", watch_id=watch_id, channel=masked, status=status, title=telnyx_error_title(answer),
+            title, code = telnyx_error_title(answer), telnyx_error_code(answer)
+            if is_channel_limit(status, answer):
+                mark()  # the retry stands for this burst's ring; later texts of the burst must not ring as well
+                log("ring_failed", watch_id=watch_id, channel=masked, status=status, code=code, title=title, reason="channel_limit")
+                return "channel_limit", None, f"HTTP {status} code {code}: {title}"
+            log("ring_failed", watch_id=watch_id, channel=masked, status=status, title=title,
                 reason=None if status >= 300 else "no call_control_id in the answer")
-            return "failed", None
+            return "failed", None, (f"HTTP {status}: {title}" if status >= 300 else "accepted without a call_control_id")
         mark()
-        log("ring_placed", watch_id=watch_id, channel=masked, call_control_id=call_id, call_leg_id=leg_id)
-        return "sent", leg_id
+        log("ring_placed", watch_id=watch_id, channel=masked, call_control_id=call_id, call_leg_id=leg_id,
+            timeout_secs=timeout_secs, from_display_name=display_name)
+        return "sent", leg_id, "accepted by Telnyx"
 
     # --- ring outcome ---------------------------------------------------------------
     # Telnyx accepting the dial (HTTP 200) is not the phone ringing: on 2026-11-05 two rings were accepted,
     # declined with SIP 603 in 0.6 s, and nothing said so for a day. Each accepted ring is followed to its
     # terminal state in a background task: off the detection path and off the bus ack. The task lives in
-    # this process only: a restart inside the ~25 s (or ~150 s, with a busy retry) window loses the check
-    # and the failure line, and the call itself is unaffected.
+    # this process only: a restart inside the window (the ring's timeout + 60 s, or +100 s more with a
+    # retry) loses the check and the failure line, and the call itself is unaffected.
 
-    def _follow(self, target: Target, channel: str, leg_id: str | None, attempt: int) -> None:
+    def _schedule(self, make, target: Target, channel: str) -> None:
+        """Run `make()` (a coroutine factory) as a held background task."""
         try:
-            task = asyncio.get_running_loop().create_task(self._follow_ring(target, channel, leg_id, attempt))
+            task = asyncio.get_running_loop().create_task(make())
         except Exception as exc:  # noqa: BLE001 - the ring is placed; failing to watch it must not raise into the bus
             log("ring_outcome_unknown", watch_id=target.id, channel=mask_channel(channel), reason="not scheduled",
                 error=type(exc).__name__)
             return
         self._bg.add(task)
         task.add_done_callback(self._bg.discard)
+
+    def _follow(self, target: Target, channel: str, leg_id: str | None, attempt: int,
+                detection_id: str | None = None, row_id: int | None = None) -> None:
+        self._schedule(lambda: self._follow_ring(target, channel, leg_id, attempt, detection_id, row_id), target, channel)
 
     async def settle(self) -> None:
         """Wait for every outcome follower (shutdown and tests)."""
@@ -559,17 +819,19 @@ class SinkService:
             detail = {"error": "no hangup or answer event yet"}
         return "unknown", detail
 
-    async def _follow_ring(self, target: Target, channel: str, leg_id: str | None, attempt: int) -> None:
-        """Log the ring's terminal outcome; retry a busy phone once; send ONE Telegram line when it never rang
-        through. Never raises."""
+    async def _follow_ring(self, target: Target, channel: str, leg_id: str | None, attempt: int,
+                           detection_id: str | None = None, row_id: int | None = None) -> None:
+        """Log the ring's terminal outcome (and write it to the notification log); retry a busy phone once;
+        send ONE line when it never rang through. Never raises."""
         masked = mask_channel(channel)
         try:
             if not leg_id:
                 kind, detail = "unknown", {"error": "the dial answer carried no call_leg_id"}
             else:
-                await asyncio.sleep(RING_OUTCOME_DELAY_S)
+                await asyncio.sleep(ring_outcome_delay(channel))
                 kind, detail = await self._lookup_outcome(leg_id)
             fields = {k: v for k, v in detail.items() if v is not None}
+            self._note_update(row_id, kind, self._cause_parts(fields, with_error=True))
             base = {"watch_id": target.id, "channel": masked, "call_leg_id": leg_id, "attempt": attempt}
             if kind == "answered":
                 log("ring_answered", **base)
@@ -582,7 +844,7 @@ class SinkService:
                 log("ring_outcome_unknown", **base, **fields)
             if kind == "busy" and attempt == 1:
                 await asyncio.sleep(RING_BUSY_RETRY_S)
-                if await self._busy_retry(target, channel):
+                if await self._busy_retry(target, channel, detection_id):
                     return
                 why = "the phone was busy and the retry could not be placed (quiet hours or a Telnyx refusal)"
             else:
@@ -590,7 +852,7 @@ class SinkService:
                        "rejected": "the call was declined", "unknown": "the outcome could not be read from Telnyx"}[kind]
                 why += self._cause_text(fields)
                 if attempt == 2:
-                    why += "; retried once after a busy signal"
+                    why += "; retried once because the operator's line was busy"
             await self._tell_ring_failed(target, masked, why)
         except asyncio.CancelledError:
             raise
@@ -598,13 +860,18 @@ class SinkService:
             log("ring_outcome_failed", watch_id=target.id, channel=masked, error=type(exc).__name__)
 
     @staticmethod
-    def _cause_text(fields: dict) -> str:
-        parts = [f"{label} {fields[key]}" for key, label in
-                 (("hangup_cause", "hangup_cause"), ("sip_hangup_cause", "SIP"), ("hangup_source", "by"), ("status", "HTTP"))
-                 if fields.get(key)]
-        return f" ({', '.join(parts)})" if parts else ""
+    def _cause_parts(fields: dict, *, with_error: bool = False) -> str:
+        keys = [("hangup_cause", "hangup_cause"), ("sip_hangup_cause", "SIP"), ("hangup_source", "by"), ("status", "HTTP")]
+        if with_error:
+            keys += [("title", "title"), ("error", "error")]
+        return ", ".join(f"{label} {fields[key]}" for key, label in keys if fields.get(key))
 
-    async def _busy_retry(self, target: Target, channel: str) -> bool:
+    @classmethod
+    def _cause_text(cls, fields: dict) -> str:
+        parts = cls._cause_parts(fields)
+        return f" ({parts})" if parts else ""
+
+    async def _busy_retry(self, target: Target, channel: str, detection_id: str | None = None, *, after: str = "busy") -> bool:
         """The one retry. True when a second call was placed (its own follower reports it). Quiet hours still
         apply; the cooldown is neither checked nor rewritten: the first ring of the burst holds it."""
         masked = mask_channel(channel)
@@ -612,27 +879,51 @@ class SinkService:
         local = self.clock().astimezone(RING_TZ)
         if in_quiet_hours(fresh.sink.ring_quiet_hours, local.hour * 60 + local.minute):
             log("ring_quiet", watch_id=target.id, channel=masked, retry=True)
+            self._note(detection_id, target.id, masked, "quiet", "retry suppressed by quiet hours", attempt=2)
             return False
-        log("ring_busy_retry", watch_id=target.id, channel=masked)
-        outcome, leg_id = await self._dial(target.id, channel, masked, record=False)
+        log("ring_busy_retry", watch_id=target.id, channel=masked, after=after)
+        outcome, leg_id, detail = await self._dial(target.id, channel, masked, ring_display_name(fresh.display_name), record=False)
         if outcome != "sent":
+            self._note(detection_id, target.id, masked, outcome, detail, attempt=2)
             return False
-        self._follow(target, channel, leg_id, attempt=2)
+        row = self._note(detection_id, target.id, masked, "placed", detail, attempt=2, ref=leg_id)
+        self._follow(target, channel, leg_id, attempt=2, detection_id=detection_id, row_id=row)
         return True
+
+    async def _retry_after_refusal(self, target: Target, channel: str, detection_id: str | None) -> None:
+        """The one retry of a dial Telnyx refused for lack of a free channel. Its own follower reports the
+        outcome; when it cannot be placed either, ONE line says so. Never raises."""
+        masked = mask_channel(channel)
+        try:
+            await asyncio.sleep(RING_BUSY_RETRY_S)
+            if await self._busy_retry(target, channel, detection_id, after="channel_limit"):
+                return
+            await self._tell_ring_failed(
+                target, masked, "Telnyx had no free channel (the operator was on another call) and the retry could not be "
+                                "placed (quiet hours or a Telnyx refusal)")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - nothing in the ring path raises
+            log("ring_outcome_failed", watch_id=target.id, channel=masked, error=type(exc).__name__)
 
     async def _tell_ring_failed(self, target: Target, masked: str, why: str) -> None:
         line = f"target-watch: the phone ring for {target.display_name} ({masked}) did not get through: {why}."
-        channels = [c for c in target.sink.notify if not is_ring(c)]
+        channels = sorted((c for c in target.sink.notify if not is_ring(c)), key=channel_rank)
         if not channels:
-            log("ring_failure_unreported", watch_id=target.id, reason="target has no telegram channel")
+            log("ring_failure_unreported", watch_id=target.id, reason="target has no telegram or ntfy channel")
             return
         for channel in channels:
-            await asyncio.to_thread(self._send, channel, line)
+            if is_ntfy(channel):
+                await self._ntfy(channel, f"{target.display_name} - ring did not get through", line, None)
+            else:
+                await asyncio.to_thread(self._send, channel, line)
 
     def ring_plan(self, target: Target | None, channel: str, received_at: float | None = None) -> dict:
         connection_id, from_number = self.ring_config()
+        timeout_secs, time_limit_secs = ring_timing(channel)
         return {"to": channel[len(RING_PREFIX):], "from": from_number, "connection_id": connection_id,
-                "timeout_secs": RING_TIMEOUT_SECS, "time_limit_secs": RING_TIME_LIMIT_SECS,
+                "from_display_name": ring_display_name(target.display_name) if target else None,
+                "timeout_secs": timeout_secs, "time_limit_secs": time_limit_secs,
                 "skipped": self.ring_skip(target, channel, received_at)}
 
     def _routed(self, detection: dict, action: str, ticket_ref, channels, reason) -> dict:
@@ -678,11 +969,7 @@ class SinkService:
             self._print({
                 "detection_id": detection_id, "action": plan.action, "ticket_ref": plan.ticket_ref,
                 "px": {"argv": plan.px_argv, "cwd": plan.px_cwd} if plan.px_argv else None,
-                "notify": [
-                    {"to": c, "ring": self.ring_plan(target, c, epoch(data["received_at"]))} if is_ring(c)
-                    else {"to": c, "text": notify_line(data, plan.action, plan.ticket_ref or "<new>")}
-                    for c in plan.notify
-                ],
+                "notify": [self._dry_notify(data, target, plan, c) for c in plan.notify],
                 "reason": plan.reason, "routed": routed,
             })
             return routed
@@ -702,6 +989,7 @@ class SinkService:
                                   text_hash(data["content"].get("text") or ""), epoch(data["received_at"]))
             route = self.state.route(detection_id)
 
+        ticket_url = None  # px's own link, known only in the run that filed or commented the ticket
         if route["action"] is not None:
             # Acted before a crash: reuse the outcome, never act twice.
             action, ticket_ref, reason = route["action"], route["ticket_ref"], route["reason"]
@@ -717,6 +1005,7 @@ class SinkService:
                 # Intent first: from here a crash can only end in 'failed', never a second create.
                 self.state.update_route(detection_id, px_kind=plan.action, px_state="pending")
                 action, ticket_ref, reason = self._run_px(plan, data)
+                ticket_url = plan.ticket_url
             self.state.update_route(
                 detection_id, px_state=("failed" if action == "failed" else "done") if plan.px_argv else "none",
                 action=action, ticket_ref=ticket_ref, reason=reason,
@@ -726,7 +1015,8 @@ class SinkService:
         channels = list(target.sink.notify) if target and action != "skipped_duplicate" else []
         sent = route["notify_channels"] if route["notified"] else []
         if channels and not route["notified"]:
-            sent, failed = await self._notify(channels, notify_line(data, action, ticket_ref), target, epoch(data["received_at"]))
+            sent, failed = await self._notify(channels, notify_line(data, action, ticket_ref), target, epoch(data["received_at"]),
+                                              detection_id=detection_id, title=ntfy_title(data), click=ticket_url)
             if failed:
                 reason = (reason + "; " if reason else "") + "notify failed: " + ",".join(mask_channel(c) for c in failed)
             self.state.update_route(detection_id, notified=1, notify_channels=sent, reason=reason)
@@ -739,6 +1029,15 @@ class SinkService:
         log("sink_routed", detection_id=detection_id, watch_id=data["watch_id"], action=action,
             ticket_ref=ticket_ref, notified=len(sent))
         return routed
+
+    def _dry_notify(self, data: dict, target: Target | None, plan: Plan, channel: str) -> dict:
+        if is_ring(channel):
+            return {"to": channel, "ring": self.ring_plan(target, channel, epoch(data["received_at"]))}
+        text = notify_line(data, plan.action, plan.ticket_ref or "<new>")
+        if is_ntfy(channel):
+            return {"to": channel, "text": text, "title": ntfy_title(data), "priority": "urgent",
+                    "url": f"{ntfy_base_url()}/{channel[len(NTFY_PREFIX):]}"}
+        return {"to": channel, "text": text}
 
     def _print(self, record: dict) -> None:
         print(json.dumps(record, sort_keys=True, default=str), file=self.out, flush=True)

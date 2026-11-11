@@ -50,7 +50,7 @@ class FakeEvents:
 
 @pytest.fixture
 def fast(monkeypatch):
-    for name in ("RING_OUTCOME_DELAY_S", "RING_OUTCOME_POLL_S", "RING_BUSY_RETRY_S"):
+    for name in ("RING_OUTCOME_DELAY_S", "RING_SIP_OUTCOME_DELAY_S", "RING_OUTCOME_POLL_S", "RING_BUSY_RETRY_S"):
         monkeypatch.setattr(sink_module, name, 0)
 
 
@@ -118,8 +118,8 @@ async def test_dial_payload_carries_the_sip_uri_unchanged_and_logs_stay_masked(t
     routed = await sink.handle(detect(index, registry, burst(1)))
     await sink.settle()
     [call] = telnyx.calls
-    assert call["body"] == {"connection_id": CONNECTION_ID, "to": SIP, "from": RING_FROM,
-                            "timeout_secs": 20, "time_limit_secs": 40}
+    assert call["body"] == {"connection_id": CONNECTION_ID, "to": SIP, "from": RING_FROM, "from_display_name": "Jane Doe",
+                            "timeout_secs": 45, "time_limit_secs": 60}  # a SIP device rings longer than a cell
     assert routed["data"]["notify_channels"] == ["telegram:1000", CHANNEL]
     assert "example-user" not in capsys.readouterr().err
     plan = sink.ring_plan(registry.get("jane-doe"), CHANNEL)
@@ -159,6 +159,7 @@ async def test_answered_ring_logs_and_sends_no_failure_line(tmp_path, index, run
 
 async def test_the_outcome_check_does_not_block_the_detection(tmp_path, index, runner, clock, monkeypatch):
     monkeypatch.setattr(sink_module, "RING_OUTCOME_DELAY_S", 3600)
+    monkeypatch.setattr(sink_module, "RING_SIP_OUTCOME_DELAY_S", 3600)
     events = FakeEvents(PICKED_UP)
     sink, registry, _ = make(tmp_path, runner, clock, events)
     routed = await sink.handle(detect(index, registry, burst(1)))  # returns although the follower sleeps an hour
@@ -288,3 +289,161 @@ async def test_e164_rings_are_followed_too(tmp_path, index, runner, clock, fast,
     await sink.handle(detect(index, registry, burst(1)))
     await sink.settle()
     assert len(events_of(capsys, "ring_answered")) == 1
+
+
+# --- the follower waits long enough ---------------------------------------------------
+
+
+def test_the_outcome_window_runs_to_60_seconds_past_the_ring_timeout():
+    # first read LEAD s after the timeout, then one read per POLL_S: the last is 60 s past the timeout
+    last = sink_module.RING_OUTCOME_LEAD_S + (sink_module.RING_OUTCOME_POLLS - 1) * sink_module.RING_OUTCOME_POLL_S
+    assert last == 60
+    assert sink_module.RING_OUTCOME_POLLS < 100  # bounded
+
+
+async def test_a_hangup_that_lands_late_is_still_read(tmp_path, index, runner, clock, fast, capsys):
+    """2026-11-11: the hangup at +20 s was not readable ~37 s after the dial and was readable later."""
+    late = sink_module.RING_OUTCOME_POLLS - 1  # empty on every read but the last
+    events = FakeEvents(*([[INITIATED]] * late), TIMEOUT)
+    sink, registry, _ = make(tmp_path, runner, clock, events)
+    await sink.handle(detect(index, registry, burst(1)))
+    await sink.settle()
+    assert len(events.calls) == sink_module.RING_OUTCOME_POLLS
+    assert len(events_of(capsys, "ring_unanswered")) == 1 and events_of(capsys, "ring_outcome_unknown") == []
+
+
+async def test_still_nothing_after_the_window_is_unknown_and_stops_reading(tmp_path, index, runner, clock, fast, capsys):
+    events = FakeEvents([INITIATED])
+    sink, registry, _ = make(tmp_path, runner, clock, events)
+    await sink.handle(detect(index, registry, burst(1)))
+    await sink.settle()
+    assert len(events.calls) == sink_module.RING_OUTCOME_POLLS
+    assert len(events_of(capsys, "ring_outcome_unknown")) == 1 and len(failure_lines(runner)) == 1
+
+
+async def test_the_first_read_waits_for_the_ring_of_its_own_kind(tmp_path, index, runner, clock, monkeypatch):
+    sleeps = []
+    real = sink_module.asyncio.sleep
+
+    async def spy(seconds):
+        sleeps.append(seconds)
+        await real(0)
+
+    monkeypatch.setattr(sink_module.asyncio, "sleep", spy)
+    monkeypatch.setattr(sink_module, "RING_OUTCOME_DELAY_S", 25)
+    monkeypatch.setattr(sink_module, "RING_SIP_OUTCOME_DELAY_S", 50)
+    monkeypatch.setattr(sink_module, "RING_OUTCOME_POLL_S", 0)
+    for n, (channel, first) in enumerate(((CHANNEL, 50), ("ring:+12155550142", 25)), start=1):
+        sleeps.clear()
+        sink, registry, _ = make(tmp_path, runner, clock, FakeEvents(PICKED_UP), notify=[channel], name=f"w{first}")
+        await sink.handle(detect(index, registry, burst(n)))
+        await sink.settle()
+        assert sleeps[0] == first
+
+
+# --- a dial refused for lack of a free channel (the operator is on another call) --------
+
+CHANNEL_LIMIT = (422, json.dumps({"errors": [{"code": "90042", "title": "OB profile channel limit exceeded",
+                                              "detail": "The outbound profile has no free channel."}]}).encode())
+
+
+class Dials:
+    """Scripted Telnyx dial answers; the last repeats. Records every POST."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.calls: list[dict] = []
+
+    def __call__(self, url, headers, body, timeout):
+        self.calls.append({"url": url, "body": json.loads(body)})
+        answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        return answer if isinstance(answer, tuple) else (200, answer)
+
+
+OK_DIAL = LegTelnyx().body
+
+
+def refused_then(sink, *answers):
+    sink.http = Dials(*answers)
+    return sink.http
+
+
+async def test_a_channel_limit_refusal_is_retried_once_and_the_retry_is_followed(tmp_path, index, runner, clock, fast, capsys):
+    sink, registry, _ = make(tmp_path, runner, clock, FakeEvents(PICKED_UP))
+    dials = refused_then(sink, CHANNEL_LIMIT, OK_DIAL)
+    routed = await sink.handle(detect(index, registry, burst(1)))
+    assert routed["data"]["notify_channels"] == ["telegram:1000"]  # the first ring did not go out
+    assert routed["data"]["reason"] == "notify failed: ring:sip:...er@sip.telnyx.com"
+    await sink.settle()
+    assert len(dials.calls) == 2 and dials.calls[0]["body"] == dials.calls[1]["body"]
+    err = capsys.readouterr().err
+    failed = json.loads([l for l in err.splitlines() if '"ring_failed"' in l][0])
+    assert failed["reason"] == "channel_limit" and failed["code"] == "90042" and failed["status"] == 422
+    assert '"ring_busy_retry"' in err and '"after": "channel_limit"' in err and err.count('"ring_answered"') == 1
+    assert failure_lines(runner) == []  # the retry rang: nothing to report
+
+
+async def test_the_channel_limit_retry_is_single_and_a_second_refusal_is_reported_once(tmp_path, index, runner, clock, fast):
+    sink, registry, _ = make(tmp_path, runner, clock, FakeEvents(PICKED_UP))
+    dials = refused_then(sink, CHANNEL_LIMIT)  # refused every time
+    await sink.handle(detect(index, registry, burst(1)))
+    await sink.settle()
+    assert len(dials.calls) == 2  # one retry, never a third
+    [line] = failure_lines(runner)
+    assert "no free channel" in line and "retry could not be placed" in line and "example-user" not in line
+
+
+async def test_a_busy_phone_whose_retry_hits_the_channel_limit_is_reported_once(tmp_path, index, runner, clock, fast):
+    sink, registry, telnyx = make(tmp_path, runner, clock, FakeEvents(BUSY))
+    sink.http = lambda *a: CHANNEL_LIMIT if telnyx.calls else telnyx(*a)
+    await sink.handle(detect(index, registry, burst(1)))
+    await sink.settle()
+    assert len(telnyx.calls) == 1
+    [line] = failure_lines(runner)
+    assert "busy" in line and "retry could not be placed" in line
+
+
+@pytest.mark.parametrize("answer", [
+    (422, json.dumps({"errors": [{"code": "10015", "title": "Bad Request"}]}).encode()),
+    (401, b'{"errors": [{"code": "10009", "title": "Authentication failed"}]}'),
+    (500, json.dumps({"errors": [{"code": "90042", "title": "OB profile channel limit exceeded"}]}).encode()),  # not a 4xx
+    (422, b"not json"),
+])
+async def test_other_refusals_are_plain_failures_without_a_retry(tmp_path, index, runner, clock, fast, answer):
+    sink, registry, _ = make(tmp_path, runner, clock, FakeEvents(PICKED_UP))
+    dials = refused_then(sink, answer)
+    routed = await sink.handle(detect(index, registry, burst(1)))
+    await sink.settle()
+    assert len(dials.calls) == 1 and "notify failed" in routed["data"]["reason"]
+
+
+async def test_any_4xx_that_names_a_concurrency_limit_is_retried(tmp_path, index, runner, clock, fast):
+    sink, registry, _ = make(tmp_path, runner, clock, FakeEvents(PICKED_UP))
+    dials = refused_then(sink, (403, json.dumps({"errors": [{"code": "90099", "title": "Concurrent call limit reached"}]}).encode()), OK_DIAL)
+    await sink.handle(detect(index, registry, burst(1)))
+    await sink.settle()
+    assert len(dials.calls) == 2
+
+
+async def test_the_pending_retry_holds_the_bursts_cooldown(tmp_path, index, runner, clock, monkeypatch):
+    monkeypatch.setattr(sink_module, "RING_BUSY_RETRY_S", 3600)  # the retry stays pending
+    sink, registry, _ = make(tmp_path, runner, clock, FakeEvents(PICKED_UP))
+    dials = refused_then(sink, CHANNEL_LIMIT)
+    await sink.handle(detect(index, registry, burst(1)))
+    await sink.handle(detect(index, registry, burst(2)))  # the burst's next text must not ring as well
+    assert len(dials.calls) == 1
+    for task in list(sink._bg):
+        task.cancel()
+    await sink.settle()
+
+
+async def test_quiet_hours_suppress_the_channel_limit_retry(tmp_path, index, runner, fast):
+    clock = Clock(datetime(2026, 11, 4, 14, 0, tzinfo=UTC))  # 09:00 in New York
+    sink, registry, telnyx = make(tmp_path, runner, clock, FakeEvents(PICKED_UP), extra='ring_quiet_hours = "09:01-17:00"')
+    dials = refused_then(sink, CHANNEL_LIMIT)
+    sink.clock = lambda: datetime(2026, 11, 4, 14, 2, tzinfo=UTC) if dials.calls else clock.now  # quiet begins after the refusal
+    await sink.handle(detect(index, registry, burst(1)))
+    await sink.settle()
+    assert len(dials.calls) == 1
+    [line] = failure_lines(runner)
+    assert "quiet hours" in line

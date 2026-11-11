@@ -176,6 +176,7 @@ class FakeRunner:
         self.hermes_code = 0
         self.op_code = 0
         self.op_key = "fake-telnyx-key-DO-NOT-LEAK"
+        self.op_values: dict[str, str] = {}  # op:// reference -> value, for any secret that is not the Telnyx key
 
     @staticmethod
     def verb(argv) -> str:
@@ -200,7 +201,7 @@ class FakeRunner:
         if verb == "read":  # fake `op read --no-newline <ref>`
             if self.op_code:
                 return self.op_code, "", "[ERROR] not signed in"
-            return 0, self.op_key, ""
+            return 0, self.op_values.get(argv[-1], self.op_key), ""
         raise AssertionError(f"unexpected command {argv}")
 
     def of(self, verb: str) -> list[list[str]]:
@@ -282,4 +283,21 @@ def ring_followers_stay_offline(monkeypatch):
         raise AssertionError(f"a test reached the Telnyx events API: {url}")
 
     monkeypatch.setattr(sink_module, "RING_OUTCOME_DELAY_S", 3600)
+    monkeypatch.setattr(sink_module, "RING_SIP_OUTCOME_DELAY_S", 3600)
     monkeypatch.setattr(sink_module, "telnyx_get", refuse)
+
+
+@pytest.fixture(autouse=True)
+def ntfy_stays_offline(monkeypatch, tmp_path):
+    """Nothing in the suite may read the operator's ntfy settings or reach a ntfy server: no token reference
+    anywhere unless a test sets one, the infra-alerts env file pointed at a file that does not exist, and a
+    SinkService without an injected ntfy_http gets a POST that refuses."""
+    from target_watch import sink as sink_module
+
+    def refuse(url, headers, body, timeout):
+        raise AssertionError(f"a test reached ntfy or Telnyx over HTTP: {url}")
+
+    monkeypatch.delenv("TARGET_WATCH_NTFY_TOKEN_REF", raising=False)
+    monkeypatch.delenv("TARGET_WATCH_NTFY_URL", raising=False)
+    monkeypatch.setenv("TARGET_WATCH_NTFY_ENV_FILE", str(tmp_path / "no-such-infra-alerts-env"))
+    monkeypatch.setattr(sink_module, "ntfy_http_post", refuse)
