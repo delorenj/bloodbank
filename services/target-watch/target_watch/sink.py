@@ -18,7 +18,9 @@ Safety rules, each paid for elsewhere:
   (which lands in a chat full of agent chatter) and before the ring. Its token comes from 1Password
   through the op CLI and lives in memory only.
 - An "earshot:<channel>" channel speaks the alert: the earshot CLI synthesises a line and drops it into that
-  earshot channel (an audible alarm on the operator's phone). It obeys the ring's cooldown and quiet hours.
+  earshot channel (an audible alarm on the operator's phone). It obeys the ring's cooldown and quiet hours. The
+  earshot bucket can be listed and read by anyone, so the line says who wrote and how, never what (unless the
+  target sets earshot_content), and the object is named by an opaque slug, never by the line.
 - A target whose sink says `ticket = "button"` files nothing when a message arrives: the route is
   `awaiting_button`, and the ntfy push carries a "Create Ticket" button. The tap is an HMAC-signed POST that
   this process answers (button.py); it files exactly what auto mode would have, once, and says so on ntfy.
@@ -119,6 +121,10 @@ URL_LINE = re.compile(r"^https://\S+$")
 URL_IN_TEXT = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 EARSHOT_DEFAULT_BIN = "~/.local/bin/earshot"
 EARSHOT_TIMEOUT_S = 45  # synthesis plus upload
+# The earshot bucket is anonymous list + read (the phone carries no credentials), and the CLI names an object after
+# the first 40 characters of what it speaks unless told otherwise: every drop of ours is named by this word instead,
+# so a listing never shows who wrote or what. An earshot without --slug refuses it (exit 2) and uploads nothing.
+EARSHOT_SLUG = "target-watch"
 SPOKEN_MAX = 200
 BUTTON_PATH = re.compile(r"^/watch/ticket/([^/?#]+)$")
 BUTTON_BAD_SIGNATURE = "bad or expired signature"
@@ -171,22 +177,24 @@ def trim_words(text: str, limit: int = SPOKEN_MAX) -> str:
     return cut.rstrip(" ,;:-") + "..."
 
 
-def spoken_line(data: dict) -> str:
-    """What earshot says: '<name> texted: <text>' for a message, '<name> emailed: <subject>' for email,
-    '<name> called' for a call. No URL is read aloud (each becomes the word 'link'); at most 200 characters."""
+def spoken_line(data: dict, *, content: bool = False) -> str:
+    """What earshot says: who wrote and how, '<name> texted', '<name> emailed', '<name> called' or '<name> called
+    and left a voicemail'. Anyone can list the earshot bucket and fetch the audio for 7 days, so the message itself
+    ('<name> texted: <text>', '<name> emailed: <subject>', the voicemail's words) is spoken only with `content`
+    (the target's earshot_content). No URL is read aloud (each becomes the word 'link'); at most 200 characters."""
     name = data["target_display_name"]
-    content = data.get("content") or {}
+    body = data.get("content") or {}
     provider = data.get("provider")
     if provider == "email":
-        what = content.get("subject") or content.get("text")
-        line = f"{name} emailed" + (f": {what}" if what else "")
+        line, what = f"{name} emailed", body.get("subject") or body.get("text")
     elif provider == "call":
-        line = f"{name} called"
+        line, what = f"{name} called", None
     elif provider == "voicemail":
-        line = f"{name} called and left a voicemail" + (f": {content['text']}" if content.get("text") else "")
+        line, what = f"{name} called and left a voicemail", body.get("text")
     else:
-        text = content.get("text")
-        line = f"{name} texted" + (f": {text}" if text else "")
+        line, what = f"{name} texted", body.get("text")
+    if content and what:
+        line += f": {what}"
     return trim_words(" ".join(URL_IN_TEXT.sub("link", line).split()))
 
 
@@ -580,7 +588,9 @@ class SinkService:
                     failed.append(channel)
                 continue
             if is_earshot(channel):
-                outcome = await self._earshot(target, channel, spoken or line, received_at, detection_id)
+                # Never the notify line as a fallback: it carries the message, and the earshot bucket is public.
+                said = spoken or (f"{target.display_name} wrote" if target else "a watched person wrote")
+                outcome = await self._earshot(target, channel, said, received_at, detection_id)
                 if outcome == "sent":
                     sent.append(channel)
                 elif outcome == "failed":
@@ -705,7 +715,7 @@ class SinkService:
         return os.path.expanduser(os.environ.get("TARGET_WATCH_EARSHOT") or EARSHOT_DEFAULT_BIN)
 
     def _earshot_argv(self, name: str, spoken: str) -> list[str]:
-        return [self._earshot_bin(), "say", "-c", name, "--", spoken]
+        return [self._earshot_bin(), "say", "-c", name, "--slug", EARSHOT_SLUG, "--", spoken]
 
     async def _earshot(self, target: Target | None, channel: str, spoken: str, received_at: float | None = None,
                        detection_id: str | None = None) -> str:
@@ -715,7 +725,8 @@ class SinkService:
         cooldown per (watch, channel). Success is exit 0 AND the object key the CLI prints (a line that starts
         with '<channel>/'). When the outcome is uncertain (exit 0 without a key, or a timeout: the line may
         already be uploaded), the cooldown is taken but the channel is reported failed; a plain failure leaves
-        the cooldown alone, because nothing was dropped. Never raises."""
+        the cooldown alone, because nothing was dropped. An earshot too old for --slug exits 2 before uploading,
+        which is a plain failure, and the line is never retried without the slug. Never raises."""
         watch_id = target.id if target else "?"
         name = channel[len(EARSHOT_PREFIX):]
         skip = self.ring_skip(target, channel, received_at)
@@ -1321,7 +1332,8 @@ class SinkService:
                     reason = (reason + "; " if reason else "") + "Create Ticket button unavailable (no readable button secret); nothing was filed"
             sent, failed = await self._notify(channels, notify_line(data, action, ticket_ref, button=actions is not None), target,
                                               epoch(data["received_at"]), detection_id=detection_id, title=ntfy_title(data),
-                                              click=ticket_url, actions=actions, spoken=spoken_line(data))
+                                              click=ticket_url, actions=actions,
+                                              spoken=spoken_line(data, content=bool(target and target.sink.earshot_content)))
             if failed:
                 reason = (reason + "; " if reason else "") + "notify failed: " + ",".join(mask_channel(c) for c in failed)
             self.state.update_route(detection_id, notified=1, notify_channels=sent, reason=reason)
@@ -1340,7 +1352,7 @@ class SinkService:
             return {"to": channel, "ring": self.ring_plan(target, channel, epoch(data["received_at"]))}
         text = notify_line(data, plan.action, plan.ticket_ref or "<new>")
         if is_earshot(channel):
-            spoken = spoken_line(data)
+            spoken = spoken_line(data, content=bool(target and target.sink.earshot_content))
             return {"to": channel, "spoken": spoken, "argv": self._earshot_argv(channel[len(EARSHOT_PREFIX):], spoken),
                     "skipped": self.ring_skip(target, channel, epoch(data["received_at"]))}
         if is_ntfy(channel):

@@ -9,6 +9,7 @@ off (real_tree_has_x_sender) so the real files are what the suite checks. The va
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -201,13 +202,18 @@ class FakeRunner:
             if self.hermes_code:
                 return self.hermes_code, '{"error": "Platform not configured"}', ""
             return 0, '{"success": true, "platform": "telegram", "message_id": "1"}', ""
-        if verb == "say":  # fake `earshot say -c <channel> -- <line>`
+        if verb == "say":  # fake `earshot say -c <channel> --slug <word> -- <line>`
             if self.earshot_code:
                 return self.earshot_code, "", "earshot: mc cp failed"
             if self.earshot_out is not None:
                 return 0, self.earshot_out, ""
             self.earshot_serial += 1
-            return 0, f"{argv[argv.index('-c') + 1]}/2026/11/04/153000000Z-spoken-{self.earshot_serial}.opus\n", ""
+            # Named like the real CLI's key: after --slug when given, else after the start of the spoken text.
+            cut = argv.index("--") if "--" in argv else len(argv)
+            options, text = argv[:cut], " ".join(argv[cut + 1:])
+            named = options[options.index("--slug") + 1] if "--slug" in options else text
+            slug = re.sub(r"[^a-z0-9]+", "-", named.lower()).strip("-")[:40].strip("-") or "drop"
+            return 0, f"{options[options.index('-c') + 1]}/2026/11/04/1530000{self.earshot_serial:02d}Z-{slug}.opus\n", ""
         if verb == "read":  # fake `op read --no-newline <ref>`
             if self.op_code:
                 return self.op_code, "", "[ERROR] not signed in"

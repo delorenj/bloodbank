@@ -127,13 +127,15 @@ async def pushed(tmp_path, index, runner, clock, ntfy, plane_repo, *events, **kw
 # --- the target file ------------------------------------------------------------------------
 
 
-def load(tmp_path, repo, *, kind="plane", notify, ticket=None):
+def load(tmp_path, repo, *, kind="plane", notify, ticket=None, extra=None):
     lines = [f'kind = "{kind}"']
     if kind == "plane":
         lines.append(f'repo = "{repo}"')
     lines.append(f"notify = {json.dumps(notify)}")
     if ticket is not None:
         lines.append(f"ticket = {json.dumps(ticket)}")
+    if extra is not None:
+        lines.append(extra)
     body = '[target]\nid = "jane-doe"\ndisplay_name = "Jane Doe"\n[target.handles]\ne164 = ["+12155550100"]\n[sink]\n' + "\n".join(lines)
     return load_targets([str(write_target(tmp_path / "v", "t", body))])
 
@@ -161,6 +163,29 @@ def test_an_unknown_ticket_mode_is_refused(tmp_path, plane_repo, ticket):
 def test_an_earshot_channel_loads(tmp_path, plane_repo):
     targets, errors = load(tmp_path, plane_repo, kind="notify_only", notify=["earshot:alarm", "earshot:house_2-b"])
     assert errors == [] and targets[0].sink.notify == ("earshot:alarm", "earshot:house_2-b")
+    assert targets[0].sink.earshot_content is False  # the message is never spoken unless the target says so
+
+
+def test_earshot_content_opts_in(tmp_path, plane_repo):
+    targets, errors = load(tmp_path, plane_repo, kind="notify_only", notify=["earshot:alarm"], extra="earshot_content = true")
+    assert errors == [] and targets[0].sink.earshot_content is True
+
+
+@pytest.mark.parametrize("value", ['"yes"', '"true"', "1", "0"])
+def test_earshot_content_must_be_a_boolean(tmp_path, plane_repo, value):
+    targets, errors = load(tmp_path, plane_repo, kind="notify_only", notify=["earshot:alarm"], extra=f"earshot_content = {value}")
+    assert targets == [] and len(errors) == 1 and "sink.earshot_content must be true or false" in errors[0]
+
+
+def test_check_notes_a_target_that_speaks_the_message(tmp_path, plane_repo, schema_tree, capsys):
+    from target_watch import cli
+    for name, extra in (("quiet", ""), ("loud", "earshot_content = true")):
+        write_target(tmp_path / name, "t", '[target]\nid = "jane-doe"\ndisplay_name = "Jane Doe"\n[target.handles]\n'
+                     f'e164 = ["+12155550100"]\n[sink]\nkind = "notify_only"\nnotify = ["earshot:alarm"]\n{extra}\n')
+    assert cli.main(["--targets", str(tmp_path / "quiet" / "*.toml"), "--schemas-dir", str(schema_tree), "check"]) == 0
+    assert "earshot_content" not in capsys.readouterr().out
+    assert cli.main(["--targets", str(tmp_path / "loud" / "*.toml"), "--schemas-dir", str(schema_tree), "check"]) == 0  # a note, not a failure
+    assert "note: earshot_content = true speaks the message itself into a public earshot channel" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("channel", ["earshot:", "earshot:Alarm", "earshot:a b", "earshot:-x", "earshot:a/b", "earshot:" + "x" * 33, "earshot:café"])
@@ -557,8 +582,8 @@ async def test_dry_run_prints_the_button_and_earshot_plan_and_touches_nothing(tm
     ntfy_plan, earshot_plan, telegram = printed["notify"]
     assert ntfy_plan["button"]["label"] == "Create Ticket" and ntfy_plan["button"]["method"] == "POST"
     assert "sig=" in ntfy_plan["button"]["url"] and ntfy_plan["priority"] == "urgent"
-    assert earshot_plan == {"to": "earshot:alarm", "spoken": "Jane Doe texted: message number 1", "skipped": None,
-                            "argv": [EARSHOT, "say", "-c", "alarm", "--", "Jane Doe texted: message number 1"]}
+    assert earshot_plan == {"to": "earshot:alarm", "spoken": "Jane Doe texted", "skipped": None,
+                            "argv": [EARSHOT, "say", "-c", "alarm", "--slug", "target-watch", "--", "Jane Doe texted"]}
     assert telegram["to"] == "telegram:1000"
     assert runner.calls == [] and ntfy.calls == [] and not dry_path.exists()  # no op read, no push, no state, no button row
 
@@ -732,7 +757,7 @@ async def test_earshot_speaks_through_the_cli_between_ntfy_and_telegram(tmp_path
     routed = await sink.handle(detect(index, registry, burst(1)))
     assert [runner.verb(argv) for argv, _ in runner.calls] == ["read", "say", "send", "read"]  # ntfy token, earshot, telegram, ring key
     [say] = runner.of("say")
-    assert say == [EARSHOT, "say", "-c", "alarm", "--", "Jane Doe texted: message number 1"]
+    assert say == [EARSHOT, "say", "-c", "alarm", "--slug", "target-watch", "--", "Jane Doe texted"]
     assert [cwd for argv, cwd in runner.calls if runner.verb(argv) == "say"] == [sink_module.NOTIFY_CWD]
     assert routed["data"]["notify_channels"] == [f"ntfy:{TOPIC}", "earshot:alarm", "telegram:1000", f"ring:{RING_TO}"]
     notes = {n["channel"]: n for n in rows_of(sink)}
@@ -787,6 +812,7 @@ async def test_earshot_does_not_speak_a_stale_detection(tmp_path, index, runner,
     (0, "uploaded, trust me\n", True),  # exit 0 without an object key: it may have played
     (124, None, True),  # a timeout: the line may already be uploaded
     (1, None, False),  # a plain failure dropped nothing
+    (2, None, False),  # an earshot that predates --slug refuses it (argparse) before uploading anything
     (127, None, False),  # the binary is missing
 ])
 async def test_earshot_success_needs_exit_0_and_the_object_key(tmp_path, index, runner, clock, ntfy, code, out, cooldown):
@@ -808,6 +834,52 @@ async def test_an_object_key_from_another_channel_is_not_success(tmp_path, index
     assert "notify failed: earshot:alarm" in routed["data"]["reason"]
 
 
+# The earshot bucket is anonymous list + read: what reaches it is public for 7 days. FakeRunner names the key the
+# way the real CLI does (after --slug when given, else after the start of the spoken text), so these prove the key.
+
+
+async def test_the_earshot_key_names_nobody_and_the_line_carries_no_message(tmp_path, index, runner, clock, ntfy):
+    sink, registry = make_notify_only(tmp_path, runner, clock, ntfy, notify=[f"ntfy:{TOPIC}", "earshot:alarm"])
+    await sink.handle(detect(index, registry, burst(1)))
+    [say] = runner.of("say")
+    options, spoken = say[:say.index("--")], say[say.index("--") + 1:]
+    assert options[options.index("--slug") + 1] == "target-watch" and spoken == ["Jane Doe texted"]
+    assert "message number 1" not in " ".join(say)
+    [push, note] = rows_of(sink)
+    assert note["channel"] == "earshot:alarm" and note["outcome"] == "sent"
+    assert note["ref"] == "alarm/2026/11/04/153000001Z-target-watch.opus"
+    assert not {"jane", "doe", "texted", "message"} & set(note["ref"].replace("-", "/").split("/"))
+    assert "message number 1" in ntfy.calls[0]["text"]  # the private push still carries the message
+
+
+async def test_earshot_content_speaks_the_message_but_the_key_stays_opaque(tmp_path, index, runner, clock, ntfy):
+    sink, registry = make_notify_only(tmp_path, runner, clock, ntfy, notify=["earshot:alarm"], extra="earshot_content = true")
+    await sink.handle(detect(index, registry, burst(1)))
+    [say] = runner.of("say")
+    assert say == [EARSHOT, "say", "-c", "alarm", "--slug", "target-watch", "--", "Jane Doe texted: message number 1"]
+    [note] = rows_of(sink)
+    assert note["ref"].endswith("Z-target-watch.opus")
+
+
+async def test_a_dry_run_shows_the_line_the_target_chose(tmp_path, index, runner, clock, ntfy, capsys):
+    _, registry = make_notify_only(tmp_path, runner, clock, ntfy, notify=["earshot:alarm"], extra="earshot_content = true")
+    dry = SinkService(registry, State(tmp_path / "dry" / "state.db", read_only=True), DryRunPublisher(), runner=runner,
+                      clock=clock, dry_run=True, ntfy_http=ntfy, op=OP)
+    await dry.handle(detect(index, registry, burst(1)))
+    [plan] = json.loads(capsys.readouterr().out.strip().splitlines()[0])["notify"]
+    assert plan["spoken"] == "Jane Doe texted: message number 1" and plan["argv"][4:6] == ["--slug", "target-watch"]
+    assert runner.calls == []
+
+
+async def test_without_a_spoken_line_earshot_never_falls_back_to_the_notify_line(tmp_path, runner, clock, ntfy):
+    sink, registry = make_notify_only(tmp_path, runner, clock, ntfy, notify=["earshot:alarm"])
+    sent, failed = await sink._notify(["earshot:alarm"], "Jane Doe via rcs: the gate code is 4411 -> notified_only",
+                                      registry.get("jane-doe"))
+    assert sent == ["earshot:alarm"] and failed == []
+    [say] = runner.of("say")
+    assert say[-1] == "Jane Doe wrote" and "4411" not in " ".join(say)
+
+
 async def test_a_ring_failure_report_never_goes_out_over_earshot_or_as_a_hermes_channel(tmp_path, runner, clock, ntfy):
     sink, registry = make_notify_only(tmp_path, runner, clock, ntfy,
                                       notify=["earshot:alarm", "telegram:1000", f"ntfy:{TOPIC}", f"ring:{RING_TO}"])
@@ -826,48 +898,59 @@ async def test_a_spoken_alarm_is_not_a_loud_push_the_ntfy_headers_are_unchanged(
 # --- what is spoken ---------------------------------------------------------------------------
 
 
-def said(provider, *, text=None, subject=None, name="Jane Doe"):
-    content = {k: v for k, v in (("text", text), ("subject", subject)) if v}
-    return spoken_line({"target_display_name": name, "provider": provider, "content": content})
+def said(provider, *, text=None, subject=None, name="Jane Doe", content=False):
+    body = {k: v for k, v in (("text", text), ("subject", subject)) if v}
+    return spoken_line({"target_display_name": name, "provider": provider, "content": body}, content=content)
 
 
 @pytest.mark.parametrize("provider", ["sms", "rcs", "mms", "imessage", "telegram", "slack", "google_chat"])
-def test_a_message_is_spoken_as_texted(provider):
-    assert said(provider, text="running ten minutes late") == "Jane Doe texted: running ten minutes late"
+def test_a_message_is_spoken_as_texted_and_its_words_only_with_content(provider):
+    assert said(provider, text="running ten minutes late") == "Jane Doe texted"
+    assert said(provider, text="running ten minutes late", content=True) == "Jane Doe texted: running ten minutes late"
 
 
-def test_an_email_is_spoken_by_its_subject():
-    assert said("email", text="body words", subject="Invoice question") == "Jane Doe emailed: Invoice question"
-    assert said("email", text="only a body") == "Jane Doe emailed: only a body"
-    assert said("email") == "Jane Doe emailed"
+def test_an_email_is_spoken_as_emailed_and_by_its_subject_only_with_content():
+    assert said("email", text="body words", subject="Invoice question") == "Jane Doe emailed"
+    assert said("email", text="body words", subject="Invoice question", content=True) == "Jane Doe emailed: Invoice question"
+    assert said("email", text="only a body", content=True) == "Jane Doe emailed: only a body"
+    assert said("email", content=True) == "Jane Doe emailed"
 
 
-def test_a_call_is_spoken_as_called_and_a_voicemail_carries_its_words():
+def test_a_call_is_spoken_as_called_and_a_voicemail_carries_its_words_only_with_content():
     assert said("call") == "Jane Doe called"
-    assert said("call", text="ignored for a plain call") == "Jane Doe called"
-    assert said("voicemail", text="call me back") == "Jane Doe called and left a voicemail: call me back"
-    assert said("voicemail") == "Jane Doe called and left a voicemail"
-    assert said("sms") == "Jane Doe texted"
+    assert said("call", text="ignored for a plain call", content=True) == "Jane Doe called"
+    assert said("voicemail", text="call me back") == "Jane Doe called and left a voicemail"
+    assert said("voicemail", text="call me back", content=True) == "Jane Doe called and left a voicemail: call me back"
+    assert said("voicemail", content=True) == "Jane Doe called and left a voicemail"
+    assert said("sms", content=True) == "Jane Doe texted"
+
+
+@pytest.mark.parametrize("provider", ["sms", "rcs", "telegram", "email", "call", "voicemail", "teams"])
+def test_by_default_not_one_word_of_the_message_is_spoken(provider):
+    line = said(provider, text="the gate code is 4411 https://example.com/x", subject="private subject")
+    assert ":" not in line and not {"gate", "code", "4411", "link", "private", "subject"} & set(line.lower().split())
 
 
 def test_no_url_is_read_aloud():
-    assert said("sms", text="see https://example.com/a?b=1&c=2 now") == "Jane Doe texted: see link now"
-    assert said("sms", text="www.example.com/x or http://example.org") == "Jane Doe texted: link or link"
-    assert said("email", subject="HTTPS://EXAMPLE.COM/Z") == "Jane Doe emailed: link"
-    assert "http" not in said("sms", text="a https://example.com/very/long/path?token=abcdef b").lower()
+    assert said("sms", text="see https://example.com/a?b=1&c=2 now", content=True) == "Jane Doe texted: see link now"
+    assert said("sms", text="www.example.com/x or http://example.org", content=True) == "Jane Doe texted: link or link"
+    assert said("email", subject="HTTPS://EXAMPLE.COM/Z", content=True) == "Jane Doe emailed: link"
+    assert "http" not in said("sms", text="a https://example.com/very/long/path?token=abcdef b", content=True).lower()
 
 
 def test_whitespace_is_flattened():
-    assert said("sms", text="line one\n\nline   two\ttabbed") == "Jane Doe texted: line one line two tabbed"
+    assert said("sms", text="line one\n\nline   two\ttabbed", content=True) == "Jane Doe texted: line one line two tabbed"
+    assert said("sms", name="Jane \n Doe") == "Jane Doe texted"
 
 
 def test_a_long_line_is_cut_at_a_word_boundary_within_200_characters():
-    line = said("sms", text="word " * 100)
+    line = said("sms", text="word " * 100, content=True)
     assert len(line) <= 200 and line.endswith("...") and line[:-3].split()[-1] == "word"
-    assert said("sms", text="x" * 500).endswith("xx...") and len(said("sms", text="x" * 500)) == 200  # one huge token is cut hard
+    huge = said("sms", text="x" * 500, content=True)
+    assert huge.endswith("xx...") and len(huge) == 200  # one huge token is cut hard
     exact = "y" * (200 - len("Jane Doe texted: "))
-    assert said("sms", text=exact) == f"Jane Doe texted: {exact}"  # exactly 200 is left alone
-    assert len(said("sms", text=exact + "z")) <= 200
+    assert said("sms", text=exact, content=True) == f"Jane Doe texted: {exact}"  # exactly 200 is left alone
+    assert len(said("sms", text=exact + "z", content=True)) <= 200
 
 
 def test_trim_words_leaves_short_text_alone():
