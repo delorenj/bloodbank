@@ -200,6 +200,10 @@ def cmd_check(args) -> int:
             failures += 1
         print(f"  {t.id:<20} {t.display_name:<24} email={len(t.email)} e164={len(t.e164)} label={len(t.label)} "
               f"platform={len(t.platform)}  sink={sink.kind} {where} notify={','.join(mask_channel(c) for c in sink.notify) or '-'}  {t.path}")
+        if sink.earshot_content and any(c.startswith("earshot:") for c in sink.notify):
+            # Not a failure, a choice: but one worth seeing every time, because it makes the message public audio.
+            print("    note: earshot_content = true speaks the message itself into a public earshot channel "
+                  "(anyone can list and fetch it for 7 days)")
         for problem in problems:
             print(f"    ! {problem}")
     for error in errors:

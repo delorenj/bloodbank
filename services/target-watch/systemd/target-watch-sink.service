@@ -44,7 +44,8 @@ Environment=TARGET_WATCH_OP=%h/.local/bin/op
 # at first use and held in memory only; this file carries the reference, never the value.
 Environment=TARGET_WATCH_BUTTON_LISTEN=172.17.0.1:18796
 Environment=TARGET_WATCH_BUTTON_SECRET_REF=op://DeLoSecrets/mtazkqyrdgujoyazn5wpeg5xxq/password
-# "earshot:<channel>" notify channel: `earshot say -c <channel> -- <line>` (the CLI is a symlink into ~/code/earshot).
+# "earshot:<channel>" notify channel: `earshot say -c <channel> --slug target-watch -- <line>` (the CLI is a symlink
+# into ~/code/earshot and must know --slug: the bucket is world-listable, so the key must not carry the line).
 Environment=TARGET_WATCH_EARSHOT=%h/.local/bin/earshot
 ExecStart=%h/code/33GOD/bloodbank/services/target-watch/.venv/bin/target-watch sink
 Restart=always

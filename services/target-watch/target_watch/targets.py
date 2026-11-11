@@ -21,6 +21,7 @@
     notify = ["ntfy:<topic>", "earshot:alarm", "telegram:<chat id>", "ring:+12155550100"]  # ring = ring that phone like an incoming call
     # ntfy = an urgent push to the ntfy topic (the loud one: it is sent first)
     # earshot = a spoken line dropped into that earshot channel (an audible alarm: the ring's cooldown and quiet hours)
+    earshot_content = false           # true speaks the message too; the earshot bucket is world-readable (README)
     # a SIP device instead of a number: "ring:sip:example-user@sip.telnyx.com"
     ring_cooldown_minutes = 10        # one ring (and one spoken alarm) per burst; default 10
     ring_quiet_hours = "22:00-07:00"  # America/New_York, may wrap midnight; absent = ring any time
@@ -74,6 +75,9 @@ class Sink:
     # (start, end) in minutes after midnight, America/New_York; end <= start wraps midnight.
     ring_quiet_hours: tuple[int, int] | None = None
     ticket: str = "auto"  # see TICKET_MODES
+    # An earshot line says who wrote and how ("Jane Doe texted"). The earshot bucket can be listed and read by
+    # anyone, so the message itself is spoken only when the target opts in.
+    earshot_content: bool = False
 
 
 @dataclass(frozen=True)
@@ -218,6 +222,9 @@ def parse_target(document: dict, path: Path) -> Target:
         if not any(channel.startswith("ntfy:") for channel in notify):
             # Without an ntfy push there is no button to tap, and no ticket would ever be filed.
             raise TargetError("sink.ticket = \"button\" needs an ntfy:<topic> entry in sink.notify: the button rides on that push")
+    earshot_content = sink_doc.get("earshot_content", False)
+    if not isinstance(earshot_content, bool):
+        raise TargetError("sink.earshot_content must be true or false")
     return Target(
         id=target_id,
         display_name=display.strip(),
@@ -237,6 +244,7 @@ def parse_target(document: dict, path: Path) -> Target:
             ring_cooldown_minutes=cooldown,
             ring_quiet_hours=quiet,
             ticket=ticket,
+            earshot_content=earshot_content,
         ),
     )
 

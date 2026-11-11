@@ -28,7 +28,7 @@ schema reload. No code changes, no restart.
                          px task create / px comment  (cwd = target's repo)
                            (ticket = "button": nothing filed until a tap, see "Create Ticket button")
                          ntfy urgent push to ntfy:<topic>  (first: the loud one; may carry a Create Ticket button)
-                         earshot say -c <channel> -- "<line>"  (a spoken alarm)
+                         earshot say -c <channel> --slug target-watch -- "<name> texted"  (a spoken alarm)
                          hermes send --to telegram:<chat id>
                          Telnyx outbound call to ring:<E.164> or ring:sip:<user>@<host>  (the phone rings),
                          then a background check of the call's outcome (a Telegram line if it did not get through)
@@ -228,15 +228,28 @@ notify = ["ntfy:<topic>", "earshot:alarm", "telegram:<operator chat id>", "ring:
 with vox and drops it into that earshot channel, which the operator's phone plays aloud (`earshot:alarm`
 is the alarm channel).
 
-- **Command.** `$TARGET_WATCH_EARSHOT say -c <channel> -- "<spoken line>"` (default
+- **Command.** `$TARGET_WATCH_EARSHOT say -c <channel> --slug target-watch -- "<spoken line>"` (default
   `~/.local/bin/earshot`, a symlink into `~/code/earshot`), run in a worker thread, 45 s timeout.
   **Success** is exit 0 *and* an object key on stdout (a line starting with `<channel>/`); exit 0 without
   one is a failed channel.
-- **The spoken line.** `<display name> texted: <text>` for a carrier or chat message,
-  `<display name> emailed: <subject>` for email (the start of the body when there is no subject),
-  `<display name> called` for a call, and `<display name> called and left a voicemail: <words>` for a
-  voicemail. Every URL is replaced by the word "link", whitespace is flattened, and the line is cut at a word
-  boundary to at most 200 characters (marked `...`).
+- **The earshot bucket is public.** The phone reads it with no credentials, so anyone can list the bucket
+  and fetch any object in it for the object's 7 days. Two rules follow:
+  - **The key names nothing.** `--slug target-watch` names every drop
+    `<channel>/YYYY/MM/DD/HHMMSSmmmZ-target-watch.<ext>`. Without it the CLI builds the key from the first 40
+    characters of the spoken line, which would put the sender's name and the start of the message in a listing
+    anyone can read. An earshot that predates `--slug` (before earshot `d92dbc8`) refuses it with exit 2 and
+    uploads nothing: the channel fails, and the line is never retried without the slug.
+  - **The line says who and how, never what.** `<display name> texted` for a carrier or chat message,
+    `<display name> emailed` for email, `<display name> called` for a call, and
+    `<display name> called and left a voicemail` for a voicemail. The ntfy push and Telegram carry the message.
+- **`earshot_content = true`** in `[sink]` (default `false`) adds the message to the line:
+  `<display name> texted: <text>`, `<display name> emailed: <subject>` (the start of the body when there is no
+  subject), `... left a voicemail: <words>`. That makes it public audio for 7 days, so leave it off for a client;
+  `target-watch check` prints a note for every target that sets it. Every URL is replaced by the word "link",
+  whitespace is flattened, and the line is cut at a word boundary to at most 200 characters (marked `...`).
+- **What stays public.** The audio still says the display name, and anyone who lists the bucket can fetch it:
+  who wrote, and when. Only an earshot channel the phone reads with credentials would close that; the alarm
+  channel is not one.
 - **Same rules as the ring.** It is an audible alarm, so `ring_quiet_hours`, the staleness cut-off (a
   detection older than 5 minutes) and `ring_cooldown_minutes` apply, with its own cooldown row per
   (watch, channel): a ring and an earshot line of one burst do not throttle each other. Skipped lines are
@@ -411,6 +424,7 @@ priority = "medium"
 coalesce_hours = 24
 ticket = "auto"                          # or "button": file only when the operator taps Create Ticket on the push
 notify = ["ntfy:<topic>", "telegram:<operator chat id>"]   # add "earshot:alarm" and "ring:sip:...", see "ntfy", "earshot" and "Ring"
+earshot_content = false                  # true speaks the message itself; the earshot bucket is public, see "earshot"
 ```
 
 Then run `target-watch check`. It must say `ok`.
