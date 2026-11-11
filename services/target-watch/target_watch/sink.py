@@ -17,6 +17,11 @@ Safety rules, each paid for elsewhere:
 - An "ntfy:<topic>" channel is the loud push: an urgent ntfy message, sent FIRST, before Telegram
   (which lands in a chat full of agent chatter) and before the ring. Its token comes from 1Password
   through the op CLI and lives in memory only.
+- An "earshot:<channel>" channel speaks the alert: the earshot CLI synthesises a line and drops it into that
+  earshot channel (an audible alarm on the operator's phone). It obeys the ring's cooldown and quiet hours.
+- A target whose sink says `ticket = "button"` files nothing when a message arrives: the route is
+  `awaiting_button`, and the ntfy push carries a "Create Ticket" button. The tap is an HMAC-signed POST that
+  this process answers (button.py); it files exactly what auto mode would have, once, and says so on ntfy.
 - Every channel attempt is written to the sqlite `notifications` table, and a ring's row is updated
   when its follower reaches a terminal outcome: journald keeps almost nothing for these units, so
   `target-watch status` reads that table to say what each channel did.
@@ -29,6 +34,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -37,6 +43,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
+from . import button as btn
 from . import envelope as env
 from .bus import Permanent
 from .log import log
@@ -50,6 +57,7 @@ TEXT_DUPLICATE_S = 60.0
 # The carrier delivers one text as sms and rcs (and mms, iMessage) twins; no other providers are folded by text.
 CARRIER_TWINS = frozenset({"sms", "mms", "rcs", "imessage"})
 PX_TIMEOUT_S = 90
+AWAITING_BUTTON = "awaiting_button"
 NOTIFY_TIMEOUT_S = 30
 HERMES_PROFILE = os.environ.get("TARGET_WATCH_HERMES_PROFILE") or "33god-pm"
 NOTIFY_CWD = os.environ.get("TARGET_WATCH_NOTIFY_CWD") or os.path.expanduser("~")
@@ -57,6 +65,7 @@ NOTIFY_CWD = os.environ.get("TARGET_WATCH_NOTIFY_CWD") or os.path.expanduser("~"
 RING_PREFIX = "ring:"
 SIP_RING_PREFIX = "ring:sip:"
 NTFY_PREFIX = "ntfy:"
+EARSHOT_PREFIX = "earshot:"
 TELNYX_CALLS_URL = "https://api.telnyx.com/v2/calls"
 # An E.164 ring stops after 20 s: it must stay under the cell carrier's no-answer forward (about
 # 25-30 s on Verizon), which sends an unanswered call back to the same Telnyx number: keep it <= 22.
@@ -106,6 +115,15 @@ NTFY_DEFAULT_ENV_FILE = "~/.config/infra-alerts/env"
 NTFY_HTTP_TIMEOUT_S = 15
 NTFY_DEADLINE_S = 30  # token lookup plus the POST, run off the event loop and abandoned after this long
 URL_LINE = re.compile(r"^https://\S+$")
+# earshot speaks the line aloud: a URL would be read out character by character.
+URL_IN_TEXT = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+EARSHOT_DEFAULT_BIN = "~/.local/bin/earshot"
+EARSHOT_TIMEOUT_S = 45  # synthesis plus upload
+SPOKEN_MAX = 200
+BUTTON_PATH = re.compile(r"^/watch/ticket/([^/?#]+)$")
+BUTTON_BAD_SIGNATURE = "bad or expired signature"
+BUTTON_SECRET_MIN = 32  # characters; the 1Password value is 64
+BUTTON_SECRET_RETRY_S = 60  # an unreadable secret is not asked for again for this long (unsigned callers must not drive op)
 FOOTER = "Filed automatically by target-watch from a {provider} message. Do not invent a ticket number."
 
 
@@ -127,10 +145,49 @@ def is_ntfy(channel: str) -> bool:
     return channel.startswith(NTFY_PREFIX)
 
 
+def is_earshot(channel: str) -> bool:
+    return channel.startswith(EARSHOT_PREFIX)
+
+
 def channel_rank(channel: str) -> int:
-    """Send order: ntfy (the loud one) first, then the quiet text channels, then the ring. The line the
-    operator reads after the phone rings must already be there."""
-    return 0 if is_ntfy(channel) else 2 if is_ring(channel) else 1
+    """Send order: ntfy (the loud one) first, then earshot (spoken), then the quiet text channels, then the
+    ring. The line the operator reads after the phone rings must already be there."""
+    return 0 if is_ntfy(channel) else 1 if is_earshot(channel) else 3 if is_ring(channel) else 2
+
+
+def button_base_url() -> str:
+    return (os.environ.get("TARGET_WATCH_BUTTON_URL") or btn.DEFAULT_BUTTON_URL).rstrip("/")
+
+
+def trim_words(text: str, limit: int = SPOKEN_MAX) -> str:
+    """At most `limit` characters, cut at a word boundary (the cut is marked with '...')."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 3]
+    if text[limit - 3] != " ":
+        boundary = cut.rfind(" ")
+        if boundary >= limit // 2:  # a long unbroken token is cut hard rather than dropped back to the prefix
+            cut = cut[:boundary]
+    return cut.rstrip(" ,;:-") + "..."
+
+
+def spoken_line(data: dict) -> str:
+    """What earshot says: '<name> texted: <text>' for a message, '<name> emailed: <subject>' for email,
+    '<name> called' for a call. No URL is read aloud (each becomes the word 'link'); at most 200 characters."""
+    name = data["target_display_name"]
+    content = data.get("content") or {}
+    provider = data.get("provider")
+    if provider == "email":
+        what = content.get("subject") or content.get("text")
+        line = f"{name} emailed" + (f": {what}" if what else "")
+    elif provider == "call":
+        line = f"{name} called"
+    elif provider == "voicemail":
+        line = f"{name} called and left a voicemail" + (f": {content['text']}" if content.get("text") else "")
+    else:
+        text = content.get("text")
+        line = f"{name} texted" + (f": {text}" if text else "")
+    return trim_words(" ".join(URL_IN_TEXT.sub("link", line).split()))
 
 
 def ring_timing(channel: str) -> tuple[int, int]:
@@ -397,8 +454,11 @@ def ntfy_title(data: dict) -> str:
     return f"{data['target_display_name']} - {data['provider']}"
 
 
-def notify_line(data: dict, action: str, ticket_ref: str | None) -> str:
-    tail = f"{action} {ticket_ref}" if ticket_ref else action
+def notify_line(data: dict, action: str, ticket_ref: str | None, *, button: bool = True) -> str:
+    if action == AWAITING_BUTTON:
+        tail = "no ticket yet, tap Create Ticket" if button else "no ticket filed (the Create Ticket button is unavailable)"
+    else:
+        tail = f"{action} {ticket_ref}" if ticket_ref else action
     return f"{data['target_display_name']} via {data['provider']}: {headline(data, 120)} -> {tail}"
 
 
@@ -420,9 +480,15 @@ class SinkService:
         self.http_get = http_get or telnyx_get
         self.ntfy_http = ntfy_http or ntfy_http_post  # its own seam: a Telnyx fake must never see an ntfy POST
         self._bg: set[asyncio.Task] = set()  # outcome followers; held so they are not garbage collected
+        self._followups: set[asyncio.Task] = set()  # button follow-up pushes: short, and waited for at shutdown
         self.op = op or os.environ.get("TARGET_WATCH_OP") or os.path.expanduser("~/.local/bin/op")
         self._ring_key: str | None = None  # resolved at first use, held in memory only
         self._ntfy_key: str | None = None  # likewise
+        self._button_key: bytes | None = None  # the button HMAC secret, likewise
+        self._button_key_retry_at = 0.0  # time.monotonic() before which an unreadable secret is not asked for again
+        # One px at a time, across the consumer and the button taps: the coalescing read and the ticket write
+        # must not interleave, or two concurrent messages of one conversation would each create a ticket.
+        self._px_lock = asyncio.Lock()
 
     # --- planning (pure: reads state, writes nothing) -------------------------
 
@@ -444,6 +510,18 @@ class SinkService:
                             reason=f"same text as detection {twin} within {int(TEXT_DUPLICATE_S)}s")
         if target.sink.kind == "notify_only":
             return Plan(detection_id, target.id, "notified_only", conv_key, notify=notify)
+        if target.sink.ticket == "button":
+            # Nothing is filed until the operator taps Create Ticket on the push; the route says so.
+            return Plan(detection_id, target.id, AWAITING_BUTTON, conv_key, notify=notify)
+        return self.ticket_plan(detection, target, notify)
+
+    def ticket_plan(self, detection: dict, target: Target, notify=()) -> Plan:
+        """What px must do for this detection: a comment on the conversation's open ticket (within
+        coalesce_hours), else a new ticket. The one place that says so, for auto mode and for a button tap."""
+        data = detection["data"]
+        detection_id = detection["id"]
+        conv_key = conversation_key(data)
+        notify = list(notify)
         repo = str(target.sink.repo)
         since = self.clock().timestamp() - target.sink.coalesce_hours * 3600
         existing = self.state.coalesce_ticket(target.id, conv_key, since) if target.sink.coalesce_hours > 0 else None
@@ -462,9 +540,10 @@ class SinkService:
 
     # --- execution --------------------------------------------------------------
 
-    def _run_px(self, plan: Plan, data: dict) -> tuple[str, str | None, str | None]:
-        """(action, ticket_ref, reason). Never retried: an unclear outcome is a failure."""
-        code, stdout, stderr = self.runner(plan.px_argv, cwd=plan.px_cwd, timeout=PX_TIMEOUT_S)
+    async def _run_px(self, plan: Plan) -> tuple[str, str | None, str | None]:
+        """(action, ticket_ref, reason). Never retried: an unclear outcome is a failure. px runs in a worker
+        thread, so a slow board never stops the event loop (which also answers the button's HTTP taps)."""
+        code, stdout, stderr = await asyncio.to_thread(self.runner, plan.px_argv, cwd=plan.px_cwd, timeout=PX_TIMEOUT_S)
         if plan.action == "ticket_created":
             ref = first_match(CREATED, stdout)
             if ref:
@@ -480,10 +559,12 @@ class SinkService:
 
     async def _notify(self, channels: list[str], line: str, target: Target | None = None,
                       received_at: float | None = None, *, detection_id: str | None = None,
-                      title: str | None = None, click: str | None = None) -> tuple[list[str], list[str]]:
-        """(sent, failed). ntfy first (the loud one), then Telegram, then the ring: the line the operator
-        reads after the phone rings must already be there. A throttled or quiet ring is neither sent nor
-        failed. Every attempt is written to the notification log."""
+                      title: str | None = None, click: str | None = None, actions: str | None = None,
+                      spoken: str | None = None) -> tuple[list[str], list[str]]:
+        """(sent, failed). ntfy first (the loud one), then earshot, then Telegram, then the ring: the line the
+        operator reads after the phone rings must already be there. A throttled, quiet or stale ring or
+        earshot line is neither sent nor failed. `actions` is ntfy's Actions header (the Create Ticket
+        button), sent on ntfy channels only. Every attempt is written to the notification log."""
         # Name the hermes profile, as Candybar's pager does: without -p, hermes
         # resolves a profile from its surroundings, and from a service process on
         # 2026-11-04 it found one with no Telegram token and exited 1. Success is
@@ -498,8 +579,17 @@ class SinkService:
                 elif outcome in ("failed", "channel_limit"):
                     failed.append(channel)
                 continue
+            if is_earshot(channel):
+                outcome = await self._earshot(target, channel, spoken or line, received_at, detection_id)
+                if outcome == "sent":
+                    sent.append(channel)
+                elif outcome == "failed":
+                    failed.append(channel)
+                continue
             if is_ntfy(channel):
-                ok, detail = await self._ntfy(channel, title or "target-watch", line, click)
+                ok, detail = await self._ntfy(channel, title or "target-watch", line, click, actions=actions)
+                if ok and actions:
+                    detail += "; with the Create Ticket button"
             else:
                 ok, detail = self._send(channel, line)
             self._note(detection_id, watch_id, mask_channel(channel), "sent" if ok else "failed", detail)
@@ -556,7 +646,8 @@ class SinkService:
             self._ntfy_key = token
         return self._ntfy_key
 
-    def _ntfy_post(self, topic: str, title: str, text: str, click: str | None) -> tuple[bool, str]:
+    def _ntfy_post(self, topic: str, title: str, text: str, click: str | None, *, priority: str = "urgent",
+                   tags: str = "rotating_light", actions: str | None = None) -> tuple[bool, str]:
         """Blocking, so it runs in a worker thread and touches no sqlite. Never raises. (published, detail).
         Success is HTTP 200 with a JSON body that carries the message "id"."""
         try:
@@ -566,11 +657,13 @@ class SinkService:
             token = None
         if token is None:
             return False, "no ntfy token"
-        headers = {"Authorization": f"Bearer {token}", "Title": ntfy_header(title), "Priority": "urgent",
-                   "Tags": "rotating_light", "Content-Type": "text/plain; charset=utf-8", "Accept": "application/json",
+        headers = {"Authorization": f"Bearer {token}", "Title": ntfy_header(title), "Priority": priority,
+                   "Tags": tags, "Content-Type": "text/plain; charset=utf-8", "Accept": "application/json",
                    "User-Agent": RING_USER_AGENT}
         if click and URL_LINE.match(click):
             headers["Click"] = click
+        if actions:
+            headers["Actions"] = actions  # ASCII by construction (button.ntfy_action); never log it: it carries the signature
         url = f"{ntfy_base_url()}/{urllib.parse.quote(topic, safe='')}"
         try:
             status, answer = self.ntfy_http(url, headers, text.encode("utf-8"), NTFY_HTTP_TIMEOUT_S)
@@ -591,17 +684,222 @@ class SinkService:
         log("ntfy_failed", status=status, error=error, reason=None if status != 200 else "no message id in the answer")
         return False, f"HTTP {status}" + (f": {error}" if error else "" if status != 200 else ": no message id in the answer")
 
-    async def _ntfy(self, channel: str, title: str, text: str, click: str | None) -> tuple[bool, str]:
+    async def _ntfy(self, channel: str, title: str, text: str, click: str | None, *, priority: str = "urgent",
+                    tags: str = "rotating_light", actions: str | None = None) -> tuple[bool, str]:
         """Publish to the channel's topic. (ok, detail); never raises."""
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(self._ntfy_post, channel[len(NTFY_PREFIX):], title, text, click), NTFY_DEADLINE_S)
+                asyncio.to_thread(self._ntfy_post, channel[len(NTFY_PREFIX):], title, text, click,
+                                  priority=priority, tags=tags, actions=actions), NTFY_DEADLINE_S)
         except TimeoutError:
             log("ntfy_failed", reason="deadline", seconds=NTFY_DEADLINE_S)
             return False, f"no answer in {NTFY_DEADLINE_S}s"
         except Exception as exc:  # noqa: BLE001
             log("ntfy_failed", reason="unexpected", error=type(exc).__name__)
             return False, f"unexpected {type(exc).__name__}"
+
+    # --- earshot ------------------------------------------------------------------------
+
+    @staticmethod
+    def _earshot_bin() -> str:
+        return os.path.expanduser(os.environ.get("TARGET_WATCH_EARSHOT") or EARSHOT_DEFAULT_BIN)
+
+    def _earshot_argv(self, name: str, spoken: str) -> list[str]:
+        return [self._earshot_bin(), "say", "-c", name, "--", spoken]
+
+    async def _earshot(self, target: Target | None, channel: str, spoken: str, received_at: float | None = None,
+                       detection_id: str | None = None) -> str:
+        """Speak the line through the earshot CLI. 'sent' | 'failed' | 'throttled' | 'quiet' | 'stale'.
+
+        An audible alarm, so it follows the ring's rules exactly: quiet hours, nothing stale, and one per
+        cooldown per (watch, channel). Success is exit 0 AND the object key the CLI prints (a line that starts
+        with '<channel>/'). When the outcome is uncertain (exit 0 without a key, or a timeout: the line may
+        already be uploaded), the cooldown is taken but the channel is reported failed; a plain failure leaves
+        the cooldown alone, because nothing was dropped. Never raises."""
+        watch_id = target.id if target else "?"
+        name = channel[len(EARSHOT_PREFIX):]
+        skip = self.ring_skip(target, channel, received_at)
+        if skip:
+            log(f"earshot_{skip}", watch_id=watch_id, channel=channel)
+            self._note(detection_id, watch_id, channel, skip)
+            return skip
+        try:
+            code, stdout, stderr = await asyncio.to_thread(
+                self.runner, self._earshot_argv(name, spoken), cwd=NOTIFY_CWD, timeout=EARSHOT_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 - nothing in a notify path raises into the bus
+            log("earshot_failed", watch_id=watch_id, channel=channel, error=type(exc).__name__)
+            self._note(detection_id, watch_id, channel, "failed", f"unexpected {type(exc).__name__}")
+            return "failed"
+        key = first_match(re.compile(rf"^({re.escape(name)}/\S+)$"), stdout or "")
+        if code == 0 and key:
+            if target is not None:
+                self._record_ring(watch_id, channel, channel)
+            log("earshot_sent", watch_id=watch_id, channel=channel, key=key)
+            self._note(detection_id, watch_id, channel, "sent", f"spoke {len(spoken)} characters", ref=key)
+            return "sent"
+        if code == 0:
+            detail = "earshot exited 0 but printed no object key"
+        elif code == 124:
+            detail = f"earshot did not finish in {EARSHOT_TIMEOUT_S}s (the line may have been dropped)"
+        else:
+            tail = (stderr or "").strip()[-200:]
+            detail = f"earshot exit {code}" + (f": {tail}" if tail else "")
+        if code in (0, 124) and target is not None:
+            self._record_ring(watch_id, channel, channel)  # uncertain: it may have played, so it holds the cooldown
+        log("earshot_failed", watch_id=watch_id, channel=channel, exit=code, error=(stderr or "").strip()[-200:])
+        self._note(detection_id, watch_id, channel, "failed", detail)
+        return "failed"
+
+    # --- the Create Ticket button -----------------------------------------------------------
+    # The ntfy push of a `ticket = "button"` target carries one http action; tapping it POSTs a signed URL to
+    # button.ButtonListener, which hands the request to button_request. The detection is stored whole in the
+    # `buttons` table, so a tap files exactly what auto mode would have filed for it.
+
+    def _button_secret(self) -> bytes | None:
+        """The HMAC key: the 1Password item TARGET_WATCH_BUTTON_SECRET_REF names, read through op and held in
+        memory only. Blocking (it may run op), so it is called from a worker thread. An unreadable secret is
+        not asked for again for BUTTON_SECRET_RETRY_S, so an unsigned caller cannot drive op."""
+        if self._button_key is not None:
+            return self._button_key
+        if time.monotonic() < self._button_key_retry_at:
+            return None
+        ref = os.environ.get("TARGET_WATCH_BUTTON_SECRET_REF") or ""
+        if not ref.startswith("op://"):
+            log("button_failed", reason="no op:// secret reference (TARGET_WATCH_BUTTON_SECRET_REF)")
+            self._button_key_retry_at = time.monotonic() + BUTTON_SECRET_RETRY_S
+            return None
+        # The argv carries the op:// reference only; the secret comes back on stdout and goes nowhere but memory.
+        code, stdout, stderr = self.runner([self.op, "read", "--no-newline", ref], cwd=NOTIFY_CWD, timeout=OP_TIMEOUT_S)
+        secret = (stdout or "").strip()
+        if code != 0 or len(secret) < BUTTON_SECRET_MIN:
+            log("button_failed", reason="secret unavailable" if code != 0 else f"secret shorter than {BUTTON_SECRET_MIN} characters",
+                exit=code, error=(stderr or "").strip()[-200:])
+            self._button_key_retry_at = time.monotonic() + BUTTON_SECRET_RETRY_S
+            return None
+        self._button_key = secret.encode("utf-8")
+        return self._button_key
+
+    async def _secret(self) -> bytes | None:
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(self._button_secret), NTFY_DEADLINE_S)
+        except Exception as exc:  # noqa: BLE001 - includes the deadline; no secret means no button, never an exception
+            log("button_failed", reason="secret lookup", error=type(exc).__name__)
+            return None
+
+    async def _offer_button(self, detection: dict, target: Target) -> str | None:
+        """Store the detection for a later tap and return the ntfy Actions header carrying its signed link
+        (7 days). None when there is no secret: the push then goes out without a button, and says so."""
+        secret = await self._secret()
+        if secret is None:
+            return None
+        channels = [c for c in target.sink.notify if is_ntfy(c)]
+        self.state.open_button(detection["id"], target.id, detection, channels)
+        exp = int(self.clock().timestamp()) + btn.BUTTON_TTL_S
+        return btn.ntfy_action(btn.signed_url(button_base_url(), secret, detection["id"], exp))
+
+    async def button_request(self, method: str, path: str, query: str) -> tuple[int, dict]:
+        """One request to the button listener: (HTTP status, JSON body). 404 for a path that is not
+        /watch/ticket/<id>, 405 for anything but POST, 403 for a malformed, forged or expired link (the
+        signature is checked before the detection is looked up, so nothing is learnt without it), 404 for a
+        genuine link whose detection is not stored, else the filing."""
+        found = BUTTON_PATH.match(path)
+        if not found:
+            return 404, {"error": "not found"}
+        if method != "POST":
+            return 405, {"error": "use POST"}
+        detection_id = urllib.parse.unquote(found.group(1))
+        params = urllib.parse.parse_qs(query, keep_blank_values=True)
+        exp, sig = params.get("exp", []), params.get("sig", [])
+        if len(exp) != 1 or len(sig) != 1 or not btn.EXP.fullmatch(exp[0]) or not btn.SIG.fullmatch(sig[0]):
+            return 403, {"error": BUTTON_BAD_SIGNATURE}
+        secret = await self._secret()
+        if secret is None:
+            return 503, {"error": "the Create Ticket button is not configured on this host"}
+        why = btn.check(secret, detection_id, exp[0], sig[0], self.clock().timestamp())
+        if why == "expired":
+            return 403, {"error": "link expired"}
+        if why:
+            return 403, {"error": BUTTON_BAD_SIGNATURE}
+        return await self._file_from_button(detection_id)
+
+    async def _file_from_button(self, detection_id: str) -> tuple[int, dict]:
+        """A genuine tap. Files what auto mode would have (comment on the open ticket, else create), once: a second
+        tap returns the same ticket and files nothing. Same no-blind-retry rule as a route: 'pending' is written
+        before px runs, so an interrupted run ends 'failed' and a failed one is never re-run."""
+        async with self._px_lock:
+            row = self.state.button(detection_id)
+            if row is None:
+                return 404, {"error": "unknown detection"}
+            watch_id = row["watch_id"]
+            if row["state"] == "done":
+                self._note(detection_id, watch_id, "button", "already_filed", None, ref=row["ticket_ref"])
+                return 200, {"ticket_ref": row["ticket_ref"]}
+            if row["state"] == "pending":
+                reason = "interrupted while px was running; outcome unknown, not retried, check the board"
+                self.state.update_button(detection_id, state="failed", action="failed", reason=reason)
+                self._note(detection_id, watch_id, "button", "failed", reason)
+                self._button_followup(row, None, None, reason)
+                return 409, {"error": "ticket not filed", "reason": reason}
+            if row["state"] == "failed":
+                return 409, {"error": "an earlier tap did not file a ticket and is not retried; check the board",
+                             "reason": row["reason"]}
+            detection = row["detection"]
+            target = self.registry.get(watch_id)
+            if target is None or target.sink.kind != "plane":
+                return 409, {"error": "this watch no longer files tickets"}
+            plan = self.ticket_plan(detection, target)
+            self.state.update_button(detection_id, state="pending", px_kind=plan.action)
+            action, ref, reason = await self._run_px(plan)
+            if action == "failed":
+                self.state.update_button(detection_id, state="failed", action=action, reason=reason)
+                self._note(detection_id, watch_id, "button", "failed", reason)
+                self._button_followup(row, None, None, reason or "px did not confirm a ticket")
+                return 502, {"error": "ticket not filed", "reason": reason}
+            self.state.update_button(detection_id, state="done", action=action, ticket_ref=ref,
+                                     ticket_url=plan.ticket_url, reason=reason)
+            self._note(detection_id, watch_id, "button", action, reason, ref=ref)
+            self._button_followup(row, ref, plan, None)
+            return 200, {"ticket_ref": ref}
+
+    def _button_followup(self, row: dict, ref: str | None, plan: Plan | None, failure: str | None) -> None:
+        """ONE ntfy line to the push's own topic after a tap, in the background (the tap's HTTP answer never
+        waits for it): '<ref> filed' at low priority with Click = the ticket's URL when px printed one, or the
+        reason the ticket was not filed."""
+        data = row["detection"]["data"]
+        target = self.registry.get(row["watch_id"])
+        channels = row["channels"] or [c for c in (target.sink.notify if target else ()) if is_ntfy(c)]
+        if not channels:
+            log("button_followup_unsent", watch_id=row["watch_id"], reason="no ntfy channel")
+            return
+        if failure is None:
+            text = f"{ref} filed" + (" (as a comment on the open ticket)" if plan and plan.action == "ticket_commented" else "")
+            kwargs = {"priority": "low", "tags": "ticket", "click": plan.ticket_url if plan else None}
+        else:
+            text = f"ticket not filed: {failure}"
+            kwargs = {"priority": "default", "tags": "warning", "click": None}
+        title = f"{data['target_display_name']} - ticket"
+
+        async def send() -> None:
+            for channel in channels:
+                ok, detail = await self._ntfy(channel, title, text, kwargs["click"], priority=kwargs["priority"], tags=kwargs["tags"])
+                self._note(row["detection_id"], row["watch_id"], f"{channel} (button follow-up)", "sent" if ok else "failed", detail)
+
+        self._background(send, "button_followup")
+
+    def _background(self, make, what: str) -> None:
+        """Run `make()` (a coroutine factory) as a held background task. Never raises."""
+        try:
+            task = asyncio.get_running_loop().create_task(make())
+        except Exception as exc:  # noqa: BLE001
+            log("background_not_scheduled", what=what, error=type(exc).__name__)
+            return
+        self._followups.add(task)
+        task.add_done_callback(self._followups.discard)
+
+    async def drain_followups(self, timeout: float = 30) -> None:
+        """Let the button follow-up pushes in flight finish (shutdown): each is one ntfy POST."""
+        if self._followups:
+            await asyncio.wait(list(self._followups), timeout=timeout)
 
     # --- ring ---------------------------------------------------------------------
 
@@ -776,9 +1074,9 @@ class SinkService:
         self._schedule(lambda: self._follow_ring(target, channel, leg_id, attempt, detection_id, row_id), target, channel)
 
     async def settle(self) -> None:
-        """Wait for every outcome follower (shutdown and tests)."""
-        while self._bg:
-            await asyncio.gather(*list(self._bg), return_exceptions=True)
+        """Wait for every outcome follower and button follow-up (tests)."""
+        while self._bg or self._followups:
+            await asyncio.gather(*list(self._bg), *list(self._followups), return_exceptions=True)
 
     def _get_events(self, leg_id: str) -> tuple[int, bytes]:
         key = self._key()
@@ -908,7 +1206,7 @@ class SinkService:
 
     async def _tell_ring_failed(self, target: Target, masked: str, why: str) -> None:
         line = f"target-watch: the phone ring for {target.display_name} ({masked}) did not get through: {why}."
-        channels = sorted((c for c in target.sink.notify if not is_ring(c)), key=channel_rank)
+        channels = sorted((c for c in target.sink.notify if not is_ring(c) and not is_earshot(c)), key=channel_rank)
         if not channels:
             log("ring_failure_unreported", watch_id=target.id, reason="target has no telegram or ntfy channel")
             return
@@ -999,24 +1297,31 @@ class SinkService:
             reason = "interrupted while px was running; outcome unknown, not retried, check the board"
             self.state.update_route(detection_id, px_state="failed", action=action, reason=reason)
         else:
-            plan = self.plan(detection)
-            action, ticket_ref, reason = plan.action, plan.ticket_ref, plan.reason
-            if plan.px_argv:
-                # Intent first: from here a crash can only end in 'failed', never a second create.
-                self.state.update_route(detection_id, px_kind=plan.action, px_state="pending")
-                action, ticket_ref, reason = self._run_px(plan, data)
-                ticket_url = plan.ticket_url
-            self.state.update_route(
-                detection_id, px_state=("failed" if action == "failed" else "done") if plan.px_argv else "none",
-                action=action, ticket_ref=ticket_ref, reason=reason,
-            )
+            async with self._px_lock:  # the coalescing read, px and the ticket write are one step (see __init__)
+                plan = self.plan(detection)
+                action, ticket_ref, reason = plan.action, plan.ticket_ref, plan.reason
+                if plan.px_argv:
+                    # Intent first: from here a crash can only end in 'failed', never a second create.
+                    self.state.update_route(detection_id, px_kind=plan.action, px_state="pending")
+                    action, ticket_ref, reason = await self._run_px(plan)
+                    ticket_url = plan.ticket_url
+                self.state.update_route(
+                    detection_id, px_state=("failed" if action == "failed" else "done") if plan.px_argv else "none",
+                    action=action, ticket_ref=ticket_ref, reason=reason,
+                )
 
         target = self.registry.get(data["watch_id"])
         channels = list(target.sink.notify) if target and action != "skipped_duplicate" else []
         sent = route["notify_channels"] if route["notified"] else []
         if channels and not route["notified"]:
-            sent, failed = await self._notify(channels, notify_line(data, action, ticket_ref), target, epoch(data["received_at"]),
-                                              detection_id=detection_id, title=ntfy_title(data), click=ticket_url)
+            actions = None
+            if action == AWAITING_BUTTON and target:
+                actions = await self._offer_button(detection, target)
+                if actions is None:
+                    reason = (reason + "; " if reason else "") + "Create Ticket button unavailable (no readable button secret); nothing was filed"
+            sent, failed = await self._notify(channels, notify_line(data, action, ticket_ref, button=actions is not None), target,
+                                              epoch(data["received_at"]), detection_id=detection_id, title=ntfy_title(data),
+                                              click=ticket_url, actions=actions, spoken=spoken_line(data))
             if failed:
                 reason = (reason + "; " if reason else "") + "notify failed: " + ",".join(mask_channel(c) for c in failed)
             self.state.update_route(detection_id, notified=1, notify_channels=sent, reason=reason)
@@ -1034,9 +1339,17 @@ class SinkService:
         if is_ring(channel):
             return {"to": channel, "ring": self.ring_plan(target, channel, epoch(data["received_at"]))}
         text = notify_line(data, plan.action, plan.ticket_ref or "<new>")
+        if is_earshot(channel):
+            spoken = spoken_line(data)
+            return {"to": channel, "spoken": spoken, "argv": self._earshot_argv(channel[len(EARSHOT_PREFIX):], spoken),
+                    "skipped": self.ring_skip(target, channel, epoch(data["received_at"]))}
         if is_ntfy(channel):
-            return {"to": channel, "text": text, "title": ntfy_title(data), "priority": "urgent",
-                    "url": f"{ntfy_base_url()}/{channel[len(NTFY_PREFIX):]}"}
+            out = {"to": channel, "text": text, "title": ntfy_title(data), "priority": "urgent",
+                   "url": f"{ntfy_base_url()}/{channel[len(NTFY_PREFIX):]}"}
+            if plan.action == AWAITING_BUTTON:
+                out["button"] = {"label": btn.BUTTON_LABEL, "method": "POST",
+                                 "url": f"{button_base_url()}/<detection id>?exp=<now + 7 days>&sig=<hmac>"}  # signed at send time
+            return out
         return {"to": channel, "text": text}
 
     def _print(self, record: dict) -> None:

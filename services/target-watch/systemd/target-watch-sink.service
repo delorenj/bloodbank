@@ -36,6 +36,16 @@ Environment=TARGET_WATCH_GOG=/usr/local/bin/gog
 Environment=TARGET_WATCH_TELNYX_CONNECTION_ID=3086124529433446133
 Environment=TARGET_WATCH_RING_FROM=+12154498437
 Environment=TARGET_WATCH_OP=%h/.local/bin/op
+# The "Create Ticket" button on a `ticket = "button"` target's ntfy push (button.py). The tap is a POST that
+# Traefik forwards to this listener: Host(agents.delo.sh) && PathPrefix(/watch/) in
+# ~/docker/core/traefik/traefik-data/dynamic/target-watch.yml, to host.docker.internal:18796. Bind the docker0
+# gateway, the one address Traefik's container reaches the host on: not 0.0.0.0, so the LAN cannot reach it.
+# The HMAC secret is the 1Password item below (DeLoSecrets, "target-watch button secret"), read with op
+# at first use and held in memory only; this file carries the reference, never the value.
+Environment=TARGET_WATCH_BUTTON_LISTEN=172.17.0.1:18796
+Environment=TARGET_WATCH_BUTTON_SECRET_REF=op://DeLoSecrets/mtazkqyrdgujoyazn5wpeg5xxq/password
+# "earshot:<channel>" notify channel: `earshot say -c <channel> -- <line>` (the CLI is a symlink into ~/code/earshot).
+Environment=TARGET_WATCH_EARSHOT=%h/.local/bin/earshot
 ExecStart=%h/code/33GOD/bloodbank/services/target-watch/.venv/bin/target-watch sink
 Restart=always
 RestartSec=5s

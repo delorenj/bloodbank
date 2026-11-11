@@ -361,6 +361,7 @@ class WatchEvents(unittest.TestCase):
         validate_envelope(routed_envelope())
         validate_envelope(routed_envelope(action="ticket_commented", ticket_ref="EXM-12"))
         validate_envelope(routed_envelope(action="notified_only", ticket_ref=None))
+        validate_envelope(routed_envelope(action="awaiting_button", ticket_ref=None))
         validate_envelope(routed_envelope(action="skipped_duplicate", ticket_ref=None,
                                           notify_channels=[], reason="already routed"))
         validate_envelope(routed_envelope(action="failed", ticket_ref=None,

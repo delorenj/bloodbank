@@ -117,8 +117,21 @@ async def cmd_sink(args) -> int:
         finally:
             await nc.drain()
         return 0
-    return await _run_consumer(args, service, name="sink", durable="target-watch-sink",
-                               subjects=["bloodbank.evt.watch.target.detected"], ack_wait=300)
+    listener = None
+    if not args.dry_run:
+        # The Create Ticket button's HTTP side, in this process (see button.py). A bind that fails retries in
+        # the background; the sink's alerts never wait for it.
+        from .button import ButtonListener
+
+        listener = ButtonListener(service.button_request, os.environ.get("TARGET_WATCH_BUTTON_LISTEN"))
+        await listener.start()
+    try:
+        return await _run_consumer(args, service, name="sink", durable="target-watch-sink",
+                                   subjects=["bloodbank.evt.watch.target.detected"], ack_wait=300)
+    finally:
+        if listener is not None:
+            await listener.close()  # a tap that is filing finishes first: px is never retried after a kill
+            await service.drain_followups()
 
 
 async def cmd_gmail_poll(args) -> int:

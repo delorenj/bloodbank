@@ -26,22 +26,27 @@ schema reload. No code changes, no restart.
                                                                         ▼
                        target-watch sink   (durable target-watch-sink)
                          px task create / px comment  (cwd = target's repo)
-                         ntfy urgent push to ntfy:<topic>  (first: the loud one)
+                           (ticket = "button": nothing filed until a tap, see "Create Ticket button")
+                         ntfy urgent push to ntfy:<topic>  (first: the loud one; may carry a Create Ticket button)
+                         earshot say -c <channel> -- "<line>"  (a spoken alarm)
                          hermes send --to telegram:<chat id>
                          Telnyx outbound call to ring:<E.164> or ring:sip:<user>@<host>  (the phone rings),
                          then a background check of the call's outcome (a Telegram line if it did not get through)
                                                                         ▼
                                      bloodbank.evt.watch.target.routed
+
+ phone: tap "Create Ticket" ─▶ https://agents.delo.sh/watch/ticket/<detection id>?exp=&sig=
+                               Cloudflare ─▶ Traefik ─▶ the sink's own HTTP listener ─▶ px  (see "Create Ticket button")
 ```
 
 | command | what it does |
 |---|---|
 | `target-watch match` | Durable JetStream pull consumer `target-watch-matcher` on `bloodbank.evt.messaging.>` and `bloodbank.evt.telephony.>`. Reads each event's sender through its schema's `x-sender` block, normalises the handles and publishes one `watch.target.detected` per (target, message). |
-| `target-watch sink` | Durable consumer `target-watch-sink` on `bloodbank.evt.watch.target.detected`. Files or comments a ticket (`plane` sink) or only notifies (`notify_only`), notifies every configured channel and publishes `watch.target.routed`. `--dry-run` prints the plan and changes nothing. |
+| `target-watch sink` | Durable consumer `target-watch-sink` on `bloodbank.evt.watch.target.detected`. Files or comments a ticket (`plane` sink) or only notifies (`notify_only`), notifies every configured channel and publishes `watch.target.routed`. With `ticket = "button"` it files nothing until the operator taps Create Ticket, and answers that tap on its own HTTP listener. `--dry-run` prints the plan and changes nothing. |
 | `target-watch gmail-poll` | One pass of target-scoped Gmail ingress, run by Candybar every five minutes. Publishes `messaging.email.received` for mail from any target's email address. |
 | `target-watch replay --since <ISO> [--target <id>]` | Reads Candystore and prints what `match` would detect. Publishes nothing. This is the dogfood proof. |
 | `target-watch check` | Validates every target file and the x-sender index and prints both. Exits non-zero on any problem. |
-| `target-watch status [--limit N] [--target <id>]` | What the sink did for the last N detections (default 10, newest first): when the message arrived (America/New_York), provider, ticket, action, and the outcome of every channel (ntfy, Telegram, each ring and its retry). Reads the sink's sqlite state read-only, so it needs no running service. |
+| `target-watch status [--limit N] [--target <id>]` | What the sink did for the last N detections (default 10, newest first): when the message arrived (America/New_York), provider, ticket, action, and the outcome of every channel (ntfy, earshot, Telegram, each ring and its retry), plus, for a button-mode target, whether the Create Ticket button was tapped and what it filed. Reads the sink's sqlite state read-only, so it needs no running service. |
 
 Shared options: `--targets <globs>`, `--schemas-dir`, `--state-dir`, `--nats-url`. `status` reads
 `$TARGET_WATCH_STATE_DIR` (or `--state-dir`) like the services.
@@ -97,16 +102,24 @@ envelopes from a file instead of the bus, plus `--since <ISO>` and `--once`.
   event and runs nothing again.
 - The notification is one line:
   `<Display name> via <provider>: <snippet> -> <action> <ticket_ref>`.
-- **Channel order.** `ntfy:` first, then `telegram:`, then `ring:`, whatever order `sink.notify` lists
-  them in. The loud channel must not wait behind a slow `hermes send`, and the ring goes last so the
-  line the operator reads after the phone rings is already there.
+- **Channel order.** `ntfy:` first, then `earshot:`, then `telegram:`, then `ring:`, whatever order
+  `sink.notify` lists them in. The loud channel must not wait behind a slow `hermes send`, and the ring
+  goes last so the line the operator reads after the phone rings is already there.
+- **Ticket mode.** `ticket = "auto"` (the default) files or comments when the message arrives.
+  `ticket = "button"` files nothing: the route is `awaiting_button` (the routed event's `ticket_ref` is
+  null), every channel is still notified, and the ntfy push carries a Create Ticket button (below). It
+  needs `kind = "plane"` and an `ntfy:` entry in `sink.notify`; the file is refused otherwise.
 - **The notification log.** journald keeps almost nothing for these units, so every channel attempt is
   also written to the sqlite `notifications` table (`detection_id`, `watch_id`, masked `channel`,
   `attempt`, `outcome`, `detail`, `ref`, `at`, `updated_at`). `sent` / `failed` for ntfy and Telegram,
   with the error in `detail`; for a ring, `placed` when Telnyx accepted the dial (`ref` is the
   `call_leg_id`), then the row is updated in place when the follower reaches a terminal outcome:
   `answered`, `unanswered`, `busy`, `rejected`, `unknown`. A refused dial is `failed` or
-  `channel_limit`, a skipped one `throttled`, `quiet` or `stale`, and a retry is `attempt` 2. The table
+  `channel_limit`, a skipped one `throttled`, `quiet` or `stale`, and a retry is `attempt` 2. An `earshot:`
+  row is `sent` (`ref` is the object key the CLI printed), `failed`, `throttled`, `quiet` or `stale`. A tap
+  of the Create Ticket button writes a `button` row (outcome `ticket_created`, `ticket_commented`,
+  `already_filed` for a repeat tap, or `failed`; `ref` is the ticket) and the follow-up push a
+  `ntfy:<topic> (button follow-up)` row. The table
   is created with `CREATE TABLE IF NOT EXISTS`, so the live `state.db` needs no migration; a state
   write that fails is logged and never blocks a notification or places a second call. Read it with
   `target-watch status`.
@@ -142,6 +155,95 @@ notify = ["ntfy:<topic>", "telegram:<operator chat id>", "ring:sip:example-user@
 - A ring that did not get through (see below) is also pushed to ntfy, not only sent to Telegram.
 - The topic must be one the token's user may publish to, and one the phone is subscribed to (the app
   syncs the account's subscriptions).
+
+### Create Ticket button: file a ticket only when the operator says so
+
+With `ticket = "button"` a message does not become a ticket by itself. The push still goes out on every
+channel, and the ntfy one carries one action button, **Create Ticket**. Tapping it files exactly what
+`ticket = "auto"` would have filed for that detection (a `px comment` on the conversation's open ticket
+inside `coalesce_hours`, else a `px task create`), then pushes one low-priority follow-up.
+
+```toml
+[sink]
+kind = "plane"
+repo = "~/code/some-client"
+ticket = "button"            # default "auto"
+notify = ["ntfy:<topic>", "earshot:alarm", "telegram:<operator chat id>", "ring:sip:example-user@sip.telnyx.com"]   # FAKE user
+```
+
+- **The button.** An ntfy `Actions` header holding one `http` action: label `Create Ticket`, `method` POST,
+  `clear` true, URL `https://agents.delo.sh/watch/ticket/<detection id>?exp=<unix>&sig=<hex>`. It is sent
+  as ntfy's JSON form, because the URL carries `=` and `&`. `exp` is seven days after the push;
+  `sig` is `hex(HMAC-SHA256(secret, "<detection id>:<exp>"))`. Only a route that has no ticket yet gets a
+  button; in auto mode the push keeps its `Click` link to the ticket and has no button. The base URL is
+  `TARGET_WATCH_BUTTON_URL` (default `https://agents.delo.sh/watch/ticket`).
+- **The secret.** A 1Password item in DeLoSecrets ("target-watch button secret", 64 random characters),
+  referenced by item UUID in `TARGET_WATCH_BUTTON_SECRET_REF` (an `op://` reference, in the sink unit). It is
+  read with `op read --no-newline` at first use and held in memory; a value shorter than 32 characters is
+  refused, and an unreadable one is not asked for again for 60 s, so an unsigned caller cannot drive `op`.
+  If it cannot be read when a message arrives, the push goes out with no button, says "the Create Ticket
+  button is unavailable", and the routed event's `reason` says nothing was filed. Rotate it by editing the item
+  and restarting the sink: links already sent stop working.
+- **The listener.** `target-watch sink` runs a small asyncio HTTP/1.1 server (`button.py`, standard library
+  only) bound to `TARGET_WATCH_BUTTON_LISTEN` (`172.17.0.1:18796`, the docker0 gateway, which is where
+  Traefik's container reaches the host as `host.docker.internal`; never `0.0.0.0`). With the variable
+  unset it stays off. If the bind fails (the port is taken) it retries every 30 s in the background and the
+  sink's alerts never wait for it; `IP_FREEBIND` lets it bind before dockerd has created the address at boot.
+  Closing it waits for a tap that is filing.
+- **The request.** `POST /watch/ticket/<detection id>?exp=&sig=`, no body. Answers are JSON:
+
+  | status | body | when |
+  |---|---|---|
+  | 200 | `{"ticket_ref": "JIMB-123"}` | filed, or already filed (a second tap files nothing and returns the same ticket) |
+  | 403 | `{"error": "bad or expired signature"}` | malformed, forged, or a link that was never genuine and has expired |
+  | 403 | `{"error": "link expired"}` | a genuine link older than its seven days |
+  | 404 | `{"error": "unknown detection"}` | a genuine link whose detection is not stored; also any path but `/watch/ticket/<id>` |
+  | 405 | `{"error": "use POST"}` | any other method (`Allow: POST`) |
+  | 409 | `{"error": ...}` | an earlier tap failed or was interrupted and is not retried; or the watch no longer files tickets |
+  | 502 | `{"error": "ticket not filed", "reason": ...}` | px did not confirm a ticket |
+  | 503 | `{"error": ...}` | the button secret is not configured or not readable |
+
+  The signature is checked (in constant time, with `hmac.compare_digest`) before the detection is looked up,
+  so nothing is learnt without it.
+- **What a tap does.** The whole detection is stored in the sqlite `buttons` table when the push goes out
+  (px needs the sender, the text and the conversation, none of which the routed event carries). A tap runs
+  the same `ticket_plan` auto mode uses, in a worker thread so a slow board never stops the loop, behind the
+  one lock that also serialises auto-mode filing: two taps (or a tap and a message) of one conversation file
+  one ticket and one comment, never two tickets. The same no-blind-retry rule as a route applies: `pending` is
+  written before px runs, so a tap whose process died mid-px ends `failed` ("outcome unknown, not retried,
+  check the board") and a failed tap is never re-run. Taps are idempotent per detection.
+- **The follow-up.** One push to the same ntfy topic(s), priority low: `<ticket_ref> filed` (plus
+  ` (as a comment on the open ticket)` for a comment), with `Click` set to the ticket's URL when px printed
+  one. A failed tap pushes `ticket not filed: <reason>` at default priority.
+- **Routing.** `~/docker/core/traefik/traefik-data/dynamic/target-watch.yml` sends
+  ``Host(`agents.delo.sh`) && PathPrefix(`/watch/`)`` to `http://host.docker.internal:18796` at priority 1000 (a
+  file-provider router's default priority is its rule's length, which would lose to the
+  `PathPrefix(/upload/)` router of `agent-pad-upload`). `/upload/` is untouched.
+- **Cleanup.** A stored detection stays in `buttons` after its link has expired; nothing deletes it yet.
+  They are small and rare.
+
+### earshot: a spoken alarm
+
+`earshot:<channel>` in `sink.notify` speaks the alert instead of showing it: the earshot CLI synthesises a line
+with vox and drops it into that earshot channel, which the operator's phone plays aloud (`earshot:alarm`
+is the alarm channel).
+
+- **Command.** `$TARGET_WATCH_EARSHOT say -c <channel> -- "<spoken line>"` (default
+  `~/.local/bin/earshot`, a symlink into `~/code/earshot`), run in a worker thread, 45 s timeout.
+  **Success** is exit 0 *and* an object key on stdout (a line starting with `<channel>/`); exit 0 without
+  one is a failed channel.
+- **The spoken line.** `<display name> texted: <text>` for a carrier or chat message,
+  `<display name> emailed: <subject>` for email (the start of the body when there is no subject),
+  `<display name> called` for a call, and `<display name> called and left a voicemail: <words>` for a
+  voicemail. Every URL is replaced by the word "link", whitespace is flattened, and the line is cut at a word
+  boundary to at most 200 characters (marked `...`).
+- **Same rules as the ring.** It is an audible alarm, so `ring_quiet_hours`, the staleness cut-off (a
+  detection older than 5 minutes) and `ring_cooldown_minutes` apply, with its own cooldown row per
+  (watch, channel): a ring and an earshot line of one burst do not throttle each other. Skipped lines are
+  neither sent nor failed and are logged as `throttled`, `quiet` or `stale`. When the outcome is uncertain
+  (exit 0 with no key, or a timeout: the line may already be uploaded) the cooldown is taken and the channel is
+  reported failed; a plain failure leaves the cooldown alone.
+- **Never a hermes channel.** A failed ring is reported on the ntfy and Telegram channels only.
 
 ### Ring: make the operator's phone ring like an incoming call
 
@@ -307,7 +409,8 @@ state = "Todo"
 labels = ["submitted-by-client"]
 priority = "medium"
 coalesce_hours = 24
-notify = ["ntfy:<topic>", "telegram:<operator chat id>"]   # add "ring:sip:...", see "ntfy" and "Ring"
+ticket = "auto"                          # or "button": file only when the operator taps Create Ticket on the push
+notify = ["ntfy:<topic>", "telegram:<operator chat id>"]   # add "earshot:alarm" and "ring:sip:...", see "ntfy", "earshot" and "Ring"
 ```
 
 Then run `target-watch check`. It must say `ok`.
@@ -391,6 +494,13 @@ ln -sf "$PWD/systemd/target-watch-match.service" ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now target-watch-sink target-watch-match
 
+# The Create Ticket button (only for ticket = "button" targets): the sink unit carries
+# TARGET_WATCH_BUTTON_LISTEN, TARGET_WATCH_BUTTON_SECRET_REF and TARGET_WATCH_EARSHOT, and Traefik needs
+# its route (private repo ~/docker): core/traefik/traefik-data/dynamic/target-watch.yml, picked up by the
+# file provider without a restart. Then, from outside the network:
+#   curl -sS -X POST -A 'Mozilla/5.0' -w '\n%{http_code}\n' \
+#     'https://agents.delo.sh/watch/ticket/does-not-exist?exp=1&sig=00'     # 403 {"error": ...}, not Traefik's 404
+
 # Gmail ingress: Candybar, registered disabled
 candybar register --dry-run ~/code/33GOD/bloodbank/services/target-watch
 candybar register ~/code/33GOD/bloodbank/services/target-watch
@@ -418,7 +528,10 @@ tickets. To backfill once, run
       `curl '127.0.0.1:8683/events?domain=watch&from=<ISO>'`.
 4. Sink dry run against the live consumer:
    `uv run target-watch sink --dry-run --since <ISO>` prints each plan (px
-   argv, notification text) and does nothing.
+   argv, notification text, the earshot command and line, the button's shape) and does nothing.
+5. The button, from outside: the curl in "Deploy" answers `403` JSON from the sink, not a Traefik 404 or a
+   Cloudflare page. A real tap is the operator's end-to-end test: a message from a `ticket = "button"`
+   target, tap Create Ticket on the push, read the `<ref> filed` follow-up, `target-watch status`.
 
 ## Tests
 

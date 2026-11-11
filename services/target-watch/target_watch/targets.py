@@ -17,10 +17,12 @@
     labels = ["submitted-by-client"]
     priority = "medium"
     coalesce_hours = 24
-    notify = ["ntfy:<topic>", "telegram:<chat id>", "ring:+12155550100"]  # ring = ring that phone like an incoming call
+    ticket = "auto"              # or "button": file only when the operator taps Create Ticket on the ntfy push
+    notify = ["ntfy:<topic>", "earshot:alarm", "telegram:<chat id>", "ring:+12155550100"]  # ring = ring that phone like an incoming call
     # ntfy = an urgent push to the ntfy topic (the loud one: it is sent first)
+    # earshot = a spoken line dropped into that earshot channel (an audible alarm: the ring's cooldown and quiet hours)
     # a SIP device instead of a number: "ring:sip:example-user@sip.telnyx.com"
-    ring_cooldown_minutes = 10        # one ring per burst; default 10
+    ring_cooldown_minutes = 10        # one ring (and one spoken alarm) per burst; default 10
     ring_quiet_hours = "22:00-07:00"  # America/New_York, may wrap midnight; absent = ring any time
 """
 from __future__ import annotations
@@ -44,9 +46,14 @@ PRIORITIES = {"urgent", "high", "medium", "low", "none"}
 SIP_RING = re.compile(r"sip:([A-Za-z0-9._+-]{1,64})@((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63})")
 # ntfy:<topic>: ntfy's own topic alphabet and length.
 NTFY_TOPIC = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# earshot:<channel>: the earshot CLI's own channel alphabet (lowercase, starts with a letter or digit, 1-32).
+EARSHOT_CHANNEL = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 QUIET_HOURS = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$")
 DEFAULT_RING_COOLDOWN_MINUTES = 10
 SINK_KINDS = {"plane", "notify_only"}
+# auto: px files or comments when the message arrives. button: nothing is filed until the operator taps the
+# "Create Ticket" button the ntfy push carries.
+TICKET_MODES = ("auto", "button")
 HANDLE_KEYS = ("email", "e164", "label", "platform")
 
 
@@ -66,6 +73,7 @@ class Sink:
     ring_cooldown_minutes: int = DEFAULT_RING_COOLDOWN_MINUTES
     # (start, end) in minutes after midnight, America/New_York; end <= start wraps midnight.
     ring_quiet_hours: tuple[int, int] | None = None
+    ticket: str = "auto"  # see TICKET_MODES
 
 
 @dataclass(frozen=True)
@@ -104,10 +112,13 @@ def _strings(value: object, where: str) -> list[str]:
 
 def _notify_channel(channel: object) -> str:
     if not isinstance(channel, str) or not (channel.startswith("ring:") or CHANNEL.match(channel)):
-        raise TargetError("sink.notify entries look like 'ntfy:<topic>', 'telegram:<chat id>', 'ring:<E.164 number>' or "
-                          "'ring:sip:<user>@<host>'")
+        raise TargetError("sink.notify entries look like 'ntfy:<topic>', 'earshot:<channel>', 'telegram:<chat id>', "
+                          "'ring:<E.164 number>' or 'ring:sip:<user>@<host>'")
     if channel.startswith("ntfy:") and not NTFY_TOPIC.fullmatch(channel[len("ntfy:"):]):
         raise TargetError("sink.notify has an ntfy: entry that is not ntfy:<topic> (letters, digits, _ and -; 1-64 characters)")
+    if channel.startswith("earshot:") and not EARSHOT_CHANNEL.fullmatch(channel[len("earshot:"):]):
+        raise TargetError("sink.notify has an earshot: entry that is not earshot:<channel> (lowercase letters, digits, _ and -; "
+                          "1-32 characters, starting with a letter or digit)")
     if channel.startswith("ring:sip:"):
         found = SIP_RING.fullmatch(channel[len("ring:"):])
         if not found:
@@ -198,6 +209,15 @@ def parse_target(document: dict, path: Path) -> Target:
         if not isinstance(raw_repo, str) or not raw_repo.strip():
             raise TargetError("a plane sink needs sink.repo (the repo whose .project.json binds the board)")
         repo = Path(os.path.expanduser(raw_repo))
+    ticket = sink_doc.get("ticket", "auto")
+    if ticket not in TICKET_MODES:
+        raise TargetError(f"sink.ticket must be one of {list(TICKET_MODES)}")
+    if ticket == "button":
+        if kind != "plane":
+            raise TargetError("sink.ticket = \"button\" needs kind = \"plane\": a notify_only sink files no ticket")
+        if not any(channel.startswith("ntfy:") for channel in notify):
+            # Without an ntfy push there is no button to tap, and no ticket would ever be filed.
+            raise TargetError("sink.ticket = \"button\" needs an ntfy:<topic> entry in sink.notify: the button rides on that push")
     return Target(
         id=target_id,
         display_name=display.strip(),
@@ -216,6 +236,7 @@ def parse_target(document: dict, path: Path) -> Target:
             notify=notify,
             ring_cooldown_minutes=cooldown,
             ring_quiet_hours=quiet,
+            ticket=ticket,
         ),
     )
 

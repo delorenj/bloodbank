@@ -1,4 +1,5 @@
-"""SQLite state: near-duplicate window, Gmail ids seen, and the sink's routing ledger.
+"""SQLite state: near-duplicate window, Gmail ids seen, the sink's routing ledger, its notification log and
+the detections waiting for a Create Ticket tap.
 
 One file (~/.local/state/target-watch/state.db) shared by the three
 entrypoints; each opens its own short connections, WAL mode, so the matcher,
@@ -74,12 +75,31 @@ CREATE TABLE IF NOT EXISTS notifications (
   updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS notifications_detection ON notifications(detection_id);
+CREATE TABLE IF NOT EXISTS buttons (
+  detection_id TEXT PRIMARY KEY,
+  watch_id TEXT NOT NULL,
+  detection TEXT NOT NULL,
+  channels TEXT NOT NULL DEFAULT '[]',
+  state TEXT NOT NULL DEFAULT 'awaiting',
+  px_kind TEXT,
+  action TEXT,
+  ticket_ref TEXT,
+  ticket_url TEXT,
+  reason TEXT,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
 """
 
 ROUTE_FIELDS = (
     "detection_id", "watch_id", "conv_key", "text_hash", "received_epoch", "px_kind", "px_state",
     "action", "ticket_ref", "reason", "notified", "notify_channels", "envelope", "published",
 )
+BUTTON_FIELDS = (
+    "detection_id", "watch_id", "detection", "channels", "state", "px_kind", "action", "ticket_ref", "ticket_url",
+    "reason", "created_at", "updated_at",
+)
+BUTTON_UPDATABLE = frozenset({"state", "px_kind", "action", "ticket_ref", "ticket_url", "reason"})
 
 
 class State:
@@ -275,6 +295,49 @@ class State:
             db.execute("UPDATE notifications SET outcome=?, detail=?, updated_at=? WHERE id=?",
                        (outcome, detail, at if at is not None else time.time(), row_id))
 
+    # --- the Create Ticket button -----------------------------------------------------
+    # A detection routed `awaiting_button` files nothing; the whole detection envelope is kept here, because
+    # the tap must file exactly what auto mode would have filed (px needs the sender, the text, the
+    # provider and the conversation, none of which the routed event carries). `state` is the tap's own
+    # ledger, with the same no-blind-retry rule as a route: awaiting -> pending (written before px runs)
+    # -> done | failed. A `pending` row found when no px is running means the sink stopped mid-run, and
+    # it becomes `failed`, never a second create. `channels` are the ntfy channels the push went to (the
+    # follow-up goes there). Additive: created beside the old tables.
+
+    def open_button(self, detection_id: str, watch_id: str, detection: dict, channels) -> None:
+        now = time.time()
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO buttons(detection_id,watch_id,detection,channels,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (detection_id, watch_id, json.dumps(detection, sort_keys=True), json.dumps(list(channels)), now, now),
+            )
+
+    def button(self, detection_id: str) -> dict | None:
+        """The stored button, or None (also on a state file written before the table existed)."""
+        try:
+            with self.connect() as db:
+                row = db.execute(f"SELECT {','.join(BUTTON_FIELDS)} FROM buttons WHERE detection_id=?", (detection_id,)).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        if row is None:
+            return None
+        out = dict(zip(BUTTON_FIELDS, row))
+        out["detection"] = json.loads(out["detection"])
+        out["channels"] = json.loads(out["channels"] or "[]")
+        return out
+
+    def update_button(self, detection_id: str, **fields) -> None:
+        for key in fields:
+            if key not in BUTTON_UPDATABLE:
+                raise KeyError(key)
+        if not fields:
+            return
+        with self.connect() as db:
+            db.execute(
+                "UPDATE buttons SET " + ",".join(f"{k}=?" for k in fields) + ",updated_at=? WHERE detection_id=?",
+                (*fields.values(), time.time(), detection_id),
+            )
+
     def recent_routes(self, limit: int, watch_id: str | None = None) -> list[dict]:
         """The sink's ledger, newest message first, each with its notification rows (oldest first).
         A state file written before the notification log existed reads as having no rows."""
@@ -302,5 +365,11 @@ class State:
                 route["notifications"] = [
                     dict(zip(("channel", "attempt", "outcome", "detail", "ref", "at", "updated_at"), note)) for note in notes
                 ]
+                try:
+                    button = db.execute("SELECT state,action,ticket_ref FROM buttons WHERE detection_id=?",
+                                        (route["detection_id"],)).fetchone()
+                except sqlite3.OperationalError:
+                    button = None
+                route["button"] = dict(zip(("state", "action", "ticket_ref"), button)) if button else None
                 out.append(route)
         return out
