@@ -177,6 +177,9 @@ class FakeRunner:
         self.op_code = 0
         self.op_key = "fake-telnyx-key-DO-NOT-LEAK"
         self.op_values: dict[str, str] = {}  # op:// reference -> value, for any secret that is not the Telnyx key
+        self.earshot_code = 0  # exit code of a fake `earshot say`
+        self.earshot_out: str | None = None  # its stdout; None = print an object key like the real CLI
+        self.earshot_serial = 0
 
     @staticmethod
     def verb(argv) -> str:
@@ -198,6 +201,13 @@ class FakeRunner:
             if self.hermes_code:
                 return self.hermes_code, '{"error": "Platform not configured"}', ""
             return 0, '{"success": true, "platform": "telegram", "message_id": "1"}', ""
+        if verb == "say":  # fake `earshot say -c <channel> -- <line>`
+            if self.earshot_code:
+                return self.earshot_code, "", "earshot: mc cp failed"
+            if self.earshot_out is not None:
+                return 0, self.earshot_out, ""
+            self.earshot_serial += 1
+            return 0, f"{argv[argv.index('-c') + 1]}/2026/11/04/153000000Z-spoken-{self.earshot_serial}.opus\n", ""
         if verb == "read":  # fake `op read --no-newline <ref>`
             if self.op_code:
                 return self.op_code, "", "[ERROR] not signed in"

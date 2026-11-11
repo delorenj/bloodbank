@@ -61,10 +61,11 @@
             "ticket_created",
             "ticket_commented",
             "notified_only",
+            "awaiting_button",
             "skipped_duplicate",
             "failed"
           ],
-          "description": "What the sink did: ticket_created (a new ticket), ticket_commented (the message was added to the open ticket of the same conversation), notified_only (the target's sink files no tickets), skipped_duplicate (this detection was already routed), failed (the sink could not tell whether it acted; it notified instead of retrying a create)."
+          "description": "What the sink did: ticket_created (a new ticket), ticket_commented (the message was added to the open ticket of the same conversation), notified_only (the target's sink files no tickets), awaiting_button (the target files a ticket only when the operator taps Create Ticket on the ntfy push: nothing is filed yet and ticket_ref stays null; the tap files it later, and that outcome is not a routed event), skipped_duplicate (this detection was already routed), failed (the sink could not tell whether it acted; it notified instead of retrying a create)."
         },
         "ticket_ref": {
           "type": [
