@@ -3,7 +3,10 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HERMES_HOME="${REPO_ROOT}/agents/hermes/runtime"
-HERMES_BIN="${HERMES_BIN:-/home/delorenj/code/hermes-agent/.venv/bin/hermes}"
+# Default: the operator's hermes-agent checkout (Path.home()-derived so every
+# host resolves its own install). Any host with a different layout overrides
+# with HERMES_BIN=/path/to/hermes.
+HERMES_BIN="${HERMES_BIN:-"$HOME/code/hermes-agent/.venv/bin/hermes"}"
 
 mkdir -p "$HERMES_HOME"
 

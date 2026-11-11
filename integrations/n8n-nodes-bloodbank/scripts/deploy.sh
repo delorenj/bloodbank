@@ -26,7 +26,8 @@ done
 PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NODES_DIR="${N8N_NODES_DIR:-$HOME/.n8n/nodes}"
 # The mise `pm2`/`node` shims are unreliable (no pinned global); use the node dir directly.
-NODE_BIN_DIR="${N8N_NODE_BIN_DIR:-/home/delorenj/.local/share/mise/installs/node/24.6.0/bin}"
+# The mise `pm2`/`node` shims are unreliable (no pinned global); use the node dir directly.
+NODE_BIN_DIR="${N8N_NODE_BIN_DIR:-"$HOME/.local/share/mise/installs/node/24.6.0/bin"}"
 export PATH="$NODE_BIN_DIR:$PATH"
 
 # Content hash of a package directory: every file under dist/ plus package.json,
@@ -143,7 +144,7 @@ echo "[deploy] installed content hash matches the build"
 # file instead (its launcher strips credential-shaped variables), then save
 # twice so the pre-relaunch dump is not left behind as dump.pm2.bak.
 ECOSYSTEM="${N8N_ECOSYSTEM:-$HOME/.n8n/ecosystem.config.js}"
-export PM2_HOME=/home/delorenj/.pm2
+export PM2_HOME="${PM2_HOME:-$HOME/.pm2}"
 if [[ -f "$ECOSYSTEM" ]]; then
   echo "[deploy] relaunching n8n from $ECOSYSTEM (PM2_HOME=$PM2_HOME)…"
   "$NODE_BIN_DIR/pm2" delete n8n >/dev/null 2>&1 || true

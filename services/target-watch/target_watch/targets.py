@@ -17,7 +17,8 @@
     labels = ["submitted-by-client"]
     priority = "medium"
     coalesce_hours = 24
-    notify = ["telegram:<chat id>", "ring:+12155550100"]  # ring = ring that phone like an incoming call
+    notify = ["ntfy:<topic>", "telegram:<chat id>", "ring:+12155550100"]  # ring = ring that phone like an incoming call
+    # ntfy = an urgent push to the ntfy topic (the loud one: it is sent first)
     # a SIP device instead of a number: "ring:sip:example-user@sip.telnyx.com"
     ring_cooldown_minutes = 10        # one ring per burst; default 10
     ring_quiet_hours = "22:00-07:00"  # America/New_York, may wrap midnight; absent = ring any time
@@ -41,6 +42,8 @@ PRIORITIES = {"urgent", "high", "medium", "low", "none"}
 # ring:sip:<user>@<host>: a Telnyx credential-connection user, dialled as sip:<user>@sip.telnyx.com.
 # Nothing but the two parts: no port, no ;parameters, no ?headers, no spaces, no second @.
 SIP_RING = re.compile(r"sip:([A-Za-z0-9._+-]{1,64})@((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63})")
+# ntfy:<topic>: ntfy's own topic alphabet and length.
+NTFY_TOPIC = re.compile(r"[A-Za-z0-9_-]{1,64}")
 QUIET_HOURS = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$")
 DEFAULT_RING_COOLDOWN_MINUTES = 10
 SINK_KINDS = {"plane", "notify_only"}
@@ -101,8 +104,10 @@ def _strings(value: object, where: str) -> list[str]:
 
 def _notify_channel(channel: object) -> str:
     if not isinstance(channel, str) or not (channel.startswith("ring:") or CHANNEL.match(channel)):
-        raise TargetError("sink.notify entries look like 'telegram:<chat id>', 'ring:<E.164 number>' or "
+        raise TargetError("sink.notify entries look like 'ntfy:<topic>', 'telegram:<chat id>', 'ring:<E.164 number>' or "
                           "'ring:sip:<user>@<host>'")
+    if channel.startswith("ntfy:") and not NTFY_TOPIC.fullmatch(channel[len("ntfy:"):]):
+        raise TargetError("sink.notify has an ntfy: entry that is not ntfy:<topic> (letters, digits, _ and -; 1-64 characters)")
     if channel.startswith("ring:sip:"):
         found = SIP_RING.fullmatch(channel[len("ring:"):])
         if not found:

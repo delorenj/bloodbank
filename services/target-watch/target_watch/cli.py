@@ -1,4 +1,4 @@
-"""The `target-watch` command: match | sink | gmail-poll | replay | check."""
+"""The `target-watch` command: match | sink | gmail-poll | replay | check | status."""
 from __future__ import annotations
 
 import argparse
@@ -211,6 +211,23 @@ def cmd_check(args) -> int:
     return 0 if not failures else 1
 
 
+def cmd_status(args) -> int:
+    from .status import render
+
+    state = _state(args, read_only=True)
+    routes = state.recent_routes(args.limit, args.target)
+    print(f"last {len(routes)} detection(s), newest first" + (f", target {args.target}" if args.target else ""))
+    print(render(routes))
+    return 0
+
+
+def _positive(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return number
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="target-watch", description="Target-focused alerts over every inbound provider.")
     p.add_argument("--targets", help="colon-separated target globs (default: $TARGET_WATCH_PATHS or the built-in set)")
@@ -238,6 +255,10 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--json", action="store_true", help="one JSON row per detection")
 
     sub.add_parser("check", help="validate target files and the x-sender index")
+
+    t = sub.add_parser("status", help="what the sink did for the last detections, channel by channel")
+    t.add_argument("--limit", type=_positive, default=10, help="how many detections (default 10)")
+    t.add_argument("--target", help="only this watch_id")
     return p
 
 
@@ -247,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_replay(args)
     if args.command == "check":
         return cmd_check(args)
+    if args.command == "status":
+        return cmd_status(args)
     runner = {"match": cmd_match, "sink": cmd_sink, "gmail-poll": cmd_gmail_poll}[args.command]
     return asyncio.run(runner(args))
 

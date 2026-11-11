@@ -115,7 +115,7 @@ async def test_ring_places_one_silent_call_after_the_telegram_line(tmp_path, ind
     [call] = telnyx.calls
     assert call["url"] == "https://api.telnyx.com/v2/calls"
     assert call["body"] == {"connection_id": CONNECTION_ID, "to": RING_TO, "from": RING_FROM,
-                            "timeout_secs": 20, "time_limit_secs": 40}
+                            "from_display_name": "Jane Doe", "timeout_secs": 20, "time_limit_secs": 40}
     assert call["timeout"] == 15
     assert call["headers"]["Authorization"] == f"Bearer {runner.op_key}"
     assert call["headers"]["User-Agent"] and "urllib" not in call["headers"]["User-Agent"].lower()
@@ -314,7 +314,7 @@ async def test_dry_run_prints_the_planned_call_and_places_nothing(tmp_path, inde
     telegram, ring = printed["notify"]
     assert telegram["to"] == "telegram:1000" and "text" in telegram
     assert ring == {"to": f"ring:{RING_TO}", "ring": {
-        "to": RING_TO, "from": RING_FROM, "connection_id": CONNECTION_ID,
+        "to": RING_TO, "from": RING_FROM, "connection_id": CONNECTION_ID, "from_display_name": "Jane Doe",
         "timeout_secs": 20, "time_limit_secs": 40, "skipped": None}}
 
 
@@ -544,6 +544,46 @@ def test_sink_unit_carries_the_ring_environment_and_no_secret():
 
 def test_ring_stays_under_the_carrier_no_answer_forward():
     assert sink_module.RING_TIMEOUT_SECS <= 22 and sink_module.RING_TIME_LIMIT_SECS == 40
+    assert sink_module.ring_timing(f"ring:{RING_TO}") == (20, 40)  # an E.164 target keeps the carrier constraint
+
+
+def test_a_sip_ring_is_longer_and_its_time_limit_outlasts_it():
+    sip = "ring:sip:example-user@sip.telnyx.com"
+    assert sink_module.ring_timing(sip) == (45, 60)
+    timeout, limit = sink_module.ring_timing(sip)
+    assert limit > timeout
+    assert sink_module.ring_timing(f"ring:{RING_TO}") != sink_module.ring_timing(sip)
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("Jane Doe", "Jane Doe"),
+    ("  Spaced    Out  ", "Spaced Out"),
+    ("Jane-Doe_1~!.+", "Jane-Doe_1~!.+"),
+    ("José Núñez", "Jose Nunez"),            # accents fold to ASCII
+    ("A/B <c>@d (e)", "AB cd e"),             # anything Telnyx refuses is dropped
+    ("Jane\nDoe\t\"quoted\"", "Jane Doe quoted"),
+    ("日本語", None),                           # nothing left: no field at all
+    ("😀", None),
+    ("x" * 200, "x" * 128),
+])
+def test_ring_display_name_is_cut_down_to_what_telnyx_accepts(name, expected):
+    assert sink_module.ring_display_name(name) == expected
+
+
+async def test_the_ring_shows_the_targets_display_name_and_omits_it_when_nothing_is_left(tmp_path, index, runner, telnyx, clock):
+    write_target(tmp_path / "w", "jane", TARGET.format(notify=json.dumps([f"ring:{RING_TO}"]), extra="").replace(
+        'display_name = "Jane Doe"', 'display_name = "  Jos\u00e9 <Doe>  "'))
+    registry = TargetRegistry([str(tmp_path / "w" / "*.toml")])
+    sink = SinkService(registry, State(tmp_path / "s.db"), _Publisher(), runner=runner, clock=clock, http=telnyx, op=OP)
+    await sink.handle(detect(index, registry, burst(1)))
+    assert telnyx.calls[0]["body"]["from_display_name"] == "Jose Doe"
+
+    write_target(tmp_path / "w2", "jane", TARGET.format(notify=json.dumps([f"ring:{RING_TO}"]), extra="").replace(
+        'display_name = "Jane Doe"', 'display_name = "\u65e5\u672c\u8a9e"'))
+    registry = TargetRegistry([str(tmp_path / "w2" / "*.toml")])
+    sink = SinkService(registry, State(tmp_path / "s2.db"), _Publisher(), runner=runner, clock=clock, http=telnyx, op=OP)
+    await sink.handle(detect(index, registry, burst(1)))
+    assert "from_display_name" not in telnyx.calls[1]["body"]
 
 
 def test_mask_channel():

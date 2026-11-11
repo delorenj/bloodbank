@@ -61,6 +61,19 @@ CREATE TABLE IF NOT EXISTS rings (
   last_epoch REAL NOT NULL,
   PRIMARY KEY (watch_id, channel)
 );
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  detection_id TEXT NOT NULL,
+  watch_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  outcome TEXT NOT NULL,
+  detail TEXT,
+  ref TEXT,
+  at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notifications_detection ON notifications(detection_id);
 """
 
 ROUTE_FIELDS = (
@@ -240,3 +253,54 @@ class State:
     def record_ring(self, watch_id: str, channel: str, epoch: float) -> None:
         with self.connect() as db:
             db.execute("INSERT OR REPLACE INTO rings VALUES(?,?,?)", (watch_id, channel, epoch))
+
+    # --- notification log -----------------------------------------------------------
+    # One row per channel attempt of a detection (a busy-phone retry is attempt 2), so "did it reach
+    # him" has a durable answer. `channel` is the masked form; `ref` is a provider id worth looking up
+    # (the Telnyx call_leg_id of a ring). Additive: the table is created beside the old ones.
+
+    def record_notification(self, detection_id: str, watch_id: str, channel: str, outcome: str, detail: str | None = None,
+                            *, attempt: int = 1, ref: str | None = None, at: float | None = None) -> int:
+        now = at if at is not None else time.time()
+        with self.connect() as db:
+            cursor = db.execute(
+                "INSERT INTO notifications(detection_id,watch_id,channel,attempt,outcome,detail,ref,at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (detection_id, watch_id, channel, attempt, outcome, detail, ref, now, now),
+            )
+            return int(cursor.lastrowid)
+
+    def update_notification(self, row_id: int, outcome: str, detail: str | None = None, *, at: float | None = None) -> None:
+        with self.connect() as db:
+            db.execute("UPDATE notifications SET outcome=?, detail=?, updated_at=? WHERE id=?",
+                       (outcome, detail, at if at is not None else time.time(), row_id))
+
+    def recent_routes(self, limit: int, watch_id: str | None = None) -> list[dict]:
+        """The sink's ledger, newest message first, each with its notification rows (oldest first).
+        A state file written before the notification log existed reads as having no rows."""
+        sql = f"SELECT {','.join(ROUTE_FIELDS)} FROM routes"
+        args: list = []
+        if watch_id:
+            sql += " WHERE watch_id=?"
+            args.append(watch_id)
+        sql += " ORDER BY received_epoch DESC, created_at DESC LIMIT ?"
+        args.append(max(1, limit))
+        with self.connect() as db:
+            rows = db.execute(sql, args).fetchall()
+            out = []
+            for row in rows:
+                route = dict(zip(ROUTE_FIELDS, row))
+                route["notify_channels"] = json.loads(route["notify_channels"] or "[]")
+                route["envelope"] = None  # the status view never needs the stored event
+                try:
+                    notes = db.execute(
+                        "SELECT channel,attempt,outcome,detail,ref,at,updated_at FROM notifications WHERE detection_id=? ORDER BY id",
+                        (route["detection_id"],),
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    notes = []
+                route["notifications"] = [
+                    dict(zip(("channel", "attempt", "outcome", "detail", "ref", "at", "updated_at"), note)) for note in notes
+                ]
+                out.append(route)
+        return out

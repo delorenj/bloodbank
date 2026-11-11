@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native SessionStart --deadline 15 --trailer passive",
+            "command": "$HOME/.agents/hooks/bb-hook --cli gemini --native SessionStart --deadline 15 --trailer passive",
             "timeout": 16000
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native SessionEnd --trailer passive",
+            "command": "$HOME/.agents/hooks/bb-hook --cli gemini --native SessionEnd --trailer passive",
             "timeout": 4000
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native BeforeAgent --deadline 15 --trailer passive",
+            "command": "$HOME/.agents/hooks/bb-hook --cli gemini --native BeforeAgent --deadline 15 --trailer passive",
             "timeout": 16000
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native AfterAgent --trailer passive",
+            "command": "$HOME/.agents/hooks/bb-hook --cli gemini --native AfterAgent --trailer passive",
             "timeout": 4000
           }
         ]
@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native BeforeTool --trailer passive",
+            "command": "$HOME/.agents/hooks/bb-hook --cli gemini --native BeforeTool --trailer passive",
             "timeout": 4000
           }
         ]
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native AfterTool --trailer passive",
+            "command": "$HOME/.agents/hooks/bb-hook --cli gemini --native AfterTool --trailer passive",
             "timeout": 4000
           }
         ]
@@ -73,7 +73,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli gemini --native Notification --trailer passive",
+            "command": "$HOME/.agents/hooks/bb-hook --cli gemini --native Notification --trailer passive",
             "timeout": 4000
           }
         ]

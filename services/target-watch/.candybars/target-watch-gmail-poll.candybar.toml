@@ -3,8 +3,8 @@
 # bloodbank.messaging.email.received for mail from watched targets' addresses,
 # so it is registered disabled; the first scheduled fire is the proof.
 #
-#   candybar register --dry-run ~/code/33GOD/bloodbank/services/target-watch
-#   candybar register ~/code/33GOD/bloodbank/services/target-watch
+#   candybar register --dry-run <checkout>/services/target-watch
+#   candybar register <checkout>/services/target-watch
 #   uv run candybar show target-watch-gmail-poll -n 5     # from ~/code/33GOD/candybar
 #   uv run candybar resume target-watch-gmail-poll
 [candybar]
@@ -18,9 +18,16 @@ enabled = false
 
 [candybar.runner]
 kind = "exec"
-# The venv entry point, not `uv run` (a mise shim that applies bloodbank's PATH; see the systemd units).
-argv = ["/home/delorenj/code/33GOD/bloodbank/services/target-watch/.venv/bin/target-watch", "gmail-poll"]
-workdir = "/home/delorenj/code/33GOD/bloodbank/services/target-watch"
-env = { NATS_URL = "nats://127.0.0.1:4222", TARGET_WATCH_GOG = "/usr/local/bin/gog", PATH = "/home/delorenj/.local/bin:/usr/local/bin:/usr/bin:/bin" }
+# Host-neutral (no home literal in git), same process on every peer:
+# - no `workdir`: Candybar starts a project-file exec runner in the project root
+#   (this directory), so `$PWD` below is this host's checkout of target-watch;
+# - the venv entry point, not `uv run` (a mise shim that applies bloodbank's PATH;
+#   see the systemd units), exec'd so the job is still one process;
+# - PATH is built from `$HOME` at spawn (Candybar env values are literals, never
+#   expanded, so it cannot live in `env`); it equals the systemd units' `%h` PATH.
+# TARGET_WATCH_GOG and TARGET_WATCH_GMAIL_ACCOUNT stay host-local: a peer without
+# gog at /usr/local/bin, or with another mailbox, overrides them before enabling.
+argv = ["/bin/sh", "-c", "export PATH=\"$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin\"; exec \"$PWD/.venv/bin/target-watch\" gmail-poll"]
+env = { NATS_URL = "nats://127.0.0.1:4222", TARGET_WATCH_GOG = "/usr/local/bin/gog" }
 timeout_s = 240
 on_failure = ["/bin/sh", "-c", "\"$HOME/.local/bin/ntfy-alert\" --title \"[candybar] target-watch-gmail-poll failed\" -- \"$CANDYBAR_FAILURE_MESSAGE\" || true"]

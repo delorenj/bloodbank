@@ -51,6 +51,12 @@ SERVICE_DIR = Path(__file__).resolve().parent
 AGENT_HOOKS_DIR = SERVICE_DIR.parent / "agent-hooks"
 MASTER = AGENT_HOOKS_DIR / "hooks.master.json"
 REGISTRY = Path(os.environ.get("HOOK_HUB_REGISTRY", SERVICE_DIR / "handlers.toml"))
+# Host overlay: a small TOML file OUTSIDE the repo that, when present, is merged
+# over the committed handlers.toml (see _overlay_registry). One overlay per host
+# path, matched by Path.home(); document its format in services/hook-hub/README.md.
+OVERLAY_DIR = Path(
+    os.environ.get("HOOK_HUB_OVERLAY_DIR", Path.home() / ".config" / "33god")
+)
 
 MAX_REQUEST_BYTES = 1 << 20
 ASYNC_SLOTS = int(os.environ.get("HOOK_HUB_ASYNC_SLOTS", "8"))
@@ -151,6 +157,7 @@ class Config:
         self.handlers: list[Handler] = []
         self.bindings: dict[tuple[str, str], dict[str, Any]] = {}
         self.error: str | None = None
+        self.registry_paths: list[Path] = []
         self._stamps: tuple = ()
 
     @staticmethod
@@ -161,7 +168,9 @@ class Config:
             return -1.0
 
     def maybe_reload(self) -> None:
-        stamps = (self._stamp(MASTER), self._stamp(REGISTRY))
+        registry_paths = _overlay_registry()
+        stamps = (self._stamp(MASTER),
+                  *(self._stamp(p) for p in registry_paths))
         if stamps == self._stamps:
             return
         try:
@@ -191,6 +200,23 @@ class Config:
 
         handlers: list[Handler] = []
         raw = tomllib.loads(REGISTRY.read_text())
+        registry_paths = _overlay_registry()
+        if len(registry_paths) > 1:
+            overlay_rows = tomllib.loads(registry_paths[1].read_text()).get("handler") or []
+            by_id = {row.get("id"): row for row in raw.get("handler", []) or [] if isinstance(row, dict)}
+            for row in overlay_rows:
+                if not isinstance(row, dict):
+                    continue
+                overlay_id = row.get("id")
+                if overlay_id in by_id:
+                    # Same id: the overlay row replaces the base row field-by-
+                    # field (missing fields inherit the base row's values).
+                    merged = {**by_id[overlay_id], **row}
+                    raw["handler"][raw["handler"].index(by_id[overlay_id])] = merged
+                    by_id[overlay_id] = merged
+                else:
+                    raw.setdefault("handler", []).append(row)
+        self.registry_paths = registry_paths
         for row in raw.get("handler", []) or []:
             try:
                 handler = Handler(row)
@@ -198,7 +224,8 @@ class Config:
                 log(f"skipping invalid handler row {row.get('id')!r}: {exc}")
                 continue
             if any(h.id == handler.id for h in handlers):
-                raise ValueError("duplicate handler id")
+                log(f"skipping duplicate handler id {handler.id!r} (overlay may shadow the base row)")
+                continue
             handlers.append(handler)
         handlers.sort(key=lambda h: (h.order, h.id))
 
@@ -234,6 +261,32 @@ class Config:
     def select(self, role: str | None, native: str, payload: Any,
                env: dict[str, str], transition: str = "", cli: str = "") -> list[Handler]:
         return [h for h, reason in self.selections(role, native, payload, env, transition, cli) if reason is None]
+
+
+# --------------------------------------------------------------------------
+# Registry: committed base + optional host overlay
+# --------------------------------------------------------------------------
+
+
+def _overlay_registry() -> list[Path]:
+    """The registry chain for this host: committed base + host overlay if any.
+
+    Precedence (left to right, later wins): the committed handlers.toml, then
+    ~/.config/33god/hook-hub-overlay.toml (HOOK_HUB_OVERLAY_DIR env may point
+    elsewhere). An overlay row with the same `id` as a base row REPLACES the
+    base row field-by-field — so setting `enabled = false` retires a handler
+    and setting a new `command` retargets it, without forking the committed
+    registry. Rows with an id not in the base are appended. The overlay file
+    is read-only to the hub; create/edit it on the host itself (see README).
+    """
+    candidates = [
+        OVERLAY_DIR / "hook-hub-overlay.toml",
+        OVERLAY_DIR / f"hook-hub-overlay-{Path.home().name}.toml",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return [REGISTRY, candidate]
+    return [REGISTRY]
 
 
 # --------------------------------------------------------------------------
@@ -759,6 +812,7 @@ class Server:
                         "started_at": self.started_at, "pid": os.getpid(),
                         "registry_error": self.cfg.error, "journal_error": self.journal_error,
                         "transport_error": transport_error,
+                        "registry": [str(p) for p in getattr(self.cfg, "registry_paths", [])],
                         "socket": {"path": str(self.socket_path) if self.socket_path else None,
                                    "present": socket_present, "activated": self.socket_activated},
                         "publish_enabled": PUBLISH_ENABLED, "async_running": len(self.background),

@@ -451,7 +451,7 @@ watcher's preflight makes the wrong order safe (it falls back to `start`), but d
 it in this order anyway.
 
 1. **Bloodbank change (no runtime effect).** On `main` in
-   `/home/delorenj/code/33GOD/bloodbank`:
+   `~/code/33GOD/bloodbank`:
    - add `schemas/bloodbank/agent/invocation.invoke.json` and the data-equality test;
    - extend `docs/event-naming.md` §3.2 with the two-lane table and the
      `invoke`/`invoked` note; add a row for `invoke` under §8.2 usage if useful;
@@ -498,7 +498,7 @@ it in this order anyway.
 5. **Prove isolation before trusting it.** Emit a harmless `invoke` to a
    low-stakes agent and watch a new journal row appear while batch is busy:
    ```bash
-   cd /home/delorenj/code/33GOD/bloodbank
+   cd ~/code/33GOD/bloodbank
    echo '{"target_agent_id":"<agent>","prompt":"Reply with the word ok.","thread_id":"lane-proof-1"}' \
      | bin/bb-emit --strict --print-ids --kind command --type bloodbank.cmd.agent.invocation.invoke \
          --actor-type service --actor-id lane-proof
@@ -508,7 +508,7 @@ it in this order anyway.
    The row should appear within seconds even while `start` has four turns running.
    Then a real memo through the Agent Pad.
 6. **Switch the producer.** Land the inbox-watcher change in
-   `/home/delorenj/code/33GOD/holocene` (lane selection, preflight, lane in
+   `~/code/33GOD/holocene` (lane selection, preflight, lane in
    `dispatched`, per-lane liveness, trace, heartbeat, API/web), run its tests
    (`services/inbox-watcher/test_inbox_watcher.py`) and the Holocene workflow from
    `holocene/CLAUDE.md`: typecheck, `pnpm --filter @holocene/api build`,

@@ -85,6 +85,26 @@ python3 sync.py --check --json   # machine-readable report
 python3 sync.py --apply --resolve  # resolve open ambiguities interactively, then apply
 ```
 
+### Host-neutral configs (multi-peer rule)
+
+`sync.py --apply` writes the generated configs in **template mode**: hook
+commands are committed as `$HOME/.agents/hooks/...`, never as one host's
+absolute path — so `--check` is green and `--apply` byte-stable on every peer.
+Install mode (`--install`, or `--check-installed`) re-renders the same
+commands with this host's literal path, because not every consumer expands
+`$HOME`:
+
+| Dialect | Runs command through | Install-mode path spelling |
+|---------|----------------------|----------------------------|
+| claude / codex / copilot / gemini / kimi / antigravity | a shell | `$HOME/...` would work, but the literal path is written (health checks compare literally) |
+| hermes | shlex argv, **no shell** (only a leading `~` expands) | **literal** — `$HOME` would never expand and the hook would silently never fire |
+| opencode | node `spawn` argv, **no shell** | **literal** — the plugin default `~/.agents/hooks/bb-hook` is a JS-string default, also not shell-expanded |
+
+`sync.py canonical_command()` normalizes `$HOME` / `${HOME}` / `~/` / literal
+spellings of the hooks dir for all comparisons (merge, hermes allowlist,
+installed-inventory), so a live config carrying an older spelling is not
+reported as drift and the merge does not toggle the file every run.
+
 ### Deploy (install to live agent configs)
 
 `mise run deploy` (= `sync.py --apply --install`) regenerates the artifacts and

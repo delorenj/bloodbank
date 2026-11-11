@@ -1,5 +1,6 @@
 import io
 import json
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -99,9 +100,29 @@ def test_candybar_manifest():
     bar, runner = doc["candybar"], doc["candybar"]["runner"]
     assert bar["name"] == path.name.removesuffix(".candybar.toml")
     assert bar["schedule"] == "*/5 * * * *" and bar["timezone"] == "America/New_York" and bar["enabled"] is False
-    assert runner["kind"] == "exec" and runner["argv"][0].endswith("/.venv/bin/target-watch") and runner["argv"][1:] == ["gmail-poll"]
-    assert all(Path(p).is_absolute() for p in (runner["argv"][0], runner["workdir"]))
+    assert runner["kind"] == "exec" and runner["argv"][:2] == ["/bin/sh", "-c"] and len(runner["argv"]) == 3
+    # Host-neutral: no home literal; no workdir, so Candybar starts it in the project root.
+    assert "/home/" not in path.read_text() and "/Users/" not in path.read_text()
+    assert "workdir" not in runner and "PATH" not in runner["env"]
     assert "ntfy-alert" in " ".join(runner["on_failure"]) and "$CANDYBAR_FAILURE_MESSAGE" in runner["on_failure"][-1]
+
+
+def test_candybar_manifest_runs_this_checkouts_venv_entry_point(tmp_path):
+    """The sh -c runner execs <project root>/.venv/bin/target-watch gmail-poll with the systemd-unit PATH."""
+    runner = tomllib.loads((SERVICE / ".candybars" / "target-watch-gmail-poll.candybar.toml").read_text())["candybar"]["runner"]
+    root, home = tmp_path / "checkout" / "services" / "target-watch", tmp_path / "home"
+    (root / ".venv" / "bin").mkdir(parents=True)
+    home.mkdir()
+    stub = root / ".venv" / "bin" / "target-watch"
+    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$PATH\" \"$NATS_URL\" \"$TARGET_WATCH_GOG\" \"$@\"\n")
+    stub.chmod(0o755)
+    # Candybar's child env: the daemon's environment (any PWD, any PATH) plus the runner env.
+    env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "PWD": "/somewhere/else", **runner["env"]}
+    done = subprocess.run(runner["argv"], cwd=root, env=env, capture_output=True, text=True, timeout=10, check=True)
+    argv0, path, nats, gog, *args = done.stdout.splitlines()
+    assert Path(argv0) == stub and Path(argv0).is_absolute()
+    assert path == f"{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+    assert (nats, gog, args) == ("nats://127.0.0.1:4222", "/usr/local/bin/gog", ["gmail-poll"])
 
 
 def test_systemd_units():
