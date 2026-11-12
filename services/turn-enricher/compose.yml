@@ -9,9 +9,10 @@
 # the bus.
 #
 # Secrets come from .env.op at the repo root (op://DeLoSecrets refs, resolved
-# by `op inject`); never commit resolved values. Refuse-to-start when any of
-# the three is empty — a missing key is a silent 401 storm, not a degraded
-# mode.
+# by `op inject`); never commit resolved values. Refuse-to-start when a
+# required one is empty — a missing key is a silent 401 storm, not a degraded
+# mode. The only degraded mode is the explicit one:
+# BLOODBANK_TURN_ENRICHER_CLAIRIC_ENABLED=false (Jev-only, no CF_* needed).
 #
 # Bring up (from the repo root):
 #   op run --env-file=.env.op -- \
@@ -43,6 +44,9 @@ services:
       JEV_API_KEY: "${JEV_API_KEY:-}"
       CF_API_KEY: "${CF_API_KEY:-}"
       CF_ACCOUNT_ID: "${CF_ACCOUNT_ID:-}"
+      # Explicit Jev-only opt-out for a host with no Cloudflare account. When
+      # false the CF_* values are not required and events name only `jev`.
+      CLAIRIC_ENABLED: "${BLOODBANK_TURN_ENRICHER_CLAIRIC_ENABLED:-true}"
       LOG_LEVEL: "${BLOODBANK_TURN_ENRICHER_LOG_LEVEL:-INFO}"
     networks:
       - bloodbank-network

@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
 import unittest
 
 import main
@@ -140,7 +143,7 @@ class TestSignalGate(unittest.TestCase):
         self.assertEqual(len(publish.published), 1)
 
     def test_gate_failure_runs_clairic_anyway(self):
-        gate = FakeGate(error=RuntimeError("openrouter down"))
+        gate = FakeGate(error=RuntimeError("jev down"))
         enricher, _, extract, publish = make(gate=gate)
         result = run(enricher.handle(source_envelope()))
         self.assertEqual(result, "annotated")
@@ -217,6 +220,32 @@ class TestPushback(unittest.TestCase):
         self.assertEqual(run(enricher.handle(source_envelope())), "skipped_paused")
         self.assertTrue(enricher.paused())
 
+    def test_litellm_rpm_429_pauses_for_its_retry_after(self):
+        # LiteLLM's ProxyRateLimitError: 429 + retry-after 60 (window size).
+        gate = FakeGate([(429, None, "60")])
+        enricher, _, extract, publish = make(gate=gate)
+        self.assertEqual(run(enricher.handle(source_envelope())), "skipped_paused")
+        self.assertAlmostEqual(enricher.paused_until - enricher.clock(), 60.0, delta=1.0)
+        self.assertEqual(extract.calls, [])
+        self.assertEqual(publish.published, [])
+        self.assertEqual(enricher.stats["http_429"], 1)
+
+    def test_litellm_budget_exceeded_422_does_not_pause_and_publishes_without_signal(self):
+        # LiteLLM budget_exceeded answers 422 (litellm.budget_exceeded_status_code):
+        # not pushback, so the turn is still published, signal null.
+        gate = FakeGate([(422, None, None)])
+        enricher, _, _, publish = make(gate=gate)
+        self.assertEqual(run(enricher.handle(source_envelope())), "annotated")
+        self.assertFalse(enricher.paused())
+        self.assertIsNone(publish.published[0][1]["data"]["signal"])
+
+    def test_bad_key_401_does_not_pause(self):
+        gate = FakeGate([(401, None, None)])
+        enricher, _, _, publish = make(gate=gate)
+        self.assertEqual(run(enricher.handle(source_envelope())), "annotated")
+        self.assertFalse(enricher.paused())
+        self.assertIsNone(publish.published[0][1]["data"]["signal"])
+
 
 class TestEnvelope(unittest.TestCase):
     def test_annotated_envelope_shape(self):
@@ -247,14 +276,14 @@ class TestEnvelope(unittest.TestCase):
         self.assertEqual(data["action"], "Fixed flakey test")
         self.assertEqual(data["artifacts"], ["HOLOC-12", "services/ntfy-router/main.py"])
         self.assertIsNone(data["blocker"])  # p_null 0.9 rejected
-        self.assertEqual(data["extractors"], {"jev": "typesafe/jev-1.13", "clairic": "@cf/cloudflare/clairic"})
+        self.assertEqual(data["extractors"], {"jev": "jev-latest", "clairic": "@cf/cloudflare/clairic"})
         self.assertEqual(data["working_directory"], "/home/delorenj/code/33GOD/bloodbank")
 
 
 class TestPayloads(unittest.TestCase):
     def test_jev_payload_shape(self):
         payload = main.jev_payload("did the thing")
-        self.assertEqual(payload["model"], "typesafe/jev-1.13")
+        self.assertEqual(payload["model"], "jev-latest")
         question = payload["questions"]["signal"]
         self.assertEqual(question["type"], "noul")
         self.assertIn("substantive work output", question["instructions"])
@@ -278,6 +307,81 @@ class TestPayloads(unittest.TestCase):
         self.assertEqual(main.retry_after_seconds("12"), 12.0)
         self.assertIsNone(main.retry_after_seconds(None))
         self.assertIsNone(main.retry_after_seconds("not a date"))
+
+
+def make_jev_only(gate=None) -> tuple[main.TurnEnricher, FakeGate, FakePublish]:
+    gate = gate or FakeGate()
+    publish = FakePublish()
+    return main.TurnEnricher(gate=gate, extract=None, publish=publish), gate, publish
+
+
+class TestClairicDisabled(unittest.TestCase):
+    """CLAIRIC_ENABLED=false: Jev-only annotation, no Cloudflare account needed."""
+
+    def test_annotates_with_signal_only_and_names_only_jev(self):
+        enricher, gate, publish = make_jev_only()
+        self.assertEqual(run(enricher.handle(source_envelope())), "annotated")
+        self.assertEqual(len(gate.calls), 1)
+        data = publish.published[0][1]["data"]
+        self.assertEqual(data["signal"], 0.9)
+        self.assertEqual(data["extractors"], {"jev": "jev-latest"})
+        self.assertIsNone(data["action"])
+        self.assertEqual(data["artifacts"], [])
+        self.assertIsNone(data["blocker"])
+        self.assertEqual(data["target_event_id"], SOURCE_ID)
+
+    def test_noise_still_dropped(self):
+        gate = FakeGate([(200, {"answers": {"signal": {"noul": 0.1}}}, None)])
+        enricher, _, publish = make_jev_only(gate)
+        self.assertEqual(run(enricher.handle(source_envelope())), "noise")
+        self.assertEqual(publish.published, [])
+
+    def test_gate_429_pauses_and_publishes_nothing(self):
+        enricher, _, publish = make_jev_only(FakeGate([(429, None, "60")]))
+        self.assertEqual(run(enricher.handle(source_envelope())), "skipped_paused")
+        self.assertTrue(enricher.paused())
+        self.assertEqual(publish.published, [])
+
+    def test_gate_failure_publishes_with_null_signal(self):
+        enricher, _, publish = make_jev_only(FakeGate([(422, None, None)]))
+        self.assertEqual(run(enricher.handle(source_envelope())), "annotated")
+        data = publish.published[0][1]["data"]
+        self.assertIsNone(data["signal"])
+        self.assertEqual(data["extractors"], {"jev": "jev-latest"})
+
+    def test_explicit_extractors_override(self):
+        publish = FakePublish()
+        enricher = main.TurnEnricher(gate=FakeGate(), extract=FakeExtract(), publish=publish,
+                                     extractors={"jev": "x"})
+        run(enricher.handle(source_envelope()))
+        self.assertEqual(publish.published[0][1]["data"]["extractors"], {"jev": "x"})
+
+
+class TestConfig(unittest.TestCase):
+    def _import_with_env(self, **env) -> dict:
+        clean = {k: v for k, v in os.environ.items()
+                 if not k.startswith(("JEV_", "CLAIRIC_", "CF_"))}
+        clean.update(env)
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import json, main; print(json.dumps({'url': main.JEV_URL, 'model': main.JEV_MODEL,"
+             " 'clairic': main.CLAIRIC_ENABLED}))"],
+            cwd=os.path.dirname(os.path.abspath(__file__)), env=clean,
+            capture_output=True, text=True, check=True,
+        )
+        return json.loads(out.stdout.strip().splitlines()[-1])
+
+    def test_defaults_point_at_the_jev_ingress_not_openrouter(self):
+        cfg = self._import_with_env()
+        self.assertEqual(cfg["url"], "https://jev.delo.sh/typesafe/v1/systemone")
+        self.assertEqual(cfg["model"], "jev-latest")
+        self.assertTrue(cfg["clairic"])
+
+    def test_clairic_flag_parsing(self):
+        for raw in ("false", "FALSE", "0", "no", "off"):
+            self.assertFalse(self._import_with_env(CLAIRIC_ENABLED=raw)["clairic"], raw)
+        for raw in ("true", "1", "yes", "", "  "):
+            self.assertTrue(self._import_with_env(CLAIRIC_ENABLED=raw)["clairic"], raw)
 
 
 if __name__ == "__main__":

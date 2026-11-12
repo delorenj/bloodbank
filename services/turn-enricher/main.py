@@ -9,24 +9,30 @@ instead of re-extracting.
 
 Per turn:
 
-  1. Jev gate  — POST https://openrouter.ai/api/alpha/decisions, model
-     typesafe/jev-1.13, one noul question `signal`: does this turn contain
-     substantive work output? answers.signal.noul < 0.5 -> noise: counted,
-     skipped. Jev failing never skips a turn (the gate is an optimization);
-     Clairic still runs.
+  1. Jev gate  — POST https://jev.delo.sh/typesafe/v1/systemone (the Jev
+     SystemOne ingress, a LiteLLM pass-through; the OpenRouter decisions
+     endpoint is retired), model jev-latest, one noul question `signal`: does
+     this turn contain substantive work output? answers.signal.noul < 0.5 ->
+     noise: counted, skipped. Jev failing never skips a turn (the gate is an
+     optimization); Clairic still runs.
 
   2. Clairic   — POST https://api.cloudflare.com/client/v4/accounts/
      {CF_ACCOUNT_ID}/ai/run/@cf/cloudflare/clairic, fields action (text),
      artifacts (list of text), blocker (text). A field is accepted iff its
      p_null < 0.5. Clairic failing publishes with facts absent, never drops
-     the event.
+     the event. CLAIRIC_ENABLED=false turns this step off explicitly (a host
+     with no Cloudflare account): no CF credentials are required, the step is
+     skipped, and `extractors` on the event lists only the extractors that ran.
 
-Extractor pushback: a 429 (or 5xx, or transport error) pauses enrichment for
+Extractor pushback: a 429 or a transport error pauses enrichment for
 Retry-After, else 60s. Events arriving during the pause are counted, not
-queued.
+queued. Any other non-2xx (401, 422 budget_exceeded, 5xx) means the extractor
+answered without facts: the turn is still published, with signal null when Jev
+was the one that failed.
 
-Secrets come from the environment (JEV_API_KEY, CF_API_KEY, CF_ACCOUNT_ID);
-compose wires them from .env.op (op:// refs). Never committed.
+Secrets come from the environment (JEV_API_KEY, and CF_API_KEY + CF_ACCOUNT_ID
+when Clairic is enabled); compose wires them from .env.op (op:// refs) or, on
+a host with the interim store, env-op-resolve. Never committed.
 """
 
 from __future__ import annotations
@@ -64,11 +70,24 @@ PUBLISH_SUBJECT = os.environ.get("PUBLISH_SUBJECT", "bloodbank.evt.conversation.
 ANNOTATED_TYPE = "bloodbank.conversation.turn.annotated"
 
 JEV_API_KEY = os.environ.get("JEV_API_KEY", "")
-JEV_URL = os.environ.get("JEV_URL", "https://openrouter.ai/api/alpha/decisions")
-JEV_MODEL = os.environ.get("JEV_MODEL", "typesafe/jev-1.13")
+JEV_URL = os.environ.get("JEV_URL", "https://jev.delo.sh/typesafe/v1/systemone")
+JEV_MODEL = os.environ.get("JEV_MODEL", "jev-latest")
 CF_API_KEY = os.environ.get("CF_API_KEY", "")
 CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "")
 CF_MODEL = os.environ.get("CF_MODEL", "@cf/cloudflare/clairic")
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+# Explicit opt-out for hosts with no Cloudflare account. Default on: the
+# extractor is part of the contract, so turning it off is a visible decision
+# (startup log + `extractors` on every event), never a silent dummy key.
+CLAIRIC_ENABLED = _env_flag("CLAIRIC_ENABLED", True)
 
 SIGNAL_THRESHOLD = float(os.environ.get("SIGNAL_THRESHOLD", "0.5"))
 P_NULL_THRESHOLD = float(os.environ.get("P_NULL_THRESHOLD", "0.5"))
@@ -175,10 +194,16 @@ def clairic_facts(body: Any, p_null_threshold: float = P_NULL_THRESHOLD) -> dict
     return facts
 
 
-def annotated_envelope(source: dict[str, Any], signal: float | None, facts: dict[str, Any]) -> dict[str, Any]:
+def annotated_envelope(
+    source: dict[str, Any],
+    signal: float | None,
+    facts: dict[str, Any],
+    extractors: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """The bloodbank.conversation.turn.annotated event for one source turn:
     causationid = source event id, correlationid preserved, actor copied,
-    ordering_key = source event id + '.annotated'."""
+    ordering_key = source event id + '.annotated'. `extractors` names the
+    extractors that actually ran (defaults to both)."""
     source_id = source.get("id") or ""
     data = _dict(source.get("data"))
     return build_envelope(
@@ -200,7 +225,7 @@ def annotated_envelope(source: dict[str, Any], signal: float | None, facts: dict
             "action": facts.get("action"),
             "artifacts": facts.get("artifacts", [])[:MAX_ARTIFACTS],
             "blocker": facts.get("blocker"),
-            "extractors": dict(EXTRACTORS),
+            "extractors": dict(EXTRACTORS if extractors is None else extractors),
             "working_directory": data.get("working_directory"),
         },
     )
@@ -251,11 +276,20 @@ def make_clairic(client: Any, api_key: str, account_id: str) -> ClairicExtract:
 @dataclass
 class TurnEnricher:
     gate: JevGate
-    extract: ClairicExtract
+    extract: ClairicExtract | None
     publish: Publisher
     clock: Callable[[], float] = time.monotonic
     stats: Counter = field(default_factory=Counter)
     paused_until: float = 0.0
+    # Extractors named on every published event. None = whatever is wired:
+    # Jev always, Clairic only when `extract` is set.
+    extractors: dict[str, str] | None = None
+
+    def __post_init__(self) -> None:
+        if self.extractors is None:
+            self.extractors = dict(EXTRACTORS)
+            if self.extract is None:
+                self.extractors.pop("clairic", None)
 
     def paused(self) -> bool:
         return self.clock() < self.paused_until
@@ -305,26 +339,28 @@ class TurnEnricher:
                     log.info("noise: %s (signal=%.3f)", envelope.get("id"), signal_value)
                     return "noise"
             else:
-                log.warning("jev answered %s; running clairic anyway", status)
+                log.warning("jev answered %s; continuing without a signal", status)
         except Exception as exc:  # noqa: BLE001 -- gate is optional
-            log.warning("jev gate failed (%s); running clairic anyway", exc)
+            log.warning("jev gate failed (%s); continuing without a signal", exc)
 
-        # 2. Clairic extract — failure publishes with facts absent.
+        # 2. Clairic extract — failure publishes with facts absent. Skipped
+        # outright when Clairic is explicitly disabled (no extract wired).
         facts: dict[str, Any] = {"action": None, "artifacts": [], "blocker": None}
-        try:
-            status, body, retry_after = await self.extract(reply_text)
-            if self._pushback_status(status):
-                self._pushback(status, retry_after)
-                self.stats["skipped_paused"] += 1
-                return "skipped_paused"
-            if 200 <= status < 300 and body is not None:
-                facts = clairic_facts(body)
-            else:
-                log.warning("clairic answered %s; publishing without facts", status)
-        except Exception as exc:  # noqa: BLE001 -- facts are optional
-            log.warning("clairic extract failed (%s); publishing without facts", exc)
+        if self.extract is not None:
+            try:
+                status, body, retry_after = await self.extract(reply_text)
+                if self._pushback_status(status):
+                    self._pushback(status, retry_after)
+                    self.stats["skipped_paused"] += 1
+                    return "skipped_paused"
+                if 200 <= status < 300 and body is not None:
+                    facts = clairic_facts(body)
+                else:
+                    log.warning("clairic answered %s; publishing without facts", status)
+            except Exception as exc:  # noqa: BLE001 -- facts are optional
+                log.warning("clairic extract failed (%s); publishing without facts", exc)
 
-        event = annotated_envelope(envelope, signal_value, facts)
+        event = annotated_envelope(envelope, signal_value, facts, self.extractors)
         await self.publish(PUBLISH_SUBJECT, json.dumps(event, separators=(",", ":")).encode("utf-8"))
         self.stats["annotated"] += 1
         log.info(
@@ -365,13 +401,22 @@ async def run() -> None:
     import nats
     from nats.aio.msg import Msg
 
-    log.info("turn-enricher starting: subject=%s publish=%s", SUBJECT, PUBLISH_SUBJECT)
+    log.info("turn-enricher starting: subject=%s publish=%s jev=%s model=%s",
+             SUBJECT, PUBLISH_SUBJECT, JEV_URL, JEV_MODEL)
 
-    if not (JEV_API_KEY and CF_API_KEY and CF_ACCOUNT_ID):
+    if not JEV_API_KEY:
         raise SystemExit(
-            "JEV_API_KEY, CF_API_KEY and CF_ACCOUNT_ID are required (op://DeLoSecrets refs in .env.op). "
-            "Without them every extraction would 401 silently."
+            "JEV_API_KEY is required (op:// ref in .env.op, or the interim store via env-op-resolve). "
+            "Without it every extraction would 401 silently."
         )
+    if CLAIRIC_ENABLED and not (CF_API_KEY and CF_ACCOUNT_ID):
+        raise SystemExit(
+            "CF_API_KEY and CF_ACCOUNT_ID are required while Clairic is enabled (op://DeLoSecrets refs in .env.op). "
+            "Set CLAIRIC_ENABLED=false to run Jev-only on a host with no Cloudflare account."
+        )
+    if not CLAIRIC_ENABLED:
+        log.warning("clairic DISABLED (CLAIRIC_ENABLED=false): annotating with the Jev signal only; "
+                    "events carry extractors=%s", {"jev": JEV_MODEL})
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -392,7 +437,7 @@ async def run() -> None:
 
         enricher = TurnEnricher(
             gate=make_jev_gate(http_client, JEV_API_KEY),
-            extract=make_clairic(http_client, CF_API_KEY, CF_ACCOUNT_ID),
+            extract=make_clairic(http_client, CF_API_KEY, CF_ACCOUNT_ID) if CLAIRIC_ENABLED else None,
             publish=publish,
         )
 
