@@ -166,6 +166,10 @@ class AskAndEditTests(CaptureTestCase):
         self.ask("<system-reminder>\nbe nice\n</system-reminder>\n/fix-it why does the backup fail on peer auth?")
         self.assertEqual(self.state()["pending_asks"], ["why does the backup fail on peer auth?"])
 
+    def test_a_crank_ask_is_buffered_with_its_tag(self):
+        self.ask("[crank] name 707163 Laura")
+        self.assertEqual(self.state()["pending_asks"], ["[crank] name 707163 Laura"])
+
     def test_a_harness_only_prompt_buffers_no_ask(self):
         outcome = self.ask("<task-notification>\n<task-id>x</task-id>\n</task-notification>")
         self.assertEqual(outcome["_hook_hub"]["reason"], "ask_is_harness_only")
@@ -562,6 +566,26 @@ class DispatchTests(CaptureTestCase):
         self.assertFalse(journal.exists() and "retain_candidate" in journal.read_text())
         self.assertFalse(hasattr(hindsight, "candidate"))
         self.assertFalse(hasattr(hindsight, "end"))
+
+
+class CrankAttributionTests(unittest.TestCase):
+    """A Crank-typed turn must never reach shared memory as something the operator said."""
+
+    def convo(self, ask: str) -> list[dict]:
+        state = {"created_at": 0, "repo": "HeyMa", "cli": "claude", "host": "h"}
+        return sc.conversation(state, [{"ask": ask, "outcome": "done"}], header=False)
+
+    def test_crank_turns_say_who_typed_them(self):
+        user = self.convo("[crank] name 707163 Laura")[0]
+        self.assertEqual(user["role"], "user")
+        self.assertTrue(user["content"].startswith("[Typed by Crank"))
+        self.assertIn("NOT the operator", user["content"])
+        self.assertTrue(user["content"].endswith("name 707163 Laura"))
+        relay = self.convo("[crank relay] ship the hotfix")[0]["content"]
+        self.assertTrue(relay.startswith("[Resubmitted by Crank") and relay.endswith("ship the hotfix"))
+
+    def test_the_operators_own_words_are_untouched(self):
+        self.assertEqual(self.convo("why does [crank] appear here?")[0]["content"], "why does [crank] appear here?")
 
 
 if __name__ == "__main__":
