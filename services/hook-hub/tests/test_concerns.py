@@ -69,6 +69,16 @@ class ConcernTests(unittest.TestCase):
                     self.assertEqual(output["_hook_hub"]["reason"], "not_a_git_repository")
             invoke.assert_not_called()
 
+    def test_a_crank_prompt_gets_the_rule_and_others_do_not(self):
+        with mock.patch.dict(os.environ, {"BB_HOOK_CLI": "claude", "BB_HOOK_NATIVE": "UserPromptSubmit"}):
+            noted = concerns.dispatch("crank-tag", {"prompt": "[crank] name 707163 Laura"})
+            plain = concerns.dispatch("crank-tag", {"prompt": "name 707163 Carrie"})
+        self.assertEqual(noted["_hook_hub"]["reason"], "crank_prompt_noted")
+        context = json.loads(noted["stdout"])["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("not by the operator", context)
+        self.assertEqual(plain["_hook_hub"]["reason"], "not_a_crank_prompt")
+        self.assertEqual(plain["stdout"], "")
+
     def test_project_disabled_concern_is_not_invoked(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

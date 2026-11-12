@@ -67,6 +67,8 @@ explicit skips for absent project context or optional tools.
 | Sound notifications | Claude/Codex attention signals, Codex turn completion, and OpenCode session closure. |
 | Zellij attention and Git checkpoint | OpenCode only; attention requires a Zellij pane, and the existing checkpoint project opt-out is preserved. |
 | Native-clock guard | Claude, Codex, Copilot, Kimi, Gemini, Hermes, OpenCode `pre_tool` on shell, file-write and `cronjob_manage` tools. Denies crontab writes, new `*.timer`/cron.d/launchd-interval files, `systemd-run --on-*`, `at`/`batch`, Hermes internal cron jobs. Candybar is the single clock; exemptions come from `candybar/deploy/scheduling-policy.json`. Standalone script (`native_clock_guard.py`): a deny is a real exit 2 + stderr, with stdout JSON for Gemini (trailer) and OpenCode. Antigravity has no `pre_tool` binding and is not guarded. |
+| Crank-keys guard | Hermes `pre_tool` on terminal and code tools. Denies `zellij action write-chars`/`write`/`paste`: an autonomous agent (Crank, a PM driving Workspace panes) types into a pane only through `~/.local/bin/zcrank-send`, which tags the text `[crank]` and checks the screen before and after. Standalone script (`crank_keys_guard.py`), real exit 2 + stderr, fails open. |
+| Crank tag | Claude, Codex, Copilot, Kimi, Gemini, OpenCode `prompt_submit`. A prompt starting `[crank]`/`[crank relay]` gets the rule for weighing Crank's words as context (`concerns.py crank-tag`); session capture files such turns to Hindsight as "typed by Crank, not the operator". |
 
 Project Notebook, Nanoleaf, CodeGraph, Code Review Graph, Orca, CommonProject/PJangler projections,
 and guarded project fallbacks consult the same ownership contract so ordinary
