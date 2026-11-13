@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir \
 
 # Build from the repository root, with Dockerfile.dockerignore's allowlist.
 COPY services/ntfy-router/main.py services/ntfy-router/tolt_family.py /app/
+COPY services/ntfy-router/lowwater_ownership.py services/ntfy-router/lowwater_control.schema.json /app/
 COPY services/agent-hooks/core/ /opt/bloodbank/services/agent-hooks/core/
 COPY schemas/ /opt/bloodbank/schemas/
 COPY docs/event-naming.md /opt/bloodbank/docs/event-naming.md

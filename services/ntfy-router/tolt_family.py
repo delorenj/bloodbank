@@ -67,10 +67,16 @@ class Config:
     lease_seconds: float = 30.0
     post_timeout: float = 8.0
     drain_limit: int = 10
+    ownership_dir: Path | None = None
+    ownership_uid: int | None = None
 
     def __post_init__(self):
         if type(self.enabled) is not bool or type(self.cutover_accepted) is not bool:
             raise ValueError("family cutover gates must be booleans")
+        if self.ownership_dir is not None and (
+                not self.ownership_dir.is_absolute() or type(self.ownership_uid) is not int
+                or self.ownership_uid < 0):
+            raise ValueError("ownership path requires an explicit trusted source UID")
         url = urlsplit(self.base_url)
         if (url.scheme != "https" or not url.hostname or url.username or url.password
                 or url.path not in ("", "/") or url.query or "#" in self.base_url
@@ -102,6 +108,8 @@ class Config:
             state_path=Path(env.get("NTFY_TOLT_STATE", "/var/lib/ntfy-router/tolt.sqlite3")),
             validator_root=Path(env.get("NTFY_FAMILY_VALIDATOR_ROOT", "/opt/bloodbank")),
             link_hosts=tuple(h.strip().lower() for h in env.get("NTFY_TOLT_LINK_HOSTS", "tolt.delo.sh").split(",") if h.strip()),
+            ownership_dir=Path(env["NTFY_TOLT_OWNERSHIP_DIR"]) if env.get("NTFY_TOLT_OWNERSHIP_DIR") else None,
+            ownership_uid=int(env["NTFY_TOLT_OWNERSHIP_UID"]) if env.get("NTFY_TOLT_OWNERSHIP_UID") else None,
         )
 
 
@@ -263,6 +271,10 @@ class DeliveryLedger:
                 CREATE TABLE IF NOT EXISTS destination_pause (
                     destination TEXT PRIMARY KEY, until_time REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS delivery_scan (
+                    destination TEXT PRIMARY KEY, after_rowid INTEGER NOT NULL,
+                    round_end INTEGER NOT NULL
+                );
             """)
         os.chmod(path, 0o600)
 
@@ -331,11 +343,26 @@ class DeliveryLedger:
                        "WHERE event_id=? AND destination=?", (event_id, destination))
 
     def due(self, destination, now, limit):
-        with self.connection() as db:
-            return [dict(r) for r in db.execute(
-                "SELECT event_id,event_type FROM delivery WHERE destination=? "
-                "AND state='pending' AND next_attempt<=? ORDER BY rowid LIMIT ?",
-                (destination, now, limit))]
+        with self.connection(True) as db:
+            cursor = db.execute("SELECT * FROM delivery_scan WHERE destination=?",
+                                (destination,)).fetchone()
+            after, end = (cursor["after_rowid"], cursor["round_end"]) if cursor else (0, 0)
+            if after >= end:
+                after = 0
+                end = db.execute("SELECT coalesce(max(rowid),0) FROM delivery WHERE destination=? "
+                                 "AND state='pending'", (destination,)).fetchone()[0]
+            # A finite round excludes new tail arrivals until the next pass.
+            # Persist selection progress, not eligibility: blocked holds stay intact,
+            # and a restart/crash cannot keep selecting the same first page.
+            rows = db.execute(
+                "SELECT rowid AS scan_id,event_id,event_type FROM delivery WHERE destination=? "
+                "AND state='pending' AND next_attempt<=? AND rowid>? AND rowid<=? "
+                "ORDER BY rowid LIMIT ?", (destination, now, after, end, limit)).fetchall()
+            after = rows[-1]["scan_id"] if len(rows) == limit else end
+            db.execute("INSERT INTO delivery_scan VALUES (?,?,?) ON CONFLICT(destination) "
+                       "DO UPDATE SET after_rowid=excluded.after_rowid,round_end=excluded.round_end",
+                       (destination, after, end))
+            return [{"event_id": r["event_id"], "event_type": r["event_type"]} for r in rows]
 
     def pending_launches(self, destination, after_rowid, limit):
         with self.connection() as db:
@@ -353,6 +380,17 @@ class DeliveryLedger:
             if (not row or row["state"] != "pending" or row["next_attempt"] > now
                     or (pause and pause["until_time"] > now)):
                 return None
+            if row["event_type"] == LOW_WATER:
+                if config.ownership_dir is None or not config.authorized:
+                    return None
+                # Authority and delivery claim share this transaction. A concurrent
+                # immutable conflict cannot win between the permit check and claim.
+                grant = db.execute("SELECT 1 FROM lowwater_grant WHERE event_id=? "
+                                   "AND destination=? AND status='accepted'",
+                                   (event_id, destination)).fetchone()
+                barrier = db.execute("SELECT 1 FROM lowwater_barrier WHERE state='active'").fetchone()
+                if not grant or not barrier:
+                    return None
             if row["attempts"] >= config.max_attempts:
                 db.execute("UPDATE delivery SET state='exhausted', reason='attempt-limit' "
                            "WHERE event_id=? AND destination=?", (event_id, destination))
@@ -415,6 +453,10 @@ class FamilyRoute:
     def __init__(self, config, ledger, validator, post, clock=time.time):
         self.config, self.ledger, self.validator, self.post, self.clock = config, ledger, validator, post, clock
         self._launch_scan_cursor = 0
+        self.ownership = None
+        if config.ownership_dir is not None:
+            from lowwater_ownership import OwnershipControl
+            self.ownership = OwnershipControl(config, ledger, validator, format_message)
 
     @classmethod
     def from_env(cls, client, token):
@@ -440,6 +482,14 @@ class FamilyRoute:
             return "family-unavailable"
         except Exception:
             return "family-invalid"
+        if envelope["type"] == LOW_WATER and self.ownership is not None:
+            try:
+                state = await asyncio.to_thread(self.ownership.receive, envelope, request)
+                if state != "pending":
+                    return "family-duplicate" if state == "accepted" else "family-" + state
+                return await self.deliver(envelope["id"])
+            except (sqlite3.Error, OSError):
+                return "family-unavailable"
         reason = suppression_reason(envelope) or ("cutover-not-accepted" if not self.config.authorized else "")
         try:
             new, state = await asyncio.to_thread(
@@ -463,9 +513,13 @@ class FamilyRoute:
         if row["state"] != "pending":
             return "family-" + row["state"]
         if row["event_type"] == LOW_WATER:
-            await asyncio.to_thread(self.ledger.suppress_pending, event_id, self.config.destination,
-                                    "lowwater-owner-episode-gate-unavailable")
-            return "family-suppressed"
+            if self.ownership is None:
+                await asyncio.to_thread(self.ledger.suppress_pending, event_id, self.config.destination,
+                                        "lowwater-owner-episode-gate-unavailable")
+                return "family-suppressed"
+            if not await asyncio.to_thread(self.ownership.permits, event_id):
+                row = await asyncio.to_thread(self.ledger.get, event_id, self.config.destination)
+                return "family-" + row["state"]
         # Pending restart work is still checked by the installed validator.
         try:
             envelope, request = json.loads(row["envelope_json"]), json.loads(row["request_json"])
@@ -477,7 +531,7 @@ class FamilyRoute:
             await asyncio.to_thread(self.validator, envelope)
         except Exception:
             return "family-unavailable"
-        reason = suppression_reason(envelope)
+        reason = "" if row["event_type"] == LOW_WATER else suppression_reason(envelope)
         if reason:
             state = await asyncio.to_thread(
                 self.ledger.suppress_pending, event_id, self.config.destination, reason)
@@ -521,6 +575,11 @@ class FamilyRoute:
             launches = await asyncio.to_thread(
                 self.ledger.pending_launches, self.config.destination, 0, self.config.drain_limit)
         results = []
+        if self.ownership is not None:
+            # Local immutable import also recovers missed core deliveries. No POST here.
+            results.extend("ownership-" + ack["status"] for ack in
+                           await asyncio.to_thread(self.ownership.scan, self.config.drain_limit))
+            await asyncio.to_thread(self.ownership.reconcile_pending, self.config.drain_limit)
         for launch in launches:
             result = await self.deliver(launch["event_id"], allow_post=False)
             self._launch_scan_cursor = launch["scan_id"]

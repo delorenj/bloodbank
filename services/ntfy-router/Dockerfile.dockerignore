@@ -4,6 +4,8 @@
 !services/ntfy-router/Dockerfile
 !services/ntfy-router/main.py
 !services/ntfy-router/tolt_family.py
+!services/ntfy-router/lowwater_ownership.py
+!services/ntfy-router/lowwater_control.schema.json
 !services/agent-hooks/
 !services/agent-hooks/core/
 !services/agent-hooks/core/*.py
