@@ -61,7 +61,25 @@ jobs:
         run: python -m compileall cli
 
       - name: Validate agent attention hooks
+        env:
+          BLOODBANK_ASM: "false"
+          BB_HOOK_HUB: "off"
         run: python -m unittest discover -s services/agent-hooks/tests -p 'test_attention*.py'
+
+      - name: Install disposable ASM Redis prerequisite
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq redis-server
+
+      - name: Validate ASM against owned disposable Redis
+        env:
+          BLOODBANK_ASM: "false"
+          # Deliberately hostile ambient settings: the suite must ignore them.
+          ASM_TEST_REDIS_URL: redis://127.0.0.1:6379
+          ASM_REDIS_URL: redis://127.0.0.1:6379
+          TOOLING_REDIS_URL: redis://127.0.0.1:6379
+          REDIS_URL: redis://127.0.0.1:6379
+        run: python -m unittest discover -s services/agent-hooks/tests -p 'test_asm.py' -v
 
       - name: Platform bootstrap check
         # Pure file-presence validator; no Docker, no network.
