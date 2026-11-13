@@ -115,19 +115,21 @@ def _alive(pid: int, starttime: int) -> bool:
 
 
 def _fire(conn: Connection, scope: str, signal: str, h: dict,
-          live_key: str = "asm:live") -> dict | None:
+          live_key: str | None = None, *, prefix: str = "") -> dict | None:
     """Push a sweeper verdict through asm.lua and return the transition.
 
     Thin by design: the proposer lives in `asm.fire` so the sweeper and the
     surfaces that acknowledge a bell go through one code path into one
     arbiter.
     """
-    return asm.fire(conn, scope, signal, h, live_key)
+    return asm.fire(conn, scope, signal, h, live_key, prefix=prefix)
 
 
 def sweep_once(conn: Connection, *, now_ms: float | None = None,
-               live_key: str = "asm:live", discover: bool = True) -> dict:
+               live_key: str | None = None, discover: bool = True,
+               prefix: str = "") -> dict:
     """One tick. Returns a small summary for logging and tests."""
+    live_key = live_key if live_key is not None else f"{prefix}asm:live"
     now = now_ms if now_ms is not None else time.time() * 1000
     seen = stale = gone = reaped = found = 0
     transitions: list[dict] = []
@@ -153,11 +155,11 @@ def sweep_once(conn: Connection, *, now_ms: float | None = None,
                 "zellij_session": found_agent["session"],
                 "zellij_pane": found_agent["pane"],
                 "profile": found_agent["profile"], "last_role": "sweep:discover",
-            }, live_key)
+            }, live_key, prefix=prefix)
             found += 1
 
     for scope in conn.command("ZRANGE", live_key, "0", "-1") or []:
-        raw = conn.command("HGETALL", f"asm:a:{scope}")
+        raw = conn.command("HGETALL", f"{prefix}asm:a:{scope}")
         if not raw:
             # The hash TTL'd out but the index entry survived it. Drop the
             # pointer rather than let asmctl render a ghost row.
@@ -197,7 +199,7 @@ def sweep_once(conn: Connection, *, now_ms: float | None = None,
             observable = pid > 0
 
         if observable and (pid <= 0 or not _alive(pid, starttime)):
-            edge = _fire(conn, scope, "gone", h, live_key)
+            edge = _fire(conn, scope, "gone", h, live_key, prefix=prefix)
             gone += 1
             if edge:
                 transitions.append(edge)
@@ -207,12 +209,13 @@ def sweep_once(conn: Connection, *, now_ms: float | None = None,
             # Proven alive: keep the row warm so a long-running agent does not
             # expire out of the table mid-task. Only a real state change goes
             # through the arbiter; this is just a TTL touch.
-            for key in (f"asm:a:{scope}", f"asm:t:{scope}", f"asm:lane:{scope}"):
+            for key in (f"{prefix}asm:a:{scope}", f"{prefix}asm:t:{scope}",
+                        f"{prefix}asm:lane:{scope}"):
                 conn.command("EXPIRE", key, asm.TTL_SECONDS)
             conn.command("ZADD", live_key, "XX", "CH", str(int(now)), scope)
 
         if busy and state not in NEVER_STALE and (now - last_ms) > STALE_MS:
-            edge = _fire(conn, scope, "stale", h, live_key)
+            edge = _fire(conn, scope, "stale", h, live_key, prefix=prefix)
             stale += 1
             if edge:
                 transitions.append(edge)
@@ -222,7 +225,7 @@ def sweep_once(conn: Connection, *, now_ms: float | None = None,
                  str(int(now - asm.TTL_SECONDS * 1000)))
     # Liveness. Absent => asmctl and Holocene must not believe any row, because
     # `stale` and `gone` are only true while something is asking.
-    conn.command("SET", "asm:sweeper", f"{os.getpid()}:{boot_id()}", "EX", "60")
+    conn.command("SET", f"{prefix}asm:sweeper", f"{os.getpid()}:{boot_id()}", "EX", "60")
 
     return {"seen": seen, "stale": stale, "gone": gone, "reaped": reaped,
             "found": found, "transitions": transitions}
@@ -250,7 +253,7 @@ def _human(ms: float) -> str:
 
 
 def write_holocene_stat(conn: Connection, *, now_ms: float | None = None,
-                        live_key: str = "asm:live") -> int:
+                        live_key: str | None = None, prefix: str = "") -> int:
     """Publish the live agent board to the key Holocene reads.
 
     This is the payoff for an operator who is headless or away from the box: the
@@ -262,11 +265,12 @@ def write_holocene_stat(conn: Connection, *, now_ms: float | None = None,
     majority (70 of 71 on a cold start) is reported as one rollup line instead of
     seventy `unknown` cards -- a dashboard that shows everything shows nothing.
     """
+    live_key = live_key if live_key is not None else f"{prefix}asm:live"
     now = now_ms if now_ms is not None else time.time() * 1000
     items, discovered = [], 0
 
     for scope in conn.command("ZRANGE", live_key, "0", "-1") or []:
-        raw = conn.command("HGETALL", f"asm:a:{scope}")
+        raw = conn.command("HGETALL", f"{prefix}asm:a:{scope}")
         if not raw:
             continue
         h = {raw[i]: raw[i + 1] for i in range(0, len(raw), 2)}
@@ -334,20 +338,20 @@ def write_holocene_stat(conn: Connection, *, now_ms: float | None = None,
         "meta": {"source": "bloodbank-asm-sweeper",
                  "ttlSeconds": HOLOCENE_STAT_TTL},
     }
-    conn.command("SET", HOLOCENE_STAT_KEY,
+    conn.command("SET", f"{prefix}{HOLOCENE_STAT_KEY}",
                  json.dumps(payload, separators=(",", ":")),
                  "EX", str(HOLOCENE_STAT_TTL))
     return len(items)
 
 
-def run(log=None) -> dict:
+def run(log=None, *, prefix: str = "") -> dict:
     """One sweep with dispatch. Never raises -- a timer must not fail loudly."""
     try:
         with Connection(asm._redis_url(), timeout=3.0) as conn:
-            summary = sweep_once(conn)
+            summary = sweep_once(conn, prefix=prefix)
             # Best-effort: a dashboard write must never fail a sweep tick.
             try:
-                summary["holocene_items"] = write_holocene_stat(conn)
+                summary["holocene_items"] = write_holocene_stat(conn, prefix=prefix)
             except Exception as exc:                   # noqa: BLE001
                 if log:
                     log(f"holocene stat write failed: {exc!r}")

@@ -369,7 +369,8 @@ def _eval(conn: Connection, keys: list[str], args: list[object]) -> object:
 
 
 def fire(conn: Connection, scope: str, signal: str, h: dict,
-         live_key: str = "asm:live", seen_key: str = "asm:seen") -> dict | None:
+         live_key: str | None = None, seen_key: str | None = None, *,
+         prefix: str = "") -> dict | None:
     """Push one signal for an EXISTING scope through asm.lua. The transition, or None.
 
     The proposer entry point for everything that is not a hook: the sweeper's
@@ -380,9 +381,11 @@ def fire(conn: Connection, scope: str, signal: str, h: dict,
 
     `h` is the scope's current hash; its fields are carried straight back so an
     out-of-band signal cannot blank the identity that hooks established.
+    `prefix` namespaces every key and the transition channel. Explicit
+    live_key/seen_key overrides are complete names, retained for older callers.
     """
     zsess, zpane = h.get("zellij_session", ""), h.get("zellij_pane", "")
-    pane_idx = f"asm:idx:pane:{zsess}:{zpane}" if (zsess and zpane) else ""
+    pane_idx = f"{prefix}asm:idx:pane:{zsess}:{zpane}" if (zsess and zpane) else ""
     meta = {
         "cli": h.get("cli", ""), "pid": h.get("pid", ""),
         "starttime": h.get("starttime", ""), "cwd": h.get("cwd", ""),
@@ -397,8 +400,11 @@ def fire(conn: Connection, scope: str, signal: str, h: dict,
         "session_id": h.get("session_id", ""), "last_role": "",
         "profile": h.get("profile", ""),
     }
-    keys = [f"asm:a:{scope}", f"asm:t:{scope}", f"asm:lane:{scope}",
-            live_key, pane_idx, seen_key]
+    keys = [f"{prefix}asm:a:{scope}", f"{prefix}asm:t:{scope}",
+            f"{prefix}asm:lane:{scope}",
+            live_key if live_key is not None else f"{prefix}asm:live", pane_idx,
+            seen_key if seen_key is not None else f"{prefix}{SEEN_KEY}",
+            f"{prefix}asm:transitions"]
     args = [signal, TTL_SECONDS, "main", json.dumps(meta, separators=(",", ":")),
             LANE_GRACE_MS, ERR_GRACE_MS, ATTENTION_MS, STREAM_MAXLEN, scope]
     result = _eval(conn, keys, args)
@@ -411,7 +417,8 @@ def fire(conn: Connection, scope: str, signal: str, h: dict,
 
 
 def record(cli: str, ce_type: str | None, alert_kind: str | None,
-           payload: object, log=None, attention_kind: str | None = None) -> None:
+           payload: object, log=None, attention_kind: str | None = None, *,
+           prefix: str = "") -> None:
     """Fold one hook into the state machine. Never raises. Never blocks."""
     if os.environ.get("BLOODBANK_ASM", "true") != "true":
         return
@@ -450,10 +457,11 @@ def record(cli: str, ce_type: str | None, alert_kind: str | None,
         }
         # The pane is carried as a FIELD and a secondary index, never as
         # identity -- see resolve_scope().
-        pane_idx = f"asm:idx:pane:{zsess}:{zpane}" if (zsess and zpane) else ""
+        pane_idx = f"{prefix}asm:idx:pane:{zsess}:{zpane}" if (zsess and zpane) else ""
 
-        keys = [f"asm:a:{scope}", f"asm:t:{scope}", f"asm:lane:{scope}",
-                "asm:live", pane_idx, SEEN_KEY]
+        keys = [f"{prefix}asm:a:{scope}", f"{prefix}asm:t:{scope}",
+                f"{prefix}asm:lane:{scope}", f"{prefix}asm:live", pane_idx,
+                f"{prefix}{SEEN_KEY}", f"{prefix}asm:transitions"]
         args = [signal, TTL_SECONDS, _lane(signal, payload),
                 json.dumps(meta, separators=(",", ":")),
                 LANE_GRACE_MS, ERR_GRACE_MS, ATTENTION_MS, STREAM_MAXLEN, scope]

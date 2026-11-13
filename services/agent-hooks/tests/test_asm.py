@@ -1,13 +1,15 @@
 """Agent State Machine — the properties that must not regress.
 
-These run the REAL asm.lua against a live Redis under a throwaway key prefix,
-because the whole correctness argument of this design is "Redis serializes it",
-and a mock would test the mock. Skipped cleanly when no Redis is reachable.
+These run the REAL asm.lua against an owned, loopback-only Redis child and a
+unique key/channel namespace. redis-server is required: setup fails rather than
+skipping the Redis assertions or falling back to an external endpoint.
 """
 from __future__ import annotations
 
 import json
 import os
+import socket
+import subprocess
 import sys
 import threading
 import unittest
@@ -19,38 +21,113 @@ sys.path.insert(0, str(SERVICE_DIR))
 
 from core import agents, asm, board, sweep  # noqa: E402
 from core.resp import Connection           # noqa: E402
+from isolated_redis import DisposableRedis  # noqa: E402
 
-URL = os.environ.get("ASM_TEST_REDIS_URL", "redis://127.0.0.1:6379")
+# Import/discovery performs no I/O. These are assigned only after owned startup.
+URL: str | None = None
+PREFIX: str | None = None
 LUA = (SERVICE_DIR / "core" / "asm.lua").read_text()
-PREFIX = f"asmtest:{os.getpid()}"
+FORBIDDEN_CONNECTIONS: list[tuple] = []
+FORBIDDEN_DISPATCHES: list[dict] = []
 
 
-def _redis_available() -> bool:
-    try:
-        with Connection(URL, timeout=1.0) as conn:
-            return conn.command("PING") == "PONG"
-    except Exception:
-        return False
+def setUpModule():
+    global URL, PREFIX
+    connect = socket.create_connection
+
+    def owned_connection(address, *args, **kwargs):
+        host, port = address
+        process = DisposableRedis.active.get(port)
+        if host != "127.0.0.1" or process is None or process.poll() is not None:
+            FORBIDDEN_CONNECTIONS.append(address)
+            raise AssertionError(f"ASM tests refuse non-owned Redis endpoint: {address}")
+        return connect(address, *args, **kwargs)
+
+    guard = mock.patch("socket.create_connection", side_effect=owned_connection)
+    guard.start()
+    unittest.addModuleCleanup(guard.stop)
+
+    def no_external_attempts():
+        if FORBIDDEN_CONNECTIONS or FORBIDDEN_DISPATCHES:
+            raise AssertionError(
+                f"non-owned connection attempts: {FORBIDDEN_CONNECTIONS}; "
+                f"live dispatch attempts: {FORBIDDEN_DISPATCHES}")
+    unittest.addModuleCleanup(no_external_attempts)
+
+    def no_live_dispatch(transition, *_):
+        FORBIDDEN_DISPATCHES.append(transition)
+        raise AssertionError("ASM tests refuse live hook-hub dispatch")
+
+    dispatch_guard = mock.patch.object(asm, "dispatch", side_effect=no_live_dispatch)
+    dispatch_guard.start()
+    unittest.addModuleCleanup(dispatch_guard.stop)
+    redis = DisposableRedis()
+
+    def close_owned():
+        redis.close()  # Also runs when module setup fails.
+        if redis.process is not None:
+            assert redis.process.poll() is not None, "owned Redis child survived teardown"
+        if redis.directory is not None:
+            assert not Path(redis.directory.name).exists(), "Redis temporary data survived teardown"
+        print("ASM teardown: owned child reaped; temporary data removed", file=sys.stderr)
+
+    unittest.addModuleCleanup(close_owned)
+    redis.start()
+    URL, PREFIX = redis.url, redis.prefix
+    print(f"ASM disposable Redis pid={redis.process.pid} port={redis.port} namespace={PREFIX}",
+          file=sys.stderr)
+
+    def audit_namespace():
+        no_external_attempts()
+        with Connection(URL) as conn:
+            cursor = "0"
+            while True:
+                cursor, keys = conn.command("SCAN", cursor, "COUNT", "1000")
+                if any(not key.startswith(PREFIX) for key in keys):
+                    raise AssertionError(f"Redis keys escaped the test namespace: {keys}")
+                if cursor == "0":
+                    break
+        print("ASM namespace audit: no unprefixed keys; no external connections or dispatch",
+              file=sys.stderr)
+
+    unittest.addModuleCleanup(audit_namespace)
+    env = mock.patch.dict(os.environ, {
+        "BLOODBANK_ASM": "false", "ASM_REDIS_URL": URL,
+        "TOOLING_REDIS_URL": URL, "REDIS_URL": URL,
+    })
+    env.start()
+    unittest.addModuleCleanup(env.stop)
 
 
-@unittest.skipUnless(_redis_available(), "no Redis at ASM_TEST_REDIS_URL")
-class LuaArbiterTest(unittest.TestCase):
-    """The Lua is the serialization point; these are its invariants."""
-
+class RedisTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.scope = f"{PREFIX}:{self.id().rsplit('.', 1)[-1]}"
-        self.seen = f"asm:seen:{self.scope}"
-        self.keys = [f"asm:a:{self.scope}", f"asm:t:{self.scope}",
-                     f"asm:lane:{self.scope}", f"asm:live:{self.scope}", "",
-                     self.seen]
-        self._clean()
-
-    def tearDown(self) -> None:
+        self.prefix = f"{PREFIX}{self.id()}:"
+        self.scope = "test-scope"
+        self.live = f"{self.prefix}asm:live"
+        self.seen = f"{self.prefix}asm:seen"
+        self.channel = f"{self.prefix}asm:transitions"
+        self.keys = [f"{self.prefix}asm:a:{self.scope}",
+                     f"{self.prefix}asm:t:{self.scope}",
+                     f"{self.prefix}asm:lane:{self.scope}", self.live, "",
+                     self.seen, self.channel]
+        self.addCleanup(self._clean)
         self._clean()
 
     def _clean(self) -> None:
         with Connection(URL) as conn:
-            conn.command("DEL", *[k for k in self.keys if k])
+            cursor = "0"
+            keys = []
+            while True:
+                cursor, batch = conn.command("SCAN", cursor, "MATCH", f"{self.prefix}*")
+                keys.extend(batch)
+                if cursor == "0":
+                    break
+            if keys:
+                conn.command("DEL", *keys)
+
+
+class LuaArbiterTest(RedisTestCase):
+    """The Lua is the serialization point; these are its invariants."""
 
     def fire(self, signal: str, *, lane: str = "main", meta: dict | None = None,
              conn: Connection | None = None) -> object:
@@ -450,24 +527,8 @@ class IdentityLadderTest(unittest.TestCase):
         self.assertTrue(asm._failed({"error": "boom"}))
 
 
-@unittest.skipUnless(_redis_available(), "no Redis at ASM_TEST_REDIS_URL")
-class SweeperTest(unittest.TestCase):
+class SweeperTest(RedisTestCase):
     """`stale` and `gone` — the two states no event can ever produce."""
-
-    def setUp(self) -> None:
-        self.scope = f"{PREFIX}:sweep:{self.id().rsplit('.', 1)[-1]}"
-        self.live = f"asm:live:{self.scope}"
-        self.seen = f"asm:seen:{self.scope}"
-        self.keys = [f"asm:a:{self.scope}", f"asm:t:{self.scope}",
-                     f"asm:lane:{self.scope}", self.live, "", self.seen]
-        self._clean()
-
-    def tearDown(self) -> None:
-        self._clean()
-
-    def _clean(self) -> None:
-        with Connection(URL) as conn:
-            conn.command("DEL", *[k for k in self.keys if k])
 
     def seed(self, *signals: str, pid: int, starttime: int) -> None:
         meta = {"cli": "sweeptest", "pid": pid, "starttime": starttime,
@@ -491,7 +552,7 @@ class SweeperTest(unittest.TestCase):
         on the box into whichever live_key it is given, which would pollute an
         isolated test index with 70 rows."""
         with Connection(URL) as conn:
-            return sweep.sweep_once(conn, live_key=self.live, discover=discover)
+            return sweep.sweep_once(conn, live_key=self.live, discover=discover, prefix=self.prefix)
 
     def state(self) -> str:
         with Connection(URL) as conn:
@@ -535,7 +596,7 @@ class SweeperTest(unittest.TestCase):
                          "profile", "stopped-pm")
             with mock.patch.object(sweep, "gateway_pids",
                                    return_value={"stopped-pm": (0, 0)}):
-                summary = sweep.sweep_once(conn, live_key=self.live, discover=False)
+                summary = sweep.sweep_once(conn, live_key=self.live, discover=False, prefix=self.prefix)
         self.assertEqual(summary["gone"], 1)
         with Connection(URL) as conn:
             self.assertEqual(conn.command("EXISTS", self.keys[0]), 0)
@@ -547,7 +608,7 @@ class SweeperTest(unittest.TestCase):
             conn.command("HSET", self.keys[0], "basis", "agent-env",
                          "profile", "never-deployed-pm")
             with mock.patch.object(sweep, "gateway_pids", return_value={}):
-                summary = sweep.sweep_once(conn, live_key=self.live, discover=False)
+                summary = sweep.sweep_once(conn, live_key=self.live, discover=False, prefix=self.prefix)
         self.assertEqual(summary["gone"], 0)
         with Connection(URL) as conn:
             self.assertEqual(conn.command("EXISTS", self.keys[0]), 1)
@@ -562,7 +623,7 @@ class SweeperTest(unittest.TestCase):
                 sweep, "gateway_pids",
                 return_value={"live-pm": (me, asm.proc_stat(me)[2])},
             ):
-                summary = sweep.sweep_once(conn, live_key=self.live, discover=False)
+                summary = sweep.sweep_once(conn, live_key=self.live, discover=False, prefix=self.prefix)
         self.assertEqual(summary["gone"], 0)
         self.assertEqual(self.state(), "working")
 
@@ -628,9 +689,9 @@ class SweeperTest(unittest.TestCase):
         self.seed("prompt", pid=me, starttime=asm.proc_stat(me)[2])
         with Connection(URL) as conn:
             conn.command("ZADD", self.live, "1", self.scope)
-            count = sweep.write_holocene_stat(conn, live_key=self.live)
-            raw = conn.command("GET", sweep.HOLOCENE_STAT_KEY)
-            ttl = conn.command("TTL", sweep.HOLOCENE_STAT_KEY)
+            count = sweep.write_holocene_stat(conn, live_key=self.live, prefix=self.prefix)
+            raw = conn.command("GET", f"{self.prefix}{sweep.HOLOCENE_STAT_KEY}")
+            ttl = conn.command("TTL", f"{self.prefix}{sweep.HOLOCENE_STAT_KEY}")
         payload = json.loads(raw)
         self.assertEqual(payload["id"], "agent-state-machine")
         # normalizeSnapshot() in holocene/apps/api/src/tooling.ts accepts only
@@ -658,8 +719,8 @@ class SweeperTest(unittest.TestCase):
         self.seed("prompt", pid=me, starttime=asm.proc_stat(me)[2])
         with Connection(URL) as conn:
             conn.command("ZADD", self.live, "1", self.scope)
-            sweep.write_holocene_stat(conn, live_key=self.live)
-            payload = json.loads(conn.command("GET", sweep.HOLOCENE_STAT_KEY))
+            sweep.write_holocene_stat(conn, live_key=self.live, prefix=self.prefix)
+            payload = json.loads(conn.command("GET", f"{self.prefix}{sweep.HOLOCENE_STAT_KEY}"))
         self.assertEqual(payload["status"], "healthy")
 
     def test_severity_covers_every_state_the_machine_can_emit(self):
@@ -672,7 +733,7 @@ class SweeperTest(unittest.TestCase):
         """The hash TTL'd out but the index survived it."""
         with Connection(URL) as conn:
             conn.command("ZADD", self.live, "1", "no-such-scope")
-            summary = sweep.sweep_once(conn, live_key=self.live, discover=False)
+            summary = sweep.sweep_once(conn, live_key=self.live, discover=False, prefix=self.prefix)
             self.assertEqual(summary["reaped"], 1)
             self.assertIsNone(conn.command("ZSCORE", self.live, "no-such-scope"))
 
@@ -690,9 +751,9 @@ class SweeperTest(unittest.TestCase):
 
     def test_sweeper_publishes_its_own_liveness(self):
         with Connection(URL) as conn:
-            sweep.sweep_once(conn, live_key=self.live, discover=False)
-            self.assertTrue(conn.command("GET", "asm:sweeper"))
-            self.assertGreater(conn.command("TTL", "asm:sweeper"), 0)
+            sweep.sweep_once(conn, live_key=self.live, discover=False, prefix=self.prefix)
+            self.assertTrue(conn.command("GET", f"{self.prefix}asm:sweeper"))
+            self.assertGreater(conn.command("TTL", f"{self.prefix}asm:sweeper"), 0)
 
 
 class HermesIdentityTest(unittest.TestCase):
@@ -866,11 +927,18 @@ class BoardWalkUpTest(unittest.TestCase):
         self.assertEqual(a["board_id"], b["board_id"])
 
     def test_a_manifest_without_a_board_stops_the_walk(self):
-        """momo/ has a .project.json with no ticket_provider. It must resolve to
-        NO board, never silently inherit 33GOD's."""
-        if not Path("/home/delorenj/code/33GOD/momo/.project.json").is_file():
-            self.skipTest("momo manifest not present")
-        self.assertIsNone(board.board_for("/home/delorenj/code/33GOD/momo"))
+        """A child manifest without ticket_provider must not inherit a board."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child = root / "unbound"
+            child.mkdir()
+            (root / ".project.json").write_text(json.dumps({
+                "project_id": "parent", "ticket_provider": {"board_id": "parent-board"},
+            }))
+            (child / ".project.json").write_text(json.dumps({"project_id": "unbound"}))
+            self.assertEqual(board.board_for(root)["board_id"], "parent-board")
+            self.assertIsNone(board.board_for(child))
 
     def test_no_manifest_anywhere_is_none_not_an_error(self):
         self.assertIsNone(board.board_for("/tmp"))
@@ -888,12 +956,16 @@ class AgentDiscoveryTest(unittest.TestCase):
     """/proc is the live registry -- asm:live is not."""
 
     def test_discovery_finds_this_very_process_tree(self):
-        found = agents.discover()
-        self.assertTrue(found, "no agent processes found at all")
-        for a in found:
-            self.assertIn(a["cli"], agents.AGENT_COMMS)
-            self.assertGreater(a["pid"], 0)
-            self.assertTrue(a["scope"])
+        # CI need not have a coding agent installed. Exercise the real /proc
+        # walk with this owned Python process as the recognized comm instead.
+        comm = asm.proc_stat(os.getpid())[0]
+        with mock.patch.object(agents, "AGENT_COMMS", (*agents.AGENT_COMMS, comm)):
+            found = agents.discover()
+            self.assertIn(os.getpid(), [a["pid"] for a in found])
+            for a in found:
+                self.assertIn(a["cli"], agents.AGENT_COMMS)
+                self.assertGreater(a["pid"], 0)
+                self.assertTrue(a["scope"])
 
     def test_scope_matches_what_the_hook_itself_would_mint(self):
         """Discovery must join to ASM rows without a second convention."""
@@ -952,27 +1024,207 @@ class RecordFailOpenTest(unittest.TestCase):
 
     conftest.py disables the ASM for the whole suite so no test deposits a
     phantom agent into the live table. These tests re-enable it deliberately —
-    and point it at a dead port — so "fail-open" is actually exercised rather
-    than passing vacuously because the kill switch was on.
+    and inject a connection failure, without probing an unowned endpoint.
     """
 
     def test_record_swallows_an_unreachable_redis(self):
         with mock.patch.dict(os.environ, {
             "BLOODBANK_ASM": "true",
-            "ASM_REDIS_URL": "redis://127.0.0.1:1",   # nothing listens here
-        }):
+            "ASM_REDIS_URL": URL,
+        }), mock.patch.object(asm, "Connection", side_effect=ConnectionError("offline")) as connect:
             asm.record("claude", "bloodbank.conversation.turn.started",
-                       None, {"prompt": "x"})
+                       None, {"prompt": "x"}, prefix=PREFIX)
+            connect.assert_called_once_with(URL, timeout=asm.TIMEOUT)
 
     def test_record_ignores_an_unmapped_event_type(self):
         with mock.patch.dict(os.environ, {"BLOODBANK_ASM": "true",
-                                          "ASM_REDIS_URL": "redis://127.0.0.1:1"}):
+                                          "ASM_REDIS_URL": URL}):
             asm.record("claude", "bloodbank.nope.nope.nope", None, {})
 
     def test_record_is_a_noop_when_disabled(self):
         with mock.patch.dict(os.environ, {"BLOODBANK_ASM": "false"}):
             asm.record("claude", "bloodbank.conversation.turn.started",
                        None, {"prompt": "x"})
+
+
+class IsolationBoundaryTest(RedisTestCase):
+    def test_record_fire_and_sweep_never_escape_the_namespace(self):
+        h = {"cli": "test", "pid": 2**31 - 1, "starttime": 1,
+             "cwd": "/tmp", "zellij_session": "test-session", "zellij_pane": "1"}
+        with Connection(URL, timeout=0.05) as subscriber, Connection(URL) as conn:
+            subscriber.command("PSUBSCRIBE", "*")
+            with mock.patch.dict(os.environ, {
+                "BLOODBANK_ASM": "true", "ASM_REDIS_URL": URL,
+                "ZELLIJ_SESSION_NAME": "test-session", "ZELLIJ_PANE_ID": "1",
+            }), mock.patch.object(asm, "resolve_scope",
+                                  return_value=(self.scope, "sid", h["pid"], 1)), \
+                    mock.patch.object(asm, "dispatch") as dispatch:
+                asm.record("test", "bloodbank.conversation.turn.started", None,
+                           {}, prefix=self.prefix)
+                dispatch.assert_called_once()
+            self.assertEqual(conn.command("HGET", self.seen,
+                                          "test|bloodbank.conversation.turn.started"),
+                             conn.command("HGET", self.keys[0], "last_ms"))
+            asm.fire(conn, self.scope, "attention", h, prefix=self.prefix)
+            self.assertEqual(sweep.write_holocene_stat(conn, prefix=self.prefix), 1)
+            self.assertTrue(conn.command("GET", f"{self.prefix}{sweep.HOLOCENE_STAT_KEY}"))
+            self.assertEqual(conn.command("GET", f"{self.prefix}asm:idx:pane:test-session:1"),
+                             self.scope)
+            summary = sweep.sweep_once(conn, discover=False, prefix=self.prefix)
+            self.assertEqual(summary["gone"], 1)
+            self.assertTrue(conn.command("GET", f"{self.prefix}asm:sweeper"))
+            for _ in range(3):
+                message = subscriber.read_push()
+                self.assertEqual(message[:3], ["pmessage", "*", self.channel])
+            with self.assertRaises(socket.timeout):
+                subscriber.read_push()
+            # These are names on the DISPOSABLE instance, never production reads.
+            self.assertEqual(conn.command("EXISTS", "asm:live", "asm:seen",
+                                          "asm:sweeper", sweep.HOLOCENE_STAT_KEY,
+                                          f"asm:a:{self.scope}", f"asm:t:{self.scope}",
+                                          f"asm:lane:{self.scope}",
+                                          "asm:idx:pane:test-session:1"), 0)
+            cursor, keys = conn.command("SCAN", "0", "COUNT", "1000")
+            self.assertEqual(cursor, "0")
+            self.assertTrue(keys)
+            self.assertTrue(all(key.startswith(PREFIX) for key in keys), keys)
+
+    def test_discovery_and_run_namespace_all_sweeper_outputs(self):
+        found = {"scope": self.scope, "cli": "test", "pid": os.getpid(),
+                 "starttime": asm.proc_stat(os.getpid())[2], "cwd": "/tmp",
+                 "profile": "", "session": "test-session", "pane": "1"}
+        with mock.patch.object(sweep.agent_discovery, "discover", return_value=[found]), \
+                mock.patch.object(asm, "dispatch") as dispatch:
+            summary = sweep.run(prefix=self.prefix)
+        self.assertNotIn("error", summary)
+        self.assertEqual(summary["found"], 1)
+        dispatch.assert_not_called()  # Discovery is bookkeeping, not a live alert.
+        with Connection(URL) as conn:
+            self.assertEqual(conn.command("HGET", self.keys[0], "state"), "unknown")
+            self.assertTrue(conn.command("GET", f"{self.prefix}asm:sweeper"))
+            self.assertTrue(conn.command("GET", f"{self.prefix}{sweep.HOLOCENE_STAT_KEY}"))
+            self.assertEqual(conn.command("EXISTS", "asm:sweeper", "asm:live",
+                                          sweep.HOLOCENE_STAT_KEY, "asm:seen"), 0)
+
+    def test_legacy_lua_key_signatures_keep_the_namespaced_channel(self):
+        # Old installed callers may omit telemetry/channel keys. That must not
+        # redirect a namespaced state hash onto the live transition channel.
+        with Connection(URL, timeout=0.05) as subscriber, Connection(URL) as conn:
+            subscriber.command("PSUBSCRIBE", "*")
+            scope = "scope:asm:a:tail"
+            for count, signal in ((5, "prompt"), (6, "attention")):
+                keys = [f"{self.prefix}asm:a:{scope}",
+                        f"{self.prefix}asm:t:{scope}",
+                        f"{self.prefix}asm:lane:{scope}", *self.keys[3:count]]
+                result = conn.command(
+                    "EVAL", LUA, count, *keys,
+                    signal, 900, "main", json.dumps({"cli": "test"}),
+                    asm.LANE_GRACE_MS, asm.ERR_GRACE_MS, asm.ATTENTION_MS,
+                    500, scope,
+                )
+                self.assertTrue(result)
+                self.assertEqual(subscriber.read_push()[:3],
+                                 ["pmessage", "*", self.channel])
+            with self.assertRaises(socket.timeout):
+                subscriber.read_push()
+
+
+class IsolationFixtureTest(unittest.TestCase):
+    def test_success_teardown_reaps_process_and_temporary_data(self):
+        with DisposableRedis() as redis:
+            process, root = redis.process, Path(redis.directory.name)
+            self.assertNotEqual(redis.port, 6379)
+            self.assertTrue(redis.url.startswith(f"redis://127.0.0.1:{redis.port}/"))
+            self.assertIsNone(process.poll())
+            self.assertTrue(root.is_dir())
+        self.assertIsNotNone(process.poll())
+        self.assertFalse(root.exists())
+        self.assertNotIn(redis.port, DisposableRedis.active)
+        redis.close()  # Cleanup is idempotent.
+
+    def test_assertion_failure_still_tears_down(self):
+        redis = DisposableRedis()
+        with self.assertRaisesRegex(AssertionError, "test failure"):
+            with redis:
+                root = Path(redis.directory.name)
+                raise AssertionError("test failure")
+        self.assertIsNotNone(redis.process.poll())
+        self.assertFalse(root.exists())
+
+    def test_readiness_failure_reaps_child_without_fallback(self):
+        redis = DisposableRedis()
+        with mock.patch("isolated_redis.Connection") as connect:
+            with self.assertRaisesRegex(RuntimeError, "readiness timed out"):
+                redis.start(readiness_timeout=0)
+            connect.assert_not_called()
+        self.assertIsNotNone(redis.process.poll())
+        self.assertFalse(Path(redis.directory.name).exists())
+        self.assertNotIn(redis.port, DisposableRedis.active)
+
+    def test_spawn_failure_removes_temporary_data_without_fallback(self):
+        redis = DisposableRedis()
+        with mock.patch("isolated_redis.subprocess.Popen", side_effect=OSError("spawn failed")), \
+                mock.patch("isolated_redis.Connection") as connect:
+            with self.assertRaisesRegex(OSError, "spawn failed"):
+                redis.start()
+            connect.assert_not_called()
+        self.assertFalse(Path(redis.directory.name).exists())
+
+    def test_missing_binary_is_an_error_not_a_skip_or_external_probe(self):
+        code = """
+import socket, unittest
+from unittest import mock
+with mock.patch("shutil.which", return_value=None), \\
+     mock.patch("socket.create_connection", side_effect=AssertionError("external probe")) as connect:
+    suite = unittest.defaultTestLoader.discover("services/agent-hooks/tests", pattern="test_asm.py")
+    result = unittest.TestResult()
+    suite.run(result)
+    assert result.testsRun == 0, result.testsRun
+    assert len(result.errors) == 1, result.errors
+    assert "require redis-server" in result.errors[0][1], result.errors
+    assert not result.skipped, result.skipped
+    connect.assert_not_called()
+"""
+        self._child(code)
+
+    def test_import_and_discovery_ignore_hostile_ambient_urls(self):
+        code = """
+import unittest
+from unittest import mock
+with mock.patch("socket.create_connection", side_effect=AssertionError("import probe")) as connect, \\
+     mock.patch("subprocess.Popen", side_effect=AssertionError("import spawn")) as spawn:
+    suite = unittest.defaultTestLoader.discover("services/agent-hooks/tests", pattern="test_asm.py")
+    assert suite.countTestCases() > 50
+    connect.assert_not_called()
+    spawn.assert_not_called()
+"""
+        self._child(code)
+
+    def _child(self, code):
+        for url in ("redis://127.0.0.1:6379", "redis://192.0.2.1:1"):
+            with self.subTest(ambient=url):
+                env = {**os.environ, **dict.fromkeys(
+                    ("ASM_TEST_REDIS_URL", "ASM_REDIS_URL", "TOOLING_REDIS_URL", "REDIS_URL"),
+                    url)}
+                result = subprocess.run([sys.executable, "-c", code], env=env,
+                                        cwd=SERVICE_DIR.parent.parent,
+                                        capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_production_defaults_are_unchanged_without_network(self):
+        conn = mock.Mock()
+        with mock.patch.object(asm, "_eval", return_value=None) as evaluate:
+            asm.fire(conn, "scope", "prompt", {})
+        self.assertEqual(evaluate.call_args.args[1], [
+            "asm:a:scope", "asm:t:scope", "asm:lane:scope",
+            "asm:live", "", "asm:seen", "asm:transitions",
+        ])
+        conn.command.return_value = []
+        sweep.sweep_once(conn, discover=False)
+        self.assertTrue(any(call.args[:2] == ("SET", "asm:sweeper")
+                            for call in conn.command.call_args_list))
+        sweep.write_holocene_stat(conn)
+        self.assertEqual(conn.command.call_args.args[:2], ("SET", sweep.HOLOCENE_STAT_KEY))
 
 
 if __name__ == "__main__":

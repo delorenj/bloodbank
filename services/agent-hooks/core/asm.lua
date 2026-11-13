@@ -21,7 +21,6 @@ local lkey  = KEYS[3]   -- asm:lane:{scope}     ZSET   lane_id -> last_ms
 local live  = KEYS[4]   -- asm:live             ZSET   scope -> last_ms
 local pidx  = KEYS[5]   -- asm:idx:pane:{zs}:{p} STRING scope pointer
 local seen_key = KEYS[6]   -- asm:seen             HASH   (cli|type) -> last fired
-
 local sig        = ARGV[1]
 local ttl        = tonumber(ARGV[2])
 local lane       = ARGV[3]
@@ -31,6 +30,11 @@ local err_grace  = tonumber(ARGV[6])
 local att_ms     = tonumber(ARGV[7])
 local maxlen     = tonumber(ARGV[8])
 local scope      = ARGV[9]
+
+-- Older callers pass only five/six keys. Strip the known "asm:a:" + scope
+-- suffix, not a pattern that could mistake part of the scope for the prefix.
+local channel = KEYS[7] or
+  (string.sub(hkey, 1, #hkey - #'asm:a:' - #scope) .. 'asm:transitions')
 
 -- Server clock, so racing hooks from different processes share one timebase.
 -- Signals a SURFACE may send. A surface observes a human; it does not run the
@@ -388,7 +392,7 @@ local js = cjson.encode(tr)
 -- streams; EXPIRE alone leaves one hot scope unbounded.
 redis.call('XADD', tkey, 'MAXLEN', '~', maxlen, '*', 'j', js)
 redis.call('EXPIRE', tkey, ttl)
-redis.call('PUBLISH', 'asm:transitions', js)
+redis.call('PUBLISH', channel, js)
 
 -- Reap AFTER the edge has been recorded and published, so `->gone` still
 -- reaches its handlers on the way out.
