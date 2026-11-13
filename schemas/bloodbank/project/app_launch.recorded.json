@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://33god.dev/schemas/bloodbank/project/app_launch.recorded.json",
   "title": "Project App Launch Recorded Event (BB-34 candidate)",
-  "description": "First actual app._ready native startup per persisted installation and authoritative iOS bundle/version/final build; unknown channel never qualifies as TestFlight.",
+  "description": "First source-reported actual app._ready native startup per persisted installation and authoritative iOS bundle/version/final build. Verification is scoped to documented source-local checks and server release comparison, not remote authentication of an offline occurrence; see the TOLT-99 provenance clarification in docs/contracts/bb-34-tolt-producers.md. Unknown channel never qualifies as TestFlight.",
   "type": "object",
   "allOf": [
     {
@@ -74,7 +74,8 @@
           "const": "ios_bundle"
         },
         "final_native_identity_verified": {
-          "const": true
+          "const": true,
+          "description": "Originating native code read the actual installed iOS tuple; the normalizer matched it to trusted final-build evidence for the same manifest. Not intended/Linux identity, distribution proof or remote runtime authentication."
         },
         "channel": {
           "enum": [
@@ -120,16 +121,20 @@
         },
         "bundle_manifest_sha256": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Source hash of exact installed main-bundle Info.plist bytes; not an IPA/PCK hash or authentication. Publication requires a matching trusted final-artifact record using the same byte definition."
         },
         "installation_verified": {
-          "const": true
+          "const": true,
+          "description": "The originating client positively checked CSPRNG UUID4 persistence/readback under the reviewed-source telemetry policy. The backend does not prove remote persistence, CSPRNG origin, physical-device uniqueness or authenticity from the POST."
         },
         "bundle_verified": {
-          "const": true
+          "const": true,
+          "description": "Source read/hash of the running main-bundle manifest and automated server comparison with trusted exact final-artifact evidence succeeded. Hash syntax or a client assertion alone is insufficient; no remote installation authentication is claimed."
         },
         "native_boot_verified": {
-          "const": true
+          "const": true,
+          "description": "The reviewed source capture path ran at actual non-debug iOS app._ready/APP_START with native bridge metadata available. This occurrence/time remain client-observed under the explicit telemetry trust model, not independently authenticated by the backend."
         },
         "provenance": {
           "type": "object",
@@ -141,7 +146,8 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 300,
-              "pattern": "^(?:urn:|repo://)"
+              "pattern": "^(?:urn:|repo://)",
+              "description": "Logical durable provenance record retaining original observation, reviewed source-policy/check scopes and trusted release comparison. It must distinguish client-observed runtime from server-compared evidence; URI syntax is not proof."
             }
           },
           "required": [

@@ -46,7 +46,12 @@ hide older ineligible intents. Existing pending non-TestFlight rows become
 suppressed before any HTTP claim; eligible TestFlight rows retain normal gates,
 retry timing and dedup. There is no new clock or automatic suppression release.
 
-**Low-water delivery is unavailable in this candidate, regardless of flags.**
+**Without an explicitly configured per-episode ownership adapter, low-water
+delivery remains unavailable regardless of flags.** The source-only continuation
+in [LOWWATER.md](LOWWATER.md) defines a closed local-control protocol and offline
+import adapter; it is not installed or accepted. The default/installed path
+has no shared ownership directory and retains the unconditional hold below.
+
 Every canonically valid low-water input is persistently suppressed with
 `lowwater-owner-episode-gate-unavailable`, retaining its existing episode ID
 and immutable envelope. This includes a late first observation after cutover

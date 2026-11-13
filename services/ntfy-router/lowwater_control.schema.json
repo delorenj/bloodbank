@@ -1,0 +1,384 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:33god:control:tolt-lowwater:1",
+  "$defs": {
+    "barrier": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "bloodbank.tolt-lowwater-barrier/1"
+        },
+        "barrier_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "project_slug": {
+          "const": "tower-of-lost-things"
+        },
+        "pool_id": {
+          "const": "curated-plane-novel"
+        },
+        "destination": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "excluded_episode_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "uniqueItems": true,
+          "maxItems": 100000
+        }
+      },
+      "required": [
+        "schema",
+        "barrier_id",
+        "project_slug",
+        "pool_id",
+        "destination",
+        "excluded_episode_ids"
+      ],
+      "additionalProperties": false
+    },
+    "grant": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "bloodbank.tolt-lowwater-grant/1"
+        },
+        "grant_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "fence_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "barrier_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "admission_barrier_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "project_slug": {
+          "const": "tower-of-lost-things"
+        },
+        "pool_id": {
+          "const": "curated-plane-novel"
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "destination": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "observed_at": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "eligible_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "envelope_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "fence": {
+          "type": "object",
+          "properties": {
+            "owner": {
+              "const": "bloodbank"
+            },
+            "direct_state": {
+              "const": "pending"
+            },
+            "never_attempted": {
+              "const": true
+            },
+            "permanent": {
+              "const": true
+            }
+          },
+          "required": [
+            "owner",
+            "direct_state",
+            "never_attempted",
+            "permanent"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "grant_id",
+        "fence_id",
+        "barrier_id",
+        "admission_barrier_id",
+        "project_slug",
+        "pool_id",
+        "episode_id",
+        "event_id",
+        "destination",
+        "observed_at",
+        "eligible_count",
+        "envelope_sha256",
+        "fence"
+      ],
+      "additionalProperties": false
+    },
+    "publication": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "jetstream_puback",
+            "jetstream_readback"
+          ]
+        },
+        "stream": {
+          "const": "BLOODBANK_EVENTS"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "message_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "subject": {
+          "const": "bloodbank.evt.game.concept_pool.breached"
+        },
+        "envelope_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "kind",
+        "stream",
+        "sequence",
+        "message_id",
+        "subject",
+        "envelope_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "handoff": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "bloodbank.tolt-lowwater-handoff/1"
+        },
+        "grant": {
+          "$ref": "#/$defs/grant"
+        },
+        "envelope_body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144
+        },
+        "publication": {
+          "$ref": "#/$defs/publication"
+        }
+      },
+      "required": [
+        "schema",
+        "grant",
+        "envelope_body",
+        "publication"
+      ],
+      "additionalProperties": false
+    },
+    "ack": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "bloodbank.tolt-lowwater-ack/1"
+        },
+        "ack_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "grant_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "handoff_sha256": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "duplicate",
+            "rejected",
+            "conflict"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "durable_import": {
+          "type": "boolean"
+        },
+        "delivery_state": {
+          "enum": [
+            null,
+            "pending",
+            "sending",
+            "accepted",
+            "uncertain",
+            "exhausted",
+            "conflict",
+            "suppressed"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "ack_id",
+        "grant_id",
+        "event_id",
+        "handoff_sha256",
+        "status",
+        "reason",
+        "durable_import",
+        "delivery_state"
+      ],
+      "additionalProperties": false
+    },
+    "source_control": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "bloodbank.tolt-lowwater-source-control/1"
+        },
+        "admitted_barrier_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "direct_claims": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "owner": {
+          "enum": [
+            "direct",
+            "bloodbank"
+          ]
+        },
+        "grant": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/grant"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "admitted_barrier_id",
+        "episode_id",
+        "direct_claims",
+        "owner",
+        "grant"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "owner": {
+                "const": "bloodbank"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "grant": {
+                "$ref": "#/$defs/grant"
+              },
+              "direct_claims": {
+                "const": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "grant": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/barrier"
+    },
+    {
+      "$ref": "#/$defs/grant"
+    },
+    {
+      "$ref": "#/$defs/handoff"
+    },
+    {
+      "$ref": "#/$defs/ack"
+    },
+    {
+      "$ref": "#/$defs/source_control"
+    }
+  ]
+}
