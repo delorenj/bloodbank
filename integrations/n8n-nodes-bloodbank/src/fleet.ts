@@ -277,65 +277,75 @@ function ticketRef(facts: TicketFacts): string {
   return facts.title ? `${key} — ${JSON.stringify(facts.title)}` : key;
 }
 
-/** Grooming: enrich one existing ticket in place, and stamp that it happened. */
 /** Both lanes: how an agent may touch labels without clobbering the pipeline's. */
 const LABEL_RULES =
   '\nLabels: change them one at a time with the Plane tool\'s add/remove label ' +
   'actions; never rewrite the whole label list. `agent:working` belongs to the ' +
   'pipeline: it shows a turn is running on this ticket and is cleared ' +
-  'automatically when your turn ends. Never add or remove it yourself.\n';
+  'automatically when your turn ends. Never add or remove it yourself, and never ' +
+  'touch another lifecycle label except the ones this prompt names.\n';
 
+/** Triage (Krebs lifecycle v2): refine one Todo ticket in place and stamp it.
+ *
+ * The lane that sends this prompt is deterministic: it has already refused a
+ * ticket that carries `lifecycle:triaged` or a hold label, so this prompt never
+ * has to police those. It must still never change state or start the work.
+ * The function keeps its pre-v2 name (`groomingPrompt`) because callers import it.
+ */
 export function groomingPrompt(
   facts: TicketFacts,
   projectPath?: string,
   doneLabel = 'lifecycle:triaged',
 ): string {
   const stamp = doneLabel
-    ? `\nWhen the pass is complete, add the label \`${doneLabel}\` to the ticket. ` +
-      'That label is the pipeline\'s completion marker: downstream automation ' +
-      'treats a ticket in Todo carrying it as ready to be delegated, so add it ' +
-      'last and only if you actually finished the pass. If you had to stop and ' +
-      'ask a question instead, do not add it.\n'
+    ? `\nEnd the turn by adding the label \`${doneLabel}\` to the ticket, as the ` +
+      'LAST thing you do. That label is the pipeline\'s completion marker: ' +
+      'Krebs only dispatches a Todo ticket that carries it, so add it only if ' +
+      'you actually finished the triage, and do nothing after it.\n\n' +
+      'If you cannot finish because you need an answer from a person, do not add ' +
+      `\`${doneLabel}\`. Instead add the label \`lifecycle:needs-input\` and post ` +
+      'the question as a comment on the ticket, written so the person can answer ' +
+      'it in one reply. Then stop.\n'
     : '';
   return (
-    `Groom the ticket that was just created on the ${facts.repo || 'project'} board: ` +
+    `Triage the ticket that just entered Todo on the ${facts.repo || 'project'} board: ` +
     `${ticketRef(facts)}.\n` +
     `${whereThingsAre(facts, projectPath)}\n` +
-    'This is a GROOMING pass on one existing ticket. Improve that ticket in ' +
-    'place. Do NOT create, split, or decompose it into new tickets, and do not ' +
-    'change its state or work the task.\n\n' +
+    'This is a TRIAGE turn on one existing ticket. Refine that ticket in place: ' +
+    'acceptance criteria, scope and labels. Never change the ticket\'s state ' +
+    '(it stays in Todo; Krebs, not you, moves it to In Progress). Do NOT create, ' +
+    'split or decompose it into new tickets, and do not start or work the task.\n\n' +
     "Read the repo's `.project.json` and the board's own conventions, then look " +
     'at what is already in flight so this ticket agrees with its neighbours ' +
-    'rather than inventing a parallel vocabulary. Apply the 33GOD standards you ' +
-    'find there:\n' +
+    'rather than inventing a parallel vocabulary. Refine, using the standards ' +
+    'you find there:\n' +
+    '  - acceptance criteria: enumerated and testable, so a reader can say pass ' +
+    'or fail on each one without asking you\n' +
+    '  - scope: what is in, and what is explicitly out\n' +
     '  - labels, using the label names the board already uses\n' +
     '  - the exposure label, whose two names come from `.project.json` ' +
     '`activity_report.board.exposure_labels` (external -> the client\'s board, ' +
     'internal -> the client-admin board). Apply one ONLY when the ticket ' +
     'genuinely belongs in front of that audience; most tickets get neither, and ' +
     'neither is the default.\n' +
-    "  - cycle assignment per the board's cycle rules\n" +
-    '  - module attachment\n' +
-    '  - priority\n' +
-    "  - start date where the board's rules imply one\n\n" +
+    "  - cycle assignment, module attachment, priority and start date where the " +
+    "board's rules imply them\n\n" +
     'If the description is one thin sentence, expand it into something a person ' +
-    'who just walked in could act on — but keep the author\'s meaning and do not ' +
-    'invent scope or commitments. If you genuinely cannot tell what the ticket ' +
-    'means, comment asking for the detail you need instead of guessing.\n' +
+    'who just walked in could act on, but keep the author\'s meaning and do not ' +
+    'invent scope or commitments. If a ticket really is two pieces of work, say ' +
+    'so in a comment; the PM splits it, not you.\n' +
     stamp +
     LABEL_RULES +
     provenance(facts)
   );
 }
 
-/** Delegation: a groomed ticket in Todo becomes real work.
+/** Delegation (Krebs lifecycle v2): implement a ticket Krebs already started.
  *
- * Two lanes send this prompt: Ticket Delegation, when a person moves a ticket
- * into Todo, and Ticket Delegation — Groomed in Todo, when the grooming pass
- * finishes on a ticket that was created in Todo. Either can arrive after the
- * ticket moved on (both lanes can even fire for one ticket), so the agent's
- * first step is a live re-read that stops on a ticket that is no longer
- * available work.
+ * `krebs tick` is the only dispatcher: it has moved the ticket to In Progress
+ * and set `agent:working` before this prompt is sent. The n8n delegation lane
+ * only refuses safely (`not_triaged`, `hitl_blocked`) if something still fires it.
+ * `requiredLabel` is kept for signature compatibility with older callers.
  */
 export function delegationPrompt(
   facts: TicketFacts,
@@ -344,45 +354,40 @@ export function delegationPrompt(
 ): string {
   const recheck =
     'Before anything else, re-read the ticket live from Plane: its state, ' +
-    'assignees, labels and latest comments. This request may be older than the ' +
-    'ticket. If it is no longer in Todo, if it is already In Progress, or if ' +
-    'another worker already holds it (an assignee, or a comment saying a ' +
-    'worker has picked it up), stop: say so in your reply and change nothing. ' +
-    'The `agent:working` label alone is not a claim; the pipeline puts it on ' +
-    'for this very turn.\n\n';
+    'labels and latest comments. This request may be older than the ticket. If ' +
+    'it is no longer In Progress, if it carries a hold label ' +
+    '(`lifecycle:needs-input`, `lifecycle:blocked` or `agent:failed`), or if it ' +
+    'already carries `lifecycle:review`, stop: say so in your reply and change ' +
+    'nothing. The `agent:working` label alone is not a claim; the pipeline puts ' +
+    'it on for this very turn.\n\n';
   const gate = requiredLabel
-    ? `Then check the precondition: the ticket must carry the label ` +
-      `\`${requiredLabel}\`, which is how the grooming pass records that it ` +
-      'finished. If the label is absent, do the grooming pass yourself — labels, ' +
-      'module, priority, cycle, and a description someone who just walked in ' +
-      'could act on — add the label, and then continue here. Do not delegate a ' +
-      'ticket nobody has groomed.\n\n'
+    ? `The ticket should carry \`${requiredLabel}\` (triage finished). If it ` +
+      'does not, say so in a comment and stop; do not triage it yourself.\n\n'
     : '';
   return (
-    `${ticketRef(facts)} is in Todo on the ${facts.repo || 'project'} ` +
-    'board and ready to be delegated. Pick it up and get the work moving.\n' +
+    `${ticketRef(facts)} is on the ${facts.repo || 'project'} board and Krebs has ` +
+    'just dispatched it to you: it is ALREADY In Progress. Do not move it, and do ' +
+    'not change its state to start work. Implement it.\n' +
     `${whereThingsAre(facts, projectPath)}\n` +
     recheck +
     gate +
-    'Then decide what happens to it, in this order:\n' +
-    '  1. Judge readiness. Acceptance criteria have to be enumerated and ' +
-    'testable — a reader must be able to say pass or fail on each one without ' +
-    'asking you. If they are not, fix them before anything else.\n' +
-    '  2. Judge fit. If this ticket is genuinely two or more pieces of work, say ' +
-    'so in a comment and split it. Grooming is forbidden from splitting; you are ' +
-    'not.\n' +
-    '  3. Delegate the work to a worker agent. You are the PM: you hold the ' +
-    'roadmap and you do not write the code yourself. Give the worker the ticket ' +
-    'key, the checkout path, the board id, and the acceptance criteria verbatim.\n' +
-    '  4. Move the ticket to In Progress and set its start date to now. The ' +
-    'start date is when work actually begins, not when the ticket was filed, and ' +
-    'that transition is what tells the rest of the board this is claimed.\n' +
-    '  5. Leave the assignee empty. Work is claimed by state, not by assignment ' +
-    '— the pool model depends on it.\n\n' +
-    'If you cannot delegate it — blocked on a decision, on another ticket, or on ' +
-    'something only a person can answer — do not move it to In Progress. Say ' +
-    'what it is waiting on in a comment and move it to the state the board uses ' +
-    'for that, so it stops looking like available work.\n' +
+    'Then work it:\n' +
+    '  1. Read the acceptance criteria. They have to be enumerated and testable. ' +
+    'If one is ambiguous, ask in a comment (see waiting, below) rather than guess.\n' +
+    '  2. Do the work, to the criteria, in the repo checkout above. Leave the ' +
+    'assignee empty; work is claimed by state, not by assignment.\n' +
+    '  3. Hand back with evidence. Post a comment that proves each acceptance ' +
+    'criterion (commands run and their output, commit SHAs, links), then:\n' +
+    '     - if this scope requires review (the ticket needs a verdict from a ' +
+    'Launch Director or the PM), add the label `lifecycle:review`. The ticket ' +
+    'stays In Progress; the verdict giver moves it from there.\n' +
+    '     - otherwise close the ticket Done, with the evidence comment.\n\n' +
+    'Waiting: if you cannot proceed because you need an answer from a person, ' +
+    'add the label `lifecycle:needs-input` and post the question as a comment. ' +
+    'If you are waiting on another ticket or an outside dependency, add ' +
+    '`lifecycle:blocked` and say in a comment what it waits on (record a ' +
+    'blocking ticket as a Plane relation). Never change lanes to signal waiting: ' +
+    'the ticket stays In Progress and the label frees the slot.\n' +
     LABEL_RULES +
     provenance(facts)
   );

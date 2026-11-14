@@ -689,7 +689,7 @@ function recovery(input: RecoveryInput): { action: RecoveryAction; hint: string 
   const retryUrl = `${originOf(input.executionUrl) || DEFAULT_N8N_BASE}/api/v1/executions/${input.executionId}/retry`;
   const retry = `Retry: POST ${retryUrl} (works only while the run data exists, ~7h).`;
   const bounce = input.ticketKey
-    ? `Or requeue: px move ${input.ticketKey} Backlog -m "lane failed (execution ${input.executionId})" && px move ${input.ticketKey} Todo.`
+    ? `Or requeue: drop agent:failed (held tickets are skipped), then px move ${input.ticketKey} Backlog -m "lane failed (execution ${input.executionId})" && px move ${input.ticketKey} Todo (a lifecycle:triaged ticket skips triage and waits for krebs tick).`
     : '';
   const wait = klass.retry_after_seconds ? ` Wait ${klass.retry_after_seconds}s first (Retry-After).` : '';
   const done = (action: RecoveryAction, ...parts: string[]) => ({

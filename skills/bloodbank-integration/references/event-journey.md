@@ -120,7 +120,8 @@ bloodbank.evt.agent.invocation.completed (reason ticket-grooming, phase Todo)
   │                  ticket_id, board_id, workspace, title, phase, …}
   └─ Skipped → bloodbank.evt.agent.invocation.skipped
        data {reason, skip_code: provider_event_guard|phase_guard|ineligible|
-             invalid_policy|fenced|no_route, target_agent_id|null, context{…}}
+             invalid_policy|fenced|no_route|already_triaged|held|
+             not_triaged|hitl_blocked, target_agent_id|null, context{…}}
 ```
 
 A skip is a fact on the bus, not a silent green execution: "why did nobody

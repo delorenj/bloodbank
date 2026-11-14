@@ -31,6 +31,9 @@ import { hermesRegistryPath, loadHermesRegistry } from '../../registry';
 const INVOCATION_COMMAND_TYPE = 'bloodbank.agent.invocation.start';
 const INVOCATION_SKIPPED_TYPE = 'bloodbank.agent.invocation.skipped';
 const GROOMED_LABEL = 'lifecycle:triaged';
+/** Krebs lifecycle v2 hold labels: a ticket carrying one is waiting on a person,
+ *  a blocker or a failure, and no lane may start a turn on it. */
+export const HOLD_LABELS = ['lifecycle:needs-input', 'lifecycle:blocked', 'agent:failed'] as const;
 const FLEET_SOURCE = 'urn:33god:integration:n8n:agent-fleet';
 const LANE_ERROR_SERVICE = 'n8n-lifecycle-lane-errors';
 
@@ -40,7 +43,16 @@ export type SkipCode =
   | 'ineligible'
   | 'invalid_policy'
   | 'fenced'
-  | 'no_route';
+  | 'no_route'
+  | 'already_triaged'
+  | 'held'
+  | 'not_triaged'
+  | 'hitl_blocked';
+
+/** The hold labels a ticket carries, in canonical order (labels are lowercased). */
+export function heldBy(labels: readonly string[]): string[] {
+  return HOLD_LABELS.filter((label) => labels.includes(label));
+}
 
 function nonblank(value: unknown, name: string): string {
   if (typeof value !== 'string' || !value.trim()) {
@@ -419,6 +431,15 @@ export class Fleet implements INodeType {
           'Comma-separated state names, case-insensitive. The item is skipped unless the ticket landed in one of them. The item carries the state name only (data.phase), so a state group such as unstarted matches only a state literally named that. Clear to accept any phase.',
       },
       {
+        displayName: 'Only When Phase Is',
+        name: 'phaseGuard',
+        type: 'string',
+        default: '',
+        displayOptions: { show: { operation: ['groomTicket'] } },
+        description:
+          'Triage lane: comma-separated state names, case-insensitive (Todo for the Krebs triage lane). The item is skipped unless the ticket landed in one of them. Empty accepts any phase, which is how workflows saved before 0.9.0 behave.',
+      },
+      {
         displayName: 'Only When Provider Event Is',
         name: 'providerEventGuard',
         type: 'multiOptions',
@@ -459,7 +480,7 @@ export class Fleet implements INodeType {
         'Provider provenance the guard above checks, e.g. plane.ticket.created',
       ),
       mapping('Phase', 'phase', '={{ $json.data?.phase }}', 'State the ticket landed in', {
-        displayOptions: { show: { operation: ['delegateTicket'] } },
+        displayOptions: { show: { operation: ['delegateTicket', 'groomTicket'] } },
       }),
       mapping(
         'Correlation ID',
@@ -581,7 +602,7 @@ export class Fleet implements INodeType {
           title: pick('title', 'title', lifted.title),
           workspace: pick('workspace', 'workspace', lifted.workspace),
           providerEventType: pick('providerEventType', 'providerEventType', lifted.providerEventType),
-          phase: operation === 'delegateTicket' ? pick('phase', 'phase', lifted.phase) : lifted.phase,
+          phase: operation === 'delegateTicket' || operation === 'groomTicket' ? pick('phase', 'phase', lifted.phase) : lifted.phase,
         };
         const correlationId =
           mapped('correlationId') ||
@@ -683,11 +704,42 @@ export class Fleet implements INodeType {
           }
         }
 
-        if (operation === 'delegateTicket') {
+        if (operation === 'delegateTicket' || operation === 'groomTicket') {
           const phaseGuard = splitList(this.getNodeParameter('phaseGuard', i, ''));
           if (phaseGuard.length && !matchesAny(facts.phase, phaseGuard)) {
             await skip('phase_guard', `phase is ${facts.phase || '(none)'}, not ${phaseGuard.join(' or ')}`);
             continue;
+          }
+        }
+
+        // Krebs lifecycle v2 code gates. These are deterministic and live here,
+        // not in prompt text: a held or out-of-order ticket never reaches an agent.
+        // Labels are lowercased by ticketFactsFromEnvelope. A hold label is
+        // checked first: it explains the ticket better than a missing stamp does.
+        if (operation === 'groomTicket' || operation === 'delegateTicket') {
+          const holds = heldBy(facts.labels);
+          const triaged = facts.labels.includes(GROOMED_LABEL);
+          if (operation === 'groomTicket') {
+            if (holds.length) {
+              await skip('held', `ticket carries hold label ${holds.join(', ')}; triage waits for it to be cleared`);
+              continue;
+            }
+            if (triaged) {
+              await skip('already_triaged', `ticket already carries ${GROOMED_LABEL}`);
+              continue;
+            }
+          } else {
+            if (holds.length) {
+              await skip(
+                'hitl_blocked',
+                `ticket carries hold label ${holds.join(', ')}; delegation is refused until it is cleared`,
+              );
+              continue;
+            }
+            if (!triaged) {
+              await skip('not_triaged', `ticket does not carry ${GROOMED_LABEL}; krebs dispatches triaged tickets only`);
+              continue;
+            }
           }
         }
 

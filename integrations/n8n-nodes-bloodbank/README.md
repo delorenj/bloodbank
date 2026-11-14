@@ -385,11 +385,15 @@ machine-readable `code` and a readable `reason`:
 | `code` | Meaning |
 | --- | --- |
 | `provider_event_guard` | `data.provider_event_type` is not one of Only When Provider Event Is — or is absent while the guard is set (the guard is strict) |
-| `phase_guard` | Delegate Ticket: the ticket landed outside Only When Phase Is |
+| `phase_guard` | Groom (triage) or Delegate Ticket: the ticket landed outside Only When Phase Is (0.9.0: Groom Ticket gains the guard, default empty; the Krebs Ticket Triage lane sets it to `Todo`) |
 | `ineligible` | The owning agent exists but its registry row refuses (explicit `bloodbank.enabled: false`, wrong `gateway_scope`, `target_agent_id` mismatch, no `profile_name`) |
 | `invalid_policy` | `bloodbank.enabled` is present but not a YAML boolean |
 | `fenced` | The repo's `.project.json` puts execution under Krebs (`execution.mode` other than `legacy`) |
 | `no_route` | No agent owns the board |
+| `held` | Groom Ticket (triage): the ticket carries a hold label (`lifecycle:needs-input`, `lifecycle:blocked`, `agent:failed`). Krebs lifecycle v2, 0.9.0 |
+| `already_triaged` | Groom Ticket (triage): the ticket already carries `lifecycle:triaged` |
+| `hitl_blocked` | Delegate Ticket: a hold label is present. Delegation is driven by `krebs tick`; this path only refuses safely |
+| `not_triaged` | Delegate Ticket: the ticket lacks `lifecycle:triaged` |
 | `error` | Only with Continue On Fail: the item errored |
 
 Every skip also publishes **`bloodbank.agent.invocation.skipped`** (schema

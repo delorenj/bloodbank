@@ -37,9 +37,13 @@
             "ineligible",
             "invalid_policy",
             "fenced",
-            "no_route"
+            "no_route",
+            "already_triaged",
+            "held",
+            "not_triaged",
+            "hitl_blocked"
           ],
-          "description": "Machine-readable skip class. provider_event_guard and phase_guard are filters the workflow asked for; ineligible, invalid_policy and fenced are registry or manifest policy; no_route means no agent owns the board."
+          "description": "Machine-readable skip class. provider_event_guard and phase_guard are filters the workflow asked for; ineligible, invalid_policy and fenced are registry or manifest policy; no_route means no agent owns the board; already_triaged and held are triage-lane gates (the ticket carries lifecycle:triaged, or a hold label: lifecycle:needs-input, lifecycle:blocked, agent:failed); not_triaged and hitl_blocked are the delegation-lane gates (no lifecycle:triaged, or a hold label present)."
         },
         "operation": {
           "type": ["string", "null"],

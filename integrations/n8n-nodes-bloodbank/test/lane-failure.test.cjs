@@ -941,6 +941,8 @@ test('a redelivered groom/delegate command is byte-identical whatever the regist
     },
   };
   for (const operation of ['groomTicket', 'delegateTicket']) {
+    // Krebs v2 gates: delegation needs lifecycle:triaged, triage refuses it.
+    causing.data.labels = operation === 'delegateTicket' ? ['lifecycle:triaged'] : [];
     const digests = new Set();
     for (const [label, registry] of Object.entries(registries)) {
       const registryFile = await tempRegistry(t, registry);

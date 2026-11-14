@@ -82,7 +82,22 @@ const MOVED_TO_TODO = envelope({
   provider_event_type: 'plane.ticket.transitioned',
   previous_phase: 'Backlog',
   phase: 'Todo',
+  labels: ['lifecycle:triaged'],
 });
+
+/** A Todo transition carrying the given labels, for the lifecycle v2 gates. */
+const TODO_UNTRIAGED = (labels = []) =>
+  envelope({
+    repo: 'james-brennan',
+    board_id: BOARD,
+    ticket_key: 'JIMB-273',
+    title: 'Wire the delegation lane',
+    workspace: 'automaticai',
+    provider_event_type: 'plane.ticket.transitioned',
+    previous_phase: 'Backlog',
+    phase: 'Todo',
+    labels,
+  });
 
 async function tempDir(t, prefix) {
   const dir = await mkdtemp(join(__dirname, '..', 'node_modules', prefix));
@@ -316,8 +331,13 @@ test('the grooming prompt carries the two facts an agent cannot derive', () => {
   assert.match(prompt, /Repo checkout: \/home\/delorenj\/code\/james-brennan/);
   assert.match(prompt, new RegExp(`Plane board id: ${BOARD}`));
   assert.match(prompt, /project_id/);
-  assert.match(prompt, /do NOT create, split, or decompose/i);
+  assert.match(prompt, /do NOT create, split or decompose/i);
+  assert.match(prompt, /Never change the ticket's state/);
+  assert.match(prompt, /LAST thing you do/);
   assert.match(prompt, /lifecycle:triaged/);
+  assert.match(prompt, /lifecycle:needs-input/);
+  assert.match(prompt, /post\s+the question as a comment/);
+  assert.doesNotMatch(prompt, /GROOMING|Groom the ticket/);
 });
 
 test('the grooming prompt stamps nothing when the completion label is cleared', () => {
@@ -342,14 +362,18 @@ test('both lanes tell the agent agent:working is pipeline-owned and labels chang
   }
 });
 
-test('the delegation prompt gates on the groomed label and states the board rules', () => {
+test('the delegation prompt hands back by label and never moves the ticket', () => {
   const prompt = delegationPrompt(ticketFactsFromEnvelope(MOVED_TO_TODO), '/home/delorenj/code/james-brennan');
   assert.match(prompt, /lifecycle:triaged/);
-  assert.match(prompt, /Do not delegate a ticket nobody has groomed/);
-  assert.match(prompt, /In Progress/);
-  assert.match(prompt, /start date/);
+  assert.match(prompt, /ALREADY In Progress/);
+  assert.match(prompt, /Do not move it/);
+  assert.match(prompt, /lifecycle:review/);
+  assert.match(prompt, /close the ticket Done, with the evidence comment/);
+  assert.match(prompt, /lifecycle:needs-input/);
+  assert.match(prompt, /lifecycle:blocked/);
+  assert.match(prompt, /Never change lanes/);
   assert.match(prompt, /assignee empty/);
-  assert.match(prompt, /you do not write the code yourself/);
+  assert.doesNotMatch(prompt, /Move the ticket to In Progress|you do not write the code yourself/);
 });
 
 // ---------------------------------------------------------------------------
@@ -406,27 +430,83 @@ test('delegate fires on a transition into Todo', async (t) => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0].data.context.reason, 'ticket-delegation');
   assert.equal(calls[0].data.context.previous_phase, 'Backlog');
-  assert.match(calls[0].data.prompt, /is in Todo on the james-brennan board and ready to be delegated/);
+  assert.match(calls[0].data.prompt, /Krebs has just dispatched it to you: it is ALREADY In Progress/);
   assert.equal(dispatched[0].json.invoked, true);
 });
 
-test('the delegation prompt is true for both lanes and re-reads the ticket before it acts', () => {
-  // Two lanes send it: a person moving a ticket into Todo, and a grooming pass
-  // finishing on a ticket created in Todo. Neither may assume "a human promoted".
+test('the delegation prompt re-reads the ticket before it acts', () => {
   const prompt = delegationPrompt(ticketFactsFromEnvelope(MOVED_TO_TODO), '');
-  assert.doesNotMatch(prompt, /has moved into Todo|promoted/);
   assert.match(prompt, /re-read the ticket live from Plane/);
-  assert.match(prompt, /no longer in Todo/);
-  assert.match(prompt, /already In Progress/);
-  assert.match(prompt, /another worker already holds it/);
+  assert.match(prompt, /no longer In Progress/);
+  assert.match(prompt, /hold label/);
   assert.match(prompt, /stop: say so in your reply and change nothing/);
   // The chip labels the ticket agent:working for the delegation turn itself.
   assert.match(prompt, /`agent:working` label alone is not a claim/);
-  // The live re-read comes before the groomed-label gate and the delegation steps.
   const recheck = prompt.indexOf('re-read the ticket live');
-  assert.ok(recheck >= 0 && recheck < prompt.indexOf('check the precondition'));
-  assert.ok(recheck < prompt.indexOf('1. Judge readiness'));
+  assert.ok(recheck >= 0 && recheck < prompt.indexOf('should carry'));
+  assert.ok(recheck < prompt.indexOf('1. Read the acceptance criteria'));
 });
+
+// ---------------------------------------------------------------------------
+// Krebs lifecycle v2 code gates
+// ---------------------------------------------------------------------------
+
+test('triage: a Todo ticket that is not yet triaged is dispatched, phase guard Todo', async (t) => {
+  const { dispatched, rec } = await run(t, { operation: 'groomTicket', phaseGuard: 'Todo' }, [
+    { json: TODO_UNTRIAGED(['repo:game']) },
+  ]);
+  assert.equal(rec.commands().length, 1);
+  assert.equal(dispatched[0].json.invoked, true);
+});
+
+test('triage: a Backlog ticket is skipped by the Todo phase guard', async (t) => {
+  const { skipped, rec } = await run(t, { operation: 'groomTicket', phaseGuard: 'Todo' }, [{ json: CREATED }]);
+  assert.equal(rec.commands().length, 0);
+  assert.equal(skipped[0].json.code, 'phase_guard');
+});
+
+test('triage: lifecycle:triaged skips with already_triaged and publishes the skip event', async (t) => {
+  const { skipped, rec } = await run(t, { operation: 'groomTicket', phaseGuard: 'Todo' }, [
+    { json: TODO_UNTRIAGED(['Lifecycle:Triaged']) },
+  ]);
+  assert.equal(rec.commands().length, 0);
+  assert.equal(skipped[0].json.code, 'already_triaged');
+  assert.equal(rec.skips().length, 1);
+  assert.equal(rec.skips()[0].data.skip_code, 'already_triaged');
+});
+
+for (const hold of ['lifecycle:needs-input', 'lifecycle:blocked', 'agent:failed']) {
+  test(`triage: ${hold} skips with held`, async (t) => {
+    const { skipped, rec } = await run(t, { operation: 'groomTicket', phaseGuard: 'Todo' }, [
+      { json: TODO_UNTRIAGED([hold]) },
+    ]);
+    assert.equal(rec.commands().length, 0);
+    assert.equal(skipped[0].json.code, 'held');
+    assert.equal(rec.skips()[0].data.skip_code, 'held');
+  });
+
+  test(`delegation: ${hold} is refused with hitl_blocked`, async (t) => {
+    const { skipped, rec } = await run(t, { operation: 'delegateTicket' }, [
+      { json: TODO_UNTRIAGED(['lifecycle:triaged', hold]) },
+    ]);
+    assert.equal(rec.commands().length, 0);
+    assert.equal(skipped[0].json.code, 'hitl_blocked');
+    assert.equal(rec.skips()[0].data.skip_code, 'hitl_blocked');
+  });
+}
+
+test('delegation: a ticket without lifecycle:triaged is refused with not_triaged', async (t) => {
+  const { skipped, rec } = await run(t, { operation: 'delegateTicket' }, [{ json: TODO_UNTRIAGED(['repo:game']) }]);
+  assert.equal(rec.commands().length, 0);
+  assert.equal(skipped[0].json.code, 'not_triaged');
+});
+
+test('delegation: a triaged, unheld ticket still dispatches', async (t) => {
+  const { dispatched, rec } = await run(t, { operation: 'delegateTicket' }, [{ json: MOVED_TO_TODO }]);
+  assert.equal(rec.commands().length, 1);
+  assert.equal(dispatched[0].json.invoked, true);
+});
+
 
 test('invoke sends the caller prompt verbatim', async (t) => {
   const { rec } = await run(t, { operation: 'invoke', prompt: 'Report the current cycle.' }, [{ json: CREATED }]);
