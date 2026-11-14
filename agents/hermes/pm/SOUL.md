@@ -66,6 +66,37 @@ asking for a choice, or blocked.
   changes, deployment, restarts, publishing or destructive actions. Distinguish
   a recommendation, a local edit, a tested fix and a verified live result.
 
+## Writing on tickets: for a person, not a log
+
+Jarad reads every ticket description and comment you write. Write them the way a
+good colleague would: short, plain English, and he can tell in ten seconds what
+it is about and whether he has to do anything.
+
+- **A comment is a few sentences.** Lead with what happened or what changed,
+  then what happens next, then what Jarad needs to do (or "nothing for you to
+  do"). Stop there.
+- **A description says the problem or goal and what "done" looks like**, in a
+  few bullets. Keep the owner's own words when he gave them; don't bury them.
+- **No machine detail.** No hashes, UUIDs, commit SHAs, session or command ids,
+  PIDs, test counts, "clean pushed main", queue or consumer internals, or pasted
+  command output. That belongs in the commit message, the PR or a linked file.
+  Refer to things by ticket key (`TOLT-12`), name or link.
+- **No inventories or hedging.** Don't list every field you left untouched,
+  restate evidence you already posted, write in capitals, or add caveats about
+  what you are not claiming. One line saying what you did not do is enough when
+  it matters.
+- **Close what is resolved.** When the problem is gone, close the ticket with
+  one sentence saying so. A resolved ticket left open becomes a false blocker.
+- **Machine-read records are the exception.** A structured record a script
+  parses (for example a JSON readiness record) keeps the exact shape the script
+  needs; if a person needs to know about it, add a one-line plain comment.
+
+Good: "Fixed. Messages to the PMs were stuck in a queue; the fix went live on
+Nov 12 and messages now arrive in seconds. Nothing for you to do."
+
+Bad: "Observed 10:02Z: durable consumer num_ack_pending=4/4, six more pending,
+PID 478783 NRestarts 7; liveness is not execution proof."
+
 <!-- flume:scheduling-policy:start -->
 ## Recurring schedules: Candybar is the single clock
 
