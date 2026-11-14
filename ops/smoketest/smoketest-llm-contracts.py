@@ -66,6 +66,22 @@ def usage_payload() -> dict:
     }
 
 
+def attribution_payload(**changes) -> dict:
+    """data.attribution as the exporter reads it from a Genesis bot's ledger row."""
+    return {
+        "group": "genesis",
+        "user_id": 10,
+        "channel_id": 55,
+        "family": "automaticai/genesis/auto",
+        "upstream_cost_usd": 0.00123,
+        "cost_source": "openrouter_usage_cost",
+        "billed_quota": 615,
+        "group_ratio": 1,
+        "upstream_request_id": "gen-1792000000-AbCdEf",
+        **changes,
+    }
+
+
 def allowance_payload() -> dict:
     return {
         "schema_version": 1,
@@ -205,6 +221,62 @@ class LLMContractTests(unittest.TestCase):
             with self.subTest(billing=billing):
                 with self.assertRaises(EnvelopeInvalid):
                     validate_envelope(usage_envelope(**{"data.billing_class": billing}))
+
+    def test_usage_old_event_without_attribution_validates(self) -> None:
+        env = usage_envelope()
+        self.assertNotIn("attribution", env["data"])
+        validate_envelope(env)
+
+    def test_usage_attributed_genesis_event_validates(self) -> None:
+        validate_envelope(usage_envelope(**{
+            "data.provider": "openrouter",
+            "data.account_id": "openrouter-genesis",
+            "data.billing_class": "metered",
+            "data.route": "automaticai/openrouter-genesis/deepseek-v4",
+            "data.attribution": attribution_payload(),
+        }))
+
+    def test_usage_attribution_accepts_all_nulls(self) -> None:
+        nulls = {key: None for key in attribution_payload()}
+        validate_envelope(usage_envelope(**{"data.attribution": nulls}))
+
+    def test_usage_attribution_requires_every_key(self) -> None:
+        for key in attribution_payload():
+            with self.subTest(key=key):
+                partial = attribution_payload()
+                del partial[key]
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(usage_envelope(**{"data.attribution": partial}))
+
+    def test_usage_attribution_rejects_invalid_values(self) -> None:
+        bad = {
+            "group": ("", "x" * 65, 7),
+            "user_id": (0, -1, "10", 1.5, True),
+            "channel_id": (0, "55"),
+            "family": ("genesis/auto", "automaticai/Genesis", ""),
+            "upstream_cost_usd": (-0.01, "0.0012", True),
+            "cost_source": ("OpenRouter", "", "has space"),
+            "billed_quota": (-1, 1.5, "781"),
+            "group_ratio": (-1, "1"),
+            "upstream_request_id": ("", "x" * 201, 5),
+        }
+        for key, values in bad.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    with self.assertRaises(EnvelopeInvalid):
+                        validate_envelope(usage_envelope(**{"data.attribution": attribution_payload(**{key: value})}))
+
+    def test_usage_attribution_refuses_unrequested_fields(self) -> None:
+        for extra in ("prompt_sha256", "user_prompt_sha256", "credential", "username"):
+            with self.subTest(extra=extra):
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(usage_envelope(**{"data.attribution": attribution_payload(**{extra: "x"})}))
+
+    def test_usage_attribution_must_be_an_object(self) -> None:
+        for value in (None, [], "genesis", 1):
+            with self.subTest(value=value):
+                with self.assertRaises(EnvelopeInvalid):
+                    validate_envelope(usage_envelope(**{"data.attribution": value}))
 
     def test_allowance_validates(self) -> None:
         validate_envelope(allowance_envelope())
