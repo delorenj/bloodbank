@@ -377,19 +377,25 @@ export function delegationPrompt(
     '  2. Do the work, to the criteria, in the repo checkout above. Leave the ' +
     'assignee empty; work is claimed by state, not by assignment.\n' +
     '  3. Land it before you hand back. Work that exists only on this disk is ' +
-    'lost work. Commit everything this ticket produced (code, tests, docs and ' +
-    'evidence files) by explicit path, never `git add -A`; rebase onto ' +
-    'origin/main and push to main (Jarad gave standing approval for merges: ' +
-    'zero users, so never park a merge for him). If you worked in a git ' +
-    'worktree or a side branch, merge it into main, push, then remove the ' +
-    'worktree and delete the branch. If the work cannot land yet (a review ' +
-    'still has to pass, or it is unfinished), push the branch to origin and ' +
-    'name it in the handback comment; never leave a commit, a dirty file or a ' +
-    'worktree only on this machine. Every other repo a command of yours wrote ' +
-    'to is yours to land too. Finally run `git unpushed` and fix whatever it ' +
-    'lists for the paths you touched.\n' +
+    'lost work. Always land on main, review scope or not: the verdict giver ' +
+    'judges the landed commit (Jarad gave standing approval for merges: zero ' +
+    'users, so never park a merge for him). Commit only the paths this ticket ' +
+    'produced (code, tests, docs and evidence) with `git commit --only -- ' +
+    '<paths>`, never `git add -A` or a bare `git commit`, which would sweep in ' +
+    'what other agents staged. Integrate with `git pull --no-rebase origin ' +
+    'main`, then push to main. The checkout is shared: never stash, autostash, ' +
+    'reset, rebase over, or check out files you did not write, and never ' +
+    'switch its branch. If you worked in your own git worktree, merge it into ' +
+    'main, push, then remove the worktree and delete the branch. Unfinished ' +
+    'work is a hold (see waiting, below), but its commits still go to main or, ' +
+    'if they would break main, to origin with `git push origin ' +
+    'HEAD:refs/heads/<ticket>`, named in the hold comment; never leave a ' +
+    'commit, a dirty file or a worktree only on this machine. Every other repo ' +
+    'a command of yours wrote to is yours to land too. Finally run `git ' +
+    'unpushed` and fix whatever it lists for the paths you touched.\n' +
     '  4. Hand back with evidence. Post a comment that proves each acceptance ' +
-    'criterion (commands run and their output, commit SHAs, links), then:\n' +
+    'criterion in plain words (what you ran and what it showed, with a link to ' +
+    'the landed commit), then:\n' +
     '     - if this scope requires review (the ticket needs a verdict from a ' +
     'Launch Director or the PM), add the label `lifecycle:review`. The ticket ' +
     'stays In Progress; the verdict giver moves it from there.\n' +

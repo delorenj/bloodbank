@@ -439,7 +439,12 @@ test('the delegation prompt re-reads the ticket before it acts', () => {
   // No dangling work (2026-11-15): the implementer lands its own work before handback.
   assert.match(prompt, /Land it before you hand back/);
   assert.match(prompt, /push to main/);
-  assert.match(prompt, /remove the\s+worktree and delete the branch/);
+  assert.match(prompt, /Always land on main, review scope or not/);
+  assert.match(prompt, /git commit --only --/);
+  assert.match(prompt, /git pull --no-rebase origin/);
+  assert.match(prompt, /never stash, autostash/);
+  assert.match(prompt, /never\s+switch its branch/);
+  assert.match(prompt, /remove the worktree and delete the branch/);
   assert.match(prompt, /`git unpushed`/);
   assert.ok(prompt.indexOf('Land it before you hand back') < prompt.indexOf('Hand back with evidence'));
   assert.match(prompt, /re-read the ticket live from Plane/);
