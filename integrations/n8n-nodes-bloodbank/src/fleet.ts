@@ -380,16 +380,18 @@ export function delegationPrompt(
     'lost work. Always land on main, review scope or not: the verdict giver ' +
     'judges the landed commit (Jarad gave standing approval for merges: zero ' +
     'users, so never park a merge for him). Commit only the paths this ticket ' +
-    'produced (code, tests, docs and evidence) with `git commit --only -- ' +
-    '<paths>`, never `git add -A` or a bare `git commit`, which would sweep in ' +
-    'what other agents staged. Integrate with `git pull --no-rebase origin ' +
-    'main`, then push to main. The checkout is shared: never stash, autostash, ' +
-    'reset, rebase over, or check out files you did not write, and never ' +
-    'switch its branch. If you worked in your own git worktree, merge it into ' +
-    'main, push, then remove the worktree and delete the branch. Unfinished ' +
-    'work is a hold (see waiting, below), but its commits still go to main or, ' +
-    'if they would break main, to origin with `git push origin ' +
-    'HEAD:refs/heads/<ticket>`, named in the hold comment; never leave a ' +
+    'produced (code, tests, docs and evidence): `git add -- <paths>` then ' +
+    '`git commit --only -- <paths>`, never `git add -A` or a bare `git commit`, ' +
+    'which would sweep in what other agents staged. Integrate with `git pull ' +
+    '--no-rebase origin main`, then push to main; if that merge conflicts in a ' +
+    'file you did not write, do not resolve it for them: abort the merge you ' +
+    'started and hold the ticket `lifecycle:blocked` naming the file. The ' +
+    'checkout is shared: never stash, autostash, reset, rebase over, or check ' +
+    'out files you did not write, and never switch its branch. Work that could ' +
+    'break main belongs in your own git worktree: when it is ready, merge it ' +
+    'into main, push, then remove the worktree and delete the branch. ' +
+    'Unfinished work is a hold (see waiting, below); push its worktree branch ' +
+    'to origin and name it in the hold comment. Never leave a ' +
     'commit, a dirty file or a worktree only on this machine. Every other repo ' +
     'a command of yours wrote to is yours to land too. Finally run `git ' +
     'unpushed` and fix whatever it lists for the paths you touched.\n' +
