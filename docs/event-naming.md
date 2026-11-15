@@ -361,6 +361,7 @@ Segment 4 of `type` MUST be one of:
 | `transcription`    | `audio`, `telephony`     | A speech-to-text job over a single audio file, or over a call recording or voicemail. |
 | `memo`             | `audio`                  | A short voice prompt captured on a device (Holocene Auto / Agent Pad) and routed to an agent. One memo is one journey: `uploaded` -> `received` -> `transcribed` -> `dispatched` -> `replied` -> `played` (the device reports playback), or `failed` at any stage. While the agent works, `narrated` (0..n: the watcher spoke a progress update for the car) and `notified` (0..n: the car's speech arbiter queued, started, ended, deferred, dropped or interrupted an acknowledgement, heard-echo, progress update or reply) annotate the journey; before `replied`, `voiced` (1..n: one sentence-chunk of a long reply rendered and uploaded as `replies/...-<memo_id>-c<ii>of<nn>.opus`, so the car starts speaking while the rest renders; a reply short enough for one file publishes one `voiced`, chunk 1 of 1, naming the reply file itself, when it is up; `replied` waits for the watcher's phone-or-car decision and still names the full file); after `replied`, `mirrored` (0..1: the reply's Earshot phone copy landed late, in the watcher's background retry, after `replied` had said it was left to the car); on the fast in-car conversation path (`MEMO_CONVERSE`), `routed` (1 per fast-model decision, between `transcribed` and `replied`: `conv_id`, `action`, answering model, rung, attempts, latency, tokens, or `fallback_reason` when the turn went direct to the agent) and `delegated` (1 per driver-confirmed brief, at dispatch: `tile_agent_id`, `target_agent_id`, `conv_id`, `brief_id`, `brief_sha256`, `command_id`, `lane`, `perm`). Every stage fact and the agent invocation command share `correlationid = data.memo_id`. |
 | `earshot`          | `audio`                  | A sound file dropped in an Earshot bucket channel, as the phone plays it. One drop is one journey: `detected` -> `started` -> `ended`, or `failed` (could not play) or `skipped` (the phone saw it too late and did not play it). `data.phase` carries the device's own word (`finished`, `missed`). `correlationid = data.event_id`, `ordering_key = earshot:<event_id>`. |
+| `harvest`          | `audio`                  | One transcript harvest: the pilot harvest worker waits for wax enrichment, runs `px harvest`, hands back a review form link, then publishes the reviewed items as tickets. Journey: command `start` -> `queued` -> `started` -> `completed` (review link in `data.links`) or `failed`; command `publish` -> `published` or `failed`. `correlationid` = the start command's. |
 | `approval_request` | `approval` (reserved)    | Human approval prompt issued.                               |
 | `worktree`         | `workspace` (reserved)   | Git worktree lifecycle.                                     |
 | `branch`           | `workspace` (reserved)   | Git branch state changes.                                   |
@@ -446,7 +447,8 @@ covers every inbound human message, texts included.
 `delegated`, `raised`, `released`, `expired`, `skipped`, `notified`,
 `revoked` (`billing.rule.revoked`: a rule was revoked; the rule's recording stays), `issued` (`billing.invoice.issued`: a statement was frozen on the ledger), `delivered` (`billing.invoice.delivered`: an issued statement was raised on a delivery rail),
 `fired` (`cron.tick.fired`: the UTC minute heartbeat every candybar schedule keys off),
-`queued` (`cron.steward_task.queued`: a steward task was accepted and waits for the steward),
+`queued` (`cron.steward_task.queued`: a steward task was accepted and waits for the steward; `audio.harvest.queued`: the harvest worker accepted a start command and waits for wax enrichment),
+`published` (`audio.harvest.published`: a reviewed harvest was published as tickets),
 `detected` (`watch.target.detected`: an inbound message was matched to a watched target), `routed` (`watch.target.routed`: the watch sink acted on a detection),
 `uploaded`, `transcribed`, `dispatched`, `replied`, `played` (the `audio.memo.*`
 journey stages: a voice memo that is uploaded, transcribed, dispatched to an agent,
@@ -463,7 +465,8 @@ file publishes one, chunk 1 of 1, when that file is up), `mirrored`
 `create`, `resume`, `start`, `end`, `complete`, `fail`, `cancel`, `generate`,
 `append`, `receive`, `send`, `grant`, `deny`, `open`, `close`, `spawn`,
 `kill`, `checkout`, `invoke`, `request`, `toggle`, `clock_in`, `clock_out`,
-`steward` (`cron.candybar.steward`: run one steward task for a candybar).
+`steward` (`cron.candybar.steward`: run one steward task for a candybar),
+`publish` (`audio.harvest.publish`: publish a reviewed transcript harvest as tickets; event pair `published`).
 
 Pairing across kinds is by semantic intent, not lexical: command `start`
 yields event `started`; command `kill` yields event `exited`; command

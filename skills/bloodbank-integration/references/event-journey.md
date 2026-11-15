@@ -256,6 +256,18 @@ The gateway does not infer permission from a running systemd unit, Telegram
 configuration, profile existence, or a past successful command. A running
 gateway with zero eligible entries is healthy but intentionally unroutable.
 
+## Journey C: Transcript harvest (audio.harvest)
+
+The Holocene Transcripts tab "Harvest" button turns one transcript into tickets, reviewed by a human in between.
+
+1. Holocene publishes command `bloodbank.audio.harvest.start` (`transcript_id` and/or `wax_item_id`, `requested_by`, optional `force`) with a fresh `correlationid`.
+2. The pilot harvest worker (`px harvest worker`, `pilot-harvest-worker.service`) consumes it and emits `audio.harvest.queued` (`waiting_for: enrichment`) while wax finishes all enrichment passes.
+3. It emits `audio.harvest.started` when `px harvest <note>` runs, then `audio.harvest.completed` with `review_url` (`https://holocene.delo.sh/harvest/review/<harvest_id>/`), item counts and `links: [{rel: page, label, url}]` so ntfy-router renders a button. A stage that cannot finish emits `audio.harvest.failed` (`stage`: `enrichment`, `harvest` or `publish`).
+4. Submitting the review form makes the worker publish command `bloodbank.audio.harvest.publish` (`harvest_id`, `artifact_path`, `accepted_only`), which it consumes itself and runs `px harvest publish <artifact> --accepted`.
+5. It emits `audio.harvest.published` (`created`, `adopted`, `failed`, `tickets[]`).
+
+Every event carries the start command's `correlationid`; `causationid` is the `command_id` that caused it. Schemas: `schemas/bloodbank/audio/harvest.*.json`.
+
 ## Which component owns what?
 
 | Boundary | Owner | Responsibility |

@@ -116,6 +116,8 @@ ALLOWED_ENTITIES = frozenset({
     # watch: one watched target (a person or organisation) and what was seen or done about it
     "target",
     "implementation", "pack", "concept_pool", "item", "app_launch",
+    # audio: one transcript harvest (wax note -> px harvest -> review form -> published tickets)
+    "harvest",
 })
 
 GAME_ENTITY_ACTIONS = {
@@ -156,6 +158,8 @@ EVENT_ACTIONS = frozenset({
     "fired",
     # cron.steward_task.queued: a steward task was accepted and waits for the steward
     "queued",
+    # audio.harvest.published: a reviewed harvest was published as tickets
+    "published",
 })
 
 COMMAND_ACTIONS = frozenset({
@@ -165,6 +169,8 @@ COMMAND_ACTIONS = frozenset({
     "request", "toggle", "clock_in", "clock_out",
     # cron.candybar.steward: run one steward task (enrich, fix, evaluate) for a candybar
     "steward",
+    # audio.harvest.publish: publish a reviewed harvest as tickets (event pair: published)
+    "publish",
 })
 
 # (domain, entity) pairs that are allowlisted individually but retired together.
