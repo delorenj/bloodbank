@@ -60,7 +60,7 @@ ALLOWED_DOMAINS = frozenset({
     # active
     "conversation", "agent", "llm", "cli", "system", "audio", "repo", "lifecycle",
     "finance", "billing", "attendance", "curator", "reporting", "portfolio", "project",
-    "workflow", "telephony", "messaging", "review", "crank",
+    "workflow", "telephony", "messaging", "review", "crank", "genesis",
     # candybar cron framework: minute tick + registered-unit lifecycle
     "cron",
     # watch: target-focused alerts over inbound messages of any provider
@@ -103,7 +103,8 @@ ALLOWED_ENTITIES = frozenset({
     # project: durable user-facing deliverables captured by the artifact sidecar
     "artifact",
     "call", "slop",
-    # crank: a Wingman duty session and the lines it says to the operator
+    # crank: a Wingman duty session and the lines it says to the operator;
+    # genesis reuses alert (alert.raised) and approval (approval.requested|granted|denied|expired)
     "duty", "alert",
     # messaging: one entity per chat platform (messaging.<platform>.received|notified)
     "email", "telegram", "slack", "teams", "whatsapp", "google_chat",

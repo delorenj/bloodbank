@@ -300,6 +300,7 @@ Segment 3 of `type` MUST be one of:
 | `telephony`    | Phone calls on the operator's lines (Telnyx numbers and the forwarded personal cell): calls, recordings, voicemail transcripts, and call commands executed through Telnyx. Text messages are `messaging` (one entity per transport: `sms`, `mms`, `rcs`, `imessage`). | active   |
 | `messaging`    | Human messages and platform alerts on every channel — email, chat platforms, messaging apps, and carrier texts (SMS/MMS/RCS/iMessage). The entity segment names the platform (`messaging.<platform>.<action>`: `received` for a message, `notified` for a mention/reaction/activity alert); see the platform rows in §7. | active   |
 | `crank`        | Desk-mode crank sessions: the operator's circuit of agent tabs in the zellij Workspace and Wingman, the voice pair programmer that watches it (`duty.started`, `duty.ended`, `alert.raised`). | active   |
+| `genesis`      | The hosted client-agent liaison (Genesis): a client's desk asked the client to approve an action (`approval.requested`) and how that ended (`approval.granted`, `approval.denied`, `approval.expired`), and things that need the operator's attention (`alert.raised`). Client and desk identity is data, never part of the type. | active   |
 | `cron`         | Time-driven scheduling facts from the Candybar cron framework: the UTC minute heartbeat every schedule keys off (`tick.fired`) and the registered-unit lifecycle (`candybar.*`), plus the `candybar.invoke` dispatch command; and the Candybar steward's task lifecycle (`steward_task.*`) with its `candybar.steward` command. | active   |
 | `watch`        | Target-focused alerts: an inbound message on any provider (email, chat, carrier text, call, voicemail) matched to a watched target (`target.detected`), and what the sink did about it (`target.routed`). Provider-agnostic: the fact names the target, not the channel; provider identity is data (see §10.1). | active   |
 | `game`         | Provider-neutral game production and delivery observations. BB-34 candidate source registration only; scout/producer adoption and production activation are NOT established (§11.5). | candidate |
@@ -385,7 +386,7 @@ Segment 4 of `type` MUST be one of:
 | `incident`         | `reporting`              | One dated occurrence of a tracked problem area.             |
 | `work`             | `portfolio`              | A Director-delegated unit; child boards remain lifecycle authority. |
 | `receipt`          | `portfolio`              | Retry-safe terminal receipt for one delegated work attempt.  |
-| `approval`         | `portfolio`              | Human or policy decision boundary for delegated work.        |
+| `approval`         | `portfolio`, `genesis`   | `portfolio`: human or policy decision boundary for delegated work. `genesis`: one action a client's desk asked the client to approve, from request to outcome (`requested`, then `granted`, `denied` or `expired`); `data.approval_id` is the proposal; the envelope `correlationid` is `uuid5(NAMESPACE_URL, "urn:33god:genesis:approval:<approval_id>")`, since the id itself is not a UUID. |
 | `escalation`       | `portfolio`              | Exception raised to and resolved by the Director.            |
 | `capacity`         | `portfolio`              | Snapshot of global pipeline or derivative delegation slots.  |
 | `lease`            | `portfolio`              | Time-bounded ownership of one global delegation slot.        |
@@ -393,7 +394,7 @@ Segment 4 of `type` MUST be one of:
 | `deployment`       | `project`                | One install of a project's built artifact on a target (phone, host service, site); version, commit, checksum and target live in data. |
 | `artifact`         | `project`                | One durable user-facing deliverable of a project (diagram, chart, document, idea, BMAD artifact) captured into content-addressed storage before publication; digest, media type, revision and provenance live in data, never paths or bytes. |
 | `duty`             | `crank`                  | One Wingman duty session: from going on duty to going off. `data.duty_id` is the session and the envelope `correlationid`. |
-| `alert`            | `crank`                  | One line Wingman said to the operator about crank tabs (a tab waiting, finished, broken, waiting too long, or the focused tab's progress); the signals behind it live in data. |
+| `alert`            | `crank`, `genesis`       | `crank`: one line Wingman said to the operator about crank tabs (a tab waiting, finished, broken, waiting too long, or the focused tab's progress); the signals behind it live in data. `genesis`: one thing that needs the operator (a desk asked for help, a gateway failure, a private-content guard firing); `data.reason` and `data.severity` say which. |
 | `call`             | `telephony`              | One phone call on an operator line, from setup to hangup; recordings and voicemails are `call.recorded`. |
 | `tick`             | `cron`                   | One UTC minute boundary fired by the Candybar heartbeat publisher; `tick:<unix_epoch_minute>` is both the ordering bucket and `data.tick_id`. |
 | `candybar`         | `cron`                   | One registered scheduled unit in the Candybar cron framework: registration (`created`/`updated`), invocation lifecycle (`invoked`/`completed`/`failed`), suppressed fires (`skipped`), and the `candybar.invoke` dispatch command. |
@@ -608,6 +609,8 @@ subscription:<series_id>         # finance: recurring-series lifecycle incl. zom
 projection:liquid                # finance: single household-wide projection bucket
 clock:<clock_system>:<principal> # attendance: one worker/system time-clock state bucket
 duty:<duty_id>                   # crank: every fact of one Wingman duty session (duty.*, alert.raised)
+approval:<approval_id>           # genesis: one approval request and its outcome (approval.requested, then granted|denied|expired)
+alert:<alert_id>                 # genesis: one alert (alert.raised)
 tick:<tick_id>                   # cron: the minute heartbeat itself (tick_id = tick:<unix_epoch_minute>)
 candybar:<candybar_id>           # cron: every lifecycle fact of one registered candybar, its steward tasks included
 watch:<watch_id>                 # watch: every detection and routing outcome of one watched target
@@ -833,8 +836,8 @@ JSON Schema documents with their own revision line (§13's `<n>`), not event
 types. Everything under `bloodbank/<domain>/` is named for the fact it
 describes and nothing else.
 
-There are 22 live domains — `agent`, `attendance`, `audio`, `billing`,
-`cli`, `conversation`, `crank`, `cron`, `curator`, `finance`, `lifecycle`, `llm`,
+There are 23 live domains — `agent`, `attendance`, `audio`, `billing`,
+`cli`, `conversation`, `crank`, `cron`, `curator`, `finance`, `genesis`, `lifecycle`, `llm`,
 `messaging`, `portfolio`, `project`, `repo`, `reporting`, `review`,
 `system`, `telephony`, `watch`, `workflow` — matching the active half of
 `ALLOWED_DOMAINS` in `services/agent-hooks/core/validate.py`. A domain
