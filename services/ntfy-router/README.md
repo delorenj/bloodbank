@@ -11,7 +11,7 @@ person wants to hear about into desktop/phone notifications on
 
    | Disposition | Default types | What happens |
    |-------------|---------------|--------------|
-   | **mute**    | `bloodbank.agent.hook.updated`, `bloodbank.system.hook.updated` | Counted, never posted. These are hook-hub state pulses (~2/s in a busy session since 2026-09-23 coalescing; ~9/s before); Holocene and Candystore are their read side. |
+   | **mute**    | `bloodbank.agent.hook.updated`, `bloodbank.system.hook.updated` | Counted, never posted. These are hook-hub state pulses (~2/s in a busy session since 2026-09-23 coalescing; ~9/s before); Holocene and Candystore are their read side. Also muted: `bloodbank.genesis.*` (client-bot approval requests, outcomes and alerts), because the n8n "Genesis -> ntfy" workflow already pushes them to topic `genesis` and updates one notification per approval in place; the router's `genesis` mirror would double every push. |
    | **digest**  | `bloodbank.agent.tool.*` | Counted and rolled into one low-priority summary route every `DIGEST_SECONDS`. |
    | **route**   | everything else | One route each at `NTFY_PRIORITY`, through a token bucket (`ROUTE_RATE_PER_MIN`, `ROUTE_BURST`), behind a smaller per-type bucket (`ROUTE_PER_TYPE_PER_MIN`, `ROUTE_PER_TYPE_BURST`) so one chatty type cannot spend the shared budget. Overflow joins the digest. |
 

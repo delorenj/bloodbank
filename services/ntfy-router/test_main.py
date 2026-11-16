@@ -215,6 +215,14 @@ class PolicyTest(unittest.TestCase):
 
 
 class DispositionTest(unittest.TestCase):
+    def test_genesis_events_are_muted_because_n8n_pushes_them_to_the_genesis_topic(self):
+        policy = main.Policy.from_env({})
+        for t in ("approval.requested", "approval.granted", "approval.denied",
+                  "approval.expired", "alert.raised"):
+            self.assertEqual(policy.classify(f"bloodbank.genesis.{t}"), "mute", t)
+        # the crank alert and portfolio approvals keep their own dispositions
+        self.assertEqual(policy.classify("bloodbank.portfolio.approval.requested"), "route")
+
     def test_voice_memo_progress_facts_are_muted_and_only_failures_page(self):
         policy = main.Policy.from_env({})
         for a in ("uploaded", "received", "transcribed", "dispatched", "replied", "played", "narrated", "notified", "voiced", "mirrored"):
