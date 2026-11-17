@@ -549,8 +549,20 @@ was lost could no longer be re-driven. The owner's identity is reported on
 
 ### The lifecycle lane
 
-Six workflows carry a Plane ticket from webhook to working agent. They live
-in n8n; their exports are in
+**Current authority (Krebs lifecycle v2):** Todo entry starts triage through
+**Ticket Triage** (`6wAGA5pdrmHLyhs2`), guarded to `Todo`. Only `krebs tick`,
+on Candybar's `krebs-tick` schedule, dispatches implementation. Both legacy
+**Ticket Delegation** (`8mmqdMwQYA28ZwUj`) and **Ticket Delegation — Groomed in
+Todo** (`l0J53w0TsS5PwETk`) are inactive and must stay off. Do not requeue or
+replay their historical backlog. Their lingering consumers are **pull** durables;
+missing `push_bound` is not a pull-health failure. See the
+[BB-41 retirement procedure](../../ops/live/bb41-consumer-retirement.md) for
+exact identities, evidence gates and independently reviewed live steps.
+
+The table and handshake below describe the **historical pre-Krebs topology**,
+not authorization to restore delegation or move tickets to trigger it. Current
+lifecycle rules are in `krebs/docs/lifecycle.md` and `krebs/spec/lifecycle.v2.yaml`.
+Workflow exports live in
 [delonet-n8n-workflows](https://github.com/delorenj/delonet-n8n-workflows),
 synced every 15 minutes (`workflows/<name>--<id>.json`).
 
