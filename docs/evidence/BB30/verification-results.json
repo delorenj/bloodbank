@@ -1,0 +1,91 @@
+[
+  {
+    "gate": "native pinned object available (object-only fixture, no HEAD required)",
+    "command": [
+      "git",
+      "cat-file",
+      "-t",
+      "0408fec7a153e6c32c064acd2b8053917f1525f1"
+    ],
+    "exit": 0
+  },
+  {
+    "gate": "venv Draft 2020-12 available",
+    "command": [
+      "/home/delorenj/code/33GOD/bloodbank/services/hermes-gateway/.venv/bin/python",
+      "-c",
+      "from jsonschema import Draft202012Validator; print(\"Draft 2020-12 available\")"
+    ],
+    "exit": 0
+  },
+  {
+    "gate": "full gateway suite",
+    "command": [
+      "/home/delorenj/code/33GOD/bloodbank/services/hermes-gateway/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp",
+      "/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-integration/full-pytest",
+      "services/hermes-gateway/tests"
+    ],
+    "exit": 0
+  },
+  {
+    "gate": "unmodified independent native + journal probes",
+    "command": [
+      "/home/delorenj/code/33GOD/bloodbank/services/hermes-gateway/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-s",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp",
+      "/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-integration/probes-pytest",
+      "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/docs/evidence/BB30/native-platform-probes.py",
+      "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/docs/evidence/BB30/journal-quality-probes.py"
+    ],
+    "exit": 0
+  },
+  {
+    "gate": "canonical schema validation",
+    "command": [
+      "bash",
+      "scripts/validate_schemas.sh"
+    ],
+    "exit": 0
+  },
+  {
+    "gate": "scoped Ruff tool identity",
+    "command": [
+      "/home/delorenj/.cache/uv/archive-v0/tlyF8Mjr6i5OLulR/ruff-0.17.5.data/scripts/ruff",
+      "--version"
+    ],
+    "exit": 0
+  },
+  {
+    "gate": "diff whitespace check",
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0
+  },
+  {
+    "gate": "reviewed application bytes unchanged",
+    "command": [
+      "git",
+      "diff",
+      "--exit-code",
+      "f168ba8f7071ba775096e790cfc3c0e34f2c8116",
+      "--",
+      "services/hermes-gateway",
+      "schemas"
+    ],
+    "exit": 0
+  }
+]

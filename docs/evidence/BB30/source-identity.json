@@ -1,0 +1,96 @@
+{
+  "reviewed_commit": "f168ba8f7071ba775096e790cfc3c0e34f2c8116",
+  "reviewed_main_base": "89e9a633ffc373687254400fce8485cca18bb322",
+  "application_trees": {
+    "services/hermes-gateway": "35c1990de3491f14bc51955add69669ff80ed48d",
+    "schemas": "f470550c6e8500e9513ec671cd70c8ed68296c2a"
+  },
+  "artifacts": {
+    "source-spec.md": {
+      "source": "bb30-spec-f168ba8.md",
+      "sha256": "8ce23ad53645255cb58dbabad71bf6f6da306b02681e50aea63259d9762f74cd"
+    },
+    "source-quality.md": {
+      "source": "bb30-quality-f168ba8.md",
+      "sha256": "1d050423304bc272166367f320fa6e4e8f7024df916f87d647bd90e14bca609a"
+    },
+    "source-spec-base.md": {
+      "source": "bb30-spec-ec8f5c1.md",
+      "sha256": "42a2744b05a02e3d63562ff060ef502a773b89003fd57273f0a67f9456923fcc"
+    },
+    "native-platform-probes.py": {
+      "source": "bb30-spec-ec8f5c1-probes.py",
+      "sha256": "6b94489c336ef85cc3b96810daac6ee400f8eb99b2cb46da484fc20b81538e21"
+    },
+    "journal-quality-probes.py": {
+      "source": "bb30-quality-ec8f5c1-probes.py",
+      "sha256": "91561dea44964732a433051962351d8fb6c718ef0a97b4e4c12498a0ec75964c"
+    }
+  },
+  "reviewed_blobs": {
+    "schemas/bloodbank/conversation/message.appended.json": {
+      "git_blob": "a511579fd272ceeb1642802814f1e38236713b0b",
+      "sha256": "d644582e1b66a0ee3dfd85b1111b24beb227efa8647ece90b3c5344d5f0f009d"
+    },
+    "services/hermes-gateway/README.md": {
+      "git_blob": "a63fbd23c5d1f12fd05f86c48f1fca566b7a97f0",
+      "sha256": "e06669ec816eb0cd7c53f7cda3c1c18c51256573746bcc163c9700905e24059f"
+    },
+    "services/hermes-gateway/bloodbank_hermes_gateway/adapter.py": {
+      "git_blob": "4052bff1fb31c9d3c3d773a0714cca6283614e19",
+      "sha256": "9fe405b0b7f30443c59b302af5b6662209f4917f74186873f1151333118b851a"
+    },
+    "services/hermes-gateway/bloodbank_hermes_gateway/contract.py": {
+      "git_blob": "413961760e6a61763bbe0c33b2cd0c4daf8c14fb",
+      "sha256": "1d4240e168afa69593a601ff9af82d6334ae1a394f2abe9f2ad865db71e5350d"
+    },
+    "services/hermes-gateway/bloodbank_hermes_gateway/execution_state.py": {
+      "git_blob": "0f762eed730f413c14ee4636a8a691bb9c146ff4",
+      "sha256": "83d14ff91109c6ad852dac218d9646913bb01dd4bcb7f49a478170612b51b2bb"
+    },
+    "services/hermes-gateway/bloodbank_hermes_gateway/plugin.py": {
+      "git_blob": "9bb9e5f3b5b7585142b1cfdcf4bd2c7758d38b92",
+      "sha256": "115ddf0a23c5d9d6b15726b58ce4b866f284aa3eb8f092145e4989d56ab21df9"
+    },
+    "services/hermes-gateway/hermes-plugin/plugin.yaml": {
+      "git_blob": "cf8b6f8cd73fcadf7530cc6ddcd22d2ff157f739",
+      "sha256": "d2ec15b9112ee7820ec91016a696fd37340decea4e96a6c47bc1b2b2e8fcaf22"
+    },
+    "services/hermes-gateway/pyproject.toml": {
+      "git_blob": "b183f7ea8e9b98c1997e8b239b5bb817ff0497e7",
+      "sha256": "559aeb49b5c44f624e5bffdb27d962fcb4ea8aad232d19658ada4a5329638935"
+    },
+    "services/hermes-gateway/tests/conftest.py": {
+      "git_blob": "e4210d2445346dce1d411e4c65a88773898294e9",
+      "sha256": "42050c6278869337eab48b8139611d1e2966201b9847d48a0a2eb2efe57df4ec"
+    },
+    "services/hermes-gateway/tests/test_adapter.py": {
+      "git_blob": "cb9d0b8b77f3dc68203068e8a9a5314028e63274",
+      "sha256": "e327845fd1b0291c01412f12dd86173e8dbc902fa1a78a4bc6eb1e87c60d0495"
+    },
+    "services/hermes-gateway/tests/test_capture_journal.py": {
+      "git_blob": "f8d7860d4a13b7505321cb5bb95d35fbed1f2b50",
+      "sha256": "2653af828baff2fb3f5d24141ec25c185aa1c3f45b99fa77eef5f9fc00716225"
+    },
+    "services/hermes-gateway/tests/test_final_answer.py": {
+      "git_blob": "715c71b56aa1f01d0b7fb9ebd42d9f87bc221047",
+      "sha256": "bd8a12065a8c3543491a5a034fe05d886f274df6031a5a2660864e75a61d5c3b"
+    },
+    "services/hermes-gateway/tests/test_hermes_seam.py": {
+      "git_blob": "b9be2955de51b07aa8e1d9fb870a1b017ed75f5c",
+      "sha256": "f1d4487068450be0009945d111c999c2031f88ed6fd991333d24724b83bbb4f3"
+    },
+    "services/hermes-gateway/tests/test_native_outcome.py": {
+      "git_blob": "cec39d2e2c98f087b79aa4c354fd4dec3cb13ecc",
+      "sha256": "d37916d329e8085cb104a5083eb842b663044096633b81aab3c4e562db29ef75"
+    },
+    "services/hermes-gateway/tests/test_registration.py": {
+      "git_blob": "96575d124b552ba126115c88b97a2adabf67f624",
+      "sha256": "786e73c8347d5a0298fb5b9a44f760d3be966b4923e8d77cdfbe5cb32e269d0b"
+    },
+    "services/hermes-gateway/uv.lock": {
+      "git_blob": "01ed26377e79c5f2366c38fa6222ca383440ddca",
+      "sha256": "2e3f3c944a295954fe97109ab4eb95f201f136de779346094c3c1d065af91924"
+    }
+  }
+}

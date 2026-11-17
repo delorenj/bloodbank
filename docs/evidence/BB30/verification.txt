@@ -1,0 +1,95 @@
+BB30 integration verification: offline source gates, not live delivery proof
+Reviewed source: f168ba8f7071ba775096e790cfc3c0e34f2c8116
+Working tree: /home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication
+PYTHONDONTWRITEBYTECODE=1
+BLOODBANK_SCHEMAS_DIR=/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/schemas
+BB30_HERMES_RELEASE=/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-native-release
+PYTHONPATH=/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/hermes-gateway:/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/hermes-gateway/tests:/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/agent-hooks
+TMPDIR=/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-integration
+
+## native pinned object available (object-only fixture, no HEAD required)
+$ git cat-file -t 0408fec7a153e6c32c064acd2b8053917f1525f1
+commit
+
+exit=0
+
+## venv Draft 2020-12 available
+$ /home/delorenj/code/33GOD/bloodbank/services/hermes-gateway/.venv/bin/python -c 'from jsonschema import Draft202012Validator; print("Draft 2020-12 available")'
+Draft 2020-12 available
+
+exit=0
+
+## full gateway suite
+$ /home/delorenj/code/33GOD/bloodbank/services/hermes-gateway/.venv/bin/python -m pytest -q -p no:cacheprovider --basetemp /home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-integration/full-pytest services/hermes-gateway/tests
+........................................................................ [ 24%]
+........................................................................ [ 49%]
+........................................................................ [ 74%]
+........................................................................ [ 99%]
+..                                                                       [100%]
+290 passed in 41.26s
+
+exit=0
+
+## unmodified independent native + journal probes
+$ /home/delorenj/code/33GOD/bloodbank/services/hermes-gateway/.venv/bin/python -m pytest -s -q -p no:cacheprovider --basetemp /home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-integration/probes-pytest /home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/docs/evidence/BB30/native-platform-probes.py /home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/docs/evidence/BB30/journal-quality-probes.py
+{"probe": "complete-native-platform", "case": "success", "outcome": "success", "answers": 1, "capture_preserved": true, "executions": 1, "exact_replays": 2}
+.{"probe": "complete-native-platform", "case": "send_failure", "outcome": "failure", "answers": 0, "capture_preserved": true, "executions": 1, "exact_replays": 2}
+.{"probe": "complete-native-platform", "case": "unexpected_cancel", "outcome": "failure", "answers": 0, "capture_preserved": true, "executions": 1, "exact_replays": 2}
+.{"probe": "complete-native-platform", "case": "expected_cancel", "outcome": "cancelled", "answers": 0, "capture_preserved": true, "executions": 1, "exact_replays": 2}
+.{"probe": "complete-native-platform", "case": "handler_failure", "outcome": "failure", "answers": 0, "capture_preserved": true, "executions": 1, "exact_replays": 2}
+.{"probe": "pending-recovery-double-fault", "capture_preserved": true, "outcome": "failure", "failure_code": "processing_outcome_unknown", "executions": 1, "answers": 0, "exact_replays": 2}
+.{"probe": "complete-native-platform-puback-ack", "stage": "answer", "outcome": "success", "naks": 1, "executions": 1, "answer_exact": true, "exact_replays": 2}
+.{"probe": "complete-native-platform-puback-ack", "stage": "invocation", "outcome": "success", "naks": 1, "executions": 1, "answer_exact": true, "exact_replays": 2}
+.{"probe": "complete-native-platform-puback-ack", "stage": "turn", "outcome": "success", "naks": 1, "executions": 1, "answer_exact": true, "exact_replays": 2}
+.{"probe": "complete-native-platform-puback-ack", "stage": "ack", "outcome": "success", "naks": 1, "executions": 1, "answer_exact": true, "exact_replays": 2}
+.{"probe": "source-identity", "adapter": "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/hermes-gateway/bloodbank_hermes_gateway/adapter.py", "validator": "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/agent-hooks/core/validate.py", "schemas": "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/schemas"}
+.{"probe": "schema-valid-capture-byte-conflict", "different_wire_bytes": true, "both_schema_valid": true}
+.{"probe": "schema-valid-resolution-byte-conflict", "different_wire_bytes": true, "both_schema_valid": true}
+.{"probe": "identity", "adapter": "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/hermes-gateway/bloodbank_hermes_gateway/adapter.py", "validator": "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/agent-hooks/core/validate.py", "schemas": "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/schemas"}
+.{"probe": "sqlite-abort-atomicity", "stage": "capture", "unchanged": true, "integrity": "ok"}
+.{"probe": "sqlite-abort-atomicity", "stage": "resolution", "unchanged": true, "integrity": "ok"}
+.{"probe": "concurrent-immutable-writers", "stage": "capture", "commits": 1, "conflicts": 1}
+.{"probe": "concurrent-immutable-writers", "stage": "resolution", "commits": 1, "conflicts": 1}
+.{"probe": "active-captured-redelivery", "executions": 1, "duplicate_nak": 1, "final_outcome": "success"}
+.{"probe": "uncertain-command-ack", "success_immutable": true, "exact_replays": 2}
+.{"probe": "lineage-bytes-conflict", "field": "id", "unchanged": true}
+.{"probe": "lineage-bytes-conflict", "field": "correlationid", "unchanged": true}
+.{"probe": "lineage-bytes-conflict", "field": "issuer", "unchanged": true}
+.{"probe": "lineage-bytes-conflict", "field": "body", "unchanged": true}
+.{"probe": "lineage-bytes-conflict", "field": "timestamp", "unchanged": true}
+.{"probe": "lineage-bytes-conflict", "field": "native", "unchanged": true}
+.
+26 passed in 7.25s
+
+exit=0
+
+## canonical schema validation
+$ bash scripts/validate_schemas.sh
+Bloodbank schema validation
+Schema directory: /home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/schemas
+
+Validated 227 schema files
+Registered 227 schema IDs
+
+exit=0
+
+## scoped Ruff tool identity
+$ /home/delorenj/.cache/uv/archive-v0/tlyF8Mjr6i5OLulR/ruff-0.17.5.data/scripts/ruff --version
+ruff 0.17.5
+
+exit=0
+
+## Scoped lint comparison against ec8f5c1332bc0653092f4a4c91737bc614f88c34
+{"baseline_findings": 2, "candidate_findings": 2, "new_findings": []}
+comparison exit=0; existing Ruff exits=1 retained, no globally clean lint claim
+
+## diff whitespace check
+$ git diff --check
+
+exit=0
+
+## reviewed application bytes unchanged
+$ git diff --exit-code f168ba8f7071ba775096e790cfc3c0e34f2c8116 -- services/hermes-gateway schemas
+
+exit=0
+Exact report/probe copy equality: PASS; application source identity: PASS
