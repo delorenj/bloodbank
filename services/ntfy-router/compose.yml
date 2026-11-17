@@ -1,0 +1,80 @@
+# ntfy-router — standalone compose
+#
+# Joins the existing bloodbank-network, subscribes to every `bloodbank.evt.>`
+# envelope — the version-free grammar, matching SUBJECT_FILTER below and the
+# running container — and routes the ones worth a person's attention at
+# ntfy.delo.sh. hook-hub state pulses are muted, tool calls are rolled into a
+# periodic low-priority digest, and individual routes are rate-limited, because
+# forwarding all of it 429'd ntfy for every publisher on the host (see main.py).
+# Deployment events are loud: they skip the rate limits, and their data.links
+# become ntfy buttons. There is no contract-version token in a subject; the
+# retired `bloodbank.evt.v1.>` wildcard would have matched nothing that is
+# published today.
+# Independent of the broader bloodbank compose lifecycle.
+# NTFY_TOKEN is required now that ntfy is auth-default-access=deny-all. It comes
+# from the committed op:// reference in .env.op, rendered by ./render-env.sh into
+# the gitignored .env that compose loads by itself, so a bare
+# `docker compose up -d --force-recreate` just works (never commit the token).
+# docker-stack-ntfy-router.service (~/docker/systemd) renders it and brings the
+# router up at boot.
+#
+# Bring up (from this directory):
+#   ./render-env.sh        # only first time, or after rotating the token
+#   docker compose up -d --build
+#
+# Tear down:
+#   docker compose down
+
+name: bloodbank-ntfy-router
+
+networks:
+  bloodbank-network:
+    external: true
+
+volumes:
+  tolt-delivery-state:
+
+services:
+  ntfy-router:
+    build:
+      context: ../..
+      dockerfile: services/ntfy-router/Dockerfile
+    container_name: bloodbank-ntfy-router
+    environment:
+      NATS_URL: "nats://nats:4222"
+      SUBJECT_FILTER: "${BLOODBANK_NTFY_ROUTER_SUBJECT:-bloodbank.evt.>}"
+      NTFY_URL: "${BLOODBANK_NTFY_ROUTER_NTFY_URL:-https://ntfy.delo.sh}"
+      NTFY_TOPIC: "${BLOODBANK_NTFY_ROUTER_NTFY_TOPIC:-bloodbank}"
+
+      # Deployments are also published here: the upstream gate forwards it, so ntfy-ios wakes (`-`: empty turns it off).
+      NTFY_DEPLOY_TOPIC: "${BLOODBANK_NTFY_ROUTER_DEPLOY_TOPIC-deploys}"
+      # Mirror nested <domain>-<entity> routes back to parent <domain> topic (e.g. messaging-sms -> messaging)
+      NTFY_MIRROR_DOMAIN: "${BLOODBANK_NTFY_ROUTER_MIRROR_DOMAIN-true}"
+      NTFY_PRIORITY: "${BLOODBANK_NTFY_ROUTER_NTFY_PRIORITY:-5}"
+      NTFY_TAGS: "${BLOODBANK_NTFY_ROUTER_NTFY_TAGS:-drop_of_blood,zap}"
+      NTFY_TOKEN: "${BLOODBANK_NTFY_ROUTER_NTFY_TOKEN:-}"
+      # Source candidate only. Both owner gates remain false until approved cutover.
+      NTFY_TOLT_ENABLED: "${BLOODBANK_NTFY_ROUTER_TOLT_ENABLED:-false}"
+      NTFY_TOLT_CUTOVER_ACCEPTED: "${BLOODBANK_NTFY_ROUTER_TOLT_CUTOVER_ACCEPTED:-false}"
+      NTFY_TOLT_TOPIC: "${BLOODBANK_NTFY_ROUTER_TOLT_TOPIC:-tolt}"
+      NTFY_TOLT_STATE: "/var/lib/ntfy-router/tolt.sqlite3"
+      NTFY_TOLT_LINK_HOSTS: "${BLOODBANK_NTFY_ROUTER_TOLT_LINK_HOSTS:-tolt.delo.sh}"
+      NTFY_FAMILY_VALIDATOR_ROOT: "/opt/bloodbank"
+      BLOODBANK_SCHEMAS_DIR: "/opt/bloodbank/schemas"
+      MAX_BODY_CHARS: "${BLOODBANK_NTFY_ROUTER_MAX_BODY_CHARS:-400}"
+      # `-` not `:-`: an explicitly empty value turns the list off.
+      NTFY_ROUTER_MUTE_TYPES: "${BLOODBANK_NTFY_ROUTER_MUTE_TYPES-bloodbank.agent.hook.updated,bloodbank.system.hook.updated,bloodbank.audio.memo.uploaded,bloodbank.audio.memo.received,bloodbank.audio.memo.transcribed,bloodbank.audio.memo.dispatched,bloodbank.audio.memo.replied,bloodbank.audio.memo.played,bloodbank.agent.invocation.progressed,bloodbank.audio.memo.narrated,bloodbank.audio.memo.notified,bloodbank.audio.memo.voiced,bloodbank.audio.memo.mirrored,bloodbank.agent.invocation.detached,bloodbank.audio.memo.routed,bloodbank.audio.memo.delegated,bloodbank.crank.duty.started,bloodbank.crank.duty.ended,bloodbank.crank.alert.raised,bloodbank.genesis.*}"
+      NTFY_ROUTER_DIGEST_TYPES: "${BLOODBANK_NTFY_ROUTER_DIGEST_TYPES-bloodbank.agent.tool.*}"
+      # Skip the per-type cap and the shared bucket (still wait out ntfy pushback).
+      NTFY_ROUTER_LOUD_TYPES: "${BLOODBANK_NTFY_ROUTER_LOUD_TYPES-bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed}"
+      ROUTE_RATE_PER_MIN: "${BLOODBANK_NTFY_ROUTER_RATE_PER_MIN:-20}"
+      ROUTE_BURST: "${BLOODBANK_NTFY_ROUTER_BURST:-10}"
+      ROUTE_PER_TYPE_PER_MIN: "${BLOODBANK_NTFY_ROUTER_PER_TYPE_PER_MIN:-6}"
+      ROUTE_PER_TYPE_BURST: "${BLOODBANK_NTFY_ROUTER_PER_TYPE_BURST:-3}"
+      DIGEST_SECONDS: "${BLOODBANK_NTFY_ROUTER_DIGEST_SECONDS:-300}"
+      LOG_LEVEL: "${BLOODBANK_NTFY_ROUTER_LOG_LEVEL:-INFO}"
+    networks:
+      - bloodbank-network
+    volumes:
+      - tolt-delivery-state:/var/lib/ntfy-router
+    restart: unless-stopped

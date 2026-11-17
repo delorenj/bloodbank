@@ -1,83 +1,46 @@
 installation:
-  version: 6.10.1-next.13
+  version: 6.12.4
   installDate: 2026-07-13T13:20:25.226Z
-  lastUpdated: 2026-07-13T13:20:25.226Z
+  lastUpdated: 2026-10-23T01:15:19.044Z
+  installShims: true
 modules:
   - name: core
-    version: 6.10.1-next.13
+    version: 6.12.4
     installDate: 2026-07-13T13:20:25.170Z
-    lastUpdated: 2026-07-13T13:20:25.223Z
+    lastUpdated: 2026-10-23T01:15:19.039Z
     source: built-in
     npmPackage: null
     repoUrl: null
   - name: bmm
-    version: 6.10.1-next.13
+    version: 6.12.4
     installDate: 2026-07-13T13:20:25.183Z
-    lastUpdated: 2026-07-13T13:20:25.223Z
+    lastUpdated: 2026-10-23T01:15:19.039Z
     source: built-in
     npmPackage: null
     repoUrl: null
   - name: bmb
-    version: main
+    version: v2.2.2
     installDate: 2026-07-13T13:20:25.194Z
-    lastUpdated: 2026-07-13T13:20:25.225Z
+    lastUpdated: 2026-10-23T01:15:19.042Z
     source: external
     npmPackage: bmad-builder
     repoUrl: https://github.com/bmad-code-org/bmad-builder
-    channel: next
-    sha: e6935f2776c34ffd9b18f4ef1e334584ef10a50f
+    channel: stable
+    sha: 4a1422274a2acb0fb0ec0511753da6263948f072
   - name: cis
-    version: main
+    version: v0.3.2
     installDate: 2026-07-13T13:20:25.199Z
-    lastUpdated: 2026-07-13T13:20:25.226Z
+    lastUpdated: 2026-10-23T01:15:19.044Z
     source: external
     npmPackage: bmad-creative-intelligence-suite
     repoUrl: https://github.com/bmad-code-org/bmad-module-creative-intelligence-suite
-    channel: next
-    sha: 07a8dd03d196a762f21c241d985293fe5b0f90e7
+    channel: pinned
+    sha: 97298b22fee1c7e482710d3a8414adb5cfccccd9
 ides:
   - claude-code
   - codex
-  - cursor
-  - github-copilot
-  - adal
-  - antigravity-cli
-  - auggie
-  - goose
-  - cline
-  - codebuddy
-  - codewhale
-  - command-code
-  - crush
-  - droid
-  - firebender
   - gemini
-  - antigravity
-  - hermes
-  - bob
-  - iflow
-  - junie
-  - kilo
-  - kimi-code
-  - kiro
-  - kode
-  - mistral-vibe
-  - mux
-  - neovate
-  - ona
-  - openclaw
+  - github-copilot
   - opencode
-  - openhands
-  - pi
-  - pochi
-  - qoder
-  - qwen
-  - replit
-  - roo
-  - rovo-dev
-  - cortex
-  - amp
-  - trae
-  - warp
-  - windsurf
-  - zencoder
+  - kimi-code
+  - zcode

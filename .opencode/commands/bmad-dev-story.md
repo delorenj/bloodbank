@@ -1,5 +1,5 @@
 ---
-description: "Execute story implementation following a context filled story spec file. Use when the user says \"dev this story [story file]\" or \"implement the next story in the sprint plan\""
+description: "Deprecated: `bmad-build` is now the official implementation method. Only use this when explicitly invoked by name"
 ---
 
 @skills/bmad-dev-story

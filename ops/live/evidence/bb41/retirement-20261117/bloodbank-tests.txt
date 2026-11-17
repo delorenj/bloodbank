@@ -1,0 +1,29 @@
+test_http_sqlite_snapshots_postcheck_and_workflow_reactivation_guard (test_bb41_consumer_retirement.CaptureBoundaryTests.test_http_sqlite_snapshots_postcheck_and_workflow_reactivation_guard) ... ok
+test_digest_review_authorization_and_output_guards (test_bb41_consumer_retirement.DeleteTests.test_digest_review_authorization_and_output_guards) ... ok
+test_first_failure_stops_before_second_delete (test_bb41_consumer_retirement.DeleteTests.test_first_failure_stops_before_second_delete) ... ok
+test_full_live_runner_offline_including_snapshot_journal_and_postcheck (test_bb41_consumer_retirement.DeleteTests.test_full_live_runner_offline_including_snapshot_journal_and_postcheck) ... ok
+test_no_network_before_review_and_authorization_gates (test_bb41_consumer_retirement.DeleteTests.test_no_network_before_review_and_authorization_gates) ... ok
+test_requests_only_exact_two_deletes (test_bb41_consumer_retirement.DeleteTests.test_requests_only_exact_two_deletes) ... ok
+test_database_connection_is_query_only (test_bb41_consumer_retirement.GuardTests.test_database_connection_is_query_only) ... ok
+test_exact_postcheck_does_not_claim_handler_success (test_bb41_consumer_retirement.GuardTests.test_exact_postcheck_does_not_claim_handler_success) ... ok
+test_fresh_allows_only_counter_growth_not_legacy_progress (test_bb41_consumer_retirement.GuardTests.test_fresh_allows_only_counter_growth_not_legacy_progress) ... ok
+test_fresh_rejects_unrelated_config_drift_and_recreation (test_bb41_consumer_retirement.GuardTests.test_fresh_rejects_unrelated_config_drift_and_recreation) ... ok
+test_incomplete_inventory_blocks (test_bb41_consumer_retirement.GuardTests.test_incomplete_inventory_blocks) ... ok
+test_missing_replacement_blocks_plan (test_bb41_consumer_retirement.GuardTests.test_missing_replacement_blocks_plan) ... ok
+test_plan_lists_only_exact_ids_and_is_not_authorization (test_bb41_consumer_retirement.GuardTests.test_plan_lists_only_exact_ids_and_is_not_authorization) ... ok
+test_postcheck_rejects_no_delete_extra_delete_config_drift_or_reactivation (test_bb41_consumer_retirement.GuardTests.test_postcheck_rejects_no_delete_extra_delete_config_drift_or_reactivation) ... ok
+test_refuses_active_inflight_push_filter_and_retention_drift (test_bb41_consumer_retirement.GuardTests.test_refuses_active_inflight_push_filter_and_retention_drift) ... ok
+test_bound_push_and_polling_pull_not_flagged_despite_old_last_delivery (test_bb41_consumer_retirement.HealthTests.test_bound_push_and_polling_pull_not_flagged_despite_old_last_delivery) ... ok
+test_inactive_known_retirement_separate_from_outage (test_bb41_consumer_retirement.HealthTests.test_inactive_known_retirement_separate_from_outage) ... ok
+test_missing_push_bound_on_pull_is_not_failure (test_bb41_consumer_retirement.HealthTests.test_missing_push_bound_on_pull_is_not_failure) ... ok
+test_one_snapshot_cannot_prove_outage_duration (test_bb41_consumer_retirement.HealthTests.test_one_snapshot_cannot_prove_outage_duration) ... ok
+test_progress_prevents_confirmed_orphan (test_bb41_consumer_retirement.HealthTests.test_progress_prevents_confirmed_orphan) ... ok
+test_real_orphan_over_24h_is_flagged_for_push_and_pull (test_bb41_consumer_retirement.HealthTests.test_real_orphan_over_24h_is_flagged_for_push_and_pull) ... ok
+test_short_outage_not_over_24h (test_bb41_consumer_retirement.HealthTests.test_short_outage_not_over_24h) ... ok
+test_zero_pending_not_flagged (test_bb41_consumer_retirement.HealthTests.test_zero_pending_not_flagged) ... ok
+
+----------------------------------------------------------------------
+Ran 23 tests in 0.817s
+
+OK
+{"ok": true, "evidence_dir": "/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/tmp1rvolvl6/operation", "remaining": "Later no-recreation snapshot and actual fresh replacement handler evidence required."}

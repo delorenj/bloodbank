@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import uuid
 from dataclasses import dataclass
@@ -20,8 +21,37 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-COMMAND_TYPE = "bloodbank.agent.invocation.start"
-COMMAND_SUBJECT = "bloodbank.cmd.agent.invocation.start"
+
+
+@dataclass(frozen=True)
+class LaneSpec:
+    """One command delivery lane: a command type, its subject and a lane name.
+
+    The lanes carry the same ``data`` payload.  They differ only in which
+    durable consumer (and therefore which in-flight slots) they are delivered
+    through, so a human-facing command is never queued behind batch work.
+    """
+
+    name: str
+    command_type: str
+    subject: str
+
+
+BATCH = LaneSpec(
+    "batch",
+    "bloodbank.agent.invocation.start",
+    "bloodbank.cmd.agent.invocation.start",
+)
+INTERACTIVE = LaneSpec(
+    "interactive",
+    "bloodbank.agent.invocation.invoke",
+    "bloodbank.cmd.agent.invocation.invoke",
+)
+LANES = {lane.name: lane for lane in (BATCH, INTERACTIVE)}
+
+# The batch lane is the original single lane; keep these importable.
+COMMAND_TYPE = BATCH.command_type
+COMMAND_SUBJECT = BATCH.subject
 COMMAND_STREAM = "BLOODBANK_COMMANDS"
 EVENT_STREAM = "BLOODBANK_EVENTS"
 
@@ -29,8 +59,21 @@ TURN_STARTED = "bloodbank.conversation.turn.started"
 INVOCATION_STARTED = "bloodbank.agent.invocation.started"
 INVOCATION_COMPLETED = "bloodbank.agent.invocation.completed"
 INVOCATION_FAILED = "bloodbank.agent.invocation.failed"
+# error_code stamped on invocation.failed when a lane's per-turn wall clock
+# expired and the gateway stopped the Hermes turn.
+TURN_TIMEOUT_CODE = "turn_timeout"
+# timeout_source of a turn_timeout whose turn had detached at the lane limit
+# and was still running at the lane's detached ceiling.
+DETACHED_CEILING_SOURCE = "detached_ceiling"
 TURN_COMPLETED = "bloodbank.conversation.turn.completed"
 MESSAGE_APPENDED = "bloodbank.conversation.message.appended"
+# One interim assistant message ("I'll check the board first.") of a running
+# command turn: what the agent said it is doing, while the human waits.
+INVOCATION_PROGRESSED = "bloodbank.agent.invocation.progressed"
+# A running turn outlived its lane's wall clock and gave its slot back instead
+# of being stopped (extra.interactive.detach_on_timeout). Not terminal.
+INVOCATION_DETACHED = "bloodbank.agent.invocation.detached"
+PROGRESS_TEXT_MAX_CHARS = 500
 
 _UUID_NAMESPACE = uuid.UUID("633de934-f359-50f8-978f-3ef4ebbdac69")
 _RFC3339 = re.compile(
@@ -41,6 +84,11 @@ _RFC3339 = re.compile(
 # Registry keys are evidence, not user input, so noncanonical spellings must
 # invalidate the snapshot rather than be silently normalized into an identity.
 _CANONICAL_AGENT_ID = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
+# data.model: one Hermes model route for this turn only ("automaticai/auto/fast",
+# "automaticai/personal/claude-sonnet-5.5"). It becomes the argument of an
+# internal `/model <route> --once`, so it is one token: no whitespace (no extra
+# flags such as --global), no leading "-" or "/".
+_MODEL_ROUTE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$")
 
 
 class CommandInvalid(ValueError):
@@ -70,6 +118,17 @@ def _uuid_string(value: Any, field: str) -> str:
     return text
 
 
+def _positive_number(value: Any) -> bool:
+    """True for a finite number > 0 (a JSON bool is not a number here)."""
+
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    )
+
+
 def _timestamp(value: Any) -> str:
     text = _nonempty_string(value, "time")
     if not _RFC3339.fullmatch(text):
@@ -82,8 +141,13 @@ def _timestamp(value: Any) -> str:
     return text
 
 
-def decode_command(payload: bytes, *, max_bytes: int = 262_144) -> dict[str, Any]:
+def decode_command(
+    payload: bytes, *, max_bytes: int = 262_144, lane: LaneSpec = BATCH
+) -> dict[str, Any]:
     """Decode and validate the canonical invocation command envelope.
+
+    ``lane`` selects the command type the envelope must carry: a ``start``
+    envelope delivered on the interactive subject (or the reverse) is poison.
 
     The canonical schema permits a null prompt because it describes the wire
     family.  This consumer needs executable content, so an empty/null prompt is
@@ -120,8 +184,8 @@ def decode_command(payload: bytes, *, max_bytes: int = 262_144) -> dict[str, Any
 
     if envelope.get("specversion") != "1.0":
         raise CommandInvalid("specversion must be '1.0'")
-    if envelope["type"] != COMMAND_TYPE:
-        raise CommandInvalid(f"type must be {COMMAND_TYPE!r}")
+    if envelope["type"] != lane.command_type:
+        raise CommandInvalid(f"type must be {lane.command_type!r}")
     if envelope["kind"] != "command":
         raise CommandInvalid("kind must be 'command'")
     if envelope["domain"] != "agent":
@@ -157,11 +221,22 @@ def decode_command(payload: bytes, *, max_bytes: int = 262_144) -> dict[str, Any
     context = data.get("context")
     if context is not None and not isinstance(context, dict):
         raise CommandInvalid("data.context must be null or an object")
+    deadline = data.get("deadline_seconds")
+    if deadline is not None and not _positive_number(deadline):
+        raise CommandInvalid("data.deadline_seconds must be null or a positive number")
+    model = data.get("model")
+    if model is not None and (
+        not isinstance(model, str) or _MODEL_ROUTE.fullmatch(model) is None
+    ):
+        raise CommandInvalid(
+            "data.model must be null or one model route (letters, digits and . _ : / @ + -, "
+            "no spaces, at most 200 characters, not starting with - or /)"
+        )
 
-    expected_schema = f"apicurio://holyfields/{COMMAND_TYPE}/versions/1"
+    expected_schema = f"apicurio://holyfields/{lane.command_type}/versions/1"
     if "dataschema" in envelope and envelope["dataschema"] != expected_schema:
         raise CommandInvalid(f"dataschema must be {expected_schema!r}")
-    expected_ref = f"{COMMAND_TYPE}.v1"
+    expected_ref = f"{lane.command_type}.v1"
     if "schemaref" in envelope and envelope["schemaref"] != expected_ref:
         raise CommandInvalid(f"schemaref must be {expected_ref!r}")
 
@@ -303,9 +378,14 @@ class Invocation:
     thread_id: str
     turn_id: str
     invocation_id: str
+    lane: str = BATCH.name
+    # data.model: the model route this turn alone runs on (None = the profile's).
+    model: str | None = None
 
     @classmethod
-    def from_envelope(cls, envelope: dict[str, Any], profile: str) -> "Invocation":
+    def from_envelope(
+        cls, envelope: dict[str, Any], profile: str, lane: str = BATCH.name
+    ) -> "Invocation":
         data = envelope["data"]
         command_id = envelope["command_id"]
         correlation_id = envelope["correlationid"]
@@ -317,6 +397,8 @@ class Invocation:
             thread_id=data.get("thread_id") or f"bloodbank:{correlation_id}",
             turn_id=data.get("turn_id") or command_id,
             invocation_id=command_id,
+            lane=lane,
+            model=data.get("model") or None,
         )
 
     def event_id(self, event_type: str) -> str:
@@ -372,6 +454,7 @@ def lifecycle_event(
             "idempotency_key": invocation.envelope["idempotency_key"],
             "target_agent_id": invocation.target_agent_id,
             "profile_name": invocation.profile,
+            "lane": invocation.lane,
         },
     }
 
@@ -447,7 +530,7 @@ def started_events(invocation: Invocation) -> tuple[dict[str, Any], dict[str, An
         data={
             "thread_id": invocation.thread_id,
             "turn_id": invocation.turn_id,
-            "prompt_text": None,
+            "prompt_text": invocation.prompt,
         },
     )
     started = lifecycle_event(
@@ -465,14 +548,117 @@ def started_events(invocation: Invocation) -> tuple[dict[str, Any], dict[str, An
     return turn, started
 
 
+def progress_text(raw: Any) -> tuple[str | None, bool]:
+    """(text, truncated) for a progress fact: trimmed, at most
+    PROGRESS_TEXT_MAX_CHARS characters (an ellipsis marks a cut), None for
+    anything that is not a non-blank string."""
+
+    if not isinstance(raw, str):
+        return None, False
+    text = raw.strip()
+    if not text:
+        return None, False
+    if len(text) <= PROGRESS_TEXT_MAX_CHARS:
+        return text, False
+    return text[: PROGRESS_TEXT_MAX_CHARS - 1].rstrip() + "…", True
+
+
+def progress_event(
+    invocation: Invocation,
+    *,
+    seq: int,
+    text: str,
+    truncated: bool = False,
+    elapsed_seconds: float | None = None,
+) -> dict[str, Any]:
+    """bloodbank.agent.invocation.progressed for one interim message.
+
+    The id is random, not derived: progress is never journaled or replayed,
+    and a re-run of the same command (redelivery after a restart) must not be
+    deduplicated against the first run's progress inside the stream's
+    duplicate window."""
+
+    event = lifecycle_event(
+        invocation,
+        INVOCATION_PROGRESSED,
+        causation_id=invocation.event_id(INVOCATION_STARTED),
+        data={
+            "invocation_id": invocation.invocation_id,
+            "thread_id": invocation.thread_id,
+            "turn_id": invocation.turn_id,
+            "seq": seq,
+            "text": text,
+            "text_truncated": truncated,
+            "elapsed_seconds": (
+                round(max(0.0, elapsed_seconds), 1)
+                if elapsed_seconds is not None
+                else None
+            ),
+            **_command_context(invocation),
+        },
+    )
+    event["id"] = str(uuid.uuid4())
+    return event
+
+
+def detached_event(
+    invocation: Invocation,
+    *,
+    elapsed_seconds: float,
+    timeout_seconds: float,
+    timeout_source: str,
+    ceiling_seconds: float,
+    detached_count: int,
+    max_detached: int,
+) -> dict[str, Any]:
+    """bloodbank.agent.invocation.detached: the turn outlived its lane's wall
+    clock and its slot was given back while it keeps running.
+
+    Not terminal: the same command later closes with exactly one completed or
+    failed fact (that one carries ``detached: true``); a turn still running at
+    ``ceiling_seconds`` after dispatch is stopped and fails turn_timeout with
+    ``timeout_source: detached_ceiling``. The id is random for the same reason
+    progress ids are: a re-run of the command after a restart detaches anew."""
+
+    event = lifecycle_event(
+        invocation,
+        INVOCATION_DETACHED,
+        causation_id=invocation.event_id(INVOCATION_STARTED),
+        data={
+            "invocation_id": invocation.invocation_id,
+            "thread_id": invocation.thread_id,
+            "turn_id": invocation.turn_id,
+            "elapsed_seconds": round(max(0.0, elapsed_seconds), 1),
+            "timeout_seconds": round(timeout_seconds, 1),
+            "timeout_source": timeout_source,
+            "ceiling_seconds": round(ceiling_seconds, 1),
+            "detached_count": detached_count,
+            "max_detached": max_detached,
+            **_command_context(invocation),
+        },
+    )
+    event["id"] = str(uuid.uuid4())
+    return event
+
+
 def terminal_events(
     invocation: Invocation,
     *,
     outcome: str,
     failure_code: str | None = None,
     failure_message: str | None = None,
+    failure_data: dict[str, Any] | None = None,
     occurred_at: str | None = None,
+    extra_data: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build the terminal invocation fact and its closing turn fact.
+
+    ``failure_data`` adds optional fields to a failed invocation payload (the
+    turn-timeout path carries ``elapsed_seconds``/``timeout_seconds``/...);
+    ``extra_data`` adds optional fields to either outcome (a turn that detached
+    at its lane's wall clock carries ``detached``/``detached_after_seconds``/
+    ``elapsed_seconds``). Neither can override the fields the contract owns."""
+
     started_id = invocation.event_id(INVOCATION_STARTED)
     if outcome == "success":
         terminal = lifecycle_event(
@@ -481,6 +667,7 @@ def terminal_events(
             causation_id=started_id,
             occurred_at=occurred_at,
             data={
+                **(extra_data or {}),
                 "invocation_id": invocation.invocation_id,
                 "thread_id": invocation.thread_id,
                 "turn_id": invocation.turn_id,
@@ -496,6 +683,8 @@ def terminal_events(
             causation_id=started_id,
             occurred_at=occurred_at,
             data={
+                **(extra_data or {}),
+                **(failure_data or {}),
                 "invocation_id": invocation.invocation_id,
                 "thread_id": invocation.thread_id,
                 "turn_id": invocation.turn_id,

@@ -1,0 +1,608 @@
+"""artifact-sidecar runtime: durable JetStream consumer on the agent bus.
+
+Consumes bloodbank.evt.agent.tool.completed and
+bloodbank.conversation.turn.completed from BLOODBANK_EVENTS with an
+explicit-ack durable consumer (plus bloodbank.evt.project.activity.recorded
+on a second durable, <durable>-activity),  captures qualifying artifact bytes into the
+content-addressed store, resolves the project through the canonical pjangler
+registry, validates and enqueues bloodbank.project.artifact.created events,
+and publishes them from the durable outbox through the REAL awaited
+JetStream transport (Nats-Msg-Id = stable event id, so server-side dedupe
+collapses replays).
+
+Ack contract (durable-outbox-after-commit): the source message is acked only
+once its capture is durably enqueued, held, duplicate, or terminally
+unqualified — the outbox, not the ack, owns publication. Publication retries
+on the idle timer (not only on the next incoming event) with exponential
+backoff and bounded attempts; exhausted rows stay visible in --status
+(nonzero exit) until an operator re-arms them with --retry-outbox.
+
+Delivery policy: a NEW durable is created with DeliverPolicy.NEW (no
+seven-day vault dump); backfill over retained history is the explicit
+ARTIFACT_SIDECAR_BACKFILL=1 operator choice at first start; a bounded
+backfill is ARTIFACT_SIDECAR_BACKFILL_SINCE=<RFC3339> (DeliverPolicy
+BY_START_TIME). Both apply ONLY when the durable is first created.
+
+Usage:
+  python3 main.py                 # run the consumer loop
+  python3 main.py --status        # state/outbox/holds snapshot (nonzero when exhausted/unresolved)
+  python3 main.py --hold-show     # list held captures awaiting attribution
+  python3 main.py --hold-resolve <hold_id> <project-slug>
+  python3 main.py --hold-publish <hold_id>  # enqueue an operator-resolved hold
+  python3 main.py --retry-outbox  # re-arm exhausted outbox rows
+
+Environment:
+  ARTIFACT_SIDECAR_NATS_URL     default nats://127.0.0.1:4222
+  ARTIFACT_SIDECAR_STATE_DIR    default ~/.local/state/artifact-sidecar
+  ARTIFACT_SIDECAR_STORE        default <state dir>/store
+  ARTIFACT_SIDECAR_REGISTRY_URL default http://127.0.0.1:8764/v1/registry
+  ARTIFACT_SIDECAR_REGISTRY_FILE optional JSON file snapshot of the registry
+  ARTIFACT_SIDECAR_REGISTRY_REFRESH_S registry re-fetch period, default 300 (0 disables)
+  ARTIFACT_SIDECAR_DURABLE      default bloodbank-artifact-sidecar
+  ARTIFACT_SIDECAR_ACTIVITY_DURABLE  default <durable>-activity; "" disables
+                                the activity-report consumer
+  ARTIFACT_SIDECAR_ACTIVITY_BACKFILL / _BACKFILL_SINCE  same semantics as the
+                                two below, for the activity durable only;
+                                each falls back to the primary setting.
+  ARTIFACT_SIDECAR_BACKFILL     "1" => new durable created with DeliverPolicy.ALL
+  ARTIFACT_SIDECAR_BACKFILL_SINCE RFC3339 timestamp (must carry a zone, e.g.
+                                2026-10-16T18:17:21Z) => new durable created
+                                with DeliverPolicy.BY_START_TIME from that
+                                instant. Takes precedence over BACKFILL=1.
+                                IGNORED when the durable already exists
+                                (consumer delivery policy is fixed at
+                                creation; to re-run a different window,
+                                delete the durable AND the sidecar state db
+                                deliberately). An unparseable value aborts
+                                startup rather than silently falling back.
+  ARTIFACT_SIDECAR_OUTBOX_RETRY_S idle-timer outbox retry period, default 5
+  ARTIFACT_SIDECAR_CAPTURE_ROOTS ':'-separated ABSOLUTE roots under which an
+                                explicitly delivered local file (MEDIA:/path
+                                token in a producer-delivered reply, or a
+                                deliverables[] path) may be read and captured.
+                                EMPTY by default: delivered-file capture is a
+                                strict operator opt-in; every delivered path
+                                outside these roots (and every path matching
+                                the denylist: .hermes, .git, config/, …) is
+                                refused, never silently captured.
+
+NOT activated anywhere: no compose service, no systemd unit is installed by
+this file. See ops/systemd/ for the deployment templates the parent reviews.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import logging
+import os
+import signal
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(
+    0, str(Path(__file__).resolve().parents[2] / "services" / "agent-hooks")
+)
+
+import nats  # nats-py: same client the hermes-gateway and ntfy-router use
+import nats.js.errors
+from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
+from nats.aio.msg import Msg
+
+import artifact_lib
+import discovery
+from artifact_lib import ProjectRegistry, RegistryError, ensure_store_root
+from sidecar import Disposition, Sidecar, SidecarState
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s [artifact-sidecar] %(levelname)s %(message)s",
+)
+log = logging.getLogger("artifact-sidecar")
+
+EVENTS_STREAM = "BLOODBANK_EVENTS"
+SOURCE_SUBJECTS = (
+    "bloodbank.evt.agent.tool.completed",
+    "bloodbank.evt.conversation.turn.completed",
+)
+# Activity reports ride a SECOND durable (own delivery policy and backfill
+# start). Changing the filter subjects of the live durable would not backfill
+# the new subject (the cursor is already past it) and risks the proven
+# consumer; a separate durable leaves it untouched.
+ACTIVITY_SUBJECTS = ("bloodbank.evt.project.activity.recorded",)
+
+# Disposition kinds that are durable terminal states for the source message:
+# the capture is committed to the store and its outcome is durably recorded
+# (enqueued / held / duplicate / skipped / unsupported), so acking is safe.
+_TERMINAL_KINDS = frozenset({"enqueued", "duplicate", "held", "skipped", "unsupported"})
+
+
+def _env(name: str, default: str) -> str:
+    return os.environ.get(name, default)
+
+
+def parse_backfill_since(raw: str) -> datetime | None:
+    """Parse ARTIFACT_SIDECAR_BACKFILL_SINCE (RFC3339 with a zone) -> aware UTC."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"ARTIFACT_SIDECAR_BACKFILL_SINCE is not RFC3339: {raw!r}") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(
+            f"ARTIFACT_SIDECAR_BACKFILL_SINCE must carry a timezone (e.g. ...Z): {raw!r}"
+        )
+    return parsed.astimezone(timezone.utc)
+
+
+def build_consumer_config(
+    durable: str,
+    *,
+    backfill: bool = False,
+    backfill_since: datetime | None = None,
+    subjects: tuple[str, ...] = SOURCE_SUBJECTS,
+) -> ConsumerConfig:
+    """Config for a NEW durable. since > backfill(ALL) > NEW."""
+    kwargs: dict[str, Any] = {}
+    if backfill_since is not None:
+        policy = DeliverPolicy.BY_START_TIME
+        kwargs["opt_start_time"] = backfill_since.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    elif backfill:
+        policy = DeliverPolicy.ALL
+    else:
+        policy = DeliverPolicy.NEW
+    # One subject is a plain filter_subject; several use filter_subjects.
+    filter_kwargs: dict[str, Any] = (
+        {"filter_subject": subjects[0]} if len(subjects) == 1
+        else {"filter_subjects": list(subjects)}
+    )
+    return ConsumerConfig(
+        durable_name=durable,
+        description=(
+            "Project artifact discovery sidecar ("
+            + ("activity report" if subjects == ACTIVITY_SUBJECTS else "tool/turn")
+            + " source events)"
+        ),
+        deliver_policy=policy,
+        ack_policy=AckPolicy.EXPLICIT,
+        ack_wait=30,
+        max_deliver=10,
+        max_waiting=1,
+        max_ack_pending=32,
+        **filter_kwargs,
+        **kwargs,
+    )
+
+
+def _default_state_dir() -> Path:
+    xdg = os.environ.get("XDG_STATE_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".local" / "state"
+    return base / "artifact-sidecar"
+
+
+def load_registry() -> ProjectRegistry:
+    file_path = _env("ARTIFACT_SIDECAR_REGISTRY_FILE", "")
+    if file_path:
+        payload = json.loads(Path(file_path).read_text())
+        return ProjectRegistry.from_payload(payload)
+    url = _env("ARTIFACT_SIDECAR_REGISTRY_URL", "http://127.0.0.1:8764/v1/registry")
+    return ProjectRegistry.from_http(url)
+
+
+def build_sidecar() -> tuple[Sidecar, SidecarState, Path]:
+    state_dir = Path(
+        _env("ARTIFACT_SIDECAR_STATE_DIR", str(_default_state_dir()))
+    )
+    state_dir.mkdir(parents=True, exist_ok=True)
+    store_root = ensure_store_root(
+        Path(_env("ARTIFACT_SIDECAR_STORE", str(state_dir / "store")))
+    )
+    state = SidecarState(state_dir / "state.sqlite3")
+    registry = load_registry()
+    return (
+        Sidecar(state=state, store_root=store_root, registry=registry),
+        state,
+        store_root,
+    )
+
+
+class Runtime:
+    def __init__(self, sidecar: Sidecar):
+        self.sidecar = sidecar
+        self._nc: Any = None
+        self._js: Any = None
+        self._sub: Any = None
+        self._activity_sub: Any = None
+        self._stop = asyncio.Event()
+        # Two consumers share one outbox: drains are serialized so a row is
+        # never published twice concurrently (single-threaded flag, no Lock).
+        self._draining = False
+        self._drain_again = False
+        self._last_drain = time.monotonic()
+        self._last_refresh = time.monotonic()
+
+    async def _bind(
+        self,
+        durable: str,
+        subjects: tuple[str, ...],
+        *,
+        backfill: bool,
+        backfill_since: datetime | None,
+    ) -> Any:
+        try:
+            await self._js.consumer_info(EVENTS_STREAM, durable)
+            existing = True
+        except (nats.js.errors.NotFoundError, KeyError, Exception):  # noqa: BLE001
+            existing = False
+        # Delivery policy for a NEW durable only: NEW unless backfill is the
+        # explicit operator choice (DeliverPolicy.ALL would replay the whole
+        # retained window — a seven-day vault dump is never the default).
+        config = None
+        if not existing:
+            config = build_consumer_config(
+                durable, backfill=backfill, backfill_since=backfill_since,
+                subjects=subjects,
+            )
+        sub = await self._js.pull_subscribe(
+            subjects[0],
+            durable=durable,
+            stream=EVENTS_STREAM,
+            config=config,
+        )
+        log.info(
+            "consumer %s (%s, deliver=%s)",
+            durable,
+            "existing" if existing else "created",
+            (
+                f"BY_START_TIME({backfill_since.isoformat()})"
+                if (not existing and backfill_since is not None)
+                else "ALL(backfill)" if (not existing and backfill)
+                else "NEW" if not existing else "bound"
+            ),
+        )
+        return sub
+
+    async def connect(
+        self,
+        nats_url: str,
+        durable: str,
+        *,
+        backfill: bool = False,
+        backfill_since: datetime | None = None,
+        activity_durable: str | None = None,
+        activity_backfill: bool = False,
+        activity_backfill_since: datetime | None = None,
+    ) -> None:
+        self._nc = await nats.connect(
+            nats_url,
+            name=f"bloodbank-{durable}",
+            connect_timeout=5,
+            max_reconnect_attempts=-1,  # reconnect forever, like the router
+            reconnect_time_wait=2,
+        )
+        self._js = self._nc.jetstream()
+        self._sub = await self._bind(
+            durable, SOURCE_SUBJECTS, backfill=backfill, backfill_since=backfill_since
+        )
+        if activity_durable:
+            self._activity_sub = await self._bind(
+                activity_durable,
+                ACTIVITY_SUBJECTS,
+                backfill=activity_backfill,
+                backfill_since=activity_backfill_since,
+            )
+
+    async def aclose(self) -> None:
+        """Close the transport cleanly (SIGTERM path and tests)."""
+        nc, self._nc, self._js = self._nc, None, None
+        if nc is not None:
+            try:
+                await nc.drain()
+            finally:
+                await nc.close()
+
+    async def _publish(self, envelope: dict[str, Any]) -> None:
+        """Publish through the real awaited JetStream transport.
+
+        Nats-Msg-Id carries the STABLE event id: JetStream's server-side
+        dedupe window collapses outbox replays of the same event id instead
+        of producing duplicates after a crash.
+        """
+        subject = envelope["subject"]
+        ack = await self._js.publish(
+            subject,
+            json.dumps(envelope).encode("utf-8"),
+            timeout=5,
+            headers={"Nats-Msg-Id": str(envelope["id"])},
+        )
+        log.debug("published %s -> seq %s", envelope["id"], getattr(ack, "seq", "?"))
+
+    async def _drain_outbox(self) -> int:
+        """Serialized outbox drain (two consumers share one outbox).
+
+        A drain requested while one is running is not dropped: it sets a flag
+        and the running drain loops once more, so a row enqueued by the other
+        consumer mid-drain is still published promptly.
+        """
+        if self._draining:
+            self._drain_again = True
+            return 0
+        self._draining = True
+        published = 0
+        try:
+            while True:
+                self._drain_again = False
+                published += await self._drain_outbox_once()
+                if not self._drain_again:
+                    break
+        finally:
+            self._draining = False
+        return published
+
+    async def _drain_outbox_once(self) -> int:
+        """Publish due outbox rows through JetStream; returns published count.
+
+        Publication errors are recorded on the row (bounded attempts,
+        exponential backoff) and never mark anything published — a row is
+        'published' only when the transport accepted it.
+        """
+        published = 0
+        for row in self.sidecar.state.due():
+            envelope = json.loads(row["envelope_json"])
+            try:
+                await self._publish(envelope)
+            except Exception as exc:  # noqa: BLE001
+                self.sidecar.state.record_attempt(
+                    row["outbox_id"], f"{type(exc).__name__}: {exc}"
+                )
+                log.warning(
+                    "outbox publish failed event=%s attempts=%s",
+                    row["event_id"], row["attempts"] + 1,
+                )
+                continue
+            self.sidecar.state._finish_publish(row)
+            published += 1
+        return published
+
+    async def _handle(self, msg: Msg) -> None:
+        # Source validation: subject must be one we subscribed; the envelope
+        # type must match the subject's entity (defends against cross-wired
+        # publishers).
+        try:
+            envelope = json.loads(msg.data.decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("malformed message on %s: %s; acking", msg.subject, exc)
+            await msg.ack()
+            return
+        if not isinstance(envelope, dict):
+            log.warning("non-object message on %s; acking", msg.subject)
+            await msg.ack()
+            return
+        expected = {
+            "bloodbank.evt.agent.tool.completed": "bloodbank.agent.tool.completed",
+            "bloodbank.evt.conversation.turn.completed": "bloodbank.conversation.turn.completed",
+            "bloodbank.evt.project.activity.recorded": "bloodbank.project.activity.recorded",
+        }.get(msg.subject)
+        if expected and envelope.get("type") != expected:
+            log.warning(
+                "subject/type mismatch on %s: type=%r; acking foreign envelope",
+                msg.subject, envelope.get("type"),
+            )
+            await msg.ack()
+            return
+        try:
+            dispositions = self.sidecar.process(envelope)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("processing failed for %s; nak", msg.subject)
+            await msg.nak(delay=5)
+            return
+        for d in dispositions:
+            log.info(
+                "disposition kind=%s artifact=%s rev=%s :: %s",
+                d.kind, d.artifact_id, d.revision, d.detail,
+            )
+        # Durable work for this message is done when every disposition is a
+        # durable terminal state. Candidate errors are contained: a
+        # deterministic validation failure is poison (ack, loudly logged,
+        # never publishable); anything else NAKs for redelivery with the
+        # bytes/holds preserved.
+        # NO dispositions == the event produced no candidate at all (a Bash
+        # call, a reply with nothing to capture, ...): terminally
+        # unqualified, nothing durable to wait for. It MUST be acked: nak'ing
+        # it redelivers the (vast majority) non-artifact traffic until
+        # max_deliver and starves the consumer at max_ack_pending.
+        kinds = {d.kind for d in dispositions}
+        if kinds <= _TERMINAL_KINDS:
+            try:
+                await self._drain_outbox()
+            except Exception:  # noqa: BLE001 - drain errors don't uncommit the capture
+                log.exception("outbox drain after handle failed; idle timer will retry")
+            await msg.ack()
+            return
+        for d in dispositions:
+            if d.kind == "error":
+                if "envelope failed validation" in d.detail:
+                    log.error("poison candidate (deterministic): %s; acking", d.detail)
+                else:
+                    log.warning("candidate error (retryable): %s; nak", d.detail)
+        await msg.nak(delay=5)
+
+    async def _refresh_registry(self) -> None:
+        """Bounded registry re-fetch; keeps last-good on failure."""
+        try:
+            registry = await asyncio.get_running_loop().run_in_executor(
+                None, load_registry
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("registry refresh failed (keeping last-good): %s", exc)
+            return
+        self.sidecar.registry = registry
+        log.info("registry refreshed (%d projects)", len(registry._projects))
+
+    async def run(self) -> None:
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, self._stop.set)
+        self._last_drain = time.monotonic()
+        self._last_refresh = time.monotonic()
+        subs = [s for s in (self._sub, self._activity_sub) if s is not None]
+        await asyncio.gather(*(self._consume(sub) for sub in subs))
+
+    async def _consume(self, sub: Any) -> None:
+        """Fetch/handle loop for one durable; idle duties are shared."""
+        retry_period = float(_env("ARTIFACT_SIDECAR_OUTBOX_RETRY_S", "5"))
+        refresh_period = float(_env("ARTIFACT_SIDECAR_REGISTRY_REFRESH_S", "300"))
+        while not self._stop.is_set():
+            try:
+                msgs = await sub.fetch(batch=8, timeout=2)
+            except TimeoutError:
+                # Idle timer: outbox retries must not depend on new traffic.
+                now = time.monotonic()
+                if now - self._last_drain >= retry_period:
+                    try:
+                        await self._drain_outbox()
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("idle outbox drain failed: %s", exc)
+                    self._last_drain = now
+                if refresh_period > 0 and now - self._last_refresh >= refresh_period:
+                    await self._refresh_registry()
+                    self._last_refresh = now
+                continue
+            except Exception as exc:  # noqa: BLE001 - reconnect storms etc.
+                if self._stop.is_set():
+                    break
+                log.warning("fetch failed: %s: %s", type(exc).__name__, exc)
+                await asyncio.sleep(2)
+                continue
+            self._last_drain = time.monotonic()
+            for msg in msgs:
+                await self._handle(msg)
+
+
+async def amain(args: argparse.Namespace) -> int:
+    sidecar, state, store_root = build_sidecar()
+    runtime: Runtime | None = None
+    try:
+        if args.status:
+            pending = state.pending()
+            exhausted = state.exhausted()
+            holds = state.holds()
+            print(json.dumps({
+                "store_root": str(store_root),
+                "artifacts": _artifact_summary(state),
+                "pending_outbox": len(pending),
+                "pending_detail": [
+                    {"event_id": r["event_id"], "attempts": r["attempts"], "last_error": r["last_error"]}
+                    for r in pending
+                ],
+                "exhausted_outbox": len(exhausted),
+                "exhausted_detail": [
+                    {"event_id": r["event_id"], "attempts": r["attempts"], "last_error": r["last_error"]}
+                    for r in exhausted
+                ],
+                "unresolved_holds": len(holds),
+            }, indent=2))
+            # Health signal: exhausted publication attempts and unresolved
+            # holds are operator-visible states; nonzero exit makes them
+            # impossible to miss in scripts and monitors.
+            return 1 if (exhausted or holds) else 0
+        if args.hold_show:
+            print(json.dumps(state.holds(include_resolved=args.all), indent=2))
+            return 0
+        if args.hold_resolve:
+            hold_id, slug = args.hold_resolve
+            if not state.resolve_hold(hold_id, slug):
+                print(f"no hold with id {hold_id}", file=sys.stderr)
+                return 1
+            print(f"resolved {hold_id} -> {slug}")
+            return 0
+        if args.hold_publish:
+            d = sidecar.publish_resolution(args.hold_publish[0])
+            print(json.dumps({"kind": d.kind, "detail": d.detail, "artifact_id": d.artifact_id, "revision": d.revision}))
+            return 0 if d.kind in ("enqueued", "published", "duplicate") else 1
+        if args.retry_outbox:
+            re_armed = state.retry_exhausted()
+            print(json.dumps({"re_armed": re_armed}))
+            return 0
+
+        nats_url = _env("ARTIFACT_SIDECAR_NATS_URL", "nats://127.0.0.1:4222")
+        durable = _env("ARTIFACT_SIDECAR_DURABLE", "bloodbank-artifact-sidecar")
+        backfill = _env("ARTIFACT_SIDECAR_BACKFILL", "") == "1"
+        backfill_since = parse_backfill_since(_env("ARTIFACT_SIDECAR_BACKFILL_SINCE", ""))
+        # Activity-report durable: own name, own first-creation backfill. Its
+        # delivery env falls back to the primary durable's so one operator
+        # setting (the drop-in's BACKFILL_SINCE) covers both; set
+        # ARTIFACT_SIDECAR_ACTIVITY_DURABLE="" to disable the consumer.
+        activity_durable = _env("ARTIFACT_SIDECAR_ACTIVITY_DURABLE", f"{durable}-activity")
+        activity_backfill = (
+            _env("ARTIFACT_SIDECAR_ACTIVITY_BACKFILL", _env("ARTIFACT_SIDECAR_BACKFILL", "")) == "1"
+        )
+        activity_since_raw = _env("ARTIFACT_SIDECAR_ACTIVITY_BACKFILL_SINCE", "")
+        activity_backfill_since = (
+            parse_backfill_since(activity_since_raw)
+            if activity_since_raw.strip()
+            else backfill_since
+        )
+        runtime = Runtime(sidecar)
+        log.info(
+            "connecting %s durable=%s subjects=%s activity_durable=%s",
+            nats_url, durable, SOURCE_SUBJECTS, activity_durable or "(disabled)",
+        )
+        await runtime.connect(
+            nats_url, durable, backfill=backfill, backfill_since=backfill_since,
+            activity_durable=activity_durable or None,
+            activity_backfill=activity_backfill,
+            activity_backfill_since=activity_backfill_since,
+        )
+        # Crash catch-up: publish anything the outbox still holds through the
+        # REAL transport (awaited JetStream publish, Nats-Msg-Id dedupe).
+        try:
+            await runtime._drain_outbox()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("startup outbox drain failed (idle timer will retry): %s", exc)
+        log.info("subscribed; consuming")
+        await runtime.run()
+        return 0
+    finally:
+        if runtime is not None:
+            try:
+                await runtime.aclose()
+            except Exception:  # noqa: BLE001 - teardown must not mask errors
+                pass
+        state.close()
+
+
+def _artifact_summary(state: SidecarState) -> dict[str, Any]:
+    cur = state._db.execute(
+        "SELECT project_slug, COUNT(DISTINCT artifact_id) AS artifacts, MAX(revision) AS max_rev "
+        "FROM artifacts GROUP BY project_slug"
+    )
+    return {row["project_slug"]: {"artifacts": row["artifacts"], "max_revision": row["max_rev"]} for row in cur}
+
+
+_DOC_LINES = (__doc__ or "artifact-sidecar").splitlines()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=_DOC_LINES[0])
+    parser.add_argument("--status", action="store_true", help="state/outbox/holds snapshot (nonzero on exhausted/unresolved)")
+    parser.add_argument("--hold-show", action="store_true", help="list held captures")
+    parser.add_argument("--all", action="store_true", help="include resolved holds")
+    parser.add_argument("--hold-resolve", nargs=2, metavar=("HOLD_ID", "SLUG"))
+    parser.add_argument("--hold-publish", nargs=1, metavar=("HOLD_ID",))
+    parser.add_argument("--retry-outbox", action="store_true", help="re-arm exhausted outbox rows")
+    args = parser.parse_args()
+    try:
+        return asyncio.run(amain(args))
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

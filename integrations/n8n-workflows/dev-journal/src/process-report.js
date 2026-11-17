@@ -8,11 +8,36 @@ const errors = [];
 const handled = [];
 let extracted = { findings: [], non_issues: [] };
 const response = $input.first().json || {};
+// The extractor streams (select-report); n8n's HTTP node hands a text/event-stream body over
+// as the string `data`. A JSON completion, or a JSON error delivered as text, still reads.
+function assistantMessage(body) {
+  if (body.error) throw new Error(JSON.stringify(body.error));
+  if (typeof body.data === 'string') return streamedMessage(body.data);
+  const message = body.choices?.[0]?.message?.content;
+  return Array.isArray(message) ? message.map((v) => v.text || '').join('') : message;
+}
+function streamedMessage(text) {
+  let message = '';
+  let chunks = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith('data:')) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === '[DONE]') continue;
+    let chunk;
+    try { chunk = JSON.parse(data); } catch { continue; }
+    if (chunk.error) throw new Error(JSON.stringify(chunk.error));
+    chunks += 1;
+    const delta = chunk.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string') message += delta;
+  }
+  if (chunks) return message;
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return undefined; }
+  return parsed && typeof parsed === 'object' ? assistantMessage(parsed) : undefined;
+}
 try {
-  if (response.error) throw new Error(JSON.stringify(response.error));
-  let message = response.choices?.[0]?.message?.content;
-  if (Array.isArray(message)) message = message.map((v) => v.text || '').join('');
-  if (typeof message !== 'string') throw new Error('Extractor returned no assistant message');
+  let message = assistantMessage(response);
+  if (typeof message !== 'string' || !message.trim()) throw new Error('Extractor returned no assistant message');
   message = message.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   extracted = JSON.parse(message);
   if (!Array.isArray(extracted.findings) || !Array.isArray(extracted.non_issues)) {

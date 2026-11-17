@@ -297,7 +297,7 @@ Newline-delimited JSON, one request → one response, close.
 
 ```json
 {"v":1,"cli":"claude","native":"UserPromptSubmit",
- "cwd":"/home/delorenj/code/33GOD/bloodbank",
+ "cwd":"~/code/33GOD/bloodbank",
  "env":{"ZELLIJ_SESSION_NAME":"Workspace","ZELLIJ_PANE_ID":"12"},
  "payload":{ ...raw hook JSON... },
  "extra":[]}

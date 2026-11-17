@@ -429,3 +429,294 @@ def test_ticket_context_rides_on_started_completed_and_failed(valid_command, rep
     for event in (started, completed, failed):
         validate_envelope(event)
         assert event["data"]["context"] == ticket
+
+
+def test_decode_command_enforces_the_lane_command_type(valid_command):
+    from bloodbank_hermes_gateway.contract import BATCH, INTERACTIVE, LANES
+
+    assert LANES == {"batch": BATCH, "interactive": INTERACTIVE}
+    assert INTERACTIVE.subject == "bloodbank.cmd.agent.invocation.invoke"
+    assert INTERACTIVE.command_type == "bloodbank.agent.invocation.invoke"
+
+    start = json.dumps(valid_command).encode()
+    assert decode_command(start)["type"] == BATCH.command_type
+    assert decode_command(start, lane=BATCH)["type"] == BATCH.command_type
+    with pytest.raises(CommandInvalid, match="invocation.invoke"):
+        decode_command(start, lane=INTERACTIVE)
+
+    invoke = json.loads(json.dumps(valid_command))
+    invoke["type"] = INTERACTIVE.command_type
+    invoke["dataschema"] = "apicurio://holyfields/bloodbank.agent.invocation.invoke/versions/1"
+    invoke["schemaref"] = "bloodbank.agent.invocation.invoke.v1"
+    raw = json.dumps(invoke).encode()
+    assert decode_command(raw, lane=INTERACTIVE)["type"] == INTERACTIVE.command_type
+    with pytest.raises(CommandInvalid, match="invocation.start"):
+        decode_command(raw)
+
+    # An invoke envelope carrying the start schema refs is poison.
+    mixed = dict(invoke, schemaref="bloodbank.agent.invocation.start.v1")
+    with pytest.raises(CommandInvalid, match="schemaref"):
+        decode_command(json.dumps(mixed).encode(), lane=INTERACTIVE)
+
+
+def test_lifecycle_events_carry_the_lane_and_validate(valid_command, repo_root):
+    jsonschema = pytest.importorskip("jsonschema")
+    for lane_name in ("batch", "interactive"):
+        invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", lane_name)
+        events = started_events(invocation) + terminal_events(
+            invocation, outcome="success"
+        )
+        for event in events:
+            assert event["data"]["lane"] == lane_name
+        for event in events:
+            if not event["type"].startswith("bloodbank.agent.invocation."):
+                continue
+            domain, entity, action = event["type"].split(".")[1:]
+            schema_path = repo_root / "schemas" / "bloodbank" / domain / f"{entity}.{action}.json"
+            schema = json.loads(schema_path.read_text())
+            jsonschema.validate(event["data"], schema["properties"]["data"])
+
+
+def test_interactive_command_schema_matches_the_batch_data_contract(repo_root):
+    agent = repo_root / "schemas" / "bloodbank" / "agent"
+    start = json.loads((agent / "invocation.start.json").read_text())
+    invoke = json.loads((agent / "invocation.invoke.json").read_text())
+
+    def payload(schema):
+        data = dict(schema["properties"]["data"])
+        data.pop("description")  # names its own type
+        return data
+
+    assert payload(start) == payload(invoke)
+    assert start["required"] == invoke["required"]
+    for key in ("kind", "domain", "delivery", "idempotency_key"):
+        assert start["properties"][key] == invoke["properties"][key]
+    assert invoke["properties"]["type"]["const"] == "bloodbank.agent.invocation.invoke"
+    assert invoke["properties"]["subject"]["const"] == "bloodbank.cmd.agent.invocation.invoke"
+
+
+def test_turn_timeout_failed_fact_validates_and_cannot_override_owned_fields(
+    valid_command, repo_root
+):
+    import sys
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", "interactive")
+    failed, turn = terminal_events(
+        invocation,
+        outcome="failure",
+        failure_code="turn_timeout",
+        failure_message="agent turn timed out after 300s on the interactive lane",
+        failure_data={
+            "elapsed_seconds": 300.2,
+            "timeout_seconds": 300.0,
+            "timeout_source": "lane",
+            "turn_stopped": True,
+            "invocation_id": "attacker",
+            "lane": "batch",
+        },
+    )
+    for event in (failed, turn):
+        validate_envelope(event)
+    data = failed["data"]
+    assert data["error_code"] == "turn_timeout"
+    assert data["timeout_source"] == "lane" and data["turn_stopped"] is True
+    assert data["invocation_id"] == valid_command["command_id"]
+    assert data["lane"] == "interactive"
+    assert turn["data"]["outcome"] == "failed"
+
+
+def _schema_data(repo_root, name):
+    schema = json.loads(
+        (repo_root / "schemas/bloodbank/agent" / f"{name}.json").read_text(encoding="utf-8")
+    )
+    return schema["properties"]["data"]
+
+
+def test_detached_event_validates_and_is_not_a_terminal_fact(valid_command, repo_root):
+    import sys
+
+    jsonschema = pytest.importorskip("jsonschema")
+    from bloodbank_hermes_gateway.contract import INVOCATION_DETACHED, detached_event
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    valid_command["data"]["context"] = {"memo_id": "m-1", "reason": "voice-inbox"}
+    invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", "interactive")
+    event = detached_event(
+        invocation,
+        elapsed_seconds=300.04,
+        timeout_seconds=300.0,
+        timeout_source="lane",
+        ceiling_seconds=2700.0,
+        detached_count=1,
+        max_detached=2,
+    )
+    validate_envelope(event)
+    jsonschema.validate(event["data"], _schema_data(repo_root, "invocation.detached"))
+    assert event["type"] == INVOCATION_DETACHED == "bloodbank.agent.invocation.detached"
+    assert event["subject"] == "bloodbank.evt.agent.invocation.detached"
+    assert event["correlationid"] == valid_command["correlationid"]
+    assert event["causationid"] == started_events(invocation)[1]["id"]
+    data = event["data"]
+    assert (data["elapsed_seconds"], data["timeout_seconds"], data["ceiling_seconds"]) == (
+        300.0, 300.0, 2700.0)
+    assert (data["lane"], data["command_id"]) == ("interactive", valid_command["command_id"])
+    assert data["context"] == {"memo_id": "m-1", "reason": "voice-inbox"}
+    # random per attempt, like progress: a re-run after a restart detaches anew
+    again = detached_event(
+        invocation, elapsed_seconds=300, timeout_seconds=300, timeout_source="lane",
+        ceiling_seconds=2700, detached_count=1, max_detached=2,
+    )
+    assert again["id"] != event["id"]
+
+
+def test_a_detached_turns_terminal_facts_validate_and_keep_owned_fields(
+    valid_command, repo_root
+):
+    import sys
+
+    jsonschema = pytest.importorskip("jsonschema")
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", "interactive")
+    detached = {
+        "detached": True,
+        "detached_after_seconds": 300.0,
+        "elapsed_seconds": 512.4,
+        "invocation_id": "attacker",
+        "lane": "batch",
+    }
+    completed, turn = terminal_events(invocation, outcome="success", extra_data=detached)
+    for event in (completed, turn):
+        validate_envelope(event)
+    jsonschema.validate(completed["data"], _schema_data(repo_root, "invocation.completed"))
+    data = completed["data"]
+    assert (data["detached"], data["detached_after_seconds"], data["elapsed_seconds"]) == (
+        True, 300.0, 512.4)
+    assert data["invocation_id"] == valid_command["command_id"]
+    assert data["lane"] == "interactive"
+    assert turn["data"]["outcome"] == "completed"
+
+    failed, _turn = terminal_events(
+        invocation,
+        outcome="failure",
+        failure_code="turn_timeout",
+        failure_message="agent turn timed out after 2700s on interactive lane (detached at 300s, ceiling 2700s)",
+        failure_data={
+            "elapsed_seconds": 2700.1,
+            "timeout_seconds": 2700.0,
+            "timeout_source": "detached_ceiling",
+            "turn_stopped": True,
+        },
+        extra_data=detached,
+    )
+    validate_envelope(failed)
+    jsonschema.validate(failed["data"], _schema_data(repo_root, "invocation.failed"))
+    data = failed["data"]
+    assert (data["timeout_source"], data["elapsed_seconds"], data["detached"]) == (
+        "detached_ceiling", 2700.1, True)
+    assert data["lane"] == "interactive"
+
+    # a turn that never detached carries none of it
+    plain, _ = terminal_events(invocation, outcome="success")
+    assert not {"detached", "detached_after_seconds", "elapsed_seconds"} & set(plain["data"])
+
+
+def test_progress_event_validates_and_echoes_the_command(valid_command, repo_root):
+    import sys
+
+    from bloodbank_hermes_gateway.contract import (
+        PROGRESS_TEXT_MAX_CHARS,
+        progress_event,
+        progress_text,
+    )
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    valid_command["data"]["context"] = {"memo_id": "m-1"}
+    for lane in ("batch", "interactive"):
+        invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", lane)
+        text, cut = progress_text("  Checking the board.  ")
+        event = progress_event(invocation, seq=3, text=text, truncated=cut, elapsed_seconds=12.345)
+        validate_envelope(event)
+        assert event["type"] == "bloodbank.agent.invocation.progressed"
+        assert event["subject"] == "bloodbank.evt.agent.invocation.progressed"
+        assert event["correlationid"] == valid_command["correlationid"]
+        assert event["causationid"] == started_events(invocation)[1]["id"]
+        assert event["ordering_key"] == f"turn:{invocation.turn_id}"
+        d = event["data"]
+        assert (d["seq"], d["text"], d["text_truncated"], d["elapsed_seconds"], d["lane"]) == (
+            3, "Checking the board.", False, 12.3, lane)
+        assert d["command_id"] == valid_command["command_id"]
+        assert d["context"] == {"memo_id": "m-1"}
+
+    assert progress_text("   ") == (None, False)
+    assert progress_text(None) == (None, False)
+    long, cut = progress_text("x" * 2000)
+    assert cut is True and len(long) == PROGRESS_TEXT_MAX_CHARS
+
+
+@pytest.mark.parametrize(
+    ("code", "refusal"),
+    [
+        ("hermes_refused", "gateway_restarting"),
+        ("hermes_refused", "gateway.busy.another_turn_running"),
+        ("hermes_turn_error", "gateway.errors.generic_failed_with_hint"),
+    ],
+)
+def test_hermes_refusal_failed_fact_validates(valid_command, repo_root, code, refusal):
+    import sys
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    for lane in ("batch", "interactive"):
+        invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", lane)
+        failed, turn = terminal_events(
+            invocation,
+            outcome="failure",
+            failure_code=code,
+            failure_message=f"Hermes refused the turn ({refusal})",
+            failure_data={"refusal": refusal, "error_code": "attacker"},
+        )
+        for event in (failed, turn):
+            validate_envelope(event)
+        assert failed["data"]["error_code"] == code
+        assert failed["data"]["refusal"] == refusal
+        assert turn["data"]["outcome"] == "failed"
+
+
+@pytest.mark.parametrize("kind", ["gateway_restart", "gateway_shutdown"])
+def test_interrupted_by_shutdown_failed_fact_validates(valid_command, repo_root, kind):
+    import json
+    import sys
+
+    jsonschema = pytest.importorskip("jsonschema")
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    schema = json.loads(
+        (repo_root / "schemas/bloodbank/agent/invocation.failed.json").read_text(encoding="utf-8")
+    )
+    for lane in ("batch", "interactive"):
+        invocation = Invocation.from_envelope(valid_command, "bloodbank-pm", lane)
+        failed, turn = terminal_events(
+            invocation,
+            outcome="failure",
+            failure_code="interrupted_by_shutdown",
+            failure_message="Hermes was restarting and interrupted the turn after 61.8s",
+            failure_data={"interrupted_by": kind, "elapsed_seconds": 61.8},
+        )
+        for event in (failed, turn):
+            validate_envelope(event)
+        jsonschema.validate(failed["data"], schema["properties"]["data"])
+        assert failed["data"]["interrupted_by"] == kind
+    bad = dict(failed["data"], interrupted_by="gateway_hiccup")
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(bad, schema["properties"]["data"])

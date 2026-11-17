@@ -92,3 +92,21 @@ function unwrap(response) {
   if (typeof response === 'string') return JSON.parse(response);
   return response;
 }
+function mailIdentity(report, phase) {
+  return `dev-journal-v2:${report.report_key}:${report.content_sha256 || ''}:${phase}`;
+}
+async function pendingMail(report) {
+  const mail = await helpers.journalReserveMail(report.report_key, null);
+  return mail ? [{ json: mail }] : null;
+}
+async function stageMail(report, phase, subject, text) {
+  const identity = mailIdentity(report, phase);
+  const mail = { report_key: report.report_key, report_date: report.report_date,
+    email_hash: identity, email_phase: phase, mail_key: identity,
+    email: { from: 'Dev Journal <dev-journal@delo.sh>', to: ['jaradd@gmail.com'],
+      subject, text,
+      html: `<pre style="font:14px/1.5 system-ui;white-space:pre-wrap">${escapeHtml(text)}</pre>` } };
+  // Freeze both bytes and key before HTTP. A timeout may mean Resend accepted it.
+  const reserved = await helpers.journalReserveMail(report.report_key, mail);
+  return reserved ? [{ json: reserved }] : [];
+}

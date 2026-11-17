@@ -181,3 +181,177 @@ test('extensions cannot replace canonical envelope fields', () => {
     );
   }
 });
+
+const MESSAGING_PAYLOAD = {
+  schema_version: 1,
+  direction: 'inbound',
+  sender: { handle: '@counterpart' },
+  recipient: { handle: '@operator' },
+  content: { text: 'hello', format: 'plain' },
+  received_at: '2026-10-14T12:00:00.000Z',
+  message_id: 'msg-1',
+  thread_id: 'thread-42',
+};
+
+const NOTIFIED_PAYLOAD = {
+  schema_version: 1,
+  category: 'reaction',
+  sender: { handle: '@counterpart' },
+  recipient: { handle: '@operator' },
+  summary: 'counterpart reacted 👍 to your message',
+  reaction: '👍',
+  received_at: '2026-10-14T12:00:00.000Z',
+  notification_id: 'notif-7',
+  message_id: 'msg-1',
+  thread_id: 'thread-42',
+};
+const PAYLOAD_BY_ACTION = { received: MESSAGING_PAYLOAD, notified: NOTIFIED_PAYLOAD };
+
+const CARRIER_TRANSPORTS = ['sms', 'mms', 'rcs', 'imessage'];
+const CARRIER_PAYLOAD_BY_ACTION = {
+  received: {
+    message_id: 'msg-1', line: 'cell', source: 'android-sms', from: '+12125550100',
+    to: 'cell', text: 'hi', received_at: '2026-10-14T12:00:00.000Z', thread_id: null,
+  },
+  sent: {
+    message_id: 'msg-1', line: 'cell', source: 'telnyx', from: '+12125550101',
+    to: '+12125550100', text: 'hi', sent_at: '2026-10-14T12:00:00.000Z', status: 'sent',
+  },
+  completed: {
+    message_id: 'msg-1', line: 'cell', to: '+12125550100', status: 'delivered',
+    completed_at: '2026-10-14T12:00:00.000Z',
+  },
+  failed: { line: 'cell', to: '+12125550100', failed_at: '2026-10-14T12:00:00.000Z' },
+};
+
+const MESSAGING_SCHEMA_DIR = require('node:path').resolve(
+  __dirname, '..', '..', '..', 'schemas', 'bloodbank', 'messaging');
+const MESSAGING_TYPES = require('node:fs')
+  .readdirSync(MESSAGING_SCHEMA_DIR)
+  .filter((name) => name.endsWith('.json') && !name.endsWith('.send.json'))
+  .map((name) => `bloodbank.messaging.${name.slice(0, -'.json'.length)}`);
+
+test('messaging is split per platform for messages and notifications', () => {
+  for (const platform of ['email', 'telegram', 'slack', 'teams', 'whatsapp', 'google_chat']) {
+    assert.ok(MESSAGING_TYPES.includes(`bloodbank.messaging.${platform}.received`), platform);
+    assert.ok(MESSAGING_TYPES.includes(`bloodbank.messaging.${platform}.notified`), platform);
+  }
+  assert.ok(!MESSAGING_TYPES.some((type) => /\.(message|notification)\./.test(type)));
+});
+
+test('carrier texts are messaging entities, one per transport', () => {
+  for (const transport of CARRIER_TRANSPORTS) {
+    assert.ok(MESSAGING_TYPES.includes(`bloodbank.messaging.${transport}.received`), transport);
+    assert.ok(MESSAGING_TYPES.includes(`bloodbank.messaging.${transport}.sent`), transport);
+  }
+});
+
+for (const type of MESSAGING_TYPES) {
+  const [, , platform, action] = type.split('.');
+  if (CARRIER_TRANSPORTS.includes(platform)) {
+    test(`${type} orders per operator line`, () => {
+      const { subject, envelope } = buildEnvelope({
+        type,
+        kind: 'event',
+        data: CARRIER_PAYLOAD_BY_ACTION[action],
+        eventId: EVENT_ID,
+        observedAt: '2026-10-14T12:00:00.000Z',
+      });
+      assert.equal(subject, `bloodbank.evt.${type.slice('bloodbank.'.length)}`);
+      assert.equal(envelope.ordering_key, 'line:cell');
+      assert.doesNotThrow(() => validateEnvelope(type, envelope));
+    });
+    continue;
+  }
+  test(`${type} derives a messaging:${platform}: ordering bucket`, () => {
+    const { subject, envelope } = buildEnvelope({
+      type,
+      kind: 'event',
+      data: PAYLOAD_BY_ACTION[action],
+      eventId: EVENT_ID,
+      observedAt: '2026-10-14T12:00:00.000Z',
+    });
+    assert.equal(subject, `bloodbank.evt.${type.slice('bloodbank.'.length)}`);
+    assert.equal(envelope.ordering_key, `messaging:${platform}:thread-42`);
+    assert.doesNotThrow(() => validateEnvelope(type, envelope));
+  });
+}
+
+test('a threadless notification buckets on its notification_id and validates', () => {
+  const { thread_id, message_id, sender, reaction, ...ping } = NOTIFIED_PAYLOAD;
+  const type = 'bloodbank.messaging.slack.notified';
+  const { envelope } = buildEnvelope({
+    type,
+    kind: 'event',
+    data: { ...ping, category: 'activity' },
+    eventId: EVENT_ID,
+    observedAt: '2026-10-14T12:00:00.000Z',
+  });
+  assert.equal(envelope.ordering_key, 'messaging:slack:notif-7');
+  assert.doesNotThrow(() => validateEnvelope(type, envelope));
+});
+
+test('messaging ordering bucket rule falls back to event id without thread_id', () => {
+  const { thread_id, ...noThread } = MESSAGING_PAYLOAD;
+  const { envelope } = buildEnvelope({
+    type: 'bloodbank.messaging.telegram.received',
+    kind: 'event',
+    data: noThread,
+    eventId: EVENT_ID,
+    observedAt: '2026-10-14T12:00:00.000Z',
+  });
+  assert.equal(envelope.ordering_key, `messaging:${EVENT_ID}`);
+});
+
+test('carrier send commands validate as messaging commands', () => {
+  for (const [type, data] of [
+    ['bloodbank.messaging.sms.send', { to: '+12125550100', text: 'hi' }],
+    ['bloodbank.messaging.mms.send', { to: '+12125550100', text: 'hi', media_urls: ['https://x.y/a.jpg'] }],
+  ]) {
+    const { subject, envelope } = buildEnvelope(commandOptions({ type, data }));
+    assert.equal(subject, `bloodbank.cmd.${type.slice('bloodbank.'.length)}`);
+    assert.doesNotThrow(() => validateEnvelope(type, envelope));
+  }
+});
+
+test('watch target facts order per target and validate against their generated schemas', () => {
+  const detected = {
+    schema_version: 1,
+    watch_id: 'example-person',
+    target_display_name: 'Example Person',
+    provider: 'email',
+    source_type: 'bloodbank.messaging.email.received',
+    source_event_id: EVENT_ID,
+    matched_on: { kind: 'email', value: 'person@example.test' },
+    sender: { handle: 'Person@Example.test', display_name: null },
+    conversation: { thread_id: 'thread-1', group_label: null },
+    content: { text: 'hello', subject: 'Hi' },
+    received_at: '2026-11-04T12:00:00Z',
+    dedupe_key: 'gmail:abc',
+  };
+  const routed = {
+    schema_version: 1,
+    watch_id: 'example-person',
+    detection_event_id: EVENT_ID,
+    action: 'notified_only',
+    ticket_ref: null,
+    notify_channels: [],
+    reason: null,
+    routed_at: '2026-11-04T12:00:01Z',
+  };
+  for (const [type, data] of [
+    ['bloodbank.watch.target.detected', detected],
+    ['bloodbank.watch.target.routed', routed],
+  ]) {
+    const { subject, envelope } = buildEnvelope({
+      type,
+      kind: 'event',
+      data,
+      eventId: EVENT_ID,
+      observedAt: '2026-11-04T12:00:02.000Z',
+    });
+    assert.equal(subject, `bloodbank.evt.${type.slice('bloodbank.'.length)}`);
+    assert.equal(envelope.ordering_key, 'watch:example-person');
+    assert.doesNotThrow(() => validateEnvelope(type, envelope));
+  }
+});

@@ -1,3 +1,9 @@
+# RETIRED 2026-10-26 (candybar cron migration wave 4, AD-18/AD-21): scheduling
+# moved to the `hindsight-capture-sweep` candybar (systemd runner, */10 * * * *
+# UTC). Do NOT `systemctl --user enable` this timer on install — link only the
+# .service. This file is kept so the migration ledger's rollback
+# (deploy/migration/ledger.yaml, id systemd:hindsight-capture-sweep.timer) can
+# re-enable it by path.
 # 10-minute cadence. Idle flush is governed by HINDSIGHT_CAPTURE_IDLE_S (2h)
 # and retries by their own backoff (1m .. 12h), not by this interval.
 [Unit]

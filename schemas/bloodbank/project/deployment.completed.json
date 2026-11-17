@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/project/deployment.completed.json",
+  "title": "Project Deployment Completed Event",
+  "description": "A built artifact of one pjangler project was installed on a target (a phone, a host service or a site) and the deploy script's own post-checks passed, or published for a later install while a device was away (deliveries[].status pending). data.summary is the one line a notification shows. ordering_key is project:<slug>. See bloodbank/docs/event-naming.md (project).",
+  "$comment": "Hygiene inherited from the project domain: no credentials, no stderr dumps, no absolute filesystem paths in data. The artifact path stays on the build host; data.artifact.sha256 identifies the bytes.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.project.deployment.completed"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "project"
+    },
+    "ordering_key": {
+      "type": "string",
+      "pattern": "^project:[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "description": "\u00a711.1 bucket project:<project_slug>, the same value as 'project:' + data.project.slug."
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.project.deployment.completed.",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "One human line, e.g. 'Gruvato v0.2.3 (2003) dd0e4c8 installed on SM-S948U, checksum verified'."
+        },
+        "project": {
+          "$ref": "#/$defs/project"
+        },
+        "artifact": {
+          "$ref": "#/$defs/artifact"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "deliveries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/delivery"
+          },
+          "description": "Optional: one entry per device when a deploy covers several (target.kind device-set)."
+        },
+        "run": {
+          "$ref": "#/$defs/run"
+        },
+        "links": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "description": "Optional download and status links a notifier can turn into buttons (mobile-deploy-hub: Install APK, Install on iPad, the build page, the run). Any project event may carry them; a notifier treats every type the same way.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "rel": {
+                "type": "string",
+                "enum": [
+                  "page",
+                  "apk",
+                  "ota",
+                  "release",
+                  "run"
+                ],
+                "description": "page: the build page; apk: the Android package; ota: the iOS over-the-air install (itms-services); release: the GitHub Release; run: the CI run."
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "description": "Button text, e.g. 'Install APK'."
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 600,
+                "pattern": "^(https|itms-services)://[^\\s\"<>]+$"
+              }
+            },
+            "required": [
+              "rel",
+              "label",
+              "url"
+            ]
+          }
+        },
+        "trigger": {
+          "type": "string",
+          "enum": [
+            "deploy",
+            "catch-up"
+          ],
+          "description": "Optional; absent means deploy. catch-up: a later automatic install of a build a deploy published while the device was away (mobile-deploy-hub)."
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "True when the deploy script's post-check passed: an installed-APK checksum match, or a service health check. False when any delivery in scope is pending or skipped."
+        },
+        "deployed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "schema_version",
+        "summary",
+        "project",
+        "artifact",
+        "target",
+        "verified",
+        "deployed_at"
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "ordering_key",
+    "data"
+  ],
+  "$defs": {
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+          "description": "The pjangler project slug."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "required": [
+        "slug",
+        "name"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "android-apk",
+            "ios-app",
+            "desktop-bundle",
+            "web-site",
+            "service",
+            "mobile-app"
+          ],
+          "description": "mobile-app is one app version delivered to several devices at once (data.deliveries); its sha256 is null."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "What was deployed, e.g. the app, site or service name."
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "version_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "Platform build number when the platform has one (Android versionCode)."
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$",
+          "description": "Commit the artifact was built from."
+        },
+        "dirty": {
+          "type": "boolean",
+          "description": "True when the build tree had uncommitted tracked changes."
+        },
+        "variant": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "description": "Build variant, e.g. debug or release."
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Digest of the deployed artifact file, when the deploy has a single file."
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "version",
+        "commit",
+        "dirty"
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "android-device",
+            "ios-simulator",
+            "ios-device",
+            "host",
+            "site",
+            "device-set"
+          ],
+          "description": "device-set names several devices in one deploy, e.g. 'SM-S948U + iPad14,5'; data.deliveries holds one entry per device."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Device model, simulator and its host, host name or site origin."
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120,
+          "description": "Stable target identifier when one exists, e.g. the device serial."
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One device install inside a multi-device deploy (mobile-deploy-hub: the S26 and the iPad). verified means the device read back the planned version (and, for Android, the installed base.apk sha256).",
+      "properties": {
+        "platform": {
+          "type": "string",
+          "enum": [
+            "android",
+            "ios"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Device model, e.g. SM-S948U or iPad14,5."
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "build": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "description": "Android versionCode or iOS CFBundleVersion, as a string."
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Digest of the installed file (APK or IPA), when known."
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "preflight",
+            "version",
+            "build",
+            "install",
+            "verify",
+            "deliver"
+          ],
+          "description": "Where this delivery stopped, when it failed. deliver: publishing the build (mobile-deploy-hub's build directory) after it was built."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "One short line: why it failed, or why it is pending or skipped. No paths, no stderr dumps."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "installed",
+            "pending",
+            "skipped",
+            "failed"
+          ],
+          "description": "Optional. installed: read back in this deploy; pending: built, checked and published, but the device could not be reached (a later catch-up installs it); skipped: not built for this device (its host offline or over its data budget, or the deploy narrowed it); failed: the device refused the install or the readback did not match."
+        },
+        "device": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "The device's friendly name (S26, iPad) next to its model in target."
+        },
+        "by": {
+          "type": "string",
+          "enum": [
+            "deploy",
+            "catch-up",
+            "manual"
+          ],
+          "description": "Optional. Who installed it: the deploy itself, a later catch-up, or a person (from a download link or Quickdrop)."
+        }
+      },
+      "required": [
+        "platform",
+        "target",
+        "version",
+        "build",
+        "sha256",
+        "verified"
+      ]
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The CI run that made the deploy (mobile-deploy-hub: the app repo's Actions run). Reruns keep id and raise attempt.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300,
+          "pattern": "^https://"
+        },
+        "hub_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100,
+          "description": "The mobile-deploy-hub ref the run used (a tag after the pin)."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  }
+}

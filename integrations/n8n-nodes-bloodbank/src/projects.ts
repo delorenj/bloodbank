@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
 
 import { expandHome } from './registry';
+import { scopeFields } from './scope';
+import type { Scoped } from './scope';
 
 /** One Plane board that an enrolled project claims.
  *
@@ -12,7 +14,7 @@ import { expandHome } from './registry';
  * which only lists projects that have an agent. A board belongs on the bus as
  * soon as a project claims it, agent or not.
  */
-export interface ProjectBoard {
+export interface ProjectBoard extends Scoped {
   boardId: string;
   repo: string;
   workspace?: string;
@@ -43,14 +45,24 @@ export function projectRegistryLocation(explicit?: unknown, env: NodeJS.ProcessE
   );
 }
 
-function planeBinding(provider: unknown): { boardId: string; workspace?: string; identifier?: string } | undefined {
+function planeBinding(
+  provider: unknown,
+): ({ boardId: string; workspace?: string; identifier?: string } & Scoped) | undefined {
   const binding = record(provider);
   if (!binding) return undefined;
   const type = text(binding.type)?.toLowerCase();
   if (type && type !== 'plane') return undefined;
   const boardId = text(binding.board_id) || text(binding.project_id);
   if (!boardId) return undefined;
-  return { boardId, workspace: text(binding.workspace), identifier: text(binding.identifier) };
+  // `scope_label` / `scope_default` are how several projects share one board:
+  // they flow through the pjangler registry untouched (it copies the manifest's
+  // whole ticket_provider block), so reading them needs no new endpoint.
+  return {
+    boardId,
+    workspace: text(binding.workspace),
+    identifier: text(binding.identifier),
+    ...scopeFields(binding),
+  };
 }
 
 /** Every Plane board claimed by a project in a pjangler registry snapshot. */

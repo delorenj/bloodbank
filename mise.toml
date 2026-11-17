@@ -55,6 +55,10 @@ docker compose --project-name $COMPOSE_PROJECT -f $COMPOSE_FILE \
 description = "Manifest-driven scaffold check (no Docker, no network)"
 run = "python3 cli/bb.py doctor"
 
+[tasks."target-watch:test"]
+description = "target-watch service tests (fakes only: no bus, board or Telegram)"
+run = "uv run --project services/target-watch --extra test pytest services/target-watch/tests -q"
+
 [tasks."repo-health"]
 description = "Read-only git/issue/PR/check snapshot for BMAD evidence"
 run = "python3 cli/bb.py repo-health"
@@ -189,6 +193,14 @@ run = "python3 ops/smoketest/smoketest-portfolio-contracts.py"
 description = "Full-envelope, audience-invariant and bb-emit tests for project activity reports"
 run = "python3 ops/smoketest/smoketest-project-contracts.py"
 
+[tasks."smoketest:project-artifact-contracts"]
+description = "Schema, discovery, pipeline and vault-projector tests for project artifact events"
+run = "python3 ops/smoketest/smoketest-project-artifact-contracts.py"
+
+[tasks."smoketest:watch-contracts"]
+description = "x-sender coverage of every inbound schema, plus full-envelope tests for watch.target.detected/routed"
+run = "python3 ops/smoketest/smoketest-watch-contracts.py"
+
 [tasks."smoketest:llm-contracts"]
 description = "Schema and cross-field tests for LLM usage and allowance observability events"
 run = "python3 ops/smoketest/smoketest-llm-contracts.py"
@@ -310,7 +322,7 @@ run = "bash ops/smoketest/smoketest-agent-hooks-ssot.sh"
 
 [tasks."smoketest:schemas"]
 description = "Schema tree validation + drift detector + contract verifier + agent-hooks SSOT (no Docker)"
-run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming && mise run smoketest:maintenance-reporting-contracts && mise run smoketest:portfolio-contracts && mise run smoketest:project-contracts && mise run smoketest:llm-contracts && mise run smoketest:plane-binding && mise run smoketest:agent-hooks-ssot"
+run = "mise run validate:schemas && mise run smoketest:schema-contract-consistency && mise run smoketest:bloodbank-naming && mise run smoketest:maintenance-reporting-contracts && mise run smoketest:portfolio-contracts && mise run smoketest:project-contracts && mise run smoketest:project-artifact-contracts && mise run smoketest:llm-contracts && mise run smoketest:watch-contracts && mise run smoketest:plane-binding && mise run smoketest:agent-hooks-ssot"
 
 [tasks."smoketest:repo-health-cleanup"]
 description = "Local smoke test for cleanup helper + strict worktree mode"

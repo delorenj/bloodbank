@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native SessionStart --deadline 15",
+            "command": "$HOME/.agents/hooks/bb-hook --cli codex --native SessionStart --deadline 15",
             "timeout": 16
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native Stop",
+            "command": "$HOME/.agents/hooks/bb-hook --cli codex --native Stop",
             "timeout": 4
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native UserPromptSubmit --deadline 15",
+            "command": "$HOME/.agents/hooks/bb-hook --cli codex --native UserPromptSubmit --deadline 15",
             "timeout": 16
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native PreToolUse",
+            "command": "$HOME/.agents/hooks/bb-hook --cli codex --native PreToolUse",
             "timeout": 4
           }
         ]
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native PostToolUse",
+            "command": "$HOME/.agents/hooks/bb-hook --cli codex --native PostToolUse",
             "timeout": 4
           }
         ]
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native SubagentStart",
+            "command": "$HOME/.agents/hooks/bb-hook --cli codex --native SubagentStart",
             "timeout": 4
           }
         ]
@@ -73,7 +73,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native SubagentStop",
+            "command": "$HOME/.agents/hooks/bb-hook --cli codex --native SubagentStop",
             "timeout": 4
           }
         ]
@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native PermissionRequest",
+            "command": "$HOME/.agents/hooks/bb-hook --cli codex --native PermissionRequest",
             "timeout": 4
           }
         ]
@@ -95,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native SessionEnd",
+            "command": "$HOME/.agents/hooks/bb-hook --cli codex --native SessionEnd",
             "timeout": 3
           }
         ]
@@ -106,7 +106,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli codex --native Interrupt",
+            "command": "$HOME/.agents/hooks/bb-hook --cli codex --native Interrupt",
             "timeout": 3
           }
         ]

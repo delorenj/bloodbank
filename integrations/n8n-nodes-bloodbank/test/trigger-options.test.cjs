@@ -17,7 +17,7 @@ const {
   valueAtPath,
 } = require('../src/index.ts');
 
-const OPTION_SHAPE = /^[A-Z][\w ]* · [\w ]+ \([a-z_.]+\)$/;
+const OPTION_SHAPE = /^[A-Z][\w ]* · [\w ]+ \([a-z_.>*]+\)$/;
 
 function property(node, name) {
   return node.description.properties.find((candidate) => candidate.name === name);

@@ -66,6 +66,9 @@ explicit skips for absent project context or optional tools.
 | Nanoleaf | Claude lifecycle and attention signals, with the existing panel runtime. |
 | Sound notifications | Claude/Codex attention signals, Codex turn completion, and OpenCode session closure. |
 | Zellij attention and Git checkpoint | OpenCode only; attention requires a Zellij pane, and the existing checkpoint project opt-out is preserved. |
+| Native-clock guard | Claude, Codex, Copilot, Kimi, Gemini, Hermes, OpenCode `pre_tool` on shell, file-write and `cronjob_manage` tools. Denies crontab writes, new `*.timer`/cron.d/launchd-interval files, `systemd-run --on-*`, `at`/`batch`, Hermes internal cron jobs. Candybar is the single clock; exemptions come from `candybar/deploy/scheduling-policy.json`. Standalone script (`native_clock_guard.py`): a deny is a real exit 2 + stderr, with stdout JSON for Gemini (trailer) and OpenCode. Antigravity has no `pre_tool` binding and is not guarded. |
+| Crank-keys guard | Hermes `pre_tool` on terminal and code tools. Denies `zellij action write-chars`/`write`/`paste`: an autonomous agent (Crank, a PM driving Workspace panes) types into a pane only through `~/.local/bin/zcrank-send`, which tags the text `[crank]` and checks the screen before and after. Standalone script (`crank_keys_guard.py`), real exit 2 + stderr, fails open. |
+| Crank tag | Claude, Codex, Copilot, Kimi, Gemini, OpenCode `prompt_submit`. A prompt starting `[crank]`/`[crank relay]` gets the rule for weighing Crank's words as context (`concerns.py crank-tag`); session capture files such turns to Hindsight as "typed by Crank, not the operator". |
 
 Project Notebook, Nanoleaf, CodeGraph, Code Review Graph, Orca, CommonProject/PJangler projections,
 and guarded project fallbacks consult the same ownership contract so ordinary
@@ -543,17 +546,19 @@ confirmed (`completed`), after which it is forgotten.
   instead of being dropped. Replay one with
   `curl -X POST "$url" -H 'Content-Type: application/json' -d "$(jq .request <file>)"`.
 - **Sweeper.** Every captured turn and session end sweeps the other sessions'
-  buffers (up to 8, within 3s). The `hindsight-capture-sweep.timer` user unit
-  runs `session_capture.py sweep` every 10 minutes for the hours when no agent
-  is running. A closed session with nothing left is deleted. So is one idle for
-  a day with nothing pending. `python3 session_capture.py status` lists live
-  buffers.
+  buffers (up to 8, within 3s). The `hindsight-capture-sweep.service` user unit
+  runs `session_capture.py sweep`; since 2026-10-26 it is started every 10
+  minutes by the `hindsight-capture-sweep` candybar (candybar cron migration
+  wave 4, AD-18/AD-21) — the `.timer` is retired. A closed session with nothing
+  left is deleted. So is one idle for a day with nothing pending.
+  `python3 session_capture.py status` lists live buffers.
 
-Install the timer with the other user units:
+Install the service with the other user units (scheduling is candybar's — do
+NOT enable the timer; the file is kept only for the ledger's rollback):
 
 ```sh
-ln -sf ~/code/33GOD/bloodbank/services/hook-hub/systemd/hindsight-capture-sweep.{service,timer} ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now hindsight-capture-sweep.timer
+ln -sf ~/code/33GOD/bloodbank/services/hook-hub/systemd/hindsight-capture-sweep.service ~/.config/systemd/user/
+systemctl --user daemon-reload
 ```
 
 ### Verification (2026-09-26, server 0.10.1)
@@ -637,6 +642,18 @@ Claude prompt's worst case is skill-reminder (1s), then recall (about 4.5s with
 interpreter start), then codegraph-prompt (2s), then hub-selftest (0.5s). That
 totals about 8s inside the 14.5s budget.
 
+Before it sends the real request the client pings the hub (`{"v":1,"op":"ping"}`,
+answered immediately from the event loop, no journal row). A hub that accepts the
+connection but does not answer the ping within `BB_HOOK_PROBE_BUDGET` (3s by
+default, the ordinary deadline) is wedged: the client exits 0 instead of sitting
+out a 15-second prompt deadline. A busy hub still answers pings while its handler
+subprocesses run, so recall keeps its full deadline. After a stalled probe the
+client writes `<socket>.stalled` and the following probes within 30 seconds use
+`BB_HOOK_STALL_PROBE_BUDGET` (0.25s), so a wedged hub costs one slow hook, not
+one per hook; the marker never skips the probe and is removed on the next
+answered ping. Hosts that do not rely on socket-activation backlog service (macOS
+launchd) should set `BB_HOOK_PROBE_BUDGET` lower (the Mac wrapper uses 1s).
+
 The client fails open on unavailable sockets, malformed replies, or elapsed
 deadlines. A deliberate, valid native denial is preserved. Hung handler process
 groups are terminated and recorded as timed out. A malformed registry retains the
@@ -658,7 +675,10 @@ terminating the remaining process group. Status reports `draining` while it runs
 | `BB_HOOK_HUB` | unset | `off` disables client recursion |
 | `BB_HOOK_SOCKET` | `$XDG_RUNTIME_DIR/33god/hook-hub.sock` | Unix socket |
 | `BB_HOOK_DEADLINE` | `3.0` | Client total deadline, seconds |
-| `HOOK_HUB_REGISTRY` | `handlers.toml` beside the daemon | Behavioral registry |
+| `BB_HOOK_PROBE_BUDGET` | `3.0` | How long the client waits for a hub ping before treating the hub as wedged |
+| `BB_HOOK_STALL_PROBE_BUDGET` | `0.25` | Ping wait during the 30 s after a stalled probe |
+| `HOOK_HUB_REGISTRY` | `handlers.toml` beside the daemon | Behavioral registry (committed base) |
+| `HOOK_HUB_OVERLAY_DIR` | `~/.config/33god` | Directory holding the optional host overlay |
 | `HOOK_HUB_SYNC_BUDGET` | `2.5` | Default shared synchronous deadline |
 | `HOOK_HUB_MAX_SYNC_BUDGET` | `14.0` | Maximum shared synchronous deadline |
 | `HOOK_HUB_ASYNC_SLOTS` | `8` | Concurrent background handlers |
@@ -678,6 +698,47 @@ terminating the remaining process group. Status reports `draining` while it runs
 Unset XDG state/runtime paths use the user's standard local state and runtime
 locations. Runtime files remain outside the source checkout.
 
+## Host overlay (`handlers.toml`)
+
+The committed `handlers.toml` is host-neutral and ships the full behavioral
+set. A host that must disable or retarget handlers without forking the repo
+drops a TOML file in `~/.config/33god/` (override the directory with
+`HOOK_HUB_OVERLAY_DIR`):
+
+- `hook-hub-overlay.toml` (generic), or
+- `hook-hub-overlay-<username>.toml` (only the first one found is used).
+
+The overlay must use the same `[[handler]]` row shape. Precedence, per row:
+
+- a row whose `id` matches a committed row **replaces that row field-by-field**
+  (fields you omit inherit the committed row's values — `enabled = false` alone
+  retires a handler; a new `command` alone retargets it);
+- a row with an `id` not in the committed registry is **appended**;
+- the hub re-reads the overlay when its mtime changes (hot reload, same as the
+  base registry) and reports the loaded chain in `GET /status` under
+  `hub.registry`.
+
+Minimal overlay that retires a handler on this host only:
+
+```toml
+[[handler]]
+id = "claude-notify"
+enabled = false
+```
+
+The overlay file is host-local state: never commit it, and create/edit it on
+the host itself.
+
+## Port contract
+
+- Hook hub read-only API: `127.0.0.1:8685` on every host (`HOOK_HUB_HTTP_PORT`
+  overrides). Keep the socket under the user's state dir
+  (`HOOK_HUB_SOCKET` / `$XDG_RUNTIME_DIR/33god/hook-hub.sock`).
+- Candystore query API: `http://127.0.0.1:8683` is the canonical loopback
+  endpoint on EVERY peer; `CANDYSTORE_URL` overrides it where a consumer must
+  point elsewhere. See `../../docs/candystore-integration.md` for the full
+  port map and why loopback-only is the contract.
+
 ## Development
 
 ```sh
@@ -688,3 +749,14 @@ Add a behavioral row to `handlers.toml`, bind it with `on` lifecycle roles or
 `on_native`, and optionally narrow it with `clis`. Sync handlers return context or
 native decisions. Async handlers emit supervised outcomes. Retire any equivalent
 native registration before enabling the new row.
+
+## Host wrapper (interpreter pin)
+
+`bb-hook` starts with `#!/usr/bin/env python3`. Where that resolves to a mise
+shim, any cwd with an untrusted `.mise.toml` makes the shim exit 1 before the
+client's fail-open code runs. A host can replace the `~/.agents/hooks/bb-hook` and
+`~/.local/bin/bb-hook` symlinks with a small `/bin/sh` wrapper that sets
+`MISE_NO_ENV=1` and execs an absolute interpreter on this checkout's client.
+`services/agent-hooks/sync.py --install` keeps a regular file in place only when
+it contains the marker `33god-bb-hook-host-wrapper` and names this checkout's
+client path; any other regular file there still aborts the install.

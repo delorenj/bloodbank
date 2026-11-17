@@ -130,3 +130,5 @@ claudemap-maps.json
 
 # Canonical agent config lives in .agents; generated skill projections stay local.
 /.agents/skills
+
+.env.jev-ingress

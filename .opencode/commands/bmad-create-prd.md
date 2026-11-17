@@ -1,5 +1,5 @@
 ---
-description: DEPRECATED — consolidated into bmad-prd create intent - this skill will be removed in v7 in favor of `bmad-prd`.
+description: Deprecated — forwards to bmad-prd (create intent)
 ---
 
 @skills/bmad-create-prd

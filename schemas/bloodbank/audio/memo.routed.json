@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/audio/memo.routed.json",
+  "title": "Audio Memo Routed Event",
+  "description": "The fast in-car conversation layer decided one turn of a voice memo (one event per fast-model decision, including lexicon short-circuits and fall-backs to the agent). Part of the voice memo journey: correlationid = data.memo_id and ordering_key 'memo:<memo_id>'. See bloodbank/docs/event-naming.md.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.audio.memo.routed"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "audio"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.audio.memo.routed.",
+      "properties": {
+        "memo_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Journey id: uuid5(NAMESPACE_URL, 's3://holocene-auto/' + s3_key)."
+        },
+        "s3_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Object key of the voice memo: inbox/<agent>/<yyyy>/<mm>/<dd>/<file>."
+        },
+        "target_agent_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Agent the memo was addressed to (the inbox/<agent>/ prefix)."
+        },
+        "conv_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Id of the fast in-car conversation session this memo belongs to."
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The fast model's decision for this turn: reply, propose, confirm, cancel, end, direct or handoff (open set)."
+        },
+        "model_answered": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The model that actually answered (response.model), not the one asked for."
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Ladder rung that answered (e.g. r1, r2, r3)."
+        },
+        "attempts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Ladder rungs tried before the decision."
+        },
+        "latency_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Wall time of the fast-model decision, in milliseconds."
+        },
+        "usage": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Token usage as the provider reported it.",
+          "additionalProperties": true
+        },
+        "cached_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Prompt tokens served from the provider cache."
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "How the turn was decided: lexicon (short-circuit), fast (ladder) or direct (fallback to the agent)."
+        },
+        "fallback_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why the turn went direct to the agent instead of through the fast model, when it did."
+        }
+      },
+      "required": [
+        "memo_id",
+        "s3_key",
+        "target_agent_id",
+        "conv_id",
+        "action"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}

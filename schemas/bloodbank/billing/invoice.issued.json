@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/billing/invoice.issued.json",
+  "title": "Billing Invoice Issued",
+  "description": "A customer statement (a Yrd) was issued: frozen on the Milkshake ledger with its number and total (ledger yrd.issued). Carries no statement lines, no document and no evidence. via_farm is true when the Farm's Create Invoice asked for it. Emitted by the milkshake-outbox after the ledger commit. See bloodbank/docs/event-naming.md (billing).",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "subject",
+    "schemaref",
+    "dataschema",
+    "ordering_key",
+    "causationid",
+    "actor",
+    "data"
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.billing.invoice.issued"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "billing"
+    },
+    "subject": {
+      "const": "bloodbank.evt.billing.invoice.issued"
+    },
+    "schemaref": {
+      "const": "bloodbank.billing.invoice.issued.v1"
+    },
+    "dataschema": {
+      "const": "apicurio://holyfields/bloodbank.billing.invoice.issued/versions/1"
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Payload for bloodbank.billing.invoice.issued.",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "client": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "maxLength": 64,
+          "description": "Client slug, or null for a ledger fact of no client."
+        },
+        "ledger_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Seq of the ledger event this announces."
+        },
+        "ledger_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Hash of that ledger event; the CloudEvent id is a uuid5 of it, so a re-publish is the same event."
+        },
+        "ledger_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The ledger event type, e.g. rule.added."
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Who recorded it (MILKSHAKE_ACTOR, or farm:<email>)."
+        },
+        "number": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "supersedes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "period_start": {
+          "type": "string",
+          "format": "date"
+        },
+        "period_end": {
+          "type": "string",
+          "format": "date",
+          "description": "Exclusive."
+        },
+        "issue_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "due_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "total_cents": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The customer total in integer cents."
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "via_farm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "client",
+        "ledger_seq",
+        "ledger_hash",
+        "ledger_type",
+        "actor",
+        "number",
+        "version",
+        "supersedes",
+        "period_start",
+        "period_end",
+        "issue_date",
+        "due_date",
+        "total_cents",
+        "content_sha256",
+        "via_farm"
+      ]
+    }
+  }
+}

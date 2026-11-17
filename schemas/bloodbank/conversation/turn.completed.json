@@ -39,6 +39,10 @@
             "canceled"
           ],
           "description": "Terminal disposition of the turn."
+        },
+        "delivered": {
+          "type": "boolean",
+          "description": "Producer assertion that reply_text reached the user (not an agent-to-agent hand-back). The artifact sidecar's conversation_reply_delivered gate reads it. Hermes sets it on every completed turn with a reply except platform=subagent."
         }
       },
       "required": [

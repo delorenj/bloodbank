@@ -61,13 +61,100 @@ class BasePlatformAdapter:
     def build_source(self, **kwargs):
         return types.SimpleNamespace(platform=self.platform, profile=None, **kwargs)
 
+    # -- Hermes session model --------------------------------------------
+    # Mirrors the parts of gateway.platforms.base the adapter relies on: one
+    # processing task per session key, a "/stop" command that bypasses the
+    # active-session guard and cancels that task, and
+    # cancel_session_processing().  ``stop_ineffective`` models a turn stuck in
+    # a thread that ignores both (the adapter must then say the stop was not
+    # confirmed); ``drop_inbound`` models an event Hermes' ingress drops
+    # without admitting it.
+    stop_ineffective = False
+    drop_inbound = False
+    # /model --once: how long the switch takes, and whether Hermes refuses the route.
+    model_switch_delay = 0.0
+    model_reject = False
+    # Set by the Hermes runner when it wires the adapter (drain flags live there).
+    gateway_runner = None
+
+    @property
+    def model_events(self):
+        return self.__dict__.setdefault("_model_event_list", [])
+
+    @property
+    def session_models(self):
+        return self.__dict__.setdefault("_session_model_map", {})
+
+    def _event_session_key(self, event):
+        return f"{event.source.profile}:{event.source.chat_id}"
+
+    @property
+    def _active_sessions(self):
+        return self.__dict__.setdefault("_active_session_map", {})
+
+    @property
+    def stop_events(self):
+        return self.__dict__.setdefault("_stop_event_list", [])
+
+    async def cancel_session_processing(self, session_key, **_kwargs):
+        task = self._active_sessions.get(session_key)
+        if task is None or self.stop_ineffective:
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
     async def handle_message(self, event):
+        # Hermes stamps every inbound event with whether it was admitted (a
+        # processing task started or it was queued for one); a dropped event
+        # gets no processing-complete hook at all.
+        event._gateway_accepted = False
+        key = self._event_session_key(event)
+        if event.text.strip() == "/stop":
+            self.stop_events.append(event)
+            await self.cancel_session_processing(key)
+            return
+        if self.drop_inbound:
+            return
+        if event.text.startswith("/model "):
+            # Hermes' idle-path /model: a processing task of its own that
+            # answers with a confirmation (or an ❌ error) anchored to the
+            # command, and holds the session until it is done.
+            self.model_events.append(event)
+            route = event.text.split()[1]
+
+            async def switch():
+                try:
+                    await asyncio.sleep(self.model_switch_delay)
+                    if self.model_reject:
+                        reply = f"❌ Model `{route}` is not available"
+                    else:
+                        self.session_models[key] = route
+                        reply = f"Model switched to {route} (this turn only)"
+                    await self.send(event.source.chat_id, reply, reply_to=event.message_id)
+                finally:
+                    if self._active_sessions.get(key) is asyncio.current_task():
+                        del self._active_sessions[key]
+                await self.on_processing_complete(event, ProcessingOutcome.SUCCESS)
+
+            task = asyncio.create_task(switch())
+            self._active_sessions[key] = task
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+            event._gateway_accepted = True
+            return
+
         async def run():
             outcome = ProcessingOutcome.SUCCESS
             try:
+                # a --once model applies to the next turn only
+                event.turn_model = self.session_models.pop(key, None)
                 response = await self._message_handler(event)
                 if response:
-                    result = await self.send(event.source.chat_id, response)
+                    # The final text is anchored to the triggering message, as
+                    # Hermes' _reply_anchor_for_event does for this platform.
+                    result = await self.send(
+                        event.source.chat_id, response, reply_to=event.message_id
+                    )
                     if not result.success:
                         outcome = ProcessingOutcome.FAILURE
             except asyncio.CancelledError:
@@ -76,11 +163,16 @@ class BasePlatformAdapter:
                 raise
             except Exception:
                 outcome = ProcessingOutcome.FAILURE
+            finally:
+                if self._active_sessions.get(key) is asyncio.current_task():
+                    del self._active_sessions[key]
             await self.on_processing_complete(event, outcome)
 
         task = asyncio.create_task(run())
+        self._active_sessions[key] = task
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+        event._gateway_accepted = True
 
     async def cancel_background_tasks(self):
         tasks = list(self._background_tasks)

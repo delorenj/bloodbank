@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native SessionStart --deadline 15",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native SessionStart --deadline 15",
             "timeout": 16
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native UserPromptSubmit --deadline 15",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native UserPromptSubmit --deadline 15",
             "timeout": 16
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native PreToolUse",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native PreToolUse",
             "timeout": 4
           }
         ]
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native PostToolUse",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native PostToolUse",
             "timeout": 4
           }
         ]
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native SubagentStop",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native SubagentStop",
             "timeout": 4
           }
         ]
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native Stop",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native Stop",
             "timeout": 4
           }
         ]
@@ -73,7 +73,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native Notification",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native Notification",
             "timeout": 4
           }
         ]
@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native PermissionRequest",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native PermissionRequest",
             "timeout": 4
           }
         ]
@@ -95,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native TeammateIdle",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native TeammateIdle",
             "timeout": 4
           }
         ]
@@ -106,7 +106,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native SessionEnd",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native SessionEnd",
             "timeout": 4
           }
         ]
@@ -118,7 +118,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native PostToolUseFailure",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native PostToolUseFailure",
             "timeout": 4
           }
         ]
@@ -129,7 +129,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native SubagentStart",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native SubagentStart",
             "timeout": 4
           }
         ]
@@ -140,7 +140,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/delorenj/.agents/hooks/bb-hook --cli claude --native StopFailure",
+            "command": "$HOME/.agents/hooks/bb-hook --cli claude --native StopFailure",
             "timeout": 4
           }
         ]

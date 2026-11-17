@@ -1,0 +1,26 @@
+# Paint the Agent State Machine and ticket lanes onto Orca's worktree board.
+#
+# A pure SURFACE, sibling of asm-tabpaint: it reads asm:* (Redis) and
+# bloodbank.repo.task.* (Candystore) and writes card comments/columns through
+# the local Orca runtime's socket. It owns no state and Orca never writes back,
+# so it can be restarted at any time. On stop it clears the agent part of every
+# card it owns, so a dead painter can't leave "working" frozen on the board.
+[Unit]
+Description=Paint the 33GOD Agent State Machine and Plane lanes onto Orca worktree cards
+Documentation=file:%h/code/33GOD/bloodbank/services/agent-hooks/README.md
+After=network-online.target orca-server.service
+Wants=orca-server.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/code/33GOD/bloodbank/services/agent-hooks/bin/asm-orcapaint
+# px/pj (ticket fallback, board identifiers) live in ~/.local/bin.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+Nice=5
+
+[Install]
+WantedBy=default.target

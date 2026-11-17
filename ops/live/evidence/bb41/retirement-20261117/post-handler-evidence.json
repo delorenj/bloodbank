@@ -1,0 +1,865 @@
+{
+  "captured_at": "2026-11-17T20:05:11.116321+00:00",
+  "post_retirement_cutoff": "2026-11-17T19:54:49.690010+00:00",
+  "read_only": true,
+  "sources": [
+    "n8n SQLite execution_entity + execution_data, mode=ro/query_only",
+    "Hermes gateway SQLite executions, mode=ro/query_only",
+    "Correlated profile SQLite sessions/messages, mode=ro/query_only",
+    "Krebs existing tick-journal.jsonl"
+  ],
+  "sanitization": "Only execution metadata, node names/status/counts, allowlisted identifiers and content digests; no prompts, node code, credentials, event payloads, tool args or results.",
+  "n8n_executions": [
+    {
+      "id": 742030,
+      "workflowId": "6wAGA5pdrmHLyhs2",
+      "startedAt": "2026-11-17 19:54:55.993",
+      "stoppedAt": "2026-11-17 19:54:56.024",
+      "status": "success",
+      "source_data_sha256": "f087c28ac7aa5c8db4aa8325b333af0709d179351209cbe05e0805466a19d036",
+      "nodes": {
+        "onTicketCreatedOrTransitioned": [
+          {
+            "status": "success",
+            "execution_time_ms": 0,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Triage Ticket": [
+          {
+            "status": "success",
+            "execution_time_ms": 15,
+            "output_items_per_branch": [
+              1,
+              0
+            ]
+          }
+        ],
+        "Triage Started": [
+          {
+            "status": "success",
+            "execution_time_ms": 10,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ]
+      },
+      "identifiers": [
+        {
+          "node": "onTicketCreatedOrTransitioned",
+          "fields": {
+            "correlationid": "79e769d6-964b-5f15-8cec-f3205e68b962",
+            "id": "f8dee1a1-2c6b-5941-a93e-2fcb9badc1ec",
+            "type": "bloodbank.repo.task.updated"
+          }
+        },
+        {
+          "node": "Triage Ticket",
+          "fields": {
+            "ticketKey": "HEYMA-28",
+            "commandId": "a97f5d82-a1f0-530b-abdc-56add9433327",
+            "correlationid": "79e769d6-964b-5f15-8cec-f3205e68b962",
+            "agentId": "heyma-pm",
+            "operation": "groomTicket",
+            "phase": "Todo",
+            "reason": "ticket-grooming"
+          }
+        },
+        {
+          "node": "Triage Started",
+          "fields": {
+            "id": "l2mTIJR41qsE"
+          }
+        }
+      ]
+    },
+    {
+      "id": 742034,
+      "workflowId": "6wAGA5pdrmHLyhs2",
+      "startedAt": "2026-11-17 19:54:56.781",
+      "stoppedAt": "2026-11-17 19:54:56.793",
+      "status": "success",
+      "source_data_sha256": "f502ed20202862cc483c94852babff643799095a0e25ed2285ec7321ce10dc06",
+      "nodes": {
+        "onTicketCreatedOrTransitioned": [
+          {
+            "status": "success",
+            "execution_time_ms": 0,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Triage Ticket": [
+          {
+            "status": "success",
+            "execution_time_ms": 2,
+            "output_items_per_branch": [
+              0,
+              1
+            ]
+          }
+        ],
+        "Notable Skip?": [
+          {
+            "status": "success",
+            "execution_time_ms": 1,
+            "output_items_per_branch": [
+              0,
+              1
+            ]
+          }
+        ]
+      },
+      "identifiers": [
+        {
+          "node": "onTicketCreatedOrTransitioned",
+          "fields": {
+            "correlationid": "85fa6b5f-6569-530d-b710-07fa40447f1c",
+            "id": "73a89430-6bb5-5613-a555-5f2e4bf20abb",
+            "type": "bloodbank.repo.task.updated"
+          }
+        },
+        {
+          "node": "Triage Ticket",
+          "fields": {
+            "ticketKey": "HEYMA-27",
+            "agentId": null,
+            "operation": "groomTicket",
+            "phase": "Done",
+            "reason": "phase is Done, not Todo"
+          }
+        },
+        {
+          "node": "Notable Skip?",
+          "fields": {
+            "ticketKey": "HEYMA-27",
+            "agentId": null,
+            "operation": "groomTicket",
+            "phase": "Done",
+            "reason": "phase is Done, not Todo"
+          }
+        }
+      ]
+    },
+    {
+      "id": 742048,
+      "workflowId": "wWXgCZiiIBWaRRzE",
+      "startedAt": "2026-11-17 19:58:06.203",
+      "stoppedAt": "2026-11-17 19:58:06.440",
+      "status": "success",
+      "source_data_sha256": "03130ca79a28600b0d2321aa17d9c514e9145bf22991c9e88295b8db91e6f345",
+      "nodes": {
+        "Invocation Lifecycle": [
+          {
+            "status": "success",
+            "execution_time_ms": 0,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Target": [
+          {
+            "status": "success",
+            "execution_time_ms": 5,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 List Labels": [
+          {
+            "status": "success",
+            "execution_time_ms": 51,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Resolve Label": [
+          {
+            "status": "success",
+            "execution_time_ms": 7,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Read Issue": [
+          {
+            "status": "success",
+            "execution_time_ms": 48,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Needs Write": [
+          {
+            "status": "success",
+            "execution_time_ms": 6,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Read Activity": [
+          {
+            "status": "success",
+            "execution_time_ms": 48,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Plan Write": [
+          {
+            "status": "success",
+            "execution_time_ms": 5,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Write Labels": [
+          {
+            "status": "success",
+            "execution_time_ms": 51,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Check Write": [
+          {
+            "status": "success",
+            "execution_time_ms": 4,
+            "output_items_per_branch": [
+              0
+            ]
+          }
+        ]
+      },
+      "identifiers": [
+        {
+          "node": "Invocation Lifecycle",
+          "fields": {
+            "correlationid": "ce7e8beb-8187-555a-98d8-92e8a5ca3f9b",
+            "id": "3d3941a8-3e59-5792-836e-efd481ac95e6",
+            "type": "bloodbank.agent.invocation.completed"
+          }
+        },
+        {
+          "node": "Chip \u2014 Target",
+          "fields": {
+            "ticketKey": "TOLT-147",
+            "correlationid": "ce7e8beb-8187-555a-98d8-92e8a5ca3f9b",
+            "agentId": "tolt-pm",
+            "reason": "ticket-grooming"
+          }
+        },
+        {
+          "node": "Chip \u2014 Resolve Label",
+          "fields": {
+            "ticketKey": "TOLT-147",
+            "correlationid": "ce7e8beb-8187-555a-98d8-92e8a5ca3f9b",
+            "agentId": "tolt-pm",
+            "reason": "ticket-grooming"
+          }
+        },
+        {
+          "node": "Chip \u2014 Read Issue",
+          "fields": {
+            "id": "7db35a9d-1d88-4f6a-addd-cfa262114194",
+            "type": null
+          }
+        },
+        {
+          "node": "Chip \u2014 Needs Write",
+          "fields": {
+            "ticketKey": "TOLT-147",
+            "correlationid": "ce7e8beb-8187-555a-98d8-92e8a5ca3f9b",
+            "agentId": "tolt-pm",
+            "reason": "ticket-grooming"
+          }
+        },
+        {
+          "node": "Chip \u2014 Plan Write",
+          "fields": {
+            "ticketKey": "TOLT-147",
+            "correlationid": "ce7e8beb-8187-555a-98d8-92e8a5ca3f9b",
+            "agentId": "tolt-pm",
+            "reason": "ticket-grooming"
+          }
+        },
+        {
+          "node": "Chip \u2014 Write Labels",
+          "fields": {
+            "id": "7db35a9d-1d88-4f6a-addd-cfa262114194",
+            "type": null
+          }
+        }
+      ]
+    },
+    {
+      "id": 742049,
+      "workflowId": "wWXgCZiiIBWaRRzE",
+      "startedAt": "2026-11-17 19:58:06.454",
+      "stoppedAt": "2026-11-17 19:58:06.562",
+      "status": "success",
+      "source_data_sha256": "0d00c25115ce2996f48417ca14a7002a313d9d4f2cbc4bdf992f4c57555468f7",
+      "nodes": {
+        "Invocation Lifecycle": [
+          {
+            "status": "success",
+            "execution_time_ms": 0,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Target": [
+          {
+            "status": "success",
+            "execution_time_ms": 5,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 List Labels": [
+          {
+            "status": "success",
+            "execution_time_ms": 41,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Resolve Label": [
+          {
+            "status": "success",
+            "execution_time_ms": 6,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Read Issue": [
+          {
+            "status": "success",
+            "execution_time_ms": 45,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Needs Write": [
+          {
+            "status": "success",
+            "execution_time_ms": 5,
+            "output_items_per_branch": [
+              0
+            ]
+          }
+        ]
+      },
+      "identifiers": [
+        {
+          "node": "Invocation Lifecycle",
+          "fields": {
+            "correlationid": "43c120da-2093-5b39-b20e-8b7e9bdbdc30",
+            "id": "df7b00ab-c566-57e5-84ab-2a3556d14814",
+            "type": "bloodbank.agent.invocation.started"
+          }
+        },
+        {
+          "node": "Chip \u2014 Target",
+          "fields": {
+            "ticketKey": "HEYMA-19",
+            "correlationid": "43c120da-2093-5b39-b20e-8b7e9bdbdc30",
+            "agentId": "heyma-pm",
+            "reason": "ticket-delegation"
+          }
+        },
+        {
+          "node": "Chip \u2014 Resolve Label",
+          "fields": {
+            "ticketKey": "HEYMA-19",
+            "correlationid": "43c120da-2093-5b39-b20e-8b7e9bdbdc30",
+            "agentId": "heyma-pm",
+            "reason": "ticket-delegation"
+          }
+        },
+        {
+          "node": "Chip \u2014 Read Issue",
+          "fields": {
+            "id": "06405dc1-9f4f-4ef9-8803-e20eea18de00",
+            "type": null
+          }
+        }
+      ]
+    },
+    {
+      "id": 742060,
+      "workflowId": "6wAGA5pdrmHLyhs2",
+      "startedAt": "2026-11-17 20:00:04.101",
+      "stoppedAt": "2026-11-17 20:00:04.145",
+      "status": "success",
+      "source_data_sha256": "901a7ce355b8d4ef7abbb37feba761bb78a840edf9febc0cc4121a378655adf3",
+      "nodes": {
+        "onTicketCreatedOrTransitioned": [
+          {
+            "status": "success",
+            "execution_time_ms": 0,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Triage Ticket": [
+          {
+            "status": "success",
+            "execution_time_ms": 3,
+            "output_items_per_branch": [
+              0,
+              1
+            ]
+          }
+        ],
+        "Notable Skip?": [
+          {
+            "status": "success",
+            "execution_time_ms": 1,
+            "output_items_per_branch": [
+              0,
+              1
+            ]
+          }
+        ]
+      },
+      "identifiers": [
+        {
+          "node": "onTicketCreatedOrTransitioned",
+          "fields": {
+            "correlationid": "c53d74bb-7d34-5997-aa17-b95f8c7b05fa",
+            "id": "712dea6e-69bb-580f-91ef-691b0bc58a2f",
+            "type": "bloodbank.repo.task.updated"
+          }
+        },
+        {
+          "node": "Triage Ticket",
+          "fields": {
+            "ticketKey": "HOLOC-44",
+            "agentId": null,
+            "operation": "groomTicket",
+            "phase": "In Progress",
+            "reason": "phase is In Progress, not Todo"
+          }
+        },
+        {
+          "node": "Notable Skip?",
+          "fields": {
+            "ticketKey": "HOLOC-44",
+            "agentId": null,
+            "operation": "groomTicket",
+            "phase": "In Progress",
+            "reason": "phase is In Progress, not Todo"
+          }
+        }
+      ]
+    }
+  ],
+  "gateway": [
+    {
+      "command_id": "a97f5d82-a1f0-530b-abdc-56add9433327",
+      "profile": "heyma-pm",
+      "state": "pending",
+      "outcome": null,
+      "created_at": "2026-11-17T19:54:56.055139Z",
+      "updated_at": "2026-11-17T19:54:56.055139Z",
+      "origin": "post_retirement_n8n",
+      "execution_id": 742030,
+      "ticket": "HEYMA-28",
+      "events": [
+        {
+          "id": "aab9d393-75b4-53e6-b669-19a53946ccf9",
+          "type": "bloodbank.conversation.turn.started",
+          "time": "2026-11-17T19:54:56.055080Z",
+          "thread_id": "bloodbank:79e769d6-964b-5f15-8cec-f3205e68b962",
+          "session_id": null,
+          "context": {}
+        },
+        {
+          "id": "2d7f4225-0e39-568c-b8a7-2c38107b4bb8",
+          "type": "bloodbank.agent.invocation.started",
+          "time": "2026-11-17T19:54:56.055101Z",
+          "thread_id": "bloodbank:79e769d6-964b-5f15-8cec-f3205e68b962",
+          "session_id": null,
+          "context": {
+            "ticket_key": "HEYMA-28"
+          }
+        }
+      ]
+    },
+    {
+      "command_id": "fb758fac-bdb9-5b56-a2b8-1c83e23fcfd4",
+      "profile": "bloodbank-pm",
+      "state": "started",
+      "outcome": null,
+      "created_at": "2026-11-17T19:19:45.811390Z",
+      "updated_at": "2026-11-17T19:19:45.881246Z",
+      "origin": "pre_retirement_BB41_dispatch",
+      "ticket": "BB-41",
+      "limit": "Post-cutoff tools corroborate continuing implementation, not a new post-retirement dispatch.",
+      "events": [
+        {
+          "id": "d0dee56f-b29a-5645-806c-ffe0ff986520",
+          "type": "bloodbank.conversation.turn.started",
+          "time": "2026-11-17T19:19:45.810977Z",
+          "thread_id": "bloodbank:df43d02d-423f-51c1-98ba-79e27dc50875",
+          "session_id": null,
+          "context": {}
+        },
+        {
+          "id": "66168b9f-2c13-585c-8e9e-813c16ca39c0",
+          "type": "bloodbank.agent.invocation.started",
+          "time": "2026-11-17T19:19:45.811049Z",
+          "thread_id": "bloodbank:df43d02d-423f-51c1-98ba-79e27dc50875",
+          "session_id": null,
+          "context": {
+            "dispatch_id": "876e72e5-eb8f-570c-9858-15e1593e2317",
+            "ticket_key": "BB-41"
+          }
+        }
+      ]
+    },
+    {
+      "command_id": "6b830397-6ff6-575f-a509-66db69b20e59",
+      "profile": "heyma-pm",
+      "state": "started",
+      "outcome": null,
+      "created_at": "2026-11-17T19:40:03.838870Z",
+      "updated_at": "2026-11-17T19:58:06.248705Z",
+      "origin": "post_retirement_pickup_chip_event",
+      "matched_event_id": "df7b00ab-c566-57e5-84ab-2a3556d14814",
+      "event_observed_after_retirement": true,
+      "ticket": "HEYMA-19",
+      "limit": "Lifecycle event handled after retirement; command may have been created before retirement. Actual session tools are counted only after cutoff.",
+      "events": [
+        {
+          "id": "bba06641-7c8b-588d-9c29-03ad2f8d9c55",
+          "type": "bloodbank.conversation.turn.started",
+          "time": "2026-11-17T19:40:03.838725Z",
+          "thread_id": "bloodbank:43c120da-2093-5b39-b20e-8b7e9bdbdc30",
+          "session_id": null,
+          "context": {}
+        },
+        {
+          "id": "df7b00ab-c566-57e5-84ab-2a3556d14814",
+          "type": "bloodbank.agent.invocation.started",
+          "time": "2026-11-17T19:40:03.838749Z",
+          "thread_id": "bloodbank:43c120da-2093-5b39-b20e-8b7e9bdbdc30",
+          "session_id": null,
+          "context": {
+            "dispatch_id": "5b31053e-8527-53e7-b357-27b884a1741c",
+            "ticket_key": "HEYMA-19"
+          }
+        }
+      ]
+    },
+    {
+      "command_id": "e1a4ec36-59c3-5b39-b3a8-d195267eaf11",
+      "profile": "tolt-pm",
+      "state": "completed",
+      "outcome": "success",
+      "created_at": "2026-11-17T19:39:35.226530Z",
+      "updated_at": "2026-11-17T19:58:06.180453Z",
+      "origin": "post_retirement_pickup_chip_event",
+      "matched_event_id": "3d3941a8-3e59-5792-836e-efd481ac95e6",
+      "event_observed_after_retirement": true,
+      "ticket": "TOLT-147",
+      "limit": "Lifecycle event handled after retirement; command may have been created before retirement. Actual session tools are counted only after cutoff.",
+      "events": [
+        {
+          "id": "ab81c498-9fbc-57d7-b528-9f8e4705fe7f",
+          "type": "bloodbank.conversation.turn.started",
+          "time": "2026-11-17T19:39:35.226355Z",
+          "thread_id": "bloodbank:ce7e8beb-8187-555a-98d8-92e8a5ca3f9b",
+          "session_id": null,
+          "context": {}
+        },
+        {
+          "id": "81e1bd15-b045-5a83-aace-481db4aa38d2",
+          "type": "bloodbank.agent.invocation.started",
+          "time": "2026-11-17T19:39:35.226377Z",
+          "thread_id": "bloodbank:ce7e8beb-8187-555a-98d8-92e8a5ca3f9b",
+          "session_id": null,
+          "context": {
+            "ticket_key": "TOLT-147"
+          }
+        },
+        {
+          "id": "3d3941a8-3e59-5792-836e-efd481ac95e6",
+          "type": "bloodbank.agent.invocation.completed",
+          "time": "2026-11-17T19:58:06.180359Z",
+          "thread_id": "bloodbank:ce7e8beb-8187-555a-98d8-92e8a5ca3f9b",
+          "session_id": null,
+          "context": {
+            "ticket_key": "TOLT-147"
+          }
+        },
+        {
+          "id": "ed8477c5-8bc0-5016-81c0-cf83eda62c68",
+          "type": "bloodbank.conversation.turn.completed",
+          "time": "2026-11-17T19:58:06.180382Z",
+          "thread_id": "bloodbank:ce7e8beb-8187-555a-98d8-92e8a5ca3f9b",
+          "session_id": null,
+          "context": {}
+        }
+      ]
+    }
+  ],
+  "agent_sessions": [
+    {
+      "id": "20261117_133502_0876a850",
+      "source": "bloodbank",
+      "session_key": "agent:bloodbank-pm:bloodbank:dm:bloodbank:df43d02d-423f-51c1-98ba-79e27dc50875",
+      "thread_id": null,
+      "started_at": 1794940502.574612,
+      "ended_at": null,
+      "profile": "bloodbank-pm",
+      "command_id": "fb758fac-bdb9-5b56-a2b8-1c83e23fcfd4",
+      "origin": "pre_retirement_BB41_dispatch",
+      "ticket": "BB-41",
+      "limit": "Post-cutoff tools corroborate continuing implementation, not a new post-retirement dispatch.",
+      "actual_post_retirement_tool_results": [
+        {
+          "message_id": 5306,
+          "tool_name": "terminal",
+          "timestamp": 1794945289.9017024,
+          "at": "2026-11-17T19:54:49.901702+00:00",
+          "content_sha256": "99da487fad6333dfe6495c556028f86438b434b955cf8e71b9624fc2f3c1b555"
+        }
+      ],
+      "tool_result_count": 1,
+      "assistant_tool_call_records": 1
+    },
+    {
+      "id": "20261113_142125_9a986331",
+      "source": "bloodbank",
+      "session_key": "agent:heyma-pm:bloodbank:dm:bloodbank:43c120da-2093-5b39-b20e-8b7e9bdbdc30",
+      "thread_id": null,
+      "started_at": 1794597685.8483677,
+      "ended_at": null,
+      "profile": "heyma-pm",
+      "command_id": "6b830397-6ff6-575f-a509-66db69b20e59",
+      "origin": "post_retirement_pickup_chip_event",
+      "matched_event_id": "df7b00ab-c566-57e5-84ab-2a3556d14814",
+      "event_observed_after_retirement": true,
+      "ticket": "HEYMA-19",
+      "limit": "Lifecycle event handled after retirement; command may have been created before retirement. Actual session tools are counted only after cutoff.",
+      "actual_post_retirement_tool_results": [
+        {
+          "message_id": 3539,
+          "tool_name": "terminal",
+          "timestamp": 1794945502.2900462,
+          "at": "2026-11-17T19:58:22.290046+00:00",
+          "content_sha256": "d93a214e16f1d70ba0637ecd596f2e865b3d203cc5425528d2ea58c39bce3152"
+        },
+        {
+          "message_id": 3541,
+          "tool_name": "skill_view",
+          "timestamp": 1794945509.3387866,
+          "at": "2026-11-17T19:58:29.338787+00:00",
+          "content_sha256": "bf71c5606dc05b3b4c4e25f334f1ad182394e57332aab93ded3fe0e58dfdf048"
+        },
+        {
+          "message_id": 3542,
+          "tool_name": "skill_view",
+          "timestamp": 1794945509.3442974,
+          "at": "2026-11-17T19:58:29.344297+00:00",
+          "content_sha256": "01811dbab19331ccfa72c46ae4bd35930395e72009395e7d0214be1d962c180c"
+        },
+        {
+          "message_id": 3543,
+          "tool_name": "skill_view",
+          "timestamp": 1794945509.34941,
+          "at": "2026-11-17T19:58:29.349410+00:00",
+          "content_sha256": "bcd2b0df56463a735527a9595593fa85d90548d6989f10a271482183ca9a3b2a"
+        },
+        {
+          "message_id": 3544,
+          "tool_name": "read_file",
+          "timestamp": 1794945509.3546197,
+          "at": "2026-11-17T19:58:29.354620+00:00",
+          "content_sha256": "8467721778739142115b91382a22cc3fefa40552c30f5a3e61d9c417cec2ffa5"
+        },
+        {
+          "message_id": 3545,
+          "tool_name": "terminal",
+          "timestamp": 1794945517.6983285,
+          "at": "2026-11-17T19:58:37.698328+00:00",
+          "content_sha256": "92a1e0a65b7be73560da154c3142544dbbceb51cb0cc88103ce82eab3e44c0ad"
+        }
+      ],
+      "tool_result_count": 6,
+      "assistant_tool_call_records": 3
+    },
+    {
+      "id": "20261117_145235_0337f180",
+      "source": "bloodbank",
+      "session_key": "agent:tolt-pm:bloodbank:dm:bloodbank:ce7e8beb-8187-555a-98d8-92e8a5ca3f9b",
+      "thread_id": null,
+      "started_at": 1794945156.657395,
+      "ended_at": null,
+      "profile": "tolt-pm",
+      "command_id": "e1a4ec36-59c3-5b39-b3a8-d195267eaf11",
+      "origin": "post_retirement_pickup_chip_event",
+      "matched_event_id": "3d3941a8-3e59-5792-836e-efd481ac95e6",
+      "event_observed_after_retirement": true,
+      "ticket": "TOLT-147",
+      "limit": "Lifecycle event handled after retirement; command may have been created before retirement. Actual session tools are counted only after cutoff.",
+      "actual_post_retirement_tool_results": [
+        {
+          "message_id": 24870,
+          "tool_name": "terminal",
+          "timestamp": 1794945303.142764,
+          "at": "2026-11-17T19:55:03.142764+00:00",
+          "content_sha256": "9b3c3d10f52fca6f4857ba97b6ad0d018b4fb0fab1781d9356ef539ee6d4a190"
+        },
+        {
+          "message_id": 24871,
+          "tool_name": "search_files",
+          "timestamp": 1794945303.4831378,
+          "at": "2026-11-17T19:55:03.483138+00:00",
+          "content_sha256": "4e9682f4bd426b5d7cea71f654d8cb1c1f0efa504c1f390371baba18a9ff3fc8"
+        },
+        {
+          "message_id": 24873,
+          "tool_name": "read_file",
+          "timestamp": 1794945324.5578506,
+          "at": "2026-11-17T19:55:24.557851+00:00",
+          "content_sha256": "4c7944227bf3b9f543977a50784378e1b739f7a19fad7cbb628e657b4cb50c9a"
+        },
+        {
+          "message_id": 24874,
+          "tool_name": "read_file",
+          "timestamp": 1794945324.5685503,
+          "at": "2026-11-17T19:55:24.568550+00:00",
+          "content_sha256": "7a62781182512474e9189c8fb2ce1a0e25ed28e4aedcbf2702ceecb7556bbeb5"
+        },
+        {
+          "message_id": 24875,
+          "tool_name": "terminal",
+          "timestamp": 1794945325.5445988,
+          "at": "2026-11-17T19:55:25.544599+00:00",
+          "content_sha256": "f821a8c125a307b312fda3a63ae466c78ae0abd9d9f850b065b9e24df479605c"
+        },
+        {
+          "message_id": 24877,
+          "tool_name": "write_file",
+          "timestamp": 1794945343.3110802,
+          "at": "2026-11-17T19:55:43.311080+00:00",
+          "content_sha256": "955d2970a2156b8fed83f006cdc8207f1f602a3a01f9bcded3e752aac4301ea8"
+        },
+        {
+          "message_id": 24879,
+          "tool_name": "terminal",
+          "timestamp": 1794945364.1071155,
+          "at": "2026-11-17T19:56:04.107116+00:00",
+          "content_sha256": "e562f42fef3e3a4bf169e80b866dcbb1268678603c949736fac097a5073918a1"
+        },
+        {
+          "message_id": 24881,
+          "tool_name": "write_file",
+          "timestamp": 1794945407.489829,
+          "at": "2026-11-17T19:56:47.489829+00:00",
+          "content_sha256": "914d16d7b8bebb5f067a8b963c657042981fa71c93eae7edd2fa87c57558051c"
+        },
+        {
+          "message_id": 24883,
+          "tool_name": "terminal",
+          "timestamp": 1794945428.8968942,
+          "at": "2026-11-17T19:57:08.896894+00:00",
+          "content_sha256": "0c1be0758efb3a43ab7c7f713afdc039d5f84e8d544410a83c46fb33c665328b"
+        },
+        {
+          "message_id": 24885,
+          "tool_name": "terminal",
+          "timestamp": 1794945440.4444327,
+          "at": "2026-11-17T19:57:20.444433+00:00",
+          "content_sha256": "191359012176ea67d2e0b99ca0c64785e22698a4ff506dff585943e3f0570f32"
+        },
+        {
+          "message_id": 24887,
+          "tool_name": "write_file",
+          "timestamp": 1794945461.5177023,
+          "at": "2026-11-17T19:57:41.517702+00:00",
+          "content_sha256": "27626a0958baa263c8e871f6d9eb6bf17efa371dc21199e170911e3288f74a97"
+        },
+        {
+          "message_id": 24889,
+          "tool_name": "terminal",
+          "timestamp": 1794945474.9816382,
+          "at": "2026-11-17T19:57:54.981638+00:00",
+          "content_sha256": "267455a2e55b402ab22e8d245a214e4ac312f7f29e0a9fbbd8d704093a302fe3"
+        }
+      ],
+      "tool_result_count": 12,
+      "assistant_tool_call_records": 9
+    }
+  ],
+  "legacy_executions_started_after_cutoff": [],
+  "krebs_dispatch_records": [
+    {
+      "ts": "2026-11-17T19:19:45.723Z",
+      "tick": "tick:2026-11-17T19:19:45.222Z",
+      "action": "dispatch.write",
+      "dispatch_id": "876e72e5-eb8f-570c-9858-15e1593e2317",
+      "command_id": "fb758fac-bdb9-5b56-a2b8-1c83e23fcfd4",
+      "key": "BB-41",
+      "ok": true
+    },
+    {
+      "ts": "2026-11-17T19:19:45.726Z",
+      "tick": "tick:2026-11-17T19:19:45.222Z",
+      "action": "dispatch.publish",
+      "dispatch_id": "876e72e5-eb8f-570c-9858-15e1593e2317",
+      "command_id": "fb758fac-bdb9-5b56-a2b8-1c83e23fcfd4",
+      "agent_id": "bloodbank-pm",
+      "key": "BB-41",
+      "ok": true,
+      "subject": "bloodbank.cmd.agent.invocation.start"
+    },
+    {
+      "ts": "2026-11-17T20:00:03.785Z",
+      "tick": "tick:2026-11-17T20:00:00.823Z",
+      "action": "dispatch.write",
+      "dispatch_id": "57212ff1-5799-53b3-b950-6980dc228e9c",
+      "command_id": "32cbef44-72c2-5809-a0e0-0a8f19066a6b",
+      "key": "HOLOC-44",
+      "ok": true
+    },
+    {
+      "ts": "2026-11-17T20:00:03.853Z",
+      "tick": "tick:2026-11-17T20:00:00.823Z",
+      "action": "dispatch.publish",
+      "dispatch_id": "57212ff1-5799-53b3-b950-6980dc228e9c",
+      "command_id": "32cbef44-72c2-5809-a0e0-0a8f19066a6b",
+      "agent_id": "holocene-pm",
+      "key": "HOLOC-44",
+      "ok": true,
+      "subject": "bloodbank.cmd.agent.invocation.start"
+    }
+  ],
+  "limits": [
+    "n8n node execution is not agent execution; pending commands remain pending.",
+    "An already-running BB-41 command is continuing execution, not proof of a newly dispatched post-retirement command.",
+    "This bounded observation does not prove continuous 24-hour availability."
+  ]
+}

@@ -35,7 +35,7 @@
         },
         "transcript_text": {
           "type": "string",
-          "description": "Final transcript text. May be empty for silent or non-speech audio. Producers MAY truncate very long transcripts and rely on transcript_uri for the canonical full text."
+          "description": "Final transcript body. Producers may omit inline text for oversized artifacts only when transcript_uri points to the canonical full body and transcript_inline is false; never silently truncate a full-copy payload."
         },
         "transcript_uri": {
           "type": [
@@ -99,6 +99,36 @@
           ],
           "description": "Specific model variant under the engine."
         },
+        "finalized": {"type": "boolean"},
+        "item_id": {"type": "string", "minLength": 1},
+        "plan_id": {"type": "string", "minLength": 1},
+        "md_path": {"type": "string", "minLength": 1},
+        "title": {"type": ["string", "null"]},
+        "summary": {"type": ["string", "null"]},
+        "title_slug": {"type": ["string", "null"]},
+        "classification": {"type": ["string", "null"]},
+        "s3_uri": {"type": "string", "format": "uri"},
+        "s3_url": {"type": ["string", "null"], "format": "uri"},
+        "archive_references": {"type": "array", "items": {"type": "object"}},
+        "metadata": {"type": "object", "additionalProperties": true},
+        "pass_results": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "state": {"enum": ["completed", "skipped"]},
+              "version": {"type": "integer", "minimum": 1},
+              "reason_code": {"type": ["string", "null"]},
+              "result": {"type": "object"}
+            },
+            "required": ["state", "version", "result"],
+            "additionalProperties": true
+          }
+        },
+        "transcript_inline": {"type": "boolean"},
+        "transcript_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "transcript_bytes": {"type": "integer", "minimum": 0},
+        "copy_warning": {"type": "string"},
         "segments": {
           "type": [
             "array",

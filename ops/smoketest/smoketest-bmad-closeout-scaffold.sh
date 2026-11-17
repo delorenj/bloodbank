@@ -26,7 +26,14 @@ set -e
 [[ "${missing_rc}" -ne 0 ]] || { echo "missing ISSUE_ID did not fail" >&2; exit 1; }
 [[ "${missing_err}" == *"ISSUE_ID is required"* ]] || { echo "missing ISSUE_ID error message mismatch" >&2; exit 1; }
 
-# 2) valid ISSUE_ID should create expected closeout file
+# 2) canonical source template is tracked and has the required fields
+TEMPLATE_PATH="_bmad_output/templates/ticket-closeout.md"
+[[ -f "${TEMPLATE_PATH}" ]] || { echo "closeout template missing" >&2; exit 1; }
+for marker in 'Issue: #<id>' 'Title: <title>' 'Owner: <name/agent>'; do
+  grep -Fq "${marker}" "${TEMPLATE_PATH}" || { echo "closeout template missing ${marker}" >&2; exit 1; }
+done
+
+# 3) valid ISSUE_ID should create expected closeout file
 create_out="$(ISSUE_ID="${TMP_ISSUE_ID}" ISSUE_TITLE="smoke title" OWNER="smoke-owner" python3 ops/bmad/scaffold_closeout.py)"
 [[ "${create_out}" == "${TMP_CLOSEOUT_PATH}" ]] || { echo "unexpected scaffold output path" >&2; exit 1; }
 [[ -f "${TMP_CLOSEOUT_PATH}" ]] || { echo "closeout file not created" >&2; exit 1; }

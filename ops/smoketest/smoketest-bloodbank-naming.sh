@@ -152,6 +152,31 @@ negative_probe "subject suffix mismatch with envelope type" "$SUBJECT_TYPE_MISMA
 VERSIONED_TYPE='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.v1.conversation.message.appended","subject":"bloodbank.evt.v1.conversation.message.appended","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"conversation","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"k","data":{}}'
 negative_probe "retired 5-token versioned type/subject (bloodbank.v1.*)" "$VERSIONED_TYPE"
 
+RETIRED_MESSAGING='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.messaging.message.received","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"messaging","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"thread:t","data":{}}'
+negative_probe "retired messaging.message (split per platform)" "$RETIRED_MESSAGING"
+
+RETIRED_TELEPHONY_TEXT='{"specversion":"1.0","id":"a","source":"x","type":"bloodbank.telephony.message.received","time":"2026-05-14T00:00:00Z","correlationid":"c","producer":"p","service":"s","domain":"telephony","kind":"event","actor":{"type":"t","agent_id":"a"},"ordering_key":"line:cell","data":{}}'
+negative_probe "retired telephony.message (texts moved to messaging)" "$RETIRED_TELEPHONY_TEXT"
+
+# bb-emit's ordering derivation must match the n8n node's (nats.ts) for messaging.
+if python3 - "$(dirname "$0")/../../bin/bb-emit" <<'PY'
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader("bb_emit", sys.argv[1])
+spec = importlib.util.spec_from_loader("bb_emit", loader)
+m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+d = m._derive_ordering_key
+assert d("messaging", "sms", {"line": "cell"}, None) == "line:cell"
+assert d("messaging", "imessage", {"line": "imessage"}, None) == "line:imessage"
+assert d("messaging", "telegram", {"thread_id": "t1"}, None) == "messaging:telegram:t1"
+assert d("messaging", "slack", {"notification_id": "n1"}, None) == "messaging:slack:n1"
+assert d("watch", "target", {"watch_id": "example-person"}, None) == "watch:example-person"
+PY
+then
+  pass_count=$((pass_count + 1)); echo "PASS bb-emit messaging ordering derivation"
+else
+  fail_count=$((fail_count + 1)); echo "FAIL bb-emit messaging ordering derivation"
+fi
+
 total=$((pass_count + fail_count))
 echo "smoketest-bloodbank-naming: ${pass_count}/${total} checks passed"
 

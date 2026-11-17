@@ -122,6 +122,44 @@ def test_json_composition_cannot_erase_an_earlier_denial():
     assert value["hookSpecificOutput"] == {"permissionDecision": "deny", "additionalContext": "first\n\nsecond"}
 
 
+def test_antigravity_context_steps_compose_in_handler_order():
+    steps = [{"ephemeralMessage": "skill reminder"}, {"ephemeralMessage": "recent work"}]
+    value = json.loads(compose_stdout([
+        json.dumps({"injectSteps": [steps[0]]}),
+        json.dumps({"injectSteps": [steps[1]]}),
+    ]))
+    assert value["injectSteps"] == steps
+
+
+def test_antigravity_startup_context_reaches_native_client_after_other_handlers(tmp_path):
+    steps = [{"ephemeralMessage": "skill reminder"}, {"ephemeralMessage": "recent work"}]
+    script = tmp_path / "context.py"
+    script.write_text("import json,sys\nprint(json.dumps({'injectSteps': [{'ephemeralMessage': sys.argv[1]}]}))\n")
+    registry = "\n".join(
+        f'[[handler]]\nid="{hid}"\nmode="sync"\non_native=["PreInvocation"]\n'
+        f'command=[{json.dumps(sys.executable)},{json.dumps(str(script))},{json.dumps(text)}]\n'
+        f'timeout_ms=1000\norder={order}\n'
+        for hid, text, order in (("skill-reminder", "skill reminder", 0),
+                                  ("candystore-context", "recent work", 6))
+    )
+    with HubHarness(tmp_path, registry) as hub:
+        proc = subprocess.run(
+            [str(CLIENT), "--cli", "antigravity", "--native", "PreInvocation",
+             "--deadline", "15", "--trailer", "passive"],
+            input='{"invocationNum":1}', capture_output=True, text=True, check=True,
+            env={**os.environ, "BB_HOOK_SOCKET": hub.sock}, timeout=5,
+        )
+    assert json.loads(proc.stdout) == {"injectSteps": steps}
+
+
+def test_hermes_context_composition_preserves_startup_and_prompt_context():
+    value = json.loads(compose_stdout([
+        json.dumps({"context": "recent work"}),
+        json.dumps({"context": "retained decisions"}),
+    ]))
+    assert value == {"context": "recent work\n\nretained decisions"}
+
+
 def test_missing_context_is_a_recorded_skip_not_a_failure(tmp_path):
     reg = echo_handler("pane", "bad", extra='require_env=["ZELLIJ_PANE_ID"]')
     with HubHarness(tmp_path, reg) as hub:

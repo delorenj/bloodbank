@@ -1,5 +1,5 @@
 ---
-description: Conduct market research on competition and customers. Use when the user says they need market research
+description: Deprecated — forwards to bmad-deep-recon (market type)
 ---
 
 @skills/bmad-market-research

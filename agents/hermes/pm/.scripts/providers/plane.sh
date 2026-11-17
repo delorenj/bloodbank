@@ -8,11 +8,22 @@
 #   workspace: <workspace-slug>      (or env PLANE_WORKSPACE)
 #   board_id:  <project-uuid>        (set by create_board / 42-ticket-provider)
 #   timezone:  <IANA timezone>       optional project calendar override
-#   state_map: { started: "In Progress", in_review: "In Review",
-#                completed: "Done", cancelled: "Cancelled" }   optional
-#   Optional extended targets, enabled per role by naming their lane:
-#     awaiting_decision (default "Needs Attention"), e2e_testing,
-#     ready_for_documentation, needs_re_evaluation
+# Lane names (role.yaml `ticket_provider:`, each optional): backlog, unstarted,
+#   started, completed (default "Done"), cancelled (default "Cancelled"). An
+#   unnamed lane resolves only when its state group has exactly one member.
+#
+# Krebs lifecycle v2 (krebs/spec/lifecycle.v2.yaml): every board has the five
+# stock lanes (Backlog, Todo, In Progress, Done, Cancelled); what the retired
+# lanes meant now lives in labels. So two normalized targets are label writes:
+#   in_review          the handback: the started lane (In Progress) plus
+#                      lifecycle:review, waiting for a verdict.
+#   awaiting_decision  a hold: plus lifecycle:needs-input, lane unchanged, on a
+#                      Todo or In Progress ticket only (krebs tick is the one
+#                      thing that moves Todo -> In Progress). Aliases:
+#                      needs_attention, waiting_reply.
+# The labels must already exist on the board (every board carries all six);
+# they are never created here. Every other target is a plain lane move, and
+# krebs tick strips a lifecycle:review left outside In Progress.
 #
 # Rate limiting: reads retry HTTP 429 up to PLANE_READ_MAX_ATTEMPTS (default 4)
 # times, sleeping the server's Retry-After capped at PLANE_429_MAX_DELAY
@@ -146,16 +157,13 @@ PY
 # Board binding: .project.json (SOT) first, then legacy role.yaml, then env.
 WS="$(pj_cfg workspace)"; [ -n "$WS" ] || WS="$(tp_cfg workspace)"; WS="${WS:-${PLANE_WORKSPACE:-}}"
 PROJ="$(pj_cfg board_id)"; [ -n "$PROJ" ] || PROJ="$(tp_cfg project)"; [ -n "$PROJ" ] || PROJ="$(tp_cfg board_id)"
-SM_IN_REVIEW="$(tp_cfg in_review)"; SM_IN_REVIEW="${SM_IN_REVIEW:-In Review}"
 SM_DONE="$(tp_cfg completed)"; SM_DONE="${SM_DONE:-Done}"
 SM_CANCELLED="$(tp_cfg cancelled)"; SM_CANCELLED="${SM_CANCELLED:-Cancelled}"
 SM_STARTED="$(tp_cfg started)"
 SM_UNSTARTED="$(tp_cfg unstarted)"
 SM_BACKLOG="$(tp_cfg backlog)"
-SM_AWAITING_DECISION="$(tp_cfg awaiting_decision)"; SM_AWAITING_DECISION="${SM_AWAITING_DECISION:-Needs Attention}"
-SM_E2E_TESTING="$(tp_cfg e2e_testing)"
-SM_READY_FOR_DOCUMENTATION="$(tp_cfg ready_for_documentation)"
-SM_NEEDS_RE_EVALUATION="$(tp_cfg needs_re_evaluation)"
+LABEL_REVIEW="lifecycle:review"
+LABEL_NEEDS_INPUT="lifecycle:needs-input"
 CALENDAR_TZ="$(pj_cfg timezone)"; [ -n "$CALENDAR_TZ" ] || CALENDAR_TZ="$(tp_cfg timezone)"
 CALENDAR_TZ="${CALENDAR_TZ:-${TICKET_PROVIDER_TIMEZONE:-${TZ:-}}}"
 API="$BASE/api/v1/workspaces/$WS"
@@ -400,38 +408,35 @@ print(json.dumps({"id":m.get("id", ""),"name":m.get("name", ""),"state":"active"
 canonical_state_target() {
   case "$1" in
     needs_attention|waiting_reply) printf 'awaiting_decision\n' ;;
-    ready_for_e2e) printf 'e2e_testing\n' ;;
     *) printf '%s\n' "$1" ;;
   esac
 }
 
-# Map a normalized state -> exactly one concrete Plane state, printed as JSON
-# {id,state,state_type,normalized}. A configured name must exist in the
-# expected group; it never falls back to another state in the same group. An
-# unnamed group is safe only when the group has one member. The extended
-# targets exist only when role.yaml names their lane.
-resolve_state_target() {
-  want="$(canonical_state_target "$1")"
-  [ -n "$PROJ" ] || die "ticket_provider.project not set"
-  case "$want" in
-    completed) grp=completed; nm="$SM_DONE" ;;
-    cancelled) grp=cancelled; nm="$SM_CANCELLED" ;;
-    in_review) grp=started;   nm="$SM_IN_REVIEW" ;;
-    started)   grp=started;   nm="$SM_STARTED" ;;
-    unstarted) grp=unstarted; nm="$SM_UNSTARTED" ;;
-    backlog)   grp=backlog;   nm="$SM_BACKLOG" ;;
-    awaiting_decision)       grp=started;   nm="$SM_AWAITING_DECISION" ;;
-    e2e_testing)             grp=started;   nm="$SM_E2E_TESTING" ;;
-    ready_for_documentation) grp=started;   nm="$SM_READY_FOR_DOCUMENTATION" ;;
-    needs_re_evaluation)     grp=unstarted; nm="$SM_NEEDS_RE_EVALUATION" ;;
-    *) die "invalid normalized state: $want" ;;
+# Normalized target -> LANE (the lane band it lands in, empty when the lane
+# does not change) and LABEL (the lifecycle label it adds, empty for none).
+state_target_plan() {
+  case "$1" in
+    backlog|unstarted|started|completed|cancelled) LANE="$1"; LABEL="" ;;
+    in_review)         LANE=started; LABEL="$LABEL_REVIEW" ;;
+    awaiting_decision) LANE="";      LABEL="$LABEL_NEEDS_INPUT" ;;
+    *) die "invalid normalized state: $1" ;;
   esac
-  case "$want" in
-    awaiting_decision|e2e_testing|ready_for_documentation|needs_re_evaluation)
-      [ -n "$nm" ] || die "ticket_provider.$want is required in role.yaml"
-      ;;
+}
+
+# pick_lane BAND NORMALIZED — read the project's states JSON on stdin and print
+# exactly one concrete Plane state as JSON {id,state,state_type}. A configured
+# name must exist in the band's group; it never falls back to another state in
+# the same group. An unnamed band is safe only when its group has one member.
+pick_lane() {
+  case "$1" in
+    completed) nm="$SM_DONE" ;;
+    cancelled) nm="$SM_CANCELLED" ;;
+    started)   nm="$SM_STARTED" ;;
+    unstarted) nm="$SM_UNSTARTED" ;;
+    backlog)   nm="$SM_BACKLOG" ;;
+    *) die "invalid lane band: $1" ;;
   esac
-  api_all "projects/$PROJ/states/" | GRP="$grp" NM="$nm" WANT="$want" python3 -c 'import sys,json,os
+  GRP="$1" NM="$nm" WANT="$2" python3 -c 'import sys,json,os
 d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get("results", []) if isinstance(d,dict) else []
 grp=os.environ["GRP"]; nm=os.environ.get("NM","").strip(); want=os.environ["WANT"]
 grouped=[s for s in rows if s.get("group")==grp]
@@ -443,19 +448,27 @@ else:
     candidates=grouped
     if len(candidates) != 1:
         names=", ".join(str(s.get("name") or "") for s in candidates) or "none"
-        raise SystemExit(f"plane: normalized state {want!r} is ambiguous in group {grp!r} ({names}); configure ticket_provider.{want}")
+        raise SystemExit(f"plane: normalized state {want!r} is ambiguous in group {grp!r} ({names}); configure ticket_provider.{grp}")
 state_id=str(candidates[0].get("id") or "")
 if not state_id:
     raise SystemExit(f"plane: resolved Plane state for normalized {want!r} has no id")
 print(json.dumps({"id":state_id,"state":str(candidates[0].get("name") or ""),
-                  "state_type":str(candidates[0].get("group") or ""),"normalized":want},
+                  "state_type":str(candidates[0].get("group") or "")},
                  separators=(",",":")))'
 }
 
-resolve_state_id() {
-  resolved_state="$(resolve_state_target "$1")" || return $?
-  printf '%s' "$resolved_state" \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'
+# pick_label NAME — read the project's labels JSON on stdin and print the id of
+# the one label with exactly that name. Lifecycle labels are board furniture:
+# a missing one is refused, never created here.
+pick_label() {
+  LABEL_NAME="$1" python3 -c 'import sys,json,os
+d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get("results", []) if isinstance(d,dict) else []
+name=os.environ["LABEL_NAME"]
+hits=[str(x["id"]) for x in rows if isinstance(x,dict) and x.get("id") and x.get("name")==name]
+if len(hits) != 1:
+    detail="does not exist" if not hits else "matches more than one label"
+    raise SystemExit(f"plane: lifecycle label {name!r} {detail} on this board; every lifecycle v2 board carries it (add it with px or Plane, never here)")
+print(hits[0])'
 }
 
 # All Plane ops except the explicit-workspace read below require the bound
@@ -482,14 +495,33 @@ except Exception: print("")')"
 
   resolve_state)
     # Read-only validation of a configured transition target; never mutates.
-    TARGET="${1:?usage: resolve_state <normalized-state>}"
-    resolve_state_target "$TARGET"
+    # A hold leaves the lane unchanged, so its id/state/state_type are empty.
+    TARGET="$(canonical_state_target "${1:?usage: resolve_state <normalized-state>}")"
+    state_target_plan "$TARGET"
+    [ -n "$PROJ" ] || die "ticket_provider.project not set"
+    LANE_JSON='{"id":"","state":"","state_type":""}'
+    [ -z "$LANE" ] || LANE_JSON="$(api_all "projects/$PROJ/states/" | pick_lane "$LANE" "$TARGET")"
+    LABEL_ID=""
+    [ -z "$LABEL" ] || LABEL_ID="$(api_all "projects/$PROJ/labels/" | pick_label "$LABEL")"
+    printf '%s' "$LANE_JSON" | NORMALIZED="$TARGET" LABEL="$LABEL" LABEL_ID="$LABEL_ID" python3 -c 'import json,os,sys
+out=json.load(sys.stdin); out["normalized"]=os.environ["NORMALIZED"]
+if os.environ["LABEL"]:
+    out["label"]=os.environ["LABEL"]; out["label_id"]=os.environ["LABEL_ID"]
+print(json.dumps(out,separators=(",",":")))'
+    ;;
+
+  list_labels)
+    [ -n "$PROJ" ] || die "project not set"
+    api_all "projects/$PROJ/labels/" | python3 -c 'import json,sys
+rows=json.load(sys.stdin)
+print(json.dumps([{"id":x["id"],"name":x["name"]} for x in rows if isinstance(x,dict) and x.get("id") and x.get("name")]))'
     ;;
 
   list_issues)
     [ -n "$PROJ" ] || die "project not set"
     # Plane v1 returns issue.state as a bare UUID, so join against the states map.
     STATES="$(api_all "projects/$PROJ/states/")"
+    LABELS="$(api_all "projects/$PROJ/labels/")"
     ISSUES="$(api_all "projects/$PROJ/issues/")"
     MILESTONE="$(api_all "projects/$PROJ/cycles/" | current_cycle)"
     MILESTONE_ID="$(printf '%s' "$MILESTONE" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id", ""))')"
@@ -497,22 +529,47 @@ except Exception: print("")')"
     if [ -n "$MILESTONE_ID" ]; then
       MILESTONE_ISSUES="$(api_all "projects/$PROJ/cycles/$MILESTONE_ID/cycle-issues/")"
     fi
-    printf '%s\0%s\0%s\0%s' "$STATES" "$ISSUES" "$MILESTONE" "$MILESTONE_ISSUES" \
+    printf '%s\0%s\0%s\0%s\0%s' "$STATES" "$LABELS" "$ISSUES" "$MILESTONE" "$MILESTONE_ISSUES" \
       | BASE="$BASE" WS="$WS" PROJ="$PROJ" python3 -c 'import sys,json,os
-parts=sys.stdin.buffer.read().split(b"\0",3)
+parts=sys.stdin.buffer.read().split(b"\0",4)
 srows=json.loads(parts[0] or "{}"); srows=srows if isinstance(srows,list) else srows.get("results", []) if isinstance(srows,dict) else []
 smap={s.get("id"):(s.get("name",""),s.get("group","")) for s in srows}
-d=json.loads(parts[1] or "{}"); rows=d if isinstance(d,list) else d.get("results", []) if isinstance(d,dict) else []
-milestone=json.loads(parts[2] or "{}"); milestone_id=str(milestone.get("id") or ""); milestone_name=str(milestone.get("name") or "")
-md=json.loads(parts[3] or "{}"); mrows=md if isinstance(md,list) else md.get("results", []) if isinstance(md,dict) else []
+label_rows=json.loads(parts[1] or "[]")
+label_rows=label_rows if isinstance(label_rows,list) else label_rows.get("results", [])
+label_map={str(x["id"]):str(x["name"]) for x in label_rows if isinstance(x,dict) and x.get("id") and x.get("name")}
+label_names=list(label_map.values())
+def labels(issue):
+    raw=issue.get("labels") or []
+    if not isinstance(raw,list): raise SystemExit("plane: issue labels were not a list")
+    names=[]
+    for item in raw:
+        identifier=str(item.get("id") or "") if isinstance(item,dict) else str(item)
+        supplied=item.get("name") if isinstance(item,dict) else None
+        if identifier:
+            name=label_map.get(identifier)
+            if not name: raise SystemExit(f"plane: issue label {identifier!r} could not be resolved on project")
+            if supplied is not None and supplied != name: raise SystemExit(f"plane: issue label {identifier!r} name disagreed with project catalog")
+        else:
+            name=supplied
+            if not isinstance(name,str) or label_names.count(name) != 1:
+                raise SystemExit(f"plane: issue label {identifier!r} could not be resolved uniquely on project")
+        if name not in names: names.append(name)
+    return names
+def relations(issue):
+    return {k:issue[k] for k in ("parent", "parent_id", "relations", "issue_relations", "blocked_by", "blocking", "depends_on", "dependencies") if k in issue}
+d=json.loads(parts[2] or "{}"); rows=d if isinstance(d,list) else d.get("results", []) if isinstance(d,dict) else []
+milestone=json.loads(parts[3] or "{}"); milestone_id=str(milestone.get("id") or ""); milestone_name=str(milestone.get("name") or "")
+md=json.loads(parts[4] or "{}"); mrows=md if isinstance(md,list) else md.get("results", []) if isinstance(md,dict) else []
 member_ids={str(issue.get("id") or "") for issue in mrows}
 base,ws,proj=os.environ["BASE"],os.environ["WS"],os.environ["PROJ"]
 out=[]
 for n in rows:
     iid=n.get("id","")
-    name,group=smap.get(n.get("state",""),("",""))
+    state=n.get("state",""); state=state.get("id") if isinstance(state,dict) else state
+    name,group=smap.get(state,("",""))
     out.append({"id":iid,"key":n.get("sequence_id",iid),
                 "title":n.get("name",""),"state":name,"state_type":group,
+                "labels":labels(n), **relations(n),
                 "updated_at":n.get("updated_at",""),"assignee":"",
                 "active_milestone_id":milestone_id,
                 "active_milestone_name":milestone_name,
@@ -524,18 +581,77 @@ print(json.dumps(out))'
   get_issue)
     ID="${1:?usage: get_issue <id>}"
     STATES="$(api_all "projects/$PROJ/states/")"
+    LABELS="$(api_all "projects/$PROJ/labels/")"
     ISSUE="$(api GET "projects/$PROJ/issues/$ID/")"
     COMM="$(api_all "projects/$PROJ/issues/$ID/comments/" 2>/dev/null || echo '[]')"
     ATTACH="$(api_all "projects/$PROJ/issues/$ID/issue-attachments/" 2>/dev/null || echo '[]')"
-    printf '%s\n%s\n%s\n%s\n' "$STATES" "$ISSUE" "$COMM" "$ATTACH" | python3 -c 'import sys,json,re
-parts=sys.stdin.read().split("\n",3)
+    # Relations (blocked_by, blocking, relates_to, duplicate, start_*/finish_*) live on
+    # their own endpoint, never on the issue row. Plane answers from both ends of a
+    # row, so one read sees every relation the item takes part in (px link list reads
+    # the same). Each related item is hydrated to key/title/state so a PM can tell an
+    # open blocker from a finished one. A failed read is reported, never hidden as "none".
+    REL_ERR=""
+    REL="$(api GET "projects/$PROJ/work-items/$ID/relations/" 2>/dev/null)" || { REL='{}'; REL_ERR="relations endpoint could not be read"; }
+    RELATED=""
+    for pair in $(printf '%s' "$REL" | PROJ="$PROJ" python3 -c 'import sys,json,os
+d=json.loads(sys.stdin.read() or "{}")
+seen=set()
+for rows in (d.values() if isinstance(d,dict) else []):
+    for r in (rows if isinstance(rows,list) else []):
+        rid=str((r or {}).get("issue_id") or (r or {}).get("id") or "")
+        pid=str((r or {}).get("project_id") or (r or {}).get("project") or os.environ["PROJ"])
+        if rid and (pid,rid) not in seen:
+            seen.add((pid,rid)); print(pid+":"+rid)' 2>/dev/null); do
+      rp="${pair%%:*}"; ri="${pair#*:}"
+      row="$(api GET "projects/$rp/issues/$ri/" 2>/dev/null)" || row="{\"id\":\"$ri\",\"unreadable\":true}"
+      RELATED="$RELATED$(printf '%s' "$row" | tr -d '\n')
+"
+    done
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s' "$STATES" "$LABELS" "$ISSUE" "$COMM" "$ATTACH" "$REL" "$RELATED" "$REL_ERR" | python3 -c 'import sys,json,re
+parts=sys.stdin.buffer.read().split(b"\0",7)
 srows=json.loads(parts[0] or "{}"); srows=srows if isinstance(srows,list) else srows.get("results", []) if isinstance(srows,dict) else []
 smap={s.get("id"):(s.get("name",""),s.get("group","")) for s in srows}
-i=json.loads(parts[1] or "{}"); c=json.loads(parts[2] or "[]"); a=json.loads(parts[3] or "[]")
+label_rows=json.loads(parts[1] or "[]")
+label_rows=label_rows if isinstance(label_rows,list) else label_rows.get("results", [])
+label_map={str(x["id"]):str(x["name"]) for x in label_rows if isinstance(x,dict) and x.get("id") and x.get("name")}
+label_names=list(label_map.values())
+i=json.loads(parts[2] or "{}"); c=json.loads(parts[3] or "[]"); a=json.loads(parts[4] or "[]")
+raw=i.get("labels") or []
+if not isinstance(raw,list): raise SystemExit("plane: issue labels were not a list")
+labels=[]
+for item in raw:
+    identifier=str(item.get("id") or "") if isinstance(item,dict) else str(item)
+    supplied=item.get("name") if isinstance(item,dict) else None
+    if identifier:
+        name=label_map.get(identifier)
+        if not name: raise SystemExit(f"plane: issue label {identifier!r} could not be resolved on project")
+        if supplied is not None and supplied != name: raise SystemExit(f"plane: issue label {identifier!r} name disagreed with project catalog")
+    else:
+        name=supplied
+        if not isinstance(name,str) or label_names.count(name) != 1:
+            raise SystemExit(f"plane: issue label {identifier!r} could not be resolved uniquely on project")
+    if name not in labels: labels.append(name)
+relations={k:i[k] for k in ("parent", "parent_id", "issue_relations", "blocked_by", "blocking", "depends_on", "dependencies") if k in i}
+rel=json.loads(parts[5] or "{}"); rel=rel if isinstance(rel,dict) else {}
+related={}
+for line in (parts[6] or b"").decode().splitlines():
+    if not line.strip(): continue
+    r=json.loads(line); related[str(r.get("id",""))]=r
+def hydrate(r):
+    rid=str((r or {}).get("issue_id") or (r or {}).get("id") or ""); x=related.get(rid,{})
+    st=x.get("state",""); st=st.get("id") if isinstance(st,dict) else st
+    sname,sgroup=smap.get(st,("",""))
+    out={"id":rid,"key":x.get("sequence_id",""),"title":x.get("name",""),"state":sname,"state_type":sgroup,
+         "project_id":str((r or {}).get("project_id") or x.get("project") or "")}
+    if x.get("unreadable"): out["unreadable"]=True
+    return out
+relations["relations"]={t:[hydrate(r) for r in rows_] for t,rows_ in rel.items() if isinstance(rows_,list) and rows_}
+if parts[7]: relations["relations_error"]=parts[7].decode()
 rows=c if isinstance(c,list) else c.get("results", []) if isinstance(c,dict) else []
 arows=a if isinstance(a,list) else a.get("results", []) if isinstance(a,dict) else []
 def strip(h): return re.sub(r"<[^>]+>","",h or "").strip()
-name,group=smap.get(i.get("state",""),("",""))
+state=i.get("state",""); state=state.get("id") if isinstance(state,dict) else state
+name,group=smap.get(state,("",""))
 desc=strip(i.get("description_html",""))
 cs=[{"id":x.get("id",""),"body":strip(x.get("comment_html","")),"author":""} for x in rows]
 ats=[]
@@ -549,7 +665,8 @@ for x in arows:
                 "is_uploaded":x.get("is_uploaded",False)})
 print(json.dumps({"id":i.get("id",""),"key":i.get("sequence_id",""),"title":i.get("name",""),
                   "description":desc,"acceptance":desc,
-                  "state":name,"state_type":group,"comments":cs,"attachments":ats}))'
+                  "state":name,"state_type":group,"labels":labels,**relations,
+                  "comments":cs,"attachments":ats}))'
     ;;
 
   comment)
@@ -574,17 +691,72 @@ print(comment_id.strip())'
     ;;
 
   transition)
-    ID="${1:?usage: transition <id> <normalized-state>}"; TARGET="${2:?}"
-    SID="$(resolve_state_id "$TARGET")"
+    ID="${1:?usage: transition <id> <normalized-state>}"
+    TARGET="$(canonical_state_target "${2:?usage: transition <id> <normalized-state>}")"
+    state_target_plan "$TARGET"
+    [ -n "$PROJ" ] || die "ticket_provider.project not set"
+    STATES="$(api_all "projects/$PROJ/states/")"
+    SID=""; LABEL_ID=""
+    if [ -n "$LANE" ]; then
+      LANE_JSON="$(printf '%s' "$STATES" | pick_lane "$LANE" "$TARGET")"
+      SID="$(printf '%s' "$LANE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+    fi
+    if [ -z "$LABEL" ]; then
+      BODY="$(printf '{"state":"%s"}' "$SID")"
+    else
+      LABEL_ID="$(api_all "projects/$PROJ/labels/" | pick_label "$LABEL")"
+      # Plane's issue PATCH replaces the whole labels list, so the issue is
+      # read immediately before the write and only this label is added to that
+      # fresh set: agent:working and lifecycle:triaged written by others survive.
+      FRESH="$(api GET "projects/$PROJ/issues/$ID/")"
+      PLAN="$(printf '%s\0%s' "$FRESH" "$STATES" | EXPECTED_ID="$ID" SID="$SID" LABEL_ID="$LABEL_ID" TARGET="$TARGET" python3 -c 'import json,os,sys
+parts=sys.stdin.buffer.read().split(b"\0",1)
+target=os.environ["TARGET"]; sid=os.environ["SID"]; label_id=os.environ["LABEL_ID"]
+try:
+    issue=json.loads(parts[0] or b"{}")
+except ValueError as exc:
+    raise SystemExit(f"plane: pre-write read was not valid JSON ({exc}); nothing was written")
+if not isinstance(issue,dict) or str(issue.get("id") or "") != os.environ["EXPECTED_ID"]:
+    raise SystemExit("plane: pre-write read did not identify the requested issue; nothing was written")
+srows=json.loads(parts[1] or b"[]"); srows=srows if isinstance(srows,list) else srows.get("results", []) if isinstance(srows,dict) else []
+groups={str(s.get("id") or ""):str(s.get("group") or "") for s in srows}
+state=issue.get("state",""); state=str(state.get("id") or "") if isinstance(state,dict) else str(state or "")
+group=groups.get(state) or "unknown"
+if not sid and group not in ("unstarted","started"):
+    raise SystemExit(f"plane: {target} is a hold and applies only to a Todo or In Progress ticket (this one is in group {group!r}); nothing was written")
+raw=issue.get("labels") or []
+if not isinstance(raw,list):
+    raise SystemExit("plane: issue labels were not a list; nothing was written")
+ids=[]
+for item in raw:
+    ident=str(item.get("id") or "") if isinstance(item,dict) else str(item)
+    if ident and ident not in ids: ids.append(ident)
+body={}
+if sid: body["state"]=sid
+if label_id not in ids: body["labels"]=ids+[label_id]
+if body:
+    print("patch\t"+json.dumps(body,separators=(",",":")))
+else:
+    sequence=str(issue.get("sequence_id") or "")
+    if not sequence:
+        raise SystemExit("plane: pre-write read omitted its sequence id")
+    print("noop\t"+sequence)')"
+      case "$PLAN" in
+        noop*) printf 'ok %s\n' "${PLAN#*	}"; exit 0 ;;
+        patch*) BODY="${PLAN#*	}" ;;
+        *) die "transition could not plan its write; nothing was written" ;;
+      esac
+    fi
     # Without a version or precondition guard, a repeated PATCH can stomp a
     # concurrent actor, so exactly one PATCH mutation attempt is ever sent.
     # The live read-back after that attempt is the only success proof: an exact
-    # same-issue match on the intended state id yields `ok`. A 2xx PATCH whose
-    # read-back disagrees is reported as concurrent divergence; an ambiguous
-    # (transport-level or non-2xx) PATCH may still be confirmed landed by an
-    # exact read-back. Any other read-back outcome fails without a second PATCH.
+    # same-issue match on the intended state id (and the intended label, when
+    # the target adds one) yields `ok`. A 2xx PATCH whose read-back disagrees
+    # is reported as concurrent divergence; an ambiguous (transport-level or
+    # non-2xx) PATCH may still be confirmed landed by an exact read-back. Any
+    # other read-back outcome fails without a second PATCH.
     # Subshell: a transport-level die inside api must not kill this op.
-    if ( api PATCH "projects/$PROJ/issues/$ID/" "$(printf '{"state":"%s"}' "$SID")" ) >/dev/null; then
+    if ( api PATCH "projects/$PROJ/issues/$ID/" "$BODY" ) >/dev/null; then
       PATCH_2XX=1
     else
       PATCH_2XX=0
@@ -592,24 +764,29 @@ print(comment_id.strip())'
     if ! READBACK="$(api GET "projects/$PROJ/issues/$ID/")"; then
       die "transition read-back failed after the single PATCH attempt; refusing to repeat the PATCH"
     fi
-    if ! READBACK_RESULT="$(printf '%s' "$READBACK" | EXPECTED_ID="$ID" EXPECTED_SID="$SID" python3 -c 'import sys,json,os
+    if ! READBACK_RESULT="$(printf '%s' "$READBACK" | EXPECTED_ID="$ID" EXPECTED_SID="$SID" EXPECTED_LABEL="$LABEL_ID" python3 -c 'import sys,json,os
 try:
     d=json.load(sys.stdin)
 except (TypeError, ValueError) as exc:
     raise SystemExit(f"plane: transition read-back was not valid JSON: {exc}")
 if not isinstance(d,dict) or str(d.get("id") or "") != os.environ["EXPECTED_ID"]:
     raise SystemExit("plane: transition read-back did not identify the requested issue")
+sid=os.environ["EXPECTED_SID"]; label_id=os.environ["EXPECTED_LABEL"]
 state=d.get("state", "")
 actual=str(state.get("id") or "") if isinstance(state,dict) else str(state or "")
-if not actual:
+if sid and not actual:
     raise SystemExit("plane: transition read-back omitted its state id")
-if actual == os.environ["EXPECTED_SID"]:
+raw=d.get("labels") or []
+labels={str(x.get("id") or "") if isinstance(x,dict) else str(x) for x in (raw if isinstance(raw,list) else [])}
+if sid and actual != sid:
+    print("mismatch\tstate\t"+actual)
+elif label_id and label_id not in labels:
+    print("mismatch\tlabel\t"+label_id)
+else:
     sequence=str(d.get("sequence_id") or "")
     if not sequence:
         raise SystemExit("plane: transition read-back omitted its sequence id")
-    print("match\t"+sequence)
-else:
-    print("mismatch\t"+actual)')"; then
+    print("match\t"+sequence)')"; then
       die "transition read-back could not be verified after the single PATCH attempt; refusing to repeat the PATCH"
     fi
     case "$READBACK_RESULT" in
@@ -617,11 +794,16 @@ else:
         printf 'ok %s\n' "${READBACK_RESULT#*	}"
         ;;
       mismatch*)
-        ACTUAL="${READBACK_RESULT#*	}"
-        if [ "$PATCH_2XX" -eq 1 ]; then
-          die "transition read-back state $ACTUAL did not match intended state id $SID after a 2xx PATCH response; concurrent divergence suspected; refusing to claim the transition completed"
+        DETAIL="${READBACK_RESULT#*	}"; KIND="${DETAIL%%	*}"; ACTUAL="${DETAIL#*	}"
+        if [ "$KIND" = label ]; then
+          WHAT="read-back labels did not include $LABEL ($ACTUAL)"
+        else
+          WHAT="read-back state $ACTUAL did not match intended state id $SID"
         fi
-        die "transition PATCH outcome was ambiguous and the read-back state $ACTUAL did not match intended state id $SID; refusing to claim the transition completed"
+        if [ "$PATCH_2XX" -eq 1 ]; then
+          die "transition $WHAT after a 2xx PATCH response; concurrent divergence suspected; refusing to claim the transition completed"
+        fi
+        die "transition PATCH outcome was ambiguous and the $WHAT; refusing to claim the transition completed"
         ;;
       *)
         die "transition read-back returned an invalid verification outcome; refusing to repeat the PATCH"
@@ -696,17 +878,77 @@ except Exception: print("")')"
     # config, never from an argument. Deliberately NOT idempotent by default:
     # two issues may legitimately share a title. Pass --if-absent to reuse an
     # issue whose title already matches exactly (case-insensitive) instead.
-    IF_ABSENT=0
-    case "${1:-}" in --if-absent) IF_ABSENT=1; shift ;; esac
-    TITLE="${1:?usage: create_issue [--if-absent] <title> [description]}"; DESC="${2:-}"
+    #
+    # Scope: a shared board routes work by exactly one scope label per ticket
+    # (e.g. repo:forge). The new ticket is stamped with this role's scope:
+    #   --scope <label>                  explicit; must be one of role.yaml board_scope
+    #   role.yaml board_scope: [<one>]   the role's own scope
+    #   .project.json ticket_provider.scope_label   the repo's scope
+    # A role whose board_scope lists several labels must pass --scope. With none
+    # of these set the board has no scope convention and no label is stamped.
+    # The label must already exist on the board (never created here), and an
+    # --if-absent match only counts inside the same scope, so a same-titled
+    # ticket in another repo's scope is never reused.
+    IF_ABSENT=0; SCOPE_ARG=""
+    while :; do
+      case "${1:-}" in
+        --if-absent) IF_ABSENT=1; shift ;;
+        --scope) [ -n "${2:-}" ] || die "usage: create_issue [--if-absent] [--scope <label>] <title> [description]"; SCOPE_ARG="$2"; shift 2 ;;
+        *) break ;;
+      esac
+    done
+    TITLE="${1:?usage: create_issue [--if-absent] [--scope <label>] <title> [description]}"; DESC="${2:-}"
     [ -n "$WS" ] || die "workspace not set (.project.json ticket_provider.workspace or PLANE_WORKSPACE)"
     [ -n "$PROJ" ] || die "project not set (.project.json ticket_provider.board_id; run 42-ticket-provider.sh)"
+    SCOPE="$(python3 - "$ROLE_YAML" "$SCOPE_ARG" "$(pj_cfg scope_label)" <<'PYSCOPE'
+import json, pathlib, re, sys
+role_yaml, explicit, project_scope = sys.argv[1:4]
+declared = []
+p = pathlib.Path(role_yaml)
+if p.is_file():
+    text = p.read_text()
+    m = re.search(r'(?m)^board_scope:[ \t]*(.*)$', text)
+    if m:
+        inline = m.group(1).strip()
+        if inline.startswith("["):
+            try: declared = [str(x) for x in json.loads(inline)]
+            except ValueError: declared = [x.strip().strip("'\"") for x in inline.strip("[]").split(",") if x.strip()]
+        elif inline:
+            declared = [inline.strip("'\"")]
+        else:
+            block = text[m.end():]
+            for line in block.splitlines():
+                mm = re.match(r'^\s+-\s*(.+?)\s*$', line)
+                if mm: declared.append(mm.group(1).strip("'\""))
+                elif line.strip() and not line.startswith((" ", "\t")): break
+if explicit:
+    if declared and explicit not in declared:
+        sys.exit(f"plane: --scope {explicit!r} is not in this role's board_scope {declared}")
+    print(explicit)
+elif len(declared) == 1:
+    print(declared[0])
+elif len(declared) > 1:
+    sys.exit(f"plane: board_scope lists {declared}; pass --scope <label> to say which one this ticket belongs to")
+else:
+    print(project_scope)
+PYSCOPE
+)" || exit 1
+    SCOPE_ID=""
+    if [ -n "$SCOPE" ]; then
+      SCOPE_ID="$(api_all "projects/$PROJ/labels/" | SCOPE="$SCOPE" python3 -c 'import sys,json,os
+d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get("results", []) if isinstance(d,dict) else []
+hits=[str(x["id"]) for x in rows if isinstance(x,dict) and x.get("id") and x.get("name")==os.environ["SCOPE"]]
+print(hits[0] if len(hits)==1 else ("AMBIGUOUS" if hits else ""))')"
+      [ -n "$SCOPE_ID" ] || die "scope label '$SCOPE' does not exist on this board; create it on the board (px or Plane), never ad hoc here"
+      [ "$SCOPE_ID" != AMBIGUOUS ] || die "scope label '$SCOPE' matches more than one board label"
+    fi
     IID=""; SEQ=""; CREATED=true
     if [ "$IF_ABSENT" = 1 ]; then
-      HIT="$(api_all "projects/$PROJ/issues/?per_page=200" | TITLE="$TITLE" python3 -c 'import sys,json,os
+      HIT="$(api_all "projects/$PROJ/issues/?per_page=200" | TITLE="$TITLE" SCOPE_ID="$SCOPE_ID" python3 -c 'import sys,json,os
 d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get("results", []) if isinstance(d,dict) else []
-want=os.environ["TITLE"].strip().lower()
-m=next((i for i in rows if (i.get("name") or "").strip().lower()==want), None)
+want=os.environ["TITLE"].strip().lower(); sid=os.environ["SCOPE_ID"]
+def ids(i): return {str(x.get("id") if isinstance(x,dict) else x) for x in (i.get("labels") or [])}
+m=next((i for i in rows if (i.get("name") or "").strip().lower()==want and (not sid or sid in ids(i))), None)
 print((str(m.get("id","")) + " " + str(m.get("sequence_id","") or "")) if m else "")')"
       if [ -n "$HIT" ]; then IID="${HIT%% *}"; SEQ="${HIT#* }"; CREATED=false; fi
     fi
@@ -716,15 +958,20 @@ print((str(m.get("id","")) + " " + str(m.get("sequence_id","") or "")) if m else
 body={"name": sys.argv[1]}
 desc=sys.argv[2]
 if desc: body["description_html"]="<p>"+html.escape(desc)+"</p>"
-print(json.dumps(body))' "$TITLE" "$DESC")" \
-        | python3 -c 'import sys,json
-d=json.load(sys.stdin)
-print(str(d.get("id","")) + " " + str(d.get("sequence_id","") or ""))')"
-      IID="${NEW%% *}"; SEQ="${NEW#* }"
+if sys.argv[3]: body["labels"]=[sys.argv[3]]
+print(json.dumps(body))' "$TITLE" "$DESC" "$SCOPE_ID")" \
+        | SCOPE_ID="$SCOPE_ID" python3 -c 'import sys,json,os
+d=json.load(sys.stdin); sid=os.environ["SCOPE_ID"]
+got={str(x.get("id") if isinstance(x,dict) else x) for x in (d.get("labels") or [])}
+print(str(d.get("id","")) + " " + str(d.get("sequence_id","") or "") + " " + ("ok" if (not sid or sid in got) else "unstamped"))')"
+      IID="${NEW%% *}"; REST="${NEW#* }"; SEQ="${REST%% *}"
+      [ -n "$IID" ] || die "create_issue failed"
+      [ "${REST##* }" = ok ] || die "created issue $SEQ ($IID) but Plane did not apply scope label '$SCOPE'; label it by hand before anyone routes it"
     fi
     [ -n "$IID" ] || die "create_issue failed"
-    printf '{"issue_id":"%s","key":"%s","issue_url":"%s/%s/projects/%s/issues/%s","created":%s}\n' \
-      "$IID" "$SEQ" "$BASE" "$WS" "$PROJ" "$IID" "$CREATED"
+    SCOPE_JSON="null"; [ -z "$SCOPE" ] || SCOPE_JSON="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$SCOPE")"
+    printf '{"issue_id":"%s","key":"%s","issue_url":"%s/%s/projects/%s/issues/%s","created":%s,"scope_label":%s}\n' \
+      "$IID" "$SEQ" "$BASE" "$WS" "$PROJ" "$IID" "$CREATED" "$SCOPE_JSON"
     ;;
 
   *) die "unknown op: $OP" ;;

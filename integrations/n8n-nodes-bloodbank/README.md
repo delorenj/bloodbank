@@ -16,7 +16,7 @@ agent-fleet dispatch for the 33GOD Bloodbank NATS bus.
 | **Bloodbank** | output | Publishes a canonical event or registry-routed invocation command. Also usable as an agent tool. |
 | **Bloodbank Trigger** | trigger | Starts workflows from events or single-consumer commands. |
 | **Plane → Bloodbank** | transform | Verifies, normalizes, and publishes Plane webhooks. |
-| **33GOD Agent Fleet** | output | Hands a ticket to the fleet agent that owns its board. Also usable as an agent tool. |
+| **33GOD Agent Fleet** | output | Hands a ticket to the fleet agent that owns its board, and reports a failed lifecycle-lane run as a bus fact (**Report Lane Failure**). Also usable as an agent tool. |
 
 Each node carries the Bloodbank mark as a light/dark icon pair, so the canvas
 reads correctly in either n8n theme. Plane → Bloodbank adds an inbound arrow to
@@ -171,10 +171,9 @@ per node.
 
 ## Plane ingress
 
-Import the versioned workflow:
-
-    n8n import:workflow --input=../n8n-workflows/plane-bloodbank.v1.json
-    n8n update:workflow --id=iMw484J1ZCqKME2C --active=true
+The workflow (`iMw484J1ZCqKME2C`) lives in n8n; its export is in
+[delonet-n8n-workflows](https://github.com/delorenj/delonet-n8n-workflows)
+(`workflows/plane-bloodbank--iMw484J1ZCqKME2C.json`), synced every 15 minutes.
 
 The Webhook node must retain Raw Body. Plane to Bloodbank rejects unsigned or
 invalid requests before publishing. `Webhook Secret References` is a JSON
@@ -220,6 +219,29 @@ modules) stay on the main output as `unsupported`.
 `repo.board.created` for a board no project claims carries `repo: null`; the
 workspace is always the slug (`workspace_slug`), never its UUID.
 
+### Shared boards
+
+Several projects (or agents) may own one Plane board, for example the TOLT
+monorepo's root, game and forge projects. Routing is then decided per ticket
+from the ticket's labels, never from the order rows were read in:
+
+| Where | Field | Meaning |
+| --- | --- | --- |
+| a project's `.project.json` `ticket_provider` (served by pjangler) | `scope_label` | the label this project takes, e.g. `repo:game` (a string) |
+| same | `scope_default` | `true` on at most one project: it takes tickets whose labels match no project's `scope_label` |
+| a Hermes registry row's `plane` block | `scope_label` | the label(s) this agent drives (a string or a list) |
+| same | `scope_default` | `true` on at most one agent: it drives unlabeled and unknown-label tickets |
+
+pjangler rows decide `data.repo` (the project the fact belongs to); Hermes rows
+decide which agent the Fleet node invokes. A ticket that carries a label an
+owner declares goes to that owner; otherwise to the owner flagged
+`scope_default`. If nothing is flagged, or several are, the owner whose repo
+slug (agent id for Fleet) sorts first wins, so the answer is still stable.
+Labels are compared case-insensitively. A board with a single owner ignores
+all of this. Plane's comment webhook carries no labels, so a comment lands on
+the board default. Trello boards shared by several projects (the
+IntelliForia `INT` board) are not Plane routes and are unaffected.
+
 ### Event ids and Nats-Msg-Id
 
 Every Plane fact's event id is `uuid5` of a dedupe key, so a redelivered
@@ -251,7 +273,12 @@ itself keep it.
 
 Operation **Reconcile Missed Tickets** (`operation: reconcile`) is the other half
 of ingress, run by the *Plane Ingress Reconcile* workflow every 10 minutes (at
-minute 3, 13, 23 …). For every board the [routing table](#routing) claims, it
+minute 3, 13, 23 …). Candybar is its clock: the candybar
+`plane-ingress-reconcile` (`bloodbank/.candybars/`) POSTs the webhook
+`candybar/plane-ingress-reconcile`, and *Reconcile — Verdict* answers from the
+Report after the recovery pages (`fail` when any ticket did not publish; a
+sweep that read no board or published nothing throws, and Candybar records the
+empty answer as a failure). The workflow has no Schedule Trigger. For every board the [routing table](#routing) claims, it
 lists the tickets Plane created in the lookback window (default 6 h, newest
 first, at most 3 pages of 100 per board), asks `BLOODBANK_EVENTS` which of them
 already have a `bloodbank.repo.task.created` fact (a throwaway ordered consumer
@@ -347,8 +374,9 @@ everything else on the bus.
 | Operation | What the agent is asked to do |
 | --- | --- |
 | **Groom Ticket** | Enrich one new ticket in place — labels, module, priority, cycle, exposure label, a description someone who just walked in could act on — then stamp the completion label. It is told not to split the ticket or change its state. |
-| **Delegate Ticket** | Pick up a groomed ticket that reached Todo, judge its acceptance criteria, delegate the work to a worker agent, and move it to In Progress with a start date. |
+| **Delegate Ticket** | Pick up a groomed ticket in Todo: re-read it live first and stop if it is no longer in Todo, is In Progress or another worker holds it; then judge its acceptance criteria, delegate the work to a worker agent, and move it to In Progress with a start date. |
 | **Invoke Agent** | Send your own prompt to the agent that owns the board. |
+| **Report Lane Failure** | The lanes' error path (0.8.0): publish `bloodbank.workflow.task.failed` for a failed lane execution. See [Report Lane Failure](#report-lane-failure). |
 
 **Outputs.** Output 0, **Dispatched**, carries one item per published command.
 Output 1, **Skipped**, carries every item that was not dispatched, with a
@@ -357,11 +385,15 @@ machine-readable `code` and a readable `reason`:
 | `code` | Meaning |
 | --- | --- |
 | `provider_event_guard` | `data.provider_event_type` is not one of Only When Provider Event Is — or is absent while the guard is set (the guard is strict) |
-| `phase_guard` | Delegate Ticket: the ticket landed outside Only When Phase Is |
+| `phase_guard` | Groom (triage) or Delegate Ticket: the ticket landed outside Only When Phase Is (0.9.0: Groom Ticket gains the guard, default empty; the Krebs Ticket Triage lane sets it to `Todo`) |
 | `ineligible` | The owning agent exists but its registry row refuses (explicit `bloodbank.enabled: false`, wrong `gateway_scope`, `target_agent_id` mismatch, no `profile_name`) |
 | `invalid_policy` | `bloodbank.enabled` is present but not a YAML boolean |
 | `fenced` | The repo's `.project.json` puts execution under Krebs (`execution.mode` other than `legacy`) |
 | `no_route` | No agent owns the board |
+| `held` | Groom Ticket (triage): the ticket carries a hold label (`lifecycle:needs-input`, `lifecycle:blocked`, `agent:failed`). Krebs lifecycle v2, 0.9.0 |
+| `already_triaged` | Groom Ticket (triage): the ticket already carries `lifecycle:triaged` |
+| `hitl_blocked` | Delegate Ticket: a hold label is present. Delegation is driven by `krebs tick`; this path only refuses safely |
+| `not_triaged` | Delegate Ticket: the ticket lacks `lifecycle:triaged` |
 | `error` | Only with Continue On Fail: the item errored |
 
 Every skip also publishes **`bloodbank.agent.invocation.skipped`** (schema
@@ -418,32 +450,202 @@ published with `Nats-Msg-Id: <command_id>`, so `BLOODBANK_COMMANDS` drops a
 republished duplicate inside its 2-minute duplicate window before the gateway
 even sees it.
 
+### Report Lane Failure
+
+The error path of the ticket lifecycle lanes. A lane run that dies used to leave
+an ntfy push and an n8n execution; now it is also a **validated bus fact**,
+`bloodbank.workflow.task.failed` (schema `schemas/bloodbank/workflow/task.failed.json`,
+an additive revision of the type the free-provider scout already emits: the four
+required fields `workflow`, `run_id`, `stage`, `reason` keep their meaning, every
+new field is optional and typed).
+
+Wire it in *Lifecycle Lane Errors* after **Execution Lookup**. The input item is
+the lookup (the n8n API execution with data, or `{error}` when the lookup
+failed). An empty input (no lookup item at all) still yields one report, built
+from the error payload alone.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| Operation | | `reportLaneFailure` |
+| Error Payload (`errorPayload`, json) | none: set it, normally to `={{ $('Lane Failed').first().json }}` | The Error Trigger item: `{execution, workflow}`, or `{trigger}` when the trigger itself failed. It has no default on purpose: n8n drops a parameter equal to its default from the saved workflow, so the export would not say where the item comes from. The wiring test requires it to be set explicitly |
+| Lane Map (`laneMap`, json) | the four lane ids -> `ticket-grooming`, `ticket-delegation`, `ticket-delegation-groomed`, `ticket-pickup-chip` | n8n workflow id -> lane slug, which becomes `data.workflow`. An unlisted workflow still reports, as its slugified name |
+| Service Name (`service`) | `n8n-lifecycle-lane-errors` | Recorded as the event's `service` (a separate parameter from the dispatch operations' `n8n-agent-fleet`) |
+
+**Outputs.** 0 **Dispatched** is *Published*; 1 **Skipped** is *Not Published*
+(the publish or schema validation failed; the item carries `publishError`).
+Every item on either output carries `event` (the finished envelope) and
+`page` (`{title, message, click, priority, tags}`), so a downstream ntfy node
+pages from it even when the bus is what broke. It **never throws**: a malformed
+or partial payload, or a parameter expression that fails to resolve (including
+the registry path and the connection), degrades to unknown fields and still
+reports.
+
+**What it works out.** The lane (by workflow id); the ticket, from the trigger
+item of the failed run (`onTicketCreated`, `onTicketTransitioned`,
+`onGroomingCompleted` + the live labels of *Read Ticket*), or on the pickup chip
+from line 1 of the error stack (`... failed for KEY (board <uuid>)` — a sweep
+carries ~98 tickets, so the message is useless), matched to the sweep item by
+`ticketKey` or `ticketId` (a UUID is reported as `ticket_id`, never as
+`ticket_key`, and gets no browse link), with the repo taken from the owner's
+registry row when the lane carries none; the error class
+(`rate_limited`, `auth_failed`, `not_found`, `no_route`, `ineligible`,
+`invalid_payload`, `upstream_unavailable`, `timeout`, `bus_unavailable`,
+`node_error`, `unknown`) from the HTTP status and text (without a status:
+"Bad gateway" is 502, "Gateway timeout" 504, "Service unavailable" 503; a JS
+property access such as `(reading 'status 500')` is never a status), with the
+upstream (`plane`: every lane Plane read uses the shared n8n credential, so
+`credential_scope` is `fleet_shared`; `nats`) and any `Retry-After` (delta-seconds,
+or an HTTP-date turned into seconds from now; a date's day or year is never
+read as seconds); the owner,
+by `target_agent_id` (groomed lane) or `resolveFleetAgentForBoard` over the
+registry, with that row's `company_identity` and `gateway_consumer` (absent =
+`null`, i.e. not enrolled); and the recovery:
+
+| Lane | `recovery.action` |
+| --- | --- |
+| Grooming, ticket created in Todo | `retry_or_requeue` |
+| Grooming, ticket created in Backlog | `retry_execution` only: bouncing Backlog -> Todo would promote it |
+| Delegation, Delegation — Groomed | `retry_or_requeue` (`px move REF Backlog -m why && px move REF Todo`) |
+| Pickup chip | `none`: the hourly sweep heals it; `severity: low` (every other lane is `page`) |
+
+`recovery.hint` carries the exact `POST <n8n>/api/v1/executions/<id>/retry` (works
+only while the run data exists, about 7 hours) and the `px` commands. An
+`auth_failed` on a known credential is `rotate_credential` (`enroll_identity`
+when the credential is the employee's and the owner is not enrolled), except a
+403 whose body names membership, permission or the workspace: the key may be
+fine and its user simply not let in, so that is `fix_route` with a hint naming
+both (add the user to the board, or rotate a revoked key). A
+`no_route`/`ineligible` is `fix_route`.
+
+**Ids and ordering.** `id` = `uuid5("workflow.task.failed:<workflow_id>:<execution_id>")`,
+also sent as `Nats-Msg-Id`, so a redelivered error-workflow run is one message.
+`correlationid` is the trigger envelope's (else the ticket's), `causationid` is
+the trigger envelope's id, and `ordering_key` is `task:<repo|board>:<ticket_id>`,
+else `workflow:<workflow_id>:<execution_id>`. A failure inside the trigger has no
+execution; its `run_id` is `trigger-<hash>`, stable for an hour.
+
+**Nothing secret.** `reason` is capped at 500 characters; every string is
+redacted exactly once (so a redacted value never grows): `op://` references,
+the whole credential of an `Authorization:` header, `Bearer`/`Basic` values,
+JWTs, any `*token`/`*secret`/`password`/`passwd`/api-key/`session` key's value
+(`key=v`, `key: v`, and `x-api-key v` / `password v`), `user:pass@` in any
+scheme's URL, vendor-prefixed keys, and long token-like strings. That last
+backstop does not apply to slug-shaped fields (`data.workflow`, `data.stage`,
+`lane.workflow_name`, `context.reason`, `target_agent_id`), so an unmapped
+workflow keeps a useful slug. The stack is read, never copied; `redacted: true`
+is constant; the registry is projected down to the company identity and gateway
+consumer, never a credential reference.
+
+**No identity stamp on commands.** Groom Ticket and Delegate Ticket commands
+carry nothing read from the owner's `company_identity` (0.8.0 stamped
+`data.context.employee`; 0.8.1 removed it). The Hermes gateway journals each
+command under `command_id` plus a sha256 of the whole envelope and terminally
+rejects a same-id redelivery whose digest differs (TERM, a log line, no event).
+A stamp read from the registry at dispatch time turned an enrollment,
+suspension or handle change between delivery and redelivery into exactly that:
+the redelivery was dropped silently, and a journaled command whose own message
+was lost could no longer be re-driven. The owner's identity is reported on
+`bloodbank.workflow.task.failed` instead.
+
 ### The lifecycle lane
 
-Five versioned workflows in `../n8n-workflows/` carry a Plane ticket from
-webhook to working agent. Import all five; each export records `active: true`.
+**Current authority (Krebs lifecycle v2):** Todo entry starts triage through
+**Ticket Triage** (`6wAGA5pdrmHLyhs2`), guarded to `Todo`. Only `krebs tick`,
+on Candybar's `krebs-tick` schedule, dispatches implementation. Both legacy
+**Ticket Delegation** (`8mmqdMwQYA28ZwUj`) and **Ticket Delegation — Groomed in
+Todo** (`l0J53w0TsS5PwETk`) are inactive and must stay off. Do not requeue or
+replay their historical backlog. Their lingering consumers are **pull** durables;
+missing `push_bound` is not a pull-health failure. See the
+[BB-41 retirement procedure](../../ops/live/bb41-consumer-retirement.md) for
+exact identities, evidence gates and independently reviewed live steps.
 
-    for f in plane-bloodbank plane-ingress-reconcile ticket-grooming ticket-delegation ticket-pickup-chip; do
-      n8n import:workflow --input=../n8n-workflows/$f.v1.json
-    done
+The table and handshake below describe the **historical pre-Krebs topology**,
+not authorization to restore delegation or move tickets to trigger it. Current
+lifecycle rules are in `krebs/docs/lifecycle.md` and `krebs/spec/lifecycle.v2.yaml`.
+Workflow exports live in
+[delonet-n8n-workflows](https://github.com/delorenj/delonet-n8n-workflows),
+synced every 15 minutes (`workflows/<name>--<id>.json`).
 
 | Workflow (id) | Starts on | Does | Pushes to ntfy `lifecycle` |
 | --- | --- | --- | --- |
 | **Plane → Bloodbank** (`iMw484J1ZCqKME2C`) | Plane webhook | Verifies, normalizes and publishes the `bloodbank.repo.*` fact (see [Plane ingress](#plane-ingress)) | **Unrouted** → *Unrouted — Once a Day* → *Unrouted Board*: a board no enrolled project claims, at most once per board per 24 h |
-| **Plane Ingress Reconcile** (`U4hYm3BYPPeZNDHQ`) | Every 10 minutes (minute 3, 13, …) | **Reconcile Missed Tickets** publishes the `repo.task.created` fact of any ticket a routed board created in the last 6 h that never reached the bus (see [Reconcile missed tickets](#reconcile-missed-tickets)) | **Recovered** → *Recovered Ticket*: one push per recovered ticket |
+| **Plane Ingress Reconcile** (`U4hYm3BYPPeZNDHQ`) | Every 10 minutes (minute 3, 13, …), fired by the Candybar `plane-ingress-reconcile` through webhook *Candybar Tick* | **Reconcile Missed Tickets** publishes the `repo.task.created` fact of any ticket a routed board created in the last 6 h that never reached the bus (see [Reconcile missed tickets](#reconcile-missed-tickets)) | **Recovered** → *Recovered Ticket*: one push per recovered ticket |
 | **Ticket Grooming** (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | **Groom Ticket** commands the board's agent to enrich the ticket and stamp `lifecycle:triaged` | **Dispatched** → *Triage Started*; **Skipped** → *Triage Skipped*, every skip |
 | **Ticket Delegation** (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` | **Delegate Ticket** (phase guard `Todo,unstarted`) commands the agent to pick the ticket up and delegate it | **Dispatched** → *Delegation Started*; **Skipped** → *Notable Skip?* → *Delegation Skipped* |
-| **Ticket Pickup Chip** (`wWXgCZiiIBWaRRzE`) | One trigger, *Invocation Lifecycle*, on `agent.invocation.started`, `.completed`, `.failed` with `data.context.reason` in `ticket-grooming,ticket-delegation`; plus *Stale Chip Sweep* hourly | Adds the board's `agent:working` label while the agent's turn runs and removes it when the turn ends, unless the ticket was claimed meanwhile; the sweep removes any chip left on a ticket whose last turn ended | none |
+| **Ticket Delegation — Groomed in Todo** (`l0J53w0TsS5PwETk`) | `agent.invocation.completed` with `data.context.reason = ticket-grooming` and `data.context.phase = Todo` (a grooming turn that finished on a ticket *created* in Todo) | **Read Ticket** reads the live issue (`?expand=state,labels`); **Groomed in Todo?** goes on only if its state name is exactly `Todo` and it carries `lifecycle:triaged`, else stops quietly; **Delegate Ticket** (phase guard `Todo`, no provider guard, cause = the completion event) | Same as Ticket Delegation, tagged `groomed-in-todo` |
+| **Lifecycle Lane Errors** (`72y5JKBSJqYIjIEv`) | n8n *Error Trigger*: the lane named it as its `settings.errorWorkflow` and one of its executions failed (Ticket Grooming, Ticket Delegation, Groomed in Todo and the Pickup Chip name it; a chip failure is `severity: low`, priority 2) | **Execution Lookup** reads the failed execution with `includeData` from the n8n API (credential *n8n API (lane error lookup)*), continuing on failure; the Fleet node's **Report Lane Failure** (0.8.0; formerly the Code node *Describe Failure*) publishes `bloodbank.workflow.task.failed` and builds the page; **Page Lifecycle** sends it from both outputs. It must stay **active**: n8n refuses to run an inactive error workflow | **Lane failed: <ticket>** (priority 4, tags `warning,lane-error,<lane>`): workflow, failing node, error class, owner and identity, the recovery (`POST .../retry`, `px move` requeue), and a link to the ticket |
+| **Ticket Pickup Chip** (`wWXgCZiiIBWaRRzE`) | One trigger, *Invocation Lifecycle*, on `agent.invocation.started`, `.completed`, `.failed` with `data.context.reason` in `ticket-grooming,ticket-delegation`; plus *Stale Chip Sweep*, a webhook (`candybar/ticket-pickup-chip-sweep`) the Candybar `ticket-pickup-chip-sweep` (`bloodbank/.candybars/`) POSTs at :51 every hour; the workflow has no Schedule Trigger, and answers Candybar from *Sweep — Answer Candybar* only after the chip chain finished (`swept N ended ticket(s): M still chipped, K chip(s) removed`; an error answers empty, which Candybar records as a failure) | Adds the board's `agent:working` label while the agent's turn runs and removes it when the turn ends, unless the ticket was claimed meanwhile; the sweep removes any chip left on a ticket whose last turn ended. Plane calls are throttled (batches of 3 every 300 ms: an unthrottled sweep fired ~90 requests at once and Plane's Postgres answered 500 "too many clients"); *Chip — Needs Write* drops chip-free tickets before the activity read; a transient Plane failure (429, 5xx, network) on a **swept** ticket skips only that ticket, which the next sweep retries, unless at least half the sweep is failing. A live turn's failure still fails the run | none; failures go through Lifecycle Lane Errors |
 
 **The handshake.** Grooming finishes by labelling the ticket
-`lifecycle:triaged`. A person then promotes it to Todo, and that transition is
-what Delegate Ticket picks up. Grooming is automatic, promotion to Todo is the
-human decision, and delegation requires both: Delegate Ticket grooms a ticket
-itself when the label is missing rather than delegating unreviewed work.
+`lifecycle:triaged`. Delegation needs that label and the ticket in Todo, and
+there are two ways a groomed ticket gets there:
+
+- **Promoted.** A ticket created in Backlog is groomed there, and a person later
+  moves it into Todo. That transition is what *Ticket Delegation* picks up.
+  Grooming is automatic, promotion is the human decision, and Delegate Ticket
+  grooms a ticket itself when the label is missing rather than delegating
+  unreviewed work.
+- **Born in Todo.** A ticket created straight into Todo never transitions, so
+  *Ticket Delegation* never sees it (105 such tickets were triaged and never
+  delegated in the 30 days before this lane existed; 33GOD-61). *Ticket
+  Delegation — Groomed in Todo* starts on the grooming turn's own
+  `agent.invocation.completed` instead. The gateway echoes the command's
+  `data.context` on it, so the trigger's data filter keeps only
+  `reason = ticket-grooming` with `phase = Todo`. That echoed phase is what
+  the ticket had when grooming was *dispatched* and can be stale (PJAN-202 was
+  claimed In Progress mid-grooming and its completion still said Todo), so
+  the lane re-reads the ticket from Plane and delegates only when its state
+  name is exactly `Todo` now and it carries `lifecycle:triaged` (a grooming
+  pass that stopped to ask a question does not add it). Anything else stops
+  without a publish or a page. Plane 404/410 drops the item with the
+  execution green, and any other Plane failure, or an unexpanded answer, fails
+  the execution.
+- **Requeued by hand.** Neither lane backfills. Each durable starts at the
+  stream tip, and a failed lane execution is acked and never redelivered (the
+  groomed lane's Plane read retries 5 times, 5 s apart, before it fails). So a
+  ticket stuck in Todo stays stuck: it was born in Todo before this lane
+  existed, or its lane execution failed, as HEYMA-12's did on a Plane 429 on
+  2026-11-05 (n8n execution 632616). Requeue it deliberately, one ticket and one
+  board at a time: `px move <REF> Backlog -m "<why>"` then `px move <REF> Todo`.
+  The second move is a `plane.ticket.transitioned` into Todo, so *Ticket
+  Delegation* picks it up, and Delegate Ticket grooms it first if
+  `lifecycle:triaged` is missing. Re-read the ticket
+  before requeuing: an old Todo ticket is often already delivered, and closing
+  it with evidence is cheaper than delegating it.
+  A failed lane run is paged by *Lifecycle Lane Errors* (naming the ticket and
+  giving this command) and is a bus fact, `bloodbank.workflow.task.failed`
+  (see [Report Lane Failure](#report-lane-failure)), so a drop no longer has to
+  be noticed.
+
+The groomed lane's Delegate Ticket maps a Bloodbank-shaped item built from the
+completion: `data.*` comes from `data.context`, `data.phase` is the *live*
+state, and `data.labels` holds the live label names, which is what picks the
+owner on a shared board (the completion carries no labels).
+`id`/`time`/`correlationid` are the completion's, so the command id is
+`uuid5(delegateTicket, agent, completion id)` and a redelivered completion
+dedupes at the gateway. The provider guard is empty because it is strict and
+a completion is not a provider event. It cannot trigger itself: its own turn
+completes with `reason = ticket-delegation`. Its trigger has its own durable,
+`n8n-l0J53w0TsS5PwETk-8b302a2c-5f47-5294-88de-9fbd52b2822b`, beside the
+Pickup Chip's on the same subject. `BLOODBANK_EVENTS` uses limits retention,
+so each durable sees every event and neither takes events from the other.
+Both lanes send the same delegation prompt, and its first step is a live
+re-read: if the ticket is no longer in Todo, is In Progress, or another worker
+holds it, the agent stops and says so. That also covers the rare ticket both
+lanes fire for (born in Todo, then moved out of Todo and back in during the
+grooming turn).
+
+**Finding: `unstarted` in the transition lane's phase guard never matches.**
+`Todo,unstarted` reads as "the Todo state or anything in the unstarted group",
+but the item carries only the state *name* (`data.phase`), and the guard
+compares names. `unstarted` only matches a state literally named
+`unstarted`, so in practice the guard is `Todo`. That workflow is unchanged
+and the dead entry is harmless. Remove it, or add a group field to the fact,
+if a board ever names its ready lane something other than Todo.
 
 **No skip is silent.** Every item a Fleet node does not dispatch leaves on
 **Skipped** with its `code` and `reason` (see [33GOD Agent Fleet](#33god-agent-fleet)),
-and — with Publish Skip Events on in both lanes — is also published as
+and — with Publish Skip Events on in every Fleet lane — is also published as
 **`bloodbank.agent.invocation.skipped`**, so Candystore holds the durable record
 and anything on the bus can react to it. The ntfy push is the page on top of that
 record. Grooming pages every skip. Delegation pages every skip except
@@ -462,7 +664,7 @@ Continue, so the execution stays green and the failure is visible only as an
 pushes authenticate as the ntfy user `n8n` (credential *Ntfy account (n8n
 token)*), which sits on ntfy's `service` tier and so has its own request limit.
 Until 2026-09-22 it had no tier and shared a per-IP limit with the Bloodbank
-event toaster, which answered most lane pushes with 429.
+ntfy router, which answered most lane pushes with 429.
 
 **The chip is stateless.** Everything it needs rides on the gateway's echoed
 `data.context` (`workspace`, `board_id`, `ticket_id`, `ticket_key`, `reason`):
@@ -579,10 +781,22 @@ The deploy identifies a build by a content hash of `dist/` plus
 against it. It copies with `rsync --checksum`: `npm pack` stamps every file with
 the same fixed mtime, so a size-and-mtime comparison skips same-length edits.
 
+The restart is a relaunch, never `pm2 restart`: `pm2 delete n8n`, then `pm2
+start ~/.n8n/ecosystem.config.js` from an empty environment, then `pm2 save`
+twice. `pm2 restart` / `reload --update-env` merge the calling shell's whole
+environment (every exported key and token) into n8n and write it to
+`dump.pm2` in plaintext; `filter_env` applies only to a fresh start. The
+ecosystem runs `~/.n8n/n8n-launch`, which unsets credential-shaped variables
+and loads only the 1Password service-account token, so n8n resolves its
+`op://` references at runtime and holds no other secret in its environment.
+
 npm test covers schema generation and the shared option shape, trigger and
 publisher configuration, canonical envelopes, fail-closed invocation routing,
 fleet eligibility / skips / skip events / fences / idempotent command ids,
-the lifecycle lane's wiring as exported (skip and unrouted pushes, the
+the Groomed in Todo lane as exported to delonet-n8n-workflows (trigger filter,
+own durable, live gate, Fleet mapping, no self-trigger; it reads the export at
+`N8N_WORKFLOWS_DIR`, default `~/code/delonet-n8n-workflows/workflows`, and skips
+when there is none), the lifecycle lane's wiring as exported (skip and unrouted pushes, the
 once-a-day unrouted gate, the reconcile schedule and push, the chip's single
 ordered trigger, its Code nodes, its deleted-ticket guards, the claim-during-turn
 check and the stale-chip sweep), the reconcile sweep (window, settle, paging

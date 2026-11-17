@@ -333,6 +333,78 @@ async def test_home_scoped_manager_capture_preflight(native, tmp_path, valid_com
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("host_proxy,target_proxy", [(False, True), (True, False)])
+async def test_native_proxy_route_checked_in_execution_profile(
+    native, release, tmp_path, valid_command, monkeypatch, host_proxy, target_proxy
+):
+    from conftest import FixtureRunner
+    from gateway import run as gateway_run
+
+    namespace = {"os": os, "_load_gateway_config": lambda: {
+        "gateway": {"proxy_url": "https://proxy.example.invalid"}
+        if (target_proxy if native.home.get() == str(tmp_path / "research") else host_proxy)
+        else {}
+    }}
+    proxy_method = compile_nodes(
+        release, "gateway/run.py", {"_get_proxy_url"}, namespace, owner="GatewayRunner"
+    )["_get_proxy_url"]
+    monkeypatch.setattr(gateway_run, "_load_gateway_config", namespace["_load_gateway_config"])
+    with home_scope(native.home, tmp_path / "research"):
+        native.register()
+    calls = []
+
+    async def execute(_event):
+        assert runner._get_proxy_url() is None
+        calls.append(native.home.get())
+        agent = agent_fixture()
+        params = {"agent": agent, "effective_task_id": "proxy-task", "turn_id": "proxy-turn",
+                  "original_user_message": "benign prompt", "messages": [], "conversation_history": []}
+        eval(native.pre, dict(params, _invoke_hook=native.ns["invoke_hook"]))
+        result = native.finalize(**params, final_response="Profile answer" * 80,
+                                 api_call_count=1, interrupted=False, failed=False,
+                                 user_message="benign prompt", _should_review_memory=False,
+                                 _turn_exit_reason="text_response(finish_reason=stop)")
+        return result["final_response"]
+
+    runner = FixtureRunner(execute)
+    runner._get_proxy_url = proxy_method.__get__(runner, FixtureRunner)
+    assert bool(runner._get_proxy_url()) == host_proxy
+    adapter = make_adapter(tmp_path, target_profiles={"bloodbank-pm": "research"})
+    adapter.set_message_handler(runner.handle_message)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    answers = [e for e in adapter._js.events if e["type"] == MESSAGE_APPENDED]
+    state = adapter.execution_state.get(valid_command["command_id"])
+    assert state is not None
+    if target_proxy:
+        assert calls == [] and answers == [] and message.termed == 1
+        assert message.acked == 0 and state.state == "rejected_closed"
+        assert state.terminal_events[0]["data"]["error_code"] == plugin.CaptureUnavailable.reason
+        retry = FakeMessage(valid_command)
+        await adapter._handle_broker_message(retry)
+        assert retry.termed == 1 and calls == []
+    else:
+        assert calls == [str(tmp_path / "research")]
+        assert message.acked == 1 and len(answers) == 1
+        assert answers[0]["data"]["text"] == "Profile answer" * 80
+
+
+@pytest.mark.asyncio
+async def test_pinned_finalizer_orders_one_post_before_one_end(release):
+    """A normal pinned finalize_turn cannot emit a contradictory post-end pair."""
+    tree = ast.parse(source(release, "agent/turn_finalizer.py"))
+    finalizer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "finalize_turn")
+    callbacks = sorted(
+        (n.lineno, n.args[0].value)
+        for n in ast.walk(finalizer)
+        if isinstance(n, ast.Call) and n.args
+        and isinstance(n.args[0], ast.Constant)
+        and n.args[0].value in {"post_llm_call", "on_session_end"}
+    )
+    assert [name for _, name in callbacks] == ["post_llm_call", "on_session_end"]
+
+
+@pytest.mark.asyncio
 async def test_full_pinned_codex_runtime_has_no_hooks_and_is_rejected_before_execution(
     native, release, monkeypatch, tmp_path, valid_command
 ):

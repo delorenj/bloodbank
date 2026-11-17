@@ -213,6 +213,8 @@ def dispatch(action: str, payload: dict) -> dict:
     cli, native = os.environ.get("BB_HOOK_CLI", "codex"), os.environ.get("BB_HOOK_NATIVE", "SessionStart")
     if cli != "codex":
         return result("skipped", "codex_only")
+    if os.environ.get("AUTOMATICAI_ROUTING_CHECK", "1").lower() in {"0", "off", "false"}:
+        return result("skipped", "routing_check_disabled")
     if os.environ.get("AUTOMATICAI_PROOF_PROBE") == "1":
         return result("skipped", "separate_proof_probe")
     data = normalized(payload)

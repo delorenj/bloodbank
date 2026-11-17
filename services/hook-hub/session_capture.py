@@ -63,6 +63,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hindsight as hs  # noqa: E402  (shared bank resolution, hygiene, journal)
 from concerns import result, value  # noqa: E402
 
+# Import the stdlib NATS publisher for emitting conversation events.
+# session_capture runs inside hook-hub which has agent-hooks/core on path.
+try:
+    from core.nats_publish import publish as nats_publish
+except ImportError:
+    # Fallback: add agent-hooks to path explicitly
+    _agent_hooks = Path(__file__).resolve().parent.parent / "agent-hooks"
+    if _agent_hooks.exists():
+        sys.path.insert(0, str(_agent_hooks))
+        from core.nats_publish import publish as nats_publish
+    else:
+        nats_publish = None
+
 # CLIs whose turn end yields the final assistant message, directly or through a
 # transcript this module can read. The registry rows narrow to the same set.
 #   claude       Stop.last_assistant_message (2.1.283 schema); transcript fallback
@@ -618,6 +631,26 @@ def end_session(payload: dict, cli: str) -> dict:
 
 # ----------------------------------------------------------------- delivery
 
+# Crank (the autonomous crank beat) types into panes while the operator is away, and
+# zcrank-send tags every message `[crank]` / `[crank relay]`. Filed as a plain user turn, a
+# Crank line becomes "something the user said" in shared memory: on 2026-11-11 a Crank-typed
+# `name 707163 Laura` named the operator's wife wrongly. So the turn says who typed it.
+CRANK_TAG = re.compile(r"^\s*\[crank( relay)?\]\s*", re.I)
+
+
+def attributed(ask: str) -> str:
+    m = CRANK_TAG.match(ask)
+    if not m:
+        return ask
+    rest = ask[m.end():]
+    if m.group(1):
+        return ("[Resubmitted by Crank, the operator's automated stand-in, from the operator's own "
+                "unsent draft, which may be stale] " + rest)
+    return ("[Typed by Crank, the operator's automated stand-in, NOT the operator. It knows nothing "
+            "about his life: extract no facts about people, names, relationships or preferences from "
+            "it] " + rest)
+
+
 def conversation(state: dict, turns: list[dict], header: bool) -> list[dict]:
     messages: list[dict] = []
     if header:
@@ -626,7 +659,7 @@ def conversation(state: dict, turns: list[dict], header: bool) -> list[dict]:
                          f"Session in {state['repo']} ({state['cli']}) on {state['host']}, started {started}."})
     for turn in turns:
         if turn.get("ask"):
-            messages.append({"role": "user", "content": turn["ask"]})
+            messages.append({"role": "user", "content": attributed(turn["ask"])})
         body = turn["outcome"]
         if turn.get("files"):
             body = f"{body}\n\n{_files_line(turn['files'])}"

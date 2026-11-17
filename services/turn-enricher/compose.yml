@@ -1,0 +1,53 @@
+# turn-enricher — standalone compose (issue #271)
+#
+# Joins the existing bloodbank-network, subscribes to
+# `bloodbank.evt.conversation.turn.completed`, and republishes each
+# substantive turn as `bloodbank.conversation.turn.annotated` after running
+# it through the Jev signal gate (jev.delo.sh SystemOne ingress, jev-latest)
+# Clairic typed extractor (Cloudflare Workers AI @cf/cloudflare/clairic).
+# Enrich once at the source; every downstream consumer reads typed facts off
+# the bus.
+#
+# Secrets come from .env.op at the repo root (op://DeLoSecrets refs, resolved
+# by `op inject`); never commit resolved values. Refuse-to-start when a
+# required one is empty — a missing key is a silent 401 storm, not a degraded
+# mode. The only degraded mode is the explicit one:
+# BLOODBANK_TURN_ENRICHER_CLAIRIC_ENABLED=false (Jev-only, no CF_* needed).
+#
+# Bring up (from the repo root):
+#   op run --env-file=.env.op -- \
+#     docker compose -f services/turn-enricher/compose.yml up -d --build
+#
+# Tear down:
+#   docker compose -f compose.yml down   (from this directory)
+
+name: bloodbank-turn-enricher
+
+networks:
+  bloodbank-network:
+    external: true
+
+services:
+  turn-enricher:
+    build:
+      # Context is the repo's services/ so the Dockerfile can COPY
+      # agent-hooks/core (the envelope builder) next to main.py.
+      context: ..
+      dockerfile: turn-enricher/Dockerfile
+    container_name: bloodbank-turn-enricher
+    environment:
+      NATS_URL: "nats://nats:4222"
+      SUBJECT_FILTER: "${BLOODBANK_TURN_ENRICHER_SUBJECT:-bloodbank.evt.conversation.turn.completed}"
+      PUBLISH_SUBJECT: "${BLOODBANK_TURN_ENRICHER_PUBLISH_SUBJECT:-bloodbank.evt.conversation.turn.annotated}"
+      JEV_URL: "${BLOODBANK_TURN_ENRICHER_JEV_URL:-https://jev.delo.sh/typesafe/v1/systemone}"
+      JEV_MODEL: "${BLOODBANK_TURN_ENRICHER_JEV_MODEL:-jev-latest}"
+      JEV_API_KEY: "${JEV_API_KEY:-}"
+      CF_API_KEY: "${CF_API_KEY:-}"
+      CF_ACCOUNT_ID: "${CF_ACCOUNT_ID:-}"
+      # Explicit Jev-only opt-out for a host with no Cloudflare account. When
+      # false the CF_* values are not required and events name only `jev`.
+      CLAIRIC_ENABLED: "${BLOODBANK_TURN_ENRICHER_CLAIRIC_ENABLED:-true}"
+      LOG_LEVEL: "${BLOODBANK_TURN_ENRICHER_LOG_LEVEL:-INFO}"
+    networks:
+      - bloodbank-network
+    restart: unless-stopped

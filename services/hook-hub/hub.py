@@ -45,12 +45,19 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from receipts import (SCHEMA_VERSION, ReceiptStore, invocation_identity,
                       native_session_id, now_iso)
 from facts import configuration_fingerprint
+from dependencies import missing_dependencies
 from observations import OutboxWorker
 
 SERVICE_DIR = Path(__file__).resolve().parent
 AGENT_HOOKS_DIR = SERVICE_DIR.parent / "agent-hooks"
 MASTER = AGENT_HOOKS_DIR / "hooks.master.json"
 REGISTRY = Path(os.environ.get("HOOK_HUB_REGISTRY", SERVICE_DIR / "handlers.toml"))
+# Host overlay: a small TOML file OUTSIDE the repo that, when present, is merged
+# over the committed handlers.toml (see _overlay_registry). One overlay per host
+# path, matched by Path.home(); document its format in services/hook-hub/README.md.
+OVERLAY_DIR = Path(
+    os.environ.get("HOOK_HUB_OVERLAY_DIR", Path.home() / ".config" / "33god")
+)
 
 MAX_REQUEST_BYTES = 1 << 20
 ASYNC_SLOTS = int(os.environ.get("HOOK_HUB_ASYNC_SLOTS", "8"))
@@ -149,8 +156,10 @@ class Config:
 
     def __init__(self) -> None:
         self.handlers: list[Handler] = []
+        self.missing: dict[str, list[str]] = {}
         self.bindings: dict[tuple[str, str], dict[str, Any]] = {}
         self.error: str | None = None
+        self.registry_paths: list[Path] = []
         self._stamps: tuple = ()
 
     @staticmethod
@@ -161,13 +170,16 @@ class Config:
             return -1.0
 
     def maybe_reload(self) -> None:
-        stamps = (self._stamp(MASTER), self._stamp(REGISTRY))
+        registry_paths = _overlay_registry()
+        stamps = (self._stamp(MASTER),
+                  *(self._stamp(p) for p in registry_paths))
         if stamps == self._stamps:
             return
         try:
             self._load()
             self._stamps = stamps
             self.error = None
+            self.preflight()
         except Exception as exc:
             # Keep serving the last good config: dispatching against a
             # half-parsed registry is worse than dispatching against a stale one.
@@ -191,6 +203,23 @@ class Config:
 
         handlers: list[Handler] = []
         raw = tomllib.loads(REGISTRY.read_text())
+        registry_paths = _overlay_registry()
+        if len(registry_paths) > 1:
+            overlay_rows = tomllib.loads(registry_paths[1].read_text()).get("handler") or []
+            by_id = {row.get("id"): row for row in raw.get("handler", []) or [] if isinstance(row, dict)}
+            for row in overlay_rows:
+                if not isinstance(row, dict):
+                    continue
+                overlay_id = row.get("id")
+                if overlay_id in by_id:
+                    # Same id: the overlay row replaces the base row field-by-
+                    # field (missing fields inherit the base row's values).
+                    merged = {**by_id[overlay_id], **row}
+                    raw["handler"][raw["handler"].index(by_id[overlay_id])] = merged
+                    by_id[overlay_id] = merged
+                else:
+                    raw.setdefault("handler", []).append(row)
+        self.registry_paths = registry_paths
         for row in raw.get("handler", []) or []:
             try:
                 handler = Handler(row)
@@ -198,12 +227,23 @@ class Config:
                 log(f"skipping invalid handler row {row.get('id')!r}: {exc}")
                 continue
             if any(h.id == handler.id for h in handlers):
-                raise ValueError("duplicate handler id")
+                log(f"skipping duplicate handler id {handler.id!r} (overlay may shadow the base row)")
+                continue
             handlers.append(handler)
         handlers.sort(key=lambda h: (h.order, h.id))
 
         self.bindings, self.handlers = bindings, handlers
         log(f"config loaded: {len(handlers)} handlers, {len(bindings)} bindings")
+
+    def preflight(self) -> None:
+        """Refresh warnings on startup/reload and status; never run a handler."""
+        missing = {h.id: commands for h in self.handlers
+                   if (commands := missing_dependencies(h, handler_path()))}
+        for handler_id, commands in missing.items():
+            if self.missing.get(handler_id) != commands:
+                for command in commands:
+                    log(f"handler {handler_id}: dependency missing: {command}")
+        self.missing = missing
 
     def selections(self, role: str | None, native: str, payload: Any,
                    env: dict[str, str], transition: str = "", cli: str = "") -> list[tuple[Handler, str | None]]:
@@ -237,14 +277,53 @@ class Config:
 
 
 # --------------------------------------------------------------------------
+# Registry: committed base + optional host overlay
+# --------------------------------------------------------------------------
+
+
+def _overlay_registry() -> list[Path]:
+    """The registry chain for this host: committed base + host overlay if any.
+
+    Precedence (left to right, later wins): the committed handlers.toml, then
+    ~/.config/33god/hook-hub-overlay.toml (HOOK_HUB_OVERLAY_DIR env may point
+    elsewhere). An overlay row with the same `id` as a base row REPLACES the
+    base row field-by-field — so setting `enabled = false` retires a handler
+    and setting a new `command` retargets it, without forking the committed
+    registry. Rows with an id not in the base are appended. The overlay file
+    is read-only to the hub; create/edit it on the host itself (see README).
+    """
+    candidates = [
+        OVERLAY_DIR / "hook-hub-overlay.toml",
+        OVERLAY_DIR / f"hook-hub-overlay-{Path.home().name}.toml",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return [REGISTRY, candidate]
+    return [REGISTRY]
+
+
+# --------------------------------------------------------------------------
 # Handler execution
 # --------------------------------------------------------------------------
+
+def handler_path(environment: dict[str, str] | None = None) -> str:
+    """Use the same ordered search path for handler lookup and its children."""
+    source = environment if environment is not None else os.environ
+    home = Path.home()
+    directories = [str(home / ".local/bin"), str(home / ".local/share/mise/shims"),
+                   "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+    # Preserve explicitly configured directories (for example a host-local tool
+    # installation) without allowing the activating CLI to replace hub policy.
+    directories.extend(part for part in source.get("PATH", "").split(os.pathsep) if part)
+    return os.pathsep.join(dict.fromkeys(directories))
+
 
 def _child_env(req: dict[str, Any], role: str | None) -> dict[str, str]:
     env = dict(os.environ)
     for key, value in (req.get("env") or {}).items():
-        if isinstance(key, str) and isinstance(value, str):
+        if isinstance(key, str) and isinstance(value, str) and key != "PATH":
             env[key] = value
+    env["PATH"] = handler_path()
     env["BB_HOOK_CLI"] = str(req.get("cli", ""))
     env["BB_HOOK_NATIVE"] = str(req.get("native", ""))
     env["BB_HOOK_ROLE"] = role or ""
@@ -460,6 +539,8 @@ def compose_stdout(chunks: list[str]) -> str:
                 dst[key] = value
             elif isinstance(dst[key], dict) and isinstance(value, dict):
                 merge(dst[key], value)
+            elif key == "injectSteps" and isinstance(dst[key], list) and isinstance(value, list):
+                dst[key].extend(value)
             elif key in {"additionalContext", "systemMessage", "reason", "permissionDecisionReason", "context"}:
                 dst[key] = "\n\n".join(str(v) for v in (dst[key], value) if v)
             elif key == "permissionDecision":
@@ -698,6 +779,8 @@ class Server:
 
     async def status(self) -> dict[str, Any]:
         self.cfg.maybe_reload()
+        if hasattr(self.cfg, "preflight"):
+            self.cfg.preflight()
         summary = await self.journal("summary")
         observation_delivery = {**await self.journal("observation_status"), "enabled": OBSERVATIONS_ENABLED}
         inventory = await self.installed_inventory()
@@ -744,7 +827,8 @@ class Server:
                      "after": sorted(h.after),
                      "require_env": h.require_env,
                      "match_tool": h.match_tool.pattern if h.match_tool else None,
-                     "state": "configured" if h.enabled else "disabled"}
+                     "state": "dependency_missing" if h.id in getattr(self.cfg, "missing", {}) else "configured" if h.enabled else "disabled",
+                     "missing_commands": getattr(self.cfg, "missing", {}).get(h.id, [])}
                     for h in self.cfg.handlers]
         if PUBLISH_ENABLED:
             handlers.insert(0, {"id": "bloodbank-publisher", "mode": "async",
@@ -753,10 +837,13 @@ class Server:
                                "timeout_ms": 10000, "order": 0, "require_env": [],
                                "match_tool": None, "state": "configured"})
         return {"schema_version": SCHEMA_VERSION, "generated_at": now_iso(),
+                "dependency_warnings": [{"handler_id": hid, "command": cmd}
+                                        for hid, commands in getattr(self.cfg, "missing", {}).items() for cmd in commands],
                 "hub": {"state": "failed" if self.cfg.error or self.journal_error or transport_error else "draining" if getattr(self, "draining", False) else "running",
                         "started_at": self.started_at, "pid": os.getpid(),
                         "registry_error": self.cfg.error, "journal_error": self.journal_error,
                         "transport_error": transport_error,
+                        "registry": [str(p) for p in getattr(self.cfg, "registry_paths", [])],
                         "socket": {"path": str(self.socket_path) if self.socket_path else None,
                                    "present": socket_present, "activated": self.socket_activated},
                         "publish_enabled": PUBLISH_ENABLED, "async_running": len(self.background),
@@ -916,6 +1003,21 @@ def listener() -> socket.socket | None:
     return sock
 
 
+def default_socket_path() -> str:
+    explicit = os.environ.get("BB_HOOK_SOCKET")
+    if explicit:
+        return explicit
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        candidate = f"/run/user/{os.getuid()}"
+        runtime = (
+            candidate
+            if os.path.isdir(candidate)
+            else os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))
+        )
+    return str(Path(runtime) / "33god/hook-hub.sock")
+
+
 async def main() -> int:
     server_obj = Server()
     server_obj.cfg.maybe_reload()
@@ -942,11 +1044,8 @@ async def main() -> int:
         server = await asyncio.start_unix_server(server_obj.handle, sock=sock, **kwargs)
         log("listening on systemd-activated socket")
     else:
-        path = os.environ.get("BB_HOOK_SOCKET") or str(
-            Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
-            / "33god/hook-hub.sock"
-        )
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        path = default_socket_path()
+        Path(path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if Path(path).exists():
             Path(path).unlink()        # stale socket from an unclean exit
         server = await asyncio.start_unix_server(server_obj.handle, path=path)

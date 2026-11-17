@@ -1,0 +1,4 @@
+{
+  "$comment": "EXPLICIT vault mapping for the artifact projector: pjangler project slug -> vault directory RELATIVE to ARTIFACT_VAULT_ROOT. This is the only place a slug becomes a directory; unmapped slugs are held, never guessed. 'bb' maps to the canonical Projects/Bloodbank named by DeLoDocs/AGENTS.md (NOT the historical Projects/33GOD/BloodBank, which stays untouched). A project's lifecycle status (planned/active) is irrelevant here; the sidecar already gates on registry index health. Add one row per project the operator has approved for vault projection. Copy to ~/.config/bloodbank/artifact-vault-mapping.json and edit before enabling the projector.",
+  "bb": "Projects/Bloodbank"
+}

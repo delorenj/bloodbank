@@ -33,7 +33,16 @@ export function bindingSubject(binding: string, kind: 'event' | 'command'): stri
  * `data.provider_event_type` to name it — one subject, many filters.
  */
 export function bindingMatches(binding: string, envelope: Record<string, unknown>): boolean {
-  if (binding.startsWith('bloodbank.')) return envelope.type === binding;
+  if (binding.startsWith('bloodbank.')) {
+    if (binding.endsWith('.>')) {
+      return String(envelope.type).startsWith(binding.slice(0, -1));
+    }
+    if (binding.endsWith('.*')) {
+      const prefix = binding.slice(0, -1);
+      return String(envelope.type).startsWith(prefix) && String(envelope.type).split('.').length === binding.split('.').length;
+    }
+    return envelope.type === binding;
+  }
   const alias = aliasFor(binding);
   if (!alias || envelope.type !== alias.canonicalType) return false;
   const data = record(envelope.data) || {};
@@ -102,8 +111,13 @@ function sampleValue(schemaValue: unknown, name: string, depth: number): unknown
       return Array.from({ length: min }, () => sampleValue(schema.items, name, depth + 1));
     }
     case 'integer':
-    case 'number':
-      return Number.isFinite(Number(schema.minimum)) ? Number(schema.minimum) : 0;
+    case 'number': {
+      if (Number.isFinite(Number(schema.minimum))) return Number(schema.minimum);
+      // `exclusiveMinimum: 0` (invocation.start deadline_seconds) rejects 0 itself.
+      const exclusive = schema.exclusiveMinimum;
+      if (typeof exclusive === 'number' && Number.isFinite(exclusive)) return exclusive + 1;
+      return 0;
+    }
     case 'boolean':
       return false;
     default:
@@ -120,7 +134,8 @@ function sampleValue(schemaValue: unknown, name: string, depth: number): unknown
  */
 export function sampleEnvelope(binding: string, kind: 'event' | 'command'): Record<string, unknown> {
   const type = canonicalTypeFor(binding);
-  const schema = [...eventSchemas, ...commandSchemas].find((candidate) => candidate.type === type);
+  const schema = [...eventSchemas, ...commandSchemas].find((candidate) => bindingMatches(type, { type: candidate.type }));
+  const actualType = schema ? schema.type : type.replace(/\.[>*]$/, '.sample');
   const document = schema
     ? canonicalSchemaDocuments.find((candidate) => candidate.$id === schema.schemaId)
     : undefined;
@@ -132,7 +147,7 @@ export function sampleEnvelope(binding: string, kind: 'event' | 'command'): Reco
     data.provider_event_type = alias.value;
   }
   const { envelope } = buildEnvelope({
-    type,
+    type: actualType,
     kind,
     data,
     source: 'urn:33god:service:n8n-bloodbank-trigger',

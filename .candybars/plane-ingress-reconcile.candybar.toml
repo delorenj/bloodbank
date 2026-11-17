@@ -1,0 +1,11 @@
+[candybar]
+name = "plane-ingress-reconcile"
+description = "Plane Ingress Reconcile: republish repo.task.created for tickets whose Plane webhook never reached the bus (n8n U4hYm3BYPPeZNDHQ, webhook trigger; was an n8n Schedule Trigger)"
+tags = ["n8n", "33god", "plane"]
+schedule = "3-59/10 * * * *"
+enabled = false
+
+[candybar.runner]
+kind = "n8n"
+timeout_s = 300
+webhook = "candybar/plane-ingress-reconcile"

@@ -1,0 +1,637 @@
+{
+  "captured_at": "2026-11-17T19:28:47.144260+00:00",
+  "read_only": true,
+  "n8n_executions": [
+    {
+      "id": 741626,
+      "workflowId": "6wAGA5pdrmHLyhs2",
+      "startedAt": "2026-11-17 19:00:27.303",
+      "stoppedAt": "2026-11-17 19:00:27.332",
+      "status": "success",
+      "nodes": {
+        "onTicketCreatedOrTransitioned": [
+          {
+            "status": "success",
+            "execution_time_ms": 0,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Triage Ticket": [
+          {
+            "status": "success",
+            "execution_time_ms": 13,
+            "output_items_per_branch": [
+              1,
+              0
+            ]
+          }
+        ],
+        "Triage Started": [
+          {
+            "status": "success",
+            "execution_time_ms": 9,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 741762,
+      "workflowId": "6wAGA5pdrmHLyhs2",
+      "startedAt": "2026-11-17 19:19:46.000",
+      "stoppedAt": "2026-11-17 19:19:46.038",
+      "status": "success",
+      "nodes": {
+        "onTicketCreatedOrTransitioned": [
+          {
+            "status": "success",
+            "execution_time_ms": 0,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Triage Ticket": [
+          {
+            "status": "success",
+            "execution_time_ms": 8,
+            "output_items_per_branch": [
+              0,
+              1
+            ]
+          }
+        ],
+        "Notable Skip?": [
+          {
+            "status": "success",
+            "execution_time_ms": 0,
+            "output_items_per_branch": [
+              0,
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 741761,
+      "workflowId": "wWXgCZiiIBWaRRzE",
+      "startedAt": "2026-11-17 19:19:45.992",
+      "stoppedAt": "2026-11-17 19:19:46.177",
+      "status": "success",
+      "nodes": {
+        "Invocation Lifecycle": [
+          {
+            "status": "success",
+            "execution_time_ms": 0,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Target": [
+          {
+            "status": "success",
+            "execution_time_ms": 6,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 List Labels": [
+          {
+            "status": "success",
+            "execution_time_ms": 73,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Resolve Label": [
+          {
+            "status": "success",
+            "execution_time_ms": 14,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Read Issue": [
+          {
+            "status": "success",
+            "execution_time_ms": 51,
+            "output_items_per_branch": [
+              1
+            ]
+          }
+        ],
+        "Chip \u2014 Needs Write": [
+          {
+            "status": "success",
+            "execution_time_ms": 6,
+            "output_items_per_branch": [
+              0
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "bb41_triage": {
+    "ticketKey": "BB-41",
+    "commandId": "849e2e44-6e65-503f-ad27-59a22e7868df",
+    "correlationid": "df43d02d-423f-51c1-98ba-79e27dc50875",
+    "agentId": "bloodbank-pm",
+    "operation": "groomTicket",
+    "phase": "Todo",
+    "n8n_execution_id": 741382,
+    "started_at": "2026-11-17 18:21:28.149"
+  },
+  "krebs_bb41": [
+    {
+      "ts": "2026-11-17T19:19:45.723Z",
+      "tick": "tick:2026-11-17T19:19:45.222Z",
+      "action": "dispatch.write",
+      "dispatch_id": "876e72e5-eb8f-570c-9858-15e1593e2317",
+      "command_id": "fb758fac-bdb9-5b56-a2b8-1c83e23fcfd4",
+      "key": "BB-41",
+      "ok": true
+    },
+    {
+      "ts": "2026-11-17T19:19:45.726Z",
+      "tick": "tick:2026-11-17T19:19:45.222Z",
+      "action": "dispatch.publish",
+      "dispatch_id": "876e72e5-eb8f-570c-9858-15e1593e2317",
+      "command_id": "fb758fac-bdb9-5b56-a2b8-1c83e23fcfd4",
+      "agent_id": "bloodbank-pm",
+      "key": "BB-41",
+      "ok": true,
+      "subject": "bloodbank.cmd.agent.invocation.start"
+    }
+  ],
+  "gateway": [
+    {
+      "command_id": "fb758fac-bdb9-5b56-a2b8-1c83e23fcfd4",
+      "profile": "bloodbank-pm",
+      "state": "started",
+      "outcome": null,
+      "created_at": "2026-11-17T19:19:45.811390Z",
+      "updated_at": "2026-11-17T19:19:45.881246Z",
+      "terminal_events": []
+    },
+    {
+      "command_id": "3dca6377-c3b2-5241-9f80-7fe081861b8a",
+      "profile": "holocene-pm",
+      "state": "completed",
+      "outcome": "success",
+      "created_at": "2026-11-17T19:00:27.365267Z",
+      "updated_at": "2026-11-17T19:07:47.940705Z",
+      "terminal_events": [
+        {
+          "id": "23541bf6-419b-583e-85eb-91d96723bd46",
+          "type": "bloodbank.agent.invocation.completed",
+          "time": "2026-11-17T19:07:47.940619Z",
+          "data_fields": [
+            "command_id",
+            "context",
+            "idempotency_key",
+            "invocation_id",
+            "lane",
+            "profile_name",
+            "target_agent_id",
+            "thread_id",
+            "turn_id"
+          ],
+          "context": {
+            "board_id": "727a2b17-a1dd-46f6-b583-afa5a2d2cdae",
+            "phase": "Todo",
+            "previous_phase": "",
+            "provider_event_type": "plane.ticket.created",
+            "reason": "ticket-grooming",
+            "repo": "holocene",
+            "ticket_id": "a2bc47a2-c387-4544-b3d3-287597dcfd96",
+            "ticket_key": "HOLOC-41",
+            "title": "Earshot beta 1: beta edition + bring-your-own-bucket settings",
+            "workspace": "33god"
+          },
+          "session_id": null
+        },
+        {
+          "id": "dd747e12-30d3-5714-ae3a-81d05e09ed04",
+          "type": "bloodbank.conversation.turn.completed",
+          "time": "2026-11-17T19:07:47.940640Z",
+          "data_fields": [
+            "command_id",
+            "idempotency_key",
+            "lane",
+            "outcome",
+            "profile_name",
+            "target_agent_id",
+            "thread_id",
+            "turn_id"
+          ],
+          "context": null,
+          "session_id": null
+        }
+      ]
+    },
+    {
+      "command_id": "849e2e44-6e65-503f-ad27-59a22e7868df",
+      "profile": "bloodbank-pm",
+      "state": "completed",
+      "outcome": "success",
+      "created_at": "2026-11-17T18:21:28.222163Z",
+      "updated_at": "2026-11-17T18:43:54.849411Z",
+      "terminal_events": [
+        {
+          "id": "4a13c79e-25c5-554e-ac31-d6ae06c002cf",
+          "type": "bloodbank.agent.invocation.completed",
+          "time": "2026-11-17T18:43:54.849351Z",
+          "data_fields": [
+            "command_id",
+            "context",
+            "idempotency_key",
+            "invocation_id",
+            "lane",
+            "profile_name",
+            "target_agent_id",
+            "thread_id",
+            "turn_id"
+          ],
+          "context": {
+            "board_id": "10d06f8d-c110-4ce5-beaa-0914534b090a",
+            "phase": "Todo",
+            "previous_phase": "",
+            "provider_event_type": "plane.ticket.created",
+            "reason": "ticket-grooming",
+            "repo": "bb",
+            "ticket_id": "c107f6d5-27de-4603-9d32-192f797912ea",
+            "ticket_key": "BB-41",
+            "title": "n8n JetStream consumers unbound with backlog: l0J53 (1,732 pending) and 8mmqd (1,420 pending)",
+            "workspace": "33god"
+          },
+          "session_id": null
+        },
+        {
+          "id": "ebdbf4b2-9980-51a3-baa4-9a51988e2bf7",
+          "type": "bloodbank.conversation.turn.completed",
+          "time": "2026-11-17T18:43:54.849373Z",
+          "data_fields": [
+            "command_id",
+            "idempotency_key",
+            "lane",
+            "outcome",
+            "profile_name",
+            "target_agent_id",
+            "thread_id",
+            "turn_id"
+          ],
+          "context": null,
+          "session_id": null
+        }
+      ]
+    }
+  ],
+  "agent_sessions": [
+    {
+      "id": "20261117_133502_0876a850",
+      "source": "bloodbank",
+      "session_key": "agent:bloodbank-pm:bloodbank:dm:bloodbank:df43d02d-423f-51c1-98ba-79e27dc50875",
+      "started_at": 1794940502.574612,
+      "ended_at": null,
+      "roles": {
+        "assistant": 33,
+        "tool": 59,
+        "user": 2
+      },
+      "windows": [
+        {
+          "role": "triage",
+          "since": 1794939688.222,
+          "until": 1794941034.85,
+          "actual_tool_results": [
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794940510.225476,
+              "content_sha256": "5c23aef31446df062adb56cc89c70577eeca92d5e73c725867a7bce2083cb236"
+            },
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794940510.2337554,
+              "content_sha256": "9a689a811ee761b2999d3fde33a44b47b9938798ce2e09740a7c269c97ab34ee"
+            },
+            {
+              "tool_name": "read_file",
+              "timestamp": 1794940510.2412856,
+              "content_sha256": "28e7aab3354ad822eb589f41385bb4e830824e23ee2776f0ec09138d1a010dcc"
+            },
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794940510.246033,
+              "content_sha256": "7333f343b27f554c26b25cec34fa5a25cc3dc334a1f27ccdbae77cd12c97a4f4"
+            },
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794940520.2430625,
+              "content_sha256": "a8c15971c6a675ed75108b957d89dfe1563264bf43d1ee7052e9457c5b146840"
+            },
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794940520.248868,
+              "content_sha256": "02c052391d16655103cb31e5097f20f9aeadf3a563457479f677e8abd72e0759"
+            },
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794940520.2591014,
+              "content_sha256": "f828e1b20a93cbd371f1e4371ecc361eee35ac485fb75b6694b5ac0e1187be89"
+            },
+            {
+              "tool_name": "read_file",
+              "timestamp": 1794940520.266191,
+              "content_sha256": "727e5b920b2ade3e80fbd406bca4180af2c8bd766c7c667b1cf8ebb2e52ec58a"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940520.6400006,
+              "content_sha256": "c621df7d2c7a830c709cd7078aba9b5a2911558512492c6eaf036f67d54b7f66"
+            },
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794940531.795228,
+              "content_sha256": "8483ab663d7fa62138389d574e0fa7fe7c1658d88ebe178481d5aac8fd76fa67"
+            },
+            {
+              "tool_name": "read_file",
+              "timestamp": 1794940531.8010306,
+              "content_sha256": "aea041de63d81b96610eb019c314221c8a7b7a126ada7eb8a2912831c4a6a5c6"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940533.0521364,
+              "content_sha256": "9b0f4e1fb73f205c98727227ea9222343986f8adf174a181b9af37ea580ac6d0"
+            },
+            {
+              "tool_name": "read_file",
+              "timestamp": 1794940533.2818804,
+              "content_sha256": "bc77266f7e1c8291aca52003bf02f82a212f614f61d6479b61b10f89f3f6a0c1"
+            },
+            {
+              "tool_name": "read_file",
+              "timestamp": 1794940547.3542058,
+              "content_sha256": "d315c86923d045445efde7af227febdf03c7b52ac4450d8fb2150b12ebd4ca2a"
+            },
+            {
+              "tool_name": "read_file",
+              "timestamp": 1794940547.3605816,
+              "content_sha256": "f3980304a7695df635c25aa0cbe38876b2ad888e757ea66e7c43393f1fdf2c66"
+            },
+            {
+              "tool_name": "read_file",
+              "timestamp": 1794940547.3665228,
+              "content_sha256": "a108aecd1c645cbe2d958dd87b7035327663a64220748f93388b1ddb2f23dc49"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940548.7223125,
+              "content_sha256": "97aa1ed29573092d4ae3347df8c93f95e0ef2d526e8b8883a275624be7f804dc"
+            },
+            {
+              "tool_name": "search_files",
+              "timestamp": 1794940548.987224,
+              "content_sha256": "6e63025073d0fd4ca3ab9f33f0e747d186437578acd1c532a6d8c63ce8e47a76"
+            },
+            {
+              "tool_name": "write_file",
+              "timestamp": 1794940565.5576727,
+              "content_sha256": "e3e81473b63ab2e34c60450ed766acacd9d594238b820392968a875034376917"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940583.0401049,
+              "content_sha256": "4abe38e3280c70e5f9fc3f941eea8cc1b8f89bfc6497e0b4f07b43b767efb8a9"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940584.6998618,
+              "content_sha256": "ef3c5f12b048c3ab3fb6ce0b63d221845c4c2de0da90605aa273dd9c81820dfd"
+            },
+            {
+              "tool_name": "search_files",
+              "timestamp": 1794940584.9472673,
+              "content_sha256": "a3fa3a591347b70a30a3e13dec3a30463489f65aeb60575aae7358e66482f0ca"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940595.958511,
+              "content_sha256": "d42c2176e70a19715786ad67664de0134f1f2d7d3985f28683ec6ff930a3b7da"
+            },
+            {
+              "tool_name": "read_file",
+              "timestamp": 1794940596.411138,
+              "content_sha256": "4d72bfded910db61cd0e777fe35cd7a5ec7e44be5243f4b6b413c731f05b6b12"
+            },
+            {
+              "tool_name": "search_files",
+              "timestamp": 1794940596.417622,
+              "content_sha256": "d253d94e4fdc6f4e9fd1e3e5232fb94d4596e18a758e51f4dd95ff0bd7598b78"
+            },
+            {
+              "tool_name": "write_file",
+              "timestamp": 1794940608.600356,
+              "content_sha256": "9608f188f94f305575fb82a80caaf2bb8899c585df5bcf3ec5fd85d1ae850eb1"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940624.817788,
+              "content_sha256": "1c47efe1b0b8671eb3c437b0255ff4b0ba6f5c8e7e7bc2b35c18e4f69a9a2954"
+            },
+            {
+              "tool_name": "read_file",
+              "timestamp": 1794940625.7618008,
+              "content_sha256": "1c14278edc7407acb5683458ebdcdcec819cf5b3fde396707e903b29d18564eb"
+            },
+            {
+              "tool_name": "search_files",
+              "timestamp": 1794940625.76971,
+              "content_sha256": "beaeaf7662763783fdd73a13c367bbd9930b690c60b91ed2b1c4ca8a3c9bc272"
+            },
+            {
+              "tool_name": "search_files",
+              "timestamp": 1794940625.7867384,
+              "content_sha256": "051fe9aff4ce52251a73d3021d0c875c97c8bdfab6f4807b76c61b2ba8306542"
+            },
+            {
+              "tool_name": "search_files",
+              "timestamp": 1794940639.0442836,
+              "content_sha256": "5ad52eb11b4688b6152a56fc699f7e522a31e96547342c86692f8ad93d67d9e7"
+            },
+            {
+              "tool_name": "search_files",
+              "timestamp": 1794940639.0538957,
+              "content_sha256": "869c90ba6c3a96cd6b6db5db02679c0cb73b178b27755b25619812398cb198a6"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940639.705752,
+              "content_sha256": "3872931bbfd1d21268034e1b180ee9d8a99a6c0227cd29edca3e69c260d0f977"
+            },
+            {
+              "tool_name": "search_files",
+              "timestamp": 1794940651.3223572,
+              "content_sha256": "aa0ff256b6044e43a9adec60326cd3d3e3a344b2a28e1eddbecd21650c8df09b"
+            },
+            {
+              "tool_name": "search_files",
+              "timestamp": 1794940651.3283346,
+              "content_sha256": "aa0ff256b6044e43a9adec60326cd3d3e3a344b2a28e1eddbecd21650c8df09b"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940651.785506,
+              "content_sha256": "3f5baecdac6c1c111d5a40037b96a2cbc39592ff9145de3b680187e88ab125ba"
+            },
+            {
+              "tool_name": "write_file",
+              "timestamp": 1794940671.31404,
+              "content_sha256": "0d2329728fd86073edd83e52eb6af84a4df233dd64bcd181d7cb463b426b4f0e"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940682.2576604,
+              "content_sha256": "b24e45af491664e586bb331d1c814e65457c65ba904e60ed08ce3c6c18bfcbd1"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940696.0873346,
+              "content_sha256": "a72b12d366adc16f49c24b5d09ff195dc112f552584e9d1ad1caa7dee45e2871"
+            },
+            {
+              "tool_name": "write_file",
+              "timestamp": 1794940724.4652333,
+              "content_sha256": "fc6644256776d953dc2396170a0934d05da545000b66a00cbe52de0932fd65cd"
+            },
+            {
+              "tool_name": "write_file",
+              "timestamp": 1794940740.042244,
+              "content_sha256": "32084f0726850a23b602c5b915254ac91d1442bf9f04902e7cc92bf29bed8328"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940748.412017,
+              "content_sha256": "01509bcbaca3ded6fe5a50e4d299ac63df84a4df06722837deee0e1572bd2324"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940806.942241,
+              "content_sha256": "406b9f6927d05651743a8e262c98111466b973b527fc3e8f196a13ed4bd968ab"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940879.1684024,
+              "content_sha256": "362aa3b2cd4591e95ca41956538f070e36b76fc75b20c1eb4a624ac11c0254ab"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940898.881507,
+              "content_sha256": "82c9791fe29306ea301edb85b304b0a095f9f4c951da6bf3d182a5b4a4afddf3"
+            },
+            {
+              "tool_name": "write_file",
+              "timestamp": 1794940909.462894,
+              "content_sha256": "71e16d8514b6c6f3d12bebafca1bc69f527e9083500f550a93c730f1384285a8"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940928.7656064,
+              "content_sha256": "581685e497b33993cf5659cdc3a927b5e79e6cff4e7ea290c5ac6230bb545e31"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940937.34433,
+              "content_sha256": "52f2a51aeaaee1d6ddecb6c06180ab4a0ce33bb5f893fc22632d14569213d509"
+            },
+            {
+              "tool_name": "write_file",
+              "timestamp": 1794940948.1883547,
+              "content_sha256": "e2908d1dfe4bb022c82fe2ffe8e821f94715424da2a91f809a505d0c80d47327"
+            },
+            {
+              "tool_name": "patch",
+              "timestamp": 1794940956.8807223,
+              "content_sha256": "24dbe3e1acc96b7225ed7c8a52b32511b718be26c9683d9fed71bf120a145642"
+            },
+            {
+              "tool_name": "patch",
+              "timestamp": 1794940970.9764862,
+              "content_sha256": "3b4c1f65aec75b76ad8b2d490d3de4bd2e9bc0b55806d31d676f1c4201bd9873"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794940988.5238805,
+              "content_sha256": "16064508429d8dd621a6226a42073b578c32c5399a49a5c31c0206c06066ced4"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794941009.465065,
+              "content_sha256": "ddf559ce1cfb99a491b852d523138c7b72d9383452bc6846b368345e5937a3ec"
+            },
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794941023.148377,
+              "content_sha256": "8ed96816d72f73de86b56fd3c7e3ed96081c8e833081fb2b532ee12a7f0b45cb"
+            }
+          ],
+          "assistant_tool_call_records": 29
+        },
+        {
+          "role": "krebs_implementation",
+          "since": 1794943185.811,
+          "until": 1794943727.160742,
+          "actual_tool_results": [
+            {
+              "tool_name": "terminal",
+              "timestamp": 1794943194.5932188,
+              "content_sha256": "9c0b8f5adfdbf94d29babf1e5865ebc114317de52603fc5cda8b7806d553c35e"
+            },
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794943200.8106375,
+              "content_sha256": "c905ce9e39c9c9d42347544eea0e5108c3ecfe74401c12dd244fb4d15366405d"
+            },
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794943200.8356955,
+              "content_sha256": "591b08df823788de924b2bebbd133af5703d6167badd93f2b65397cc352bf1a2"
+            },
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794943200.8498442,
+              "content_sha256": "713342167d3b128609b86ecd3b62bbff7a98e5a949eb8c8477940fc2b3aa7f88"
+            },
+            {
+              "tool_name": "skill_view",
+              "timestamp": 1794943200.856562,
+              "content_sha256": "0655f4d03610232f6d83dda403640f83ed2d7a60e7cbf8d1f3290cc204603e7f"
+            }
+          ],
+          "assistant_tool_call_records": 3
+        }
+      ],
+      "tool_result_names": [
+        "patch",
+        "read_file",
+        "search_files",
+        "skill_view",
+        "terminal",
+        "write_file"
+      ],
+      "tool_result_count": 59,
+      "assistant_with_tool_calls_count": 32,
+      "last_recorded_message_at": 1794943222.4434988
+    }
+  ]
+}

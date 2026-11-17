@@ -91,14 +91,40 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
         env["causationid"] = payload["causation_id"]
         if ce_type == "bloodbank.portfolio.receipt.recorded":
             env["id"] = payload["receipt_id"]
+    if ce_type == "bloodbank.project.app_launch.recorded":
+        sys.path.insert(0, str(Path("services/agent-hooks/tests").resolve()))
+        from tolt_contract_fixtures import envelope_for
+        return envelope_for("launch")
     if domain == "project":
         # data: {} cannot satisfy assert_project_invariants; use the internal
         # fixture and bind the two cross-field keys the validator checks.
+        # Activity fixtures are keyed by audience; other project facts are one payload.
         fixtures = json.loads(Path("ops/fixtures/project-contracts.v1.json").read_text())
-        payload = fixtures[ce_type]["internal"]
+        entry = fixtures[ce_type]
+        payload = entry["internal"] if "internal" in entry else entry
         env["data"] = payload
         env["ordering_key"] = f"project:{payload['project']['slug']}"
-        env["correlationid"] = payload["generator"]["run_id"]
+        if "generator" in payload:
+            env["correlationid"] = payload["generator"]["run_id"]
+        if ce_type == "bloodbank.project.artifact.created":
+            # An artifact fact is caused by the agent event whose bytes were
+            # captured (assert_project_invariants); bind the envelope to the
+            # fixture's source_event.id the way the sidecar producer does.
+            env["causationid"] = payload["origin"]["source_event"]["id"]
+    if domain == "watch":
+        # data: {} cannot satisfy assert_watch_invariants; bind the ordering
+        # bucket to the target id and causationid to the event answered.
+        parent = {
+            "bloodbank.watch.target.detected": "source_event_id",
+            "bloodbank.watch.target.routed": "detection_event_id",
+        }[ce_type]
+        env["data"] = {"watch_id": "test-target", parent: env["causationid"]}
+        env["ordering_key"] = "watch:test-target"
+    if domain == "game":
+        sys.path.insert(0, str(Path("services/agent-hooks/tests").resolve()))
+        from tolt_contract_fixtures import CASES, envelope_for
+        case = next(name for name, (type_name, _, _) in CASES.items() if type_name == ce_type)
+        env = envelope_for(case)
     return env
 
 

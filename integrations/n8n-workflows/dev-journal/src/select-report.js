@@ -2,7 +2,8 @@ const now = Date.now();
 const candidates = (await rows('reports')).filter((r) => {
   const retry = r.next_attempt_at && Date.parse(r.next_attempt_at) > now;
   const lease = r.processing_lease_until && Date.parse(r.processing_lease_until) > now;
-  const done = r.status === 'complete' && (r.backfill || r.email_id);
+  const done = r.status === 'complete' && !r.pending_email &&
+    (r.backfill || (r.email_id && r.email_phase === 'complete'));
   return r.generation_id !== 'missing' && !retry && !lease && !done;
 });
 candidates.sort((a, b) => {
@@ -41,9 +42,14 @@ const user = JSON.stringify({ report_date: row.report_date, source_candidates: s
   collector_facts: content.collector_facts, known_findings: knownFindings,
   full_report_markdown: content.markdown });
 const llmRequest = {
-  model: 'openai/gpt-4.1-mini',
+  // auto/fast: the cheap tier, on the operator's subscription and free pools (2026-11-03).
+  // The metered OpenRouter route this used ran out of credit and failed every 5 minutes.
+  model: 'automaticai/auto/fast',
   messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
   response_format: { type: 'json_object' }, temperature: 0, max_tokens: 10000,
+  // Streamed: a full journal takes ~200 s on auto/fast, and a non-streaming answer is cut at the
+  // gateway's 115 s header backstop. The stream's heartbeats carry it; process-report reads the SSE text.
+  stream: true,
 };
 return [{ json: { report_key: row.report_key, source_candidates: sourceCandidates,
   known_finding_count: knownFindings.length, llm_request: llmRequest } }];

@@ -685,6 +685,10 @@
         "state": {
           "type": "string",
           "maxLength": 4096
+        },
+        "missing_commands": {
+          "type": "array",
+          "items": {"type": "string", "maxLength": 4096}
         }
       },
       "required": [

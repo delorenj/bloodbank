@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/billing/rule.cancel.json",
+  "title": "Billing Rule Cancel Command",
+  "description": "Imperative request, from a Farm operator through the command palette, that the billing authority revoke one ledger rule of a client with a reason (ms rule revoke). Apply only. Signed by the portal Worker (HMAC-SHA256, a farm-command-* key) and accepted by farm-command-bridge at POST /v1/commands; the consumer re-verifies the signature, checks the sender's per-client grant on its own ledger and answers with billing.farm_command.completed, .denied or .failed carrying this command_id. Recommended idempotency_key: 'billing.rule.cancel:client:<client>:command:<command_id>'. See bloodbank/docs/event-naming.md (billing) and Milkshake docs/farm-commands.md section 14.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.billing.rule.cancel"
+    },
+    "kind": {
+      "const": "command"
+    },
+    "domain": {
+      "const": "billing"
+    },
+    "subject": {
+      "const": "bloodbank.cmd.billing.rule.cancel"
+    },
+    "schemaref": {
+      "const": "bloodbank.billing.rule.cancel.v1"
+    },
+    "dataschema": {
+      "const": "apicurio://holyfields/bloodbank.billing.rule.cancel/versions/1"
+    },
+    "delivery": {
+      "const": "single_consumer"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "pattern": "^billing\\.rule\\.cancel:client:[a-z0-9]+(-[a-z0-9]+)*:command:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "data": {
+      "allOf": [
+        {
+          "$ref": "../../_common/farm_command_request.v1.json#/$defs/palette_data"
+        }
+      ],
+      "description": "Payload for bloodbank.billing.rule.cancel.",
+      "properties": {
+        "request": {
+          "allOf": [
+            {
+              "$ref": "../../_common/farm_command_request.v1.json#/$defs/palette_request"
+            }
+          ],
+          "properties": {
+            "subject": {
+              "const": "bloodbank.cmd.billing.rule.cancel"
+            },
+            "command": {
+              "const": "rule revoke"
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "rule_id": {
+                  "type": "string",
+                  "pattern": "^r[1-9][0-9]{0,9}$"
+                },
+                "reason": {
+                  "$ref": "../../_common/farm_command_request.v1.json#/$defs/reason"
+                }
+              },
+              "required": [
+                "rule_id",
+                "reason"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "subject",
+    "schemaref",
+    "dataschema",
+    "command_id",
+    "idempotency_key",
+    "actor",
+    "data",
+    "delivery"
+  ]
+}

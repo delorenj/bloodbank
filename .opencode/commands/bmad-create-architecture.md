@@ -1,5 +1,5 @@
 ---
-description: DEPRECATED — consolidated into bmad-architecture create intent - this skill will be removed in v7 in favor of `bmad-architecture`.
+description: Deprecated — forwards to bmad-architecture (create intent)
 ---
 
 @skills/bmad-create-architecture

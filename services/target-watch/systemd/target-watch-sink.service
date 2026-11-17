@@ -1,0 +1,61 @@
+# target-watch sink: systemd --user unit TEMPLATE. NOT installed by the repo.
+#
+#   uv sync --project ~/code/33GOD/bloodbank/services/target-watch --frozen --no-dev
+#   ln -sf ~/code/33GOD/bloodbank/services/target-watch/systemd/target-watch-sink.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now target-watch-sink
+#
+# Durable JetStream consumer target-watch-sink on bloodbank.evt.watch.target.detected.
+# Runs `px` (cwd = the target's sink repo) and `hermes send`, both from ~/.local/bin.
+# Every JIMB ticket it files dispatches the james-brennan PM to groom it, so the
+# sink coalesces follow-ups into one ticket per conversation (sink.coalesce_hours).
+[Unit]
+Description=target-watch sink (detections -> tickets, notifications, bloodbank.watch.target.routed)
+Documentation=file:%h/code/33GOD/bloodbank/services/target-watch/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/33GOD/bloodbank/services/target-watch
+Environment=NATS_URL=nats://127.0.0.1:4222
+Environment=TARGET_WATCH_STATE_DIR=%h/.local/state/target-watch
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Run the synced venv's entry point, never `uv run`: uv here is a mise shim, and
+# mise applies bloodbank's mise.toml, whose PATH puts agents/hermes/pm/hermes (a
+# wrapper pinned to the bloodbank-pm profile, Telegram disabled) ahead of the real
+# hermes. Every notification failed that way on 2026-11-04. Re-run `uv sync` after a pull.
+Environment=TARGET_WATCH_HERMES=%h/.local/bin/hermes
+Environment=TARGET_WATCH_HERMES_PROFILE=33god-pm
+Environment=TARGET_WATCH_PX=%h/.local/bin/px
+Environment=TARGET_WATCH_GOG=/usr/local/bin/gog
+# "ring:<E.164>" / "ring:sip:<user>@<host>" notify channel: a Telnyx Call Control outbound call that makes the operator's
+# phone ring. Ids and numbers of the operator's own Telnyx account, not secrets. The API key is
+# read at use time with `op read` (TARGET_WATCH_TELNYX_KEY_REF, default in sink.py);
+# OP_SERVICE_ACCOUNT_TOKEN is inherited from the user manager, as in delohome.service.
+Environment=TARGET_WATCH_TELNYX_CONNECTION_ID=3086124529433446133
+Environment=TARGET_WATCH_RING_FROM=+12154498437
+Environment=TARGET_WATCH_OP=%h/.local/bin/op
+# The "Create Ticket" button on a `ticket = "button"` target's ntfy push (button.py). The tap is a POST that
+# Traefik forwards to this listener: Host(agents.delo.sh) && PathPrefix(/watch/) in
+# ~/docker/core/traefik/traefik-data/dynamic/target-watch.yml, to host.docker.internal:18796. Bind the docker0
+# gateway, the one address Traefik's container reaches the host on: not 0.0.0.0, so the LAN cannot reach it.
+# The HMAC secret is the 1Password item below (DeLoSecrets, "target-watch button secret"), read with op
+# at first use and held in memory only; this file carries the reference, never the value.
+Environment=TARGET_WATCH_BUTTON_LISTEN=172.17.0.1:18796
+Environment=TARGET_WATCH_BUTTON_SECRET_REF=op://DeLoSecrets/mtazkqyrdgujoyazn5wpeg5xxq/password
+# "earshot:<channel>" notify channel: `earshot say -c <channel> --slug target-watch -- <line>` (the CLI is a symlink
+# into ~/code/earshot and must know --slug: the bucket is world-listable, so the key must not carry the line).
+Environment=TARGET_WATCH_EARSHOT=%h/.local/bin/earshot
+ExecStart=%h/code/33GOD/bloodbank/services/target-watch/.venv/bin/target-watch sink
+Restart=always
+RestartSec=5s
+RestartSteps=8
+RestartMaxDelaySec=5min
+# A px create in flight is allowed to finish (it is never retried after a kill).
+TimeoutStopSec=120s
+KillMode=mixed
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

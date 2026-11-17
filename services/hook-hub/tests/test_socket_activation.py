@@ -16,7 +16,7 @@ import pytest
 
 from test_hub import CLIENT, HUB
 sys.path.insert(0, str(HUB.parent))
-from hub import Server
+from hub import Server, default_socket_path
 from receipts import ReceiptStore
 
 PYTHON_313 = sys.executable if sys.version_info >= (3, 13) else shutil.which("python3.13")
@@ -203,3 +203,23 @@ def test_shutdown_interruption_cannot_replace_a_completed_publish_receipt(tmp_pa
     assert receipt["executions"][0]["event_id"] == "event-id"
     assert receipt["executions"][0]["publish_status"] == "sent"
     assert all(row["status"] != "interrupted" for row in receipt["timeline"])
+
+
+def test_macos_style_socket_fallback_matches_between_hub_and_client(tmp_path, monkeypatch):
+    import importlib.machinery
+    import importlib.util
+
+    loader = importlib.machinery.SourceFileLoader("bb_hook_client", str(CLIENT))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bb_hook = importlib.util.module_from_spec(spec)
+    loader.exec_module(bb_hook)
+
+    monkeypatch.delenv("BB_HOOK_SOCKET", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(os.path, "isdir", lambda p: False if str(p).startswith("/run/user/") else os.path.exists(p))
+
+    expected = str(tmp_path / "state/33god/hook-hub.sock")
+    assert default_socket_path() == expected
+    assert bb_hook.socket_path() == expected
+

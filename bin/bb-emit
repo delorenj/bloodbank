@@ -44,7 +44,10 @@ Lineage and ordering: causationid is always emitted (null unless --causation
 is given -- a root event). ordering_key is --ordering-key when given, else the
 narrowest §11.1 bucket the payload names: transcription:<id> when the data
 carries a transcription_id/id, project:<data.project.slug> for the project
-domain, else <domain>:<uuid4>.
+domain, line:<data.line> for messaging carrier texts (sms/mms/rcs/imessage),
+messaging:<platform>:<thread_id|notification_id> for messaging chat platforms,
+watch:<data.watch_id> for the watch domain,
+else <domain>:<uuid4>.
 
 Every event envelope carries an `actor` (§10, and REQUIRED_EVENT_FIELDS in
 core/validate.py). bb-emit shipped without one for months: NATS core PUB does
@@ -143,12 +146,27 @@ def _nats_publish(subject, body, host, port, timeout=3.0):
                 raise IOError("NATS -ERR: " + line.decode(errors="replace").strip())
 
 
-def _derive_ordering_key(domain, data, tid):
+CARRIER_TRANSPORTS = frozenset({"sms", "mms", "rcs", "imessage"})
+
+
+def _derive_ordering_key(domain, entity, data, tid):
     """§11.1 bucket when the caller gave none: the narrowest one the payload names."""
     if tid:
         return f"transcription:{tid}"
     if domain == "project" and isinstance(data.get("project"), dict) and data["project"].get("slug"):
         return f"project:{data['project']['slug']}"
+    # watch.target.*: every fact about one watched target orders together
+    if domain == "watch" and isinstance(data.get("watch_id"), str) and data["watch_id"].strip():
+        return f"watch:{data['watch_id'].strip()}"
+    # messaging carrier texts order per operator line, whatever the transport
+    if domain == "messaging" and entity in CARRIER_TRANSPORTS and isinstance(data.get("line"), str) and data["line"].strip():
+        return f"line:{data['line'].strip()}"
+    # messaging.<platform>.*: messaging:<platform>:<thread_id>, else the notification itself
+    if domain == "messaging" and entity not in CARRIER_TRANSPORTS:
+        for field in ("thread_id", "notification_id"):
+            value = data.get(field)
+            if isinstance(value, str) and value.strip():
+                return f"messaging:{entity}:{value.strip()}"
     return f"{domain}:{uuid.uuid4()}"
 
 
@@ -173,13 +191,21 @@ def main():
     ap.add_argument("--causation", help="explicit causationid (uuid); default null = root event")
     ap.add_argument("--ordering-key",
                     help="explicit §11.1 ordering bucket (default derived from data: "
-                         "transcription:<id>, project:<data.project.slug>, else <domain>:<uuid4>)")
+                         "transcription:<id>, project:<data.project.slug>, line:<data.line> for "
+                         "messaging carrier texts, messaging:<platform>:<thread_id> for "
+                         "messaging chat platforms, else <domain>:<uuid4>)")
     ap.add_argument("--actor-type", default="service",
                     help="actor.type archetype: service|operator|scheduler|agent_cli|... (default: service)")
     ap.add_argument("--actor-id",
                     help="actor.agent_id (default: bloodbank.service.<--service>)")
     ap.add_argument("--actor",
                     help="whole actor object as JSON; overrides --actor-type/--actor-id")
+    ap.add_argument("--command-id",
+                    help="explicit command_id (uuid) for --kind command; default uuid4. Lets a "
+                         "caller persist the id BEFORE publishing so a crash cannot lose it")
+    ap.add_argument("--print-ids", action="store_true",
+                    help="after a successful publish (or --check), print one JSON line on stdout "
+                         "with id, command_id, idempotency_key, correlationid, subject, type")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=4222)
     ap.add_argument("--strict", action="store_true",
@@ -235,7 +261,7 @@ def main():
               f"got '{a.type}'", file=sys.stderr)
         return usage_rc
 
-    domain = ce_type.split(".")[1]
+    domain, entity = ce_type.split(".")[1:3]
     subject = f"bloodbank.{_KIND_MARKERS[kind]}." + ce_type[len("bloodbank."):]
 
     tid = str(data.get("transcription_id") or data.get("id") or "").strip()
@@ -290,14 +316,14 @@ def main():
         "dataschema": dataschema,
         "kind": kind,
         "actor": actor,
-        "ordering_key": a.ordering_key or _derive_ordering_key(domain, data, tid),
+        "ordering_key": a.ordering_key or _derive_ordering_key(domain, entity, data, tid),
         "data": data,
     }
     if kind == "command":
         # §11.2 — a command envelope is not a contract-valid event envelope; it
         # carries its own required fields. Without these a --kind command emit
         # would fail assert_contract on a shape bb-emit itself chose.
-        command_id = str(uuid.uuid4())
+        command_id = a.command_id or str(uuid.uuid4())
         envelope["command_id"] = command_id
         envelope["idempotency_key"] = str(uuid.uuid5(_NS, f"{ce_type}:{correlationid}"))
         envelope["delivery"] = "single_consumer"
@@ -313,6 +339,21 @@ def main():
     elif _IMPORT_ERROR is not None:
         print(f"bb-emit: WARNING — core/validate.py is present but failed to import "
               f"({_IMPORT_ERROR!r}); publishing UNVALIDATED", file=sys.stderr)
+
+    def _ids_line():
+        return json.dumps({
+            "id": envelope["id"],
+            "type": ce_type,
+            "subject": subject,
+            "correlationid": correlationid,
+            "command_id": envelope.get("command_id"),
+            "idempotency_key": envelope.get("idempotency_key"),
+            "ordering_key": envelope["ordering_key"],
+        }, separators=(",", ":"))
+
+    if a.command_id is not None and kind != "command":
+        print("bb-emit: --command-id only applies to --kind command", file=sys.stderr)
+        return usage_rc
 
     if a.check:
         # Dry run. Everything above already ran, so a PASS here means the very
@@ -351,6 +392,8 @@ def main():
         else:
             print("  validated   yes (core.validate.assert_contract)")
         print(f"  schema      {schema_note}")
+        if a.print_ids:
+            print(_ids_line())
         print("bb-emit: --check, nothing published", file=sys.stderr)
         return 0
 
@@ -370,6 +413,8 @@ def main():
         print(f"bb-emit: publish FAILED ({e}); {outcome}", file=sys.stderr)
         return fail_rc
     print(f"bb-emit: published {ce_type} -> {subject} (corr={correlationid[:8]})", file=sys.stderr)
+    if a.print_ids:
+        print(_ids_line())
     return 0
 
 

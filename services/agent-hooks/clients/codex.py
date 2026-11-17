@@ -24,7 +24,7 @@ from core.session import (
     git_status_word,
 )
 
-from .base import ClientAdapter, read_stdin_text
+from .base import MAX_TURN_PAYLOAD_BYTES, ClientAdapter, read_stdin_text, reply_fields
 
 _CODEX_STATE_DIR = Path.home() / ".codex"
 
@@ -73,7 +73,7 @@ class CodexAdapter(ClientAdapter):
 
     def read_payload(self, argv: list[str]) -> Any:
         if not sys.stdin.isatty():
-            raw = read_stdin_text()
+            raw = read_stdin_text(max_bytes=MAX_TURN_PAYLOAD_BYTES)
             if raw.strip():
                 return _parse_json(raw)
         if len(argv) > 2:
@@ -168,6 +168,11 @@ class CodexAdapter(ClientAdapter):
                 "thread_id": session.session_id,
                 "turn_id": _turn_id(session, payload),
                 "outcome": outcome,
+                # Promote the final reply out of the nested native payload so
+                # consumers (artifact sidecar) read data.reply_text like every
+                # other CLI. `raw` still carries the untouched payload.
+                **reply_fields(_value(payload, "last_assistant_message",
+                                      "last-assistant-message", "lastAssistantMessage")),
                 **raw,
             }
 

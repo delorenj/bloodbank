@@ -181,8 +181,6 @@ def prepare_capture(handler: Any, event: Any) -> None:
         getattr(owner, "_resolve_session_agent_runtime", None)
     ):
         raise CaptureUnavailable("unsupported Hermes handler capture interface")
-    if owner._get_proxy_url():
-        raise CaptureUnavailable("proxy runtime has no local final-answer observer")
     expected_home = get_profile_dir(event.source.profile).resolve()
     multiplex = getattr(owner.config, "multiplex_profiles", False)
     home = (
@@ -194,6 +192,8 @@ def prepare_capture(handler: Any, event: Any) -> None:
         raise CaptureUnavailable("execution home differs from the resolved profile")
     scope = _profile_runtime_scope(home) if multiplex else nullcontext()
     with scope:
+        if owner._get_proxy_url():
+            raise CaptureUnavailable("proxy runtime has no local final-answer observer")
         config = _load_gateway_config()
         model, runtime = owner._resolve_session_agent_runtime(
             source=event.source, user_config=config

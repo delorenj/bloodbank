@@ -157,9 +157,10 @@ def collect_installed_inventory(master: dict | None = None, *, probe_native: boo
                         approvals = set()
                         if allowlist and allowlist.exists():
                             alw = json.loads(allowlist.read_text())
-                            approvals = {(a.get("event"), a.get("command")) for a in alw.get("approvals", [])}
+                            approvals = {(a.get("event"), sync.canonical_command(a.get("command")))
+                                         for a in alw.get("approvals", [])}
                         for row in rows:
-                            if _is_hub(row["command"]) and (row["native"], row["command"]) not in approvals:
+                            if _is_hub(row["command"]) and (row["native"], sync.canonical_command(row["command"])) not in approvals:
                                 row["trust_error"] = "approval_missing"
                 except Exception as exc:
                     entry.update(status="unreadable", errors=[f"config_parse:{type(exc).__name__}"])
@@ -181,8 +182,16 @@ def collect_installed_inventory(master: dict | None = None, *, probe_native: boo
                 want = by_native.get(native)
                 for hook in hub:
                     if want:
+                        # Compare commands over canonical home spellings: live
+                        # configs may carry $HOME/${HOME}/~/ where the installer
+                        # rendered this host's literal — that is one command,
+                        # not drift. Other field diffs stay live diffs.
                         for field in ("command", "matcher", "timeout", "condition"):
-                            if hook.get(field) != want.get(field):
+                            got, expected = hook.get(field), want.get(field)
+                            if field == "command":
+                                got = sync.canonical_command(got)
+                                expected = sync.canonical_command(expected)
+                            if got != expected:
                                 issues.append(f"{field}_drift")
                     hook_enabled = hook.get("enabled", True)
                     if hook_enabled is False:

@@ -46,7 +46,7 @@ n8n workflow `Plane → Bloodbank` (iMw484J1ZCqKME2C)
   ▼
 NATS `bloodbank.evt.repo.*`
   ├─ JetStream `BLOODBANK_EVENTS` retains the immutable envelope
-  ├─ event-toaster core subscription fans out to ntfy for human observation
+  ├─ ntfy-router core subscription fans out to ntfy for human observation
   └─ Dapr durable `candystore-events` subscription (`bloodbank.evt.>`)
        ▼
      Candystore `/events/all` → idempotent PostgreSQL insert
@@ -100,17 +100,19 @@ publishes `repo.task.*` or `repo.board.*`. It writes Plane (`px task create`,
 
 **Missed deliveries.** Plane does not retry an HTTP error, so a ticket created
 while n8n is down never reaches the bus by webhook. *Plane Ingress Reconcile*
-(`U4hYm3BYPPeZNDHQ`, every 10 min) republishes missing creation facts through
+(`U4hYm3BYPPeZNDHQ`, every 10 min, fired by the Candybar `plane-ingress-reconcile`) republishes missing creation facts through
 the same normalizer (`data.trigger_source: plane-reconcile`, same event id and
 `Nats-Msg-Id`, at most 20 per sweep). Updates, transitions and comments made
 during an outage are not recovered.
 
-### The n8n ticket lanes (n8n-nodes-bloodbank 0.7.2)
+### The n8n ticket lanes (n8n-nodes-bloodbank 0.8.0)
 
 ```text
 bloodbank.evt.repo.task.created / .updated
-  ▼ Bloodbank Trigger (alias plane.ticket.created / plane.ticket.transitioned;
-  │   durable JetStream pull consumer, acked after the execution)
+bloodbank.evt.agent.invocation.completed (reason ticket-grooming, phase Todo)
+  ▼ Bloodbank Trigger (alias plane.ticket.created / plane.ticket.transitioned,
+  │   or the grooming completion + a live Plane re-read; durable JetStream pull
+  │   consumer per workflow+node, acked after the execution)
 33GOD Agent Fleet node (Groom Ticket / Delegate Ticket)
   ├─ Dispatched → bloodbank.cmd.agent.invocation.start
   │    command_id = uuid5(causing event id, operation, agent) → redelivery dedups
@@ -118,21 +120,73 @@ bloodbank.evt.repo.task.created / .updated
   │                  ticket_id, board_id, workspace, title, phase, …}
   └─ Skipped → bloodbank.evt.agent.invocation.skipped
        data {reason, skip_code: provider_event_guard|phase_guard|ineligible|
-             invalid_policy|fenced|no_route, target_agent_id|null, context{…}}
+             invalid_policy|fenced|no_route|already_triaged|held|
+             not_triaged|hitl_blocked, target_agent_id|null, context{…}}
 ```
 
 A skip is a fact on the bus, not a silent green execution: "why did nobody
 groom this ticket?" is answered by querying Candystore for
 `bloodbank.agent.invocation.skipped` with the ticket's `data.context.board_id`.
 
+A **failed lane run is a fact on the bus too**: `bloodbank.evt.workflow.task.failed`,
+published by the Fleet node's **Report Lane Failure** operation from the
+*Lifecycle Lane Errors* workflow. It reuses the existing type (an additive
+schema revision; the four required fields `workflow`, `run_id`, `stage`,
+`reason` are unchanged and `agent.invocation.failed` is NOT used: the Pickup Chip
+listens to it). `data.workflow` is the lane slug (`ticket-grooming`,
+`ticket-delegation`, `ticket-delegation-groomed`, `ticket-pickup-chip`) and the
+rest is typed: `lane {engine, workflow_id, execution_id, execution_url, …}`,
+`context` (same paths as the skip's), `target_agent_id`, `company_identity`
+(null = owner not enrolled), `gateway_consumer`, `error {class, http_status,
+upstream, credential_scope, retry_after_seconds}`, `severity` (`page|low`),
+`recovery {action, hint}`, `links`, `redacted: true`. The id is
+`uuid5("workflow.task.failed:<workflow_id>:<execution_id>")`, ordering key
+`task:<repo|board>:<ticket_id>` (else `workflow:<wf>:<exec>`). "Why did this
+ticket stall?" is answered by querying Candystore for
+`bloodbank.workflow.task.failed` on `data.context.ticket_key`.
+
 | Workflow (id) | Starts on | ntfy `lifecycle` push |
 |---|---|---|
 | Plane → Bloodbank (`iMw484J1ZCqKME2C`) | Plane webhook | Unrouted Board (1/board/24h) |
-| Plane Ingress Reconcile (`U4hYm3BYPPeZNDHQ`) | every 10 min | Recovered missed ticket |
+| Plane Ingress Reconcile (`U4hYm3BYPPeZNDHQ`) | every 10 min (Candybar `plane-ingress-reconcile`, webhook) | Recovered missed ticket |
 | Ticket Grooming (`6wAGA5pdrmHLyhs2`) | `plane.ticket.created` | Triage Started / Triage Skipped |
 | Ticket Delegation (`8mmqdMwQYA28ZwUj`) | `plane.ticket.transitioned` into Todo | Delegation Started / Skipped (not `phase_guard`, `provider_event_guard`) |
-| Ticket Pickup Chip (`wWXgCZiiIBWaRRzE`) | `agent.invocation.started/completed/failed` with `data.context.reason` in the two lanes; hourly stale-chip sweep | none |
+| Ticket Delegation — Groomed in Todo (`l0J53w0TsS5PwETk`) | `agent.invocation.completed` with `data.context.reason = ticket-grooming` and `data.context.phase = Todo` (a ticket *created* in Todo, which never transitions); delegates only if the live Plane state name is exactly `Todo` and the ticket carries `lifecycle:triaged` | Delegation Started / Skipped, tagged `groomed-in-todo` |
+| Lifecycle Lane Errors (`72y5JKBSJqYIjIEv`) | n8n Error Trigger: a failed execution of a workflow that names it as `settings.errorWorkflow` (grooming, delegation, groomed, and the Pickup Chip; a chip failure is `severity: low`, paged at priority 2) | Publishes `workflow.task.failed`, then **Lane failed: <ticket>** at priority 4, tagged `lane-error`, with the failing node, error class, owner, and the recovery (retry URL, requeue command) |
+| Ticket Pickup Chip (`wWXgCZiiIBWaRRzE`) | `agent.invocation.started/completed/failed` with `data.context.reason` in the two lanes; stale-chip sweep fired by the Candybar `ticket-pickup-chip-sweep` at :51 hourly (webhook, no n8n Schedule Trigger) | none (failures go through Lifecycle Lane Errors) |
 
+- **Two ways into delegation.** A ticket created in Backlog is groomed there,
+  and the transition lane delegates it when a person promotes it to Todo. A
+  ticket created straight into Todo never transitions, so the groomed lane
+  starts on its grooming turn's completion instead. The echoed `phase` is
+  the state when grooming was *dispatched* and can be stale (PJAN-202 was
+  claimed In Progress mid-grooming and its completion still said Todo), so
+  the lane re-reads Plane and stops quietly unless the ticket is in Todo and
+  labelled `lifecycle:triaged` (grooming withholds the label when it stopped to
+  ask a question). Its command's cause is the completion event, so a
+  redelivered completion dedupes at the gateway. It cannot trigger itself,
+  because its own turn completes with `reason = ticket-delegation`. Both lanes
+  send the same prompt, and its first step is a live re-read that stops on a
+  ticket that is no longer in Todo, is In Progress, or is held by another
+  worker.
+- **No backfill; requeue by hand.** Durables start at the stream tip and a
+  failed lane execution is acked, never redelivered, so a ticket left in Todo
+  (born there before the groomed lane, or dropped like HEYMA-12 on a Plane 429,
+  execution 632616) stays there. Requeue it after
+  re-reading it: `px move <REF> Backlog -m "<why>"`, then `px move <REF> Todo`.
+  The second move is the transition the delegation lane picks up.
+  A failed run of the groomed lane pages ntfy `lifecycle` (*Lifecycle Lane
+  Errors*), so you see the drop instead of having to find it: the page names
+  the ticket, read back from the failed execution, and gives this exact requeue.
+- **Each trigger has its own durable**, `n8n-<workflow id>-<node id>`, on
+  `BLOODBANK_EVENTS`. That stream uses limits retention, so the Pickup Chip
+  and the groomed lane both see every `invocation.completed` and neither
+  takes events from the other.
+- **Finding: `unstarted` in Ticket Delegation's phase guard
+  (`Todo,unstarted`) never matches.** The guard compares state *names*
+  (`data.phase`), and the fact carries no state group, so `unstarted` matches
+  only a state literally named that. The entry is harmless, and that workflow
+  is unchanged.
 - **Fleet node:** outputs Dispatched and Skipped; mapping params are visible
   expressions over the envelope; the registry path is `HERMES_AGENTS_REGISTRY`
   (default `~/.hermes/agents-registry.yaml`); `providerEventGuard` is strict (set
@@ -156,7 +210,7 @@ Command producer (PM/control plane/operator adapter)
   ▼
 JetStream `BLOODBANK_COMMANDS` (work-queue retention)
   ▼ durable pull consumer `bloodbank-hermes-gateway`
-Fleet-shared `hermes-fleet-bloodbank-gateway.service`
+Host `hermes-gateway.service` (Bloodbank lane, profile fleet-bloodbank-gateway)
   │ 1. cap size and validate command/schema/actor/prompt
   │ 2. resolve target_agent_id through fleet registry
   │ 3. check the Bloodbank route block (no enabled key = enabled)
@@ -172,7 +226,7 @@ Lifecycle event publications on `bloodbank.evt.*`
        ├─ `BLOODBANK_EVENTS`
        ├─ Candystore durable projection
        ├─ Holocene fleet/velocity read model
-       └─ event-toaster → ntfy
+       └─ ntfy-router → ntfy
 ```
 
 The gateway acknowledges a command only after Hermes processing and terminal
@@ -202,6 +256,18 @@ The gateway does not infer permission from a running systemd unit, Telegram
 configuration, profile existence, or a past successful command. A running
 gateway with zero eligible entries is healthy but intentionally unroutable.
 
+## Journey C: Transcript harvest (audio.harvest)
+
+The Holocene Transcripts tab "Harvest" button turns one transcript into tickets, reviewed by a human in between.
+
+1. Holocene publishes command `bloodbank.audio.harvest.start` (`transcript_id` and/or `wax_item_id`, `requested_by`, optional `force`) with a fresh `correlationid`.
+2. The pilot harvest worker (`px harvest worker`, `pilot-harvest-worker.service`) consumes it and emits `audio.harvest.queued` (`waiting_for: enrichment`) while wax finishes all enrichment passes.
+3. It emits `audio.harvest.started` when `px harvest <note>` runs, then `audio.harvest.completed` with `review_url` (`https://holocene.delo.sh/harvest/review/<harvest_id>/`), item counts and `links: [{rel: page, label, url}]` so ntfy-router renders a button. A stage that cannot finish emits `audio.harvest.failed` (`stage`: `enrichment`, `harvest` or `publish`).
+4. Submitting the review form makes the worker publish command `bloodbank.audio.harvest.publish` (`harvest_id`, `artifact_path`, `accepted_only`), which it consumes itself and runs `px harvest publish <artifact> --accepted`.
+5. It emits `audio.harvest.published` (`created`, `adopted`, `failed`, `tickets[]`).
+
+Every event carries the start command's `correlationid`; `causationid` is the `command_id` that caused it. Schemas: `schemas/bloodbank/audio/harvest.*.json`.
+
 ## Which component owns what?
 
 | Boundary | Owner | Responsibility |
@@ -214,7 +280,7 @@ gateway with zero eligible entries is healthy but intentionally unroutable.
 | Durable event projection | Candystore | Dapr subscription, idempotent insert, query API |
 | Agent command consumption | Hermes fleet gateway | Validates, authorizes, journals, dispatches, and emits lifecycle facts |
 | Operator read model | Holocene | Reads selected Candystore/fleet state; does not become event authority |
-| Human notification | event-toaster / ntfy | Best-effort observation; not durable proof |
+| Human notification | ntfy-router / ntfy | Best-effort observation; not durable proof |
 
 ## End-to-end proof checklist
 
@@ -226,7 +292,7 @@ gateway with zero eligible entries is healthy but intentionally unroutable.
    enabled.
 3. Trigger one safe Plane action.
 4. Confirm the n8n execution accepted the known `webhook_id` and HMAC.
-5. Confirm the expected NATS subject or event-toaster observation.
+5. Confirm the expected NATS subject or ntfy-router observation.
 6. Query Candystore by producer and type, for example:
    `GET /events?producer=n8n-plane-webhook&type=bloodbank.repo.task.created`.
 7. Match `id`, `workspace`, `board_id`, `repo`, and
@@ -248,7 +314,7 @@ gateway with zero eligible entries is healthy but intentionally unroutable.
 ## Common false conclusions
 
 - **"n8n returned 200, so the event is durable."** No. Prove the Candystore row.
-- **"ntfy showed it, so Candystore has it."** No. The toaster and Candystore are
+- **"ntfy showed it, so Candystore has it."** No. The router and Candystore are
   independent consumers.
 - **"The gateway service is running, so commands can execute."** No. Prove the
   current registry route is eligible.

@@ -1,0 +1,58 @@
+{
+  "captured_at": "2026-11-17T20:06:56.185503+00:00",
+  "read_only": true,
+  "source": "Hermes gateway SQLite executions mode=ro/query_only; metadata only",
+  "commands": [
+    {
+      "command_id": "a97f5d82-a1f0-530b-abdc-56add9433327",
+      "profile": "heyma-pm",
+      "state": "pending",
+      "outcome": null,
+      "created_at": "2026-11-17T19:54:56.055139Z",
+      "updated_at": "2026-11-17T19:54:56.055139Z",
+      "origin": "post_retirement_n8n",
+      "ticket": "HEYMA-28"
+    },
+    {
+      "command_id": "fb758fac-bdb9-5b56-a2b8-1c83e23fcfd4",
+      "profile": "bloodbank-pm",
+      "state": "started",
+      "outcome": null,
+      "created_at": "2026-11-17T19:19:45.811390Z",
+      "updated_at": "2026-11-17T19:19:45.881246Z",
+      "origin": "pre_retirement_BB41_dispatch",
+      "ticket": "BB-41"
+    },
+    {
+      "command_id": "6b830397-6ff6-575f-a509-66db69b20e59",
+      "profile": "heyma-pm",
+      "state": "started",
+      "outcome": null,
+      "created_at": "2026-11-17T19:40:03.838870Z",
+      "updated_at": "2026-11-17T19:58:06.248705Z",
+      "origin": "post_retirement_pickup_chip_event",
+      "ticket": "HEYMA-19"
+    },
+    {
+      "command_id": "e1a4ec36-59c3-5b39-b3a8-d195267eaf11",
+      "profile": "tolt-pm",
+      "state": "completed",
+      "outcome": "success",
+      "created_at": "2026-11-17T19:39:35.226530Z",
+      "updated_at": "2026-11-17T19:58:06.180453Z",
+      "origin": "post_retirement_pickup_chip_event",
+      "ticket": "TOLT-147"
+    },
+    {
+      "command_id": "32cbef44-72c2-5809-a0e0-0a8f19066a6b",
+      "profile": "holocene-pm",
+      "state": "pending",
+      "outcome": null,
+      "created_at": "2026-11-17T20:00:03.909021Z",
+      "updated_at": "2026-11-17T20:00:03.909021Z",
+      "origin": "post_retirement_scheduled_krebs_dispatch",
+      "ticket": "HOLOC-44"
+    }
+  ],
+  "limits": "Pending commands do not prove handler execution. Earlier-created commands with actual post-cutoff tools demonstrate continuing authorized work; not a new post-retirement dispatch."
+}

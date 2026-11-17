@@ -89,6 +89,14 @@ class TestEmitCheck(unittest.TestCase):
         self.assertIn("type        bloodbank.agent.invocation.start", r.stdout)
         self.assertIn("subject     bloodbank.cmd.agent.invocation.start", r.stdout)
 
+    def test_interactive_lane_command_is_a_legal_name(self):
+        r = run(BB, "emit", "--check", "--type", "bloodbank.cmd.agent.invocation.invoke",
+                "--data", "{}")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("kind        command", r.stdout)
+        self.assertIn("type        bloodbank.agent.invocation.invoke", r.stdout)
+        self.assertIn("subject     bloodbank.cmd.agent.invocation.invoke", r.stdout)
+
     def test_phantom_families_are_refused_with_the_allowlist_reason(self):
         for t in PHANTOM_EVENTS + PHANTOM_COMMANDS:
             with self.subTest(type=t):

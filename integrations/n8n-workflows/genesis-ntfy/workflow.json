@@ -1,0 +1,102 @@
+{
+  "name": "Genesis -> ntfy",
+  "nodes": [
+    {
+      "id": "6c1f3a52-8a0b-4d3e-9c1e-0d6f7b9a1001",
+      "name": "Genesis event",
+      "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "events": [
+          "bloodbank.genesis.approval.requested",
+          "bloodbank.genesis.approval.granted",
+          "bloodbank.genesis.approval.denied",
+          "bloodbank.genesis.approval.expired",
+          "bloodbank.genesis.alert.raised"
+        ],
+        "delivery": "durable",
+        "acknowledge": "afterExecution",
+        "catchUpHours": 24,
+        "connection": {}
+      }
+    },
+    {
+      "id": "6c1f3a52-8a0b-4d3e-9c1e-0d6f7b9a1002",
+      "name": "Format ntfy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Turns one bloodbank.genesis.* envelope into the JSON body ntfy publishes.\n// Embedded verbatim into the workflow's \"Format ntfy\" Code node by build.mjs, so this file is\n// the one place the wording lives. Plain function declarations only: n8n's Code node sandbox\n// has no require() and the unit test loads the source through new Function().\n\nvar NTFY_TOPIC = 'genesis';\nvar NTFY_TZ = 'America/New_York';\n\nfunction ntfyWhen(iso) {\n  var t = new Date(iso);\n  if (isNaN(t.getTime())) return String(iso || 'unknown');\n  return t.toLocaleString('en-US', {\n    timeZone: NTFY_TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',\n  });\n}\n\nfunction ntfyClip(text, max) {\n  var s = String(text == null ? '' : text);\n  return s.length > max ? s.slice(0, max - 1) + '…' : s;\n}\n\nfunction ntfyActionLines(kind, action) {\n  var a = action && typeof action === 'object' ? action : {};\n  var lines = [];\n  if (kind === 'email.send' || a.to || a.subject) {\n    if (Array.isArray(a.to) && a.to.length) lines.push('**To:** ' + a.to.join(', '));\n    if (Array.isArray(a.cc) && a.cc.length) lines.push('**Cc:** ' + a.cc.join(', '));\n    if (a.subject) lines.push('**Subject:** ' + a.subject);\n    if (a.body_preview) {\n      lines.push('');\n      lines.push(String(a.body_preview).split('\\n').map(function (l) { return '> ' + l; }).join('\\n'));\n    }\n    return lines;\n  }\n  var keys = Object.keys(a);\n  if (keys.length) lines.push('```\\n' + ntfyClip(JSON.stringify(a, null, 1), 800) + '\\n```');\n  return lines;\n}\n\nfunction formatNtfy(e) {\n  var d = (e && e.data) || {};\n  var type = e && e.type;\n  var test = d.test === true;\n  var prefix = test ? '[test] ' : '';\n  var who = d.client_name || d.client_id || 'unknown client';\n  var base = {\n    topic: NTFY_TOPIC,\n    markdown: true,\n    click: d.operator_url,\n    actions: d.operator_url ? [{ action: 'view', label: 'Open operator', url: d.operator_url }] : [],\n  };\n  var tags = ['genesis'];\n  if (test) tags.push('test_tube');\n\n  if (type === 'bloodbank.genesis.approval.requested') {\n    var lines = ['**' + ntfyClip(d.summary, 200) + '**', ''];\n    if (d.question) lines.push(ntfyClip(d.question, 1500), '');\n    var detail = ntfyActionLines(d.kind, d.action);\n    if (detail.length) lines.push(detail.join('\\n'), '');\n    lines.push('Expires ' + ntfyWhen(d.expires_at) + ' · via ' + (d.channel || 'web') + ' · ' + (d.bot_id || ''));\n    return Object.assign(base, {\n      title: prefix + 'Approval needed · ' + who,\n      message: ntfyClip(lines.join('\\n'), 3500),\n      priority: 4,\n      tags: ['raised_hand'].concat(tags),\n      sequence_id: d.approval_id,\n    });\n  }\n\n  var resolved = {\n    'bloodbank.genesis.approval.granted': ['Approved', 'white_check_mark'],\n    'bloodbank.genesis.approval.denied': ['Declined', 'x'],\n    'bloodbank.genesis.approval.expired': ['Expired', 'hourglass_flowing_sand'],\n  }[type];\n  if (resolved) {\n    var via = d.decided_via ? ' (' + d.decided_via + ')' : '';\n    return Object.assign(base, {\n      title: prefix + resolved[0] + ' · ' + who,\n      message: ntfyClip(resolved[0] + via + ': ' + (d.summary || d.kind || d.approval_id), 500),\n      priority: 2,\n      tags: [resolved[1]].concat(tags),\n      sequence_id: d.approval_id,\n    });\n  }\n\n  if (type === 'bloodbank.genesis.alert.raised') {\n    var critical = d.severity === 'critical';\n    var body = ['**' + String(d.reason || 'alert').replace(/_/g, ' ') + '**', '', ntfyClip(d.summary, 200)];\n    if (d.detail) body.push('', ntfyClip(d.detail, 2000));\n    if (d.bot_id) body.push('', d.bot_id);\n    return Object.assign(base, {\n      title: prefix + 'Genesis alert · ' + who,\n      message: ntfyClip(body.join('\\n'), 3500),\n      priority: critical ? 5 : 4,\n      tags: [critical ? 'sos' : 'rotating_light'].concat(tags),\n      sequence_id: d.alert_id,\n    });\n  }\n\n  throw new Error('Genesis -> ntfy does not handle event type ' + type);\n}\n\nreturn { json: { ntfy: formatNtfy($input.item.json) } };\n"
+      }
+    },
+    {
+      "id": "6c1f3a52-8a0b-4d3e-9c1e-0d6f7b9a1003",
+      "name": "Publish to ntfy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "parameters": {
+        "method": "POST",
+        "url": "https://ntfy.delo.sh/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ntfy) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Ek5QjwyMWTolNgcO",
+          "name": "ntfy phone publisher (n8n user)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Genesis event": {
+      "main": [
+        [
+          {
+            "node": "Format ntfy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format ntfy": {
+      "main": [
+        [
+          {
+            "node": "Publish to ntfy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all"
+  }
+}

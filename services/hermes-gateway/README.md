@@ -27,14 +27,26 @@ This repository change performs none of those rollout actions.
 
 ## Installation
 
-Install this directory from a retained Bloodbank checkout into the Python
-environment used by the dedicated Hermes gateway process. The checkout supplies
-`services/agent-hooks/core/validate.py` and canonical `schemas/`; `jsonschema` is
-a runtime dependency. Missing validation support fails capture closed:
+Hermes now runs from a PM-managed environment that is rebuilt on every
+`hermes update`; anything pip-installed by hand is dropped. Do NOT `pip install`
+this package into the managed environment. Instead install the vendored directory
+plugin, which carries the adapter code and declares `nats-py`/`PyYAML` in
+`plugin.yaml` `pip_dependencies` so PM keeps them in the shared environment.
+The adapter also needs the canonical Bloodbank schemas and validation support;
+missing validation support fails final-answer capture closed:
 
 ```bash
-python -m pip install -e ./services/hermes-gateway
+services/hermes-gateway/hermes-plugin/install.sh   # initial install or changed plugin dependencies only
+hermes-gateway-restart --strict-idle --max-wait 15 --reason "Bloodbank adapter update"
 ```
+
+Verify: `~/.hermes/gateway_state.json` `.platforms.bloodbank.state == "connected"`
+and `curl -s 'http://127.0.0.1:8222/jsz?consumers=true'` shows the
+`bloodbank-hermes-gateway` consumer with activity (`num_waiting >= 1` when idle).
+With the interactive lane enabled (below) it also shows
+`bloodbank-hermes-gateway-interactive`, `max_ack_pending: 2`, `num_waiting >= 1`.
+
+The legacy pip layout below is kept for reference only.
 
 The package advertises the `bloodbank-platform` entry point in the
 `hermes_agent.plugins` group. Enable that plugin in the host/default Hermes
@@ -59,8 +71,33 @@ gateway:
         allow_direct_profile_targets: false
         durable_name: bloodbank-hermes-gateway
         max_inflight: 4
+        # Optional batch lookahead: leave 4 turn slots bounded while retaining
+        # up to 64 extra deliveries behind busy conversation threads.
+        queued_capacity: 64
         ack_wait_seconds: 90
         ack_progress_seconds: 20
+        # Optional second lane; absent or `enabled: false` = single-lane gateway.
+        interactive:
+          enabled: true
+          durable_name: bloodbank-hermes-gateway-interactive
+          max_inflight: 2
+          max_deliver: 8
+          ack_wait_seconds: 180
+          ack_progress_seconds: 30
+          nak_delay_seconds: 3
+          # Wall clock for ONE Hermes turn on this lane. Absent = 300. A strict
+          # positive number of seconds (not a bool, string or null), at most 86400.
+          turn_timeout_seconds: 300
+          # At the wall clock, give the slot back and let the turn run on instead
+          # of stopping it (see "Detach at the wall clock"). Absent = false.
+          detach_on_timeout: true
+          max_detached: 2                  # absent = 2 (1..64); durable max_ack_pending = 2 + 2
+          detached_ceiling_seconds: 2700   # absent = 2700; stopped as before past this
+          # A DETACHED turn a reload or shutdown cuts off: fail (absent) closes it as
+          # interrupted_by_shutdown; retry NAKs it for a re-run from the top.
+          detached_shutdown_interrupt: fail
+        # data.model on a command runs that turn on the route (/model --once). Absent = true.
+        allow_model_override: true
 ```
 
 Resolution precedence is the explicit `target_profiles` mapping, followed by
@@ -109,6 +146,270 @@ record. Unknown targets never fall back to the default profile.
 point at a credentials file; credentials belong in runtime secret injection,
 not tracked YAML.
 
+## Lanes: batch and interactive
+
+Two command types carry the same `data` payload, each through its own durable
+pull consumer on `BLOODBANK_COMMANDS` and its own in-flight slots:
+
+| lane | type / subject | durable | slots | for |
+| --- | --- | --- | --- | --- |
+| batch | `bloodbank.agent.invocation.start` / `bloodbank.cmd.agent.invocation.start` | `bloodbank-hermes-gateway` | `max_inflight` (4) | unattended work: ticket grooming, delegation, PM fan-out |
+| interactive | `bloodbank.agent.invocation.invoke` / `bloodbank.cmd.agent.invocation.invoke` | `bloodbank-hermes-gateway-interactive` | `interactive.max_inflight` (2) | a human is waiting: a voice memo, a chat nudge |
+
+A grooming burst that holds all four batch slots no longer delays an
+interactive command: the lanes share only the NATS connection and the execution
+journal, each has its own fetch loop, and total concurrency is the sum of the
+slots (6 turns). Hermes runs distinct sessions of one profile concurrently, so
+a busy profile does not block an interactive turn on a different `thread_id`.
+
+The batch lane can opt into `queued_capacity` (0 by default, 1–256): the
+consumer's `max_ack_pending` becomes `max_inflight + queued_capacity`, but at
+most `max_inflight` turns execute concurrently. Deliveries waiting for the same
+conversation keep progress acknowledgements and their journal claim; they never
+NAK merely because a predecessor is busy or spend `max_deliver` attempts.
+Independent conversations behind a hot thread can use the spare turn slots as
+long as they fall within the bounded lookahead. A larger uninterrupted hot-thread
+burst than the lookahead can still block an independent command beyond it; this
+is not an unbounded fairness guarantee. On a crash, unacked deliveries replay
+through the journal; completion still owns publication followed by the ack.
+The adapter updates an existing durable's `max_ack_pending` in place on connect;
+never delete the durable to apply lookahead, because doing so discards its
+acknowledgement floor. The host gateway reads the canonical
+`~/.hermes/config.yaml` at `gateway.platforms.bloodbank.extra`; set
+`max_inflight: 4` and `queued_capacity: 64` there. Named profiles' generated
+configs are not the host transport source. The installed plugin is symlinked
+to this Bloodbank source, so with unchanged plugin dependencies there is no
+need to rerun `hermes pm install`. Source and config edits alone do not change
+the running process's old 4/4 window. After the source is reviewed, committed
+and pushed to main, request exactly one idle-safe restart:
+
+```bash
+hermes-gateway-restart --strict-idle --max-wait 15 --reason "BB-35 bounded batch lookahead"
+```
+
+Do not omit `--strict-idle`: the helper's default proceeds with a restart even
+if turns remain busy after 15 minutes; strict mode exits 4 instead. A detached
+request is not proof the restart occurred. Verify the new PID, durable
+`max_ack_pending: 68`, broker ack floor, journal rows and terminal facts before
+claiming activation.
+
+- Enabled only by `extra.interactive.enabled: true` (strict boolean). Absent
+  means the single-lane gateway exactly as before, so the code can ship before
+  the config. Rollback is `enabled: false` plus a gateway restart.
+- The adapter binds both durables on `connect()` and updates an existing
+  batch durable's mutable `max_ack_pending` in place when lookahead changes.
+  It verifies each durable's filter, `max_ack_pending` and `max_deliver` after
+  binding; an incompatible filter or failed update is a bind error, **not** a
+  reason to delete the durable. If either lane cannot bind, the platform
+  reports `bloodbank_connect_failed` and retries; a half-bound gateway is not
+  accepted.
+- A `start` envelope delivered on the interactive subject, or an `invoke` on
+  the batch one, is poison and receives a terminal acknowledgement.
+- The journal is shared and keyed by `command_id`, so a command id can never
+  run twice across lanes (the type differs, so the second envelope is a digest
+  collision and is terminated; a twin that arrives on the other lane while the
+  first copy is still running is terminated at once, not nak'd into a dead
+  letter). The journal row has a nullable `lane` column
+  (`batch` | `interactive`; NULL for rows written before lanes existed),
+  added in place on first start.
+- Every lifecycle fact (`turn.started`, `invocation.started/completed/failed`,
+  `turn.completed`) carries `data.lane`, so consumers can tell a human-waiting
+  turn from batch work. Types and subjects are unchanged.
+- The producer rule: use `invoke` only when a human is waiting. n8n, PMs and
+  `hookd_bridge` stay on `start`. A producer that cannot see the interactive
+  consumer pulling should fall back to `start` and record why (the Holocene
+  inbox watcher does, and stamps `lane`/`lane_reason` on `audio.memo.dispatched`).
+- Retry horizon: `max_deliver x nak_delay_seconds` is how long a transient
+  registry or journal error keeps being retried before the message is abandoned
+  in the stream with no consumer action. Interactive is 8 x 3 s (about 21 s);
+  batch is 5 x 5 s. A durable's `max_deliver` is part of the bind contract, so
+  changing it means updating the live durable (`add_consumer` with the new
+  value, a mutable field) before restarting the gateway.
+- Each lane's fetch loop is supervised: an unexpected exception is logged
+  (`Bloodbank lane consume loop crashed lane=...; resuming`) and the loop
+  resumes, so one lane cannot silently stop pulling while the platform still
+  reads as connected.
+- Alerts: the `nats-exporter` container (monitoring stack) exposes
+  `jetstream_consumer_*`; `BloodbankLaneNotPulled` fires when a lane's consumer
+  has `num_waiting == 0` and `num_ack_pending == 0` for 4 minutes, and
+  `BloodbankInteractiveLaneBacklog` when commands sit queued on the interactive
+  lane for 2 minutes.
+- Known limits: the interactive lane has 2 slots, FIFO within the lane, and a
+  slot is held until the Hermes turn completes or its wall clock expires
+  (progress acks keep extending `ack_wait`). Nothing restricts `invoke` to voice
+  memos, so any producer that emits it competes for the same two slots; the
+  split is by convention. A turn that outlives `turn_timeout_seconds` is
+  stopped and its slot freed (next section); a turn whose completion hook never
+  fires is now bounded by the same clock instead of holding the slot until the
+  gateway restarts.
+- Design and rollout: `docs/interactive-command-lane.md`.
+
+## Per-turn wall clock
+
+A turn that never finishes (a hung tool call, a model that loops, a shell
+command that sleeps for ten minutes) used to hold its lane slot until the
+gateway restarted; two of them blocked every later voice memo. Each lane now has
+an optional wall clock for one Hermes turn.
+
+| lane | config | default |
+| --- | --- | --- |
+| interactive | `extra.interactive.turn_timeout_seconds` | **300** when the key is absent |
+| batch | `extra.turn_timeout_seconds` | none (ticket grooming and delegation turns are long on purpose) |
+
+The value is a strict positive number of seconds, at most 86400. A bool, a
+numeric string, `null`, zero, a negative, `NaN`/`inf` or a mapping refuses to
+start the adapter with `... turn_timeout_seconds must be a positive number ...`;
+an absent key takes the lane default. The clock starts when the gateway hands
+the turn to Hermes (not while it waits for a same-thread predecessor) and ends
+when Hermes reports the turn processed.
+
+**Envelope deadline.** A command may carry `data.deadline_seconds` (a positive
+number, on both `invocation.invoke` and `invocation.start`). The effective
+budget is `min(deadline_seconds, lane turn_timeout_seconds)`: a command can
+shorten the lane limit, never extend it, and a lane with no timeout (batch by
+default) ignores it. A non-positive, non-numeric or boolean deadline is poison
+and is terminated like any other malformed envelope.
+
+**What happens at expiry**, in this order:
+
+1. The outcome is claimed synchronously (`PendingInvocation.finalizing`), so a
+   completion that arrives from now on, including the CANCELLED hook the stop
+   itself provokes, is ignored. It cannot publish a second terminal fact or flip
+   the outcome.
+2. The Hermes turn is **stopped through Hermes' own `/stop` path**: the adapter
+   injects an internal `/stop` message for the same session. `BasePlatformAdapter`
+   bypasses the active-session guard for it, the gateway runner hard-interrupts
+   the running agent (`request_hard_interrupt`), invalidates its run generation,
+   reaps the shell processes the turn spawned (so `sleep 120` actually dies) and
+   cancels the session's processing task. If the session guard is still held
+   afterwards, the adapter calls `cancel_session_processing(session_key)` as a
+   fallback. Both are bounded (10 s each).
+3. The adapter records whether the session is idle afterwards
+   (`turn_stopped`). Hermes can only interrupt a turn at its next
+   interruptible point: a tool call blocked in a thread that never checks the
+   interrupt flag may keep running after the session is released. In that case
+   `turn_stopped` is `false`, the failed fact says "Hermes did not confirm the
+   turn stopped", and the slot is **still freed**. That is the one case where a
+   timed-out turn may keep spending tokens or tool calls until it unwinds.
+4. The journal row is closed: `state = completed`, `outcome = failure`,
+   `failure_code = turn_timeout` (a nullable column added in place; an older
+   gateway ignores it), with the exact terminal events stored.
+5. `bloodbank.agent.invocation.failed` and `bloodbank.conversation.turn.completed`
+   (`outcome: failed`) are published, then the JetStream message is **acked**,
+   so it is never redelivered. The journal is written before publication: if
+   publishing fails the message is NAK'd and the redelivery replays the stored
+   events without running the prompt again, like any completed command.
+
+The failed fact:
+
+```json
+{"type": "bloodbank.agent.invocation.failed",
+ "data": {"error_code": "turn_timeout",
+          "error_message": "agent turn timed out after 300s on interactive lane (limit 300s)",
+          "lane": "interactive", "elapsed_seconds": 300.2, "timeout_seconds": 300.0,
+          "timeout_source": "lane", "turn_stopped": true, "command_id": "...", "...": "..."}}
+```
+
+`timeout_source` is `lane` or `envelope` (the command's `deadline_seconds` was
+the shorter budget). The slot the turn held is free as soon as the handler
+returns, so the next queued interactive command is fetched immediately.
+
+Look it up: `sqlite3 ~/.hermes/bloodbank-hermes-gateway-state.sqlite3
+"select command_id, lane, state, outcome, failure_code from executions where
+failure_code='turn_timeout'"`, or `mise run memo:trace` for a voice memo.
+
+## Detach at the wall clock
+
+`extra.interactive.detach_on_timeout: true` changes what the lane limit does.
+A turn still running at `turn_timeout_seconds` is no longer stopped: it gives
+its slot back and runs on. The 2026-10-21 car memos showed why. Four of the
+last five 33god-pm memos hit the 300 s wall. Each was stopped in the middle of
+a model call, re-dispatched on the batch lane in the same session, and the
+batch turn re-read the history and re-thought the lost step (37-53 s and
+34-68k tokens each). The tokens were spent either way. Only the lost call and
+the duplicate run were waste.
+
+At the limit, when the lane holds fewer than `max_detached` detached turns,
+the budget came from the lane (not from a shorter `data.deadline_seconds`, which
+still stops the turn as before) and nothing has claimed the outcome yet:
+
+1. The handler task leaves `lane.inflight` and joins `lane.detached`, and the
+   lane's fetch loop is woken. The next command is pulled at once.
+2. The task keeps everything else: the un-acked JetStream message (progress
+   acks every `ack_progress_seconds`), the `started` journal row, the record in
+   `_records` (progress facts keep flowing), and the conversation lock (a
+   same-thread follow-up waits behind it).
+3. The journal row gets `detached_at` (UTC, a nullable column added in place),
+   and `bloodbank.agent.invocation.detached` is published once with
+   `elapsed_seconds`, `timeout_seconds`, `ceiling_seconds`, `detached_count`,
+   `max_detached` and the command context. Both are observability: a journal
+   or broker error is logged and the turn runs on. The fact goes out only after
+   the journal write and only while the turn still runs, so it never follows
+   the terminal fact. A new attempt of the same command (a redelivery after a
+   NAK or an unclean exit) clears `detached_at` when it is dispatched: the
+   column describes the current attempt.
+4. When Hermes finishes, the normal completion path closes it: exactly one
+   `agent.invocation.completed` (or `failed`), with `detached: true`,
+   `detached_after_seconds` and `elapsed_seconds` added, journal closed, ack.
+   A voice memo's watcher speaks it as a late reply.
+5. A turn still running `detached_ceiling_seconds` after dispatch is stopped
+   exactly as at the lane limit (`/stop`, `turn_timeout`), with
+   `timeout_source: detached_ceiling`, `timeout_seconds` = the ceiling and
+   `detached: true`. It already ran that long, so a consumer should not re-run it.
+
+When `max_detached` turns are already detached, a turn at the limit is stopped as
+before. A reload or shutdown waits for a detached turn like any running one
+(`active_agents` and the consumer's `ack_pending` stay above 0 while it runs, so
+the restart gate stays honest). A detached turn the drain cuts off follows
+`interactive.detached_shutdown_interrupt`, not `shutdown_interrupt`: `fail` (the
+default) closes it as `interrupted_by_shutdown` with `detached: true`, acked, no
+re-run. It already ran 300 s to 45 min and its caller was told it runs on, so a
+NAK re-run would repeat all of that work and every side-effecting tool call.
+`retry` NAKs it as before.
+
+**Durable bound.** A detached message is still un-acked, so the durable's
+`max_ack_pending` must be `max_inflight + max_detached` (2 + 2 = 4), or
+JetStream would keep the freed slot empty. `pull_subscribe` never edits an
+existing durable. When the only difference is `max_ack_pending`, `connect()`
+updates the durable in place (`add_consumer` with the lane's config; JetStream
+2.10 edits that field live) and then checks the full contract as before. Any
+other mismatch is still refused. Switching detach off lowers it again the same
+way.
+
+## Per-turn model: `data.model`
+
+A command may carry `data.model`, a model route for that turn only
+(`automaticai/auto/fast`, `automaticai/personal/claude-sonnet-5.5`). It is
+validated at the boundary as one token (`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$`,
+so it cannot smuggle a flag such as `--global`) and has the same shape on both
+command schemas.
+
+Just before dispatch the adapter injects an internal `/model <route> --once`
+for the command's session (same source, message id `<command_id>:turn-model`).
+It waits until Hermes has finished it (session idle, bounded by 10 s) and then
+hands over the prompt. This is Hermes' supported path for a one-turn switch. It
+resolves the route's provider runtime and never writes config.yaml or the
+session store. It restores the session's own model when that turn ends, on
+every exit path including `/stop`. Every command thread is its own Hermes
+session (`agent:<profile>:bloodbank:dm:<thread_id>`), so Telegram and other
+memos are untouched. A batch re-run of the same thread is back on the profile's
+model unless it carries `data.model` too.
+
+The switch is best effort. The turn runs on the profile's model when the route
+is not listed for the provider, when Hermes refuses it, when the session is
+busy, or when the switch is slow. The terminal fact then carries
+`model_override: {requested, applied: false, reason, detail}`. When it worked
+the fact carries `{requested, applied: true}`. `applied` is read from the
+runner's session override, and falls back to the reply text. The route must be
+in `providers.<provider>.models`. `allow_model_override: false` turns it off.
+
+There is no `data.reasoning_effort`. Hermes' per-session effort (`/reasoning`,
+`agent.reasoning_effort`) is never sent to the AutomaticAI custom provider; the
+only effort on the wire is `providers.automaticai.extra_body.reasoning_effort`.
+`/model --once` also drops `--reasoning`. And `automaticai/auto*` strips every
+effort spelling and uses its rung's own. So effort per turn means a model route,
+and an explicit route takes its effort from a model-specific providers entry.
+
 ## Delivery behavior
 
 - Input is capped by `max_command_bytes` (default 256 KiB).
@@ -125,6 +426,12 @@ not tracked YAML.
   were committed before publication.
   Rejection states distinguish an eventless pre-start decision from a
   post-start closure in progress or durably closed.
+- A target profile whose Hermes proxy URL is configured is rejected before
+  dispatch because the proxy does not invoke the local finalizer hooks. The
+  preflight reads the proxy setting inside the resolved execution profile's
+  runtime-home scope, not the gateway host home. Host-only proxy configuration
+  cannot mask a locally observable target profile. Missing finalizer hooks or
+  an alternate runtime that bypasses the hooks is likewise rejected before run.
 - If eligibility flips after started publication may have begun, rejection
   intent and a stable timestamp are committed first. The canonical
   `agent.invocation.failed` and `conversation.turn.completed` envelopes are
@@ -136,8 +443,13 @@ not tracked YAML.
 - Redelivery of a completed record republishes stored events without invoking
   Hermes. Every durable rejection state is immutable and can never execute,
   even if its route is later re-enabled.
+- A turn that exceeds its lane's wall clock is stopped and closed as
+  `outcome = failure`, `failure_code = turn_timeout` (see "Per-turn wall clock").
+- A turn Hermes did not run is never closed as success (see "Gateway restarts
+  and refused turns").
 - The command's correlation, causation, command, idempotency, target, thread,
-  and turn identifiers are carried into schema-conformant lifecycle events.
+  and turn identifiers are carried into schema-conformant lifecycle events,
+  together with the delivery `lane`.
 
 This is not an exactly-once transport claim. JetStream delivery and lifecycle
 publication remain at-least-once. The local guarantee is at-most-once Hermes
@@ -160,15 +472,192 @@ The plugin publishes only existing canonical events:
 - `bloodbank.conversation.turn.started`
 - `bloodbank.agent.invocation.started`
 - `bloodbank.conversation.message.appended` (explicit final assistant answers)
+- `bloodbank.agent.invocation.progressed` (0..n, see "Progress: interim assistant messages")
 - `bloodbank.agent.invocation.completed`
 - `bloodbank.agent.invocation.failed`
 - `bloodbank.conversation.turn.completed`
+
+## Gateway restarts and refused turns
+
+`systemctl --user reload hermes-gateway.service` (SIGUSR1) and every planned
+stop make Hermes drain: the process keeps its adapters connected, waits up to
+`restart_after_turn_timeout` (1800 s by default) for in-flight turns, then
+gives stragglers `restart_drain_timeout` (60 s here) before interrupting them.
+Meanwhile Hermes answers every new message with "⏳ Gateway is restarting and
+is not accepting new work right now." through `send()` and reports the turn as
+SUCCESS. Before this section existed the plugin journaled that as a completed
+command, published `agent.invocation.completed` and acked it: the command was
+lost while every consumer believed it ran (journal forensics, 2026-10-21: 29
+commands closed as success in under 1 s - 5 on 2026-10-10, 10 on 2026-10-11,
+12 on 2026-10-19, 2 voice memos on 2026-10-20 - plus FLUME-37 at 1.24 s and
+two 1800 s turn-lease rejections on 2026-10-03).
+
+The plugin reads the runner's `_restart_requested`, `_draining` and
+`_external_drain_active` flags (`adapter.gateway_runner`) and:
+
+- **Stops fetching** on every lane while any flag is set. Nothing is pulled,
+  so commands stay queued in JetStream and no `max_deliver` budget is spent
+  however long the drain lasts; the next process fetches them first. One
+  WARNING per lane says `stopped fetching`, one INFO says `resumed fetching`.
+- **Checks again right before dispatch** (once before the journal row is
+  marked started, once after the started facts are published). A command
+  fetched just before the drain is NAKed with the lane's `nak_delay`, its row
+  left `pending`/`started` (both dispatch again on redelivery) and nothing
+  terminal published.
+- **Reads the turn's final reply** (the first non-interim send anchored to the
+  command id) against Hermes' own notices (`bloodbank_hermes_gateway/refusals.py`).
+  The patterns come from Hermes' i18n catalog (English plus the active
+  language, via `agent.i18n`): **every** `gateway.errors.*` key it ships is a
+  failure unless it is a fragment (`hint_*`, `processing_incomplete`,
+  `*_label`) or listed as not-run, so a new Hermes error notice cannot fall
+  through as success. English copies are the fallback when the catalog cannot
+  be imported.
+  - *not run, retried* (NAK, row stays dispatchable, no completed fact):
+    `gateway.busy.drain_rejected_new_work`, `drain_rejected`,
+    `draining_maintenance`, `gateway.errors.interrupted_before_start`,
+    `previous_turn_cleanup`, `history_unavailable`, and the
+    `max_concurrent_sessions` refusal ("Hermes is at the active session limit").
+    A false positive here runs the command twice, so a not-run notice must be
+    the **whole** reply (a trailing runtime footer of up to 200 characters
+    aside); a real answer that merely opens with the same words is an answer.
+  - *explicit failure* (`agent.invocation.failed`, acked):
+    `error_code = hermes_refused` for `gateway.busy.another_turn_running` (the
+    30 min turn-lease wait timed out; a retry would wait again),
+    `gateway.unknown_command` (the prompt began with an unknown `/command`) and
+    `gateway.busy.drain_queued` (only sent with `busy_input_mode` queue/steer:
+    Hermes kept its own copy for after the restart, so a NAK would run it
+    twice); `error_code = hermes_turn_error` for every `gateway.errors.*`
+    notice in place of an answer (`generic_failed_with_hint`: rate limit, usage
+    limit, expired sign-in, quota, overload, rejected request; `rate_limited`,
+    `usage_limit_resets`, `provider_kept_failing`, `no_credentials`,
+    `auth_failed`, `unreachable`, `connection_interrupted`,
+    `connection_unknown`, `bad_request`, `no_response`, `context_overflow`,
+    `stopped_before_finishing`, `unexpected_silence`,
+    `session_storage_unavailable(_disk)`: persistence failed inside a tool
+    round, earlier rounds may have run, so not retried) and for the agent
+    loop's own "Operation interrupted ..." abandonment line
+    (`agent.operation_interrupted`). All carry `data.refusal` = the key.
+- **Checks admission**: Hermes stamps `event._gateway_accepted`; an event its
+  ingress drops (unresolved profile route, an internal event while the session
+  slot holds a pending message) gets no processing-complete hook, so the batch
+  lane used to wait on it forever. It is now NAKed as not run. A prompt that
+  starts with `/` and is not admitted was run inline as a bypass slash command
+  (`/stop`, `/new`, `/approve` on a busy session), so it is closed at once as
+  `hermes_refused` / `not_accepted_slash_command` instead of being redelivered.
+- **Never drops on the last delivery**: when a command Hermes did not run is on
+  its last JetStream delivery (`num_delivered >= max_deliver`) a NAK would lose
+  it silently, so it is closed instead as `error_code = hermes_refused` with
+  `data.refusal` = `gateway_restarting` / `gateway_shutting_down` /
+  `gateway_external_drain` / `not_accepted` / the notice key.
+- **Logs a long pause again**: a lane still paused after 10 min (and every
+  10 min after) logs `still not fetching after Ns`, so a drain that never ends
+  (a leaked `.drain_request.json`; Hermes itself ignores one older than 1 h) is
+  visible.
+
+### Turns the stop drain cuts off
+
+A turn still running when Hermes' `stop()` drain runs out
+(`restart_drain_timeout`, 60 s here: every `systemctl --user restart`, and a
+reload whose `restart_after_turn_timeout` wait outlasted a long turn) is
+hard-interrupted. It then returns its partial text, "Operation interrupted
+...", or nothing, which the base adapter reports as SUCCESS; a turn still alive
+at adapter teardown is CANCELLED. Hermes' own auto-resume after the restart
+skips Bloodbank sessions. Before this, such turns were journaled
+completed/success (or cancelled) and acked, and never ran again.
+
+The plugin wraps the runner's `_interrupt_running_agents` (once per runner;
+the only caller is the drain-timed-out path) and marks every dispatched command
+whose Hermes session it interrupts. Fallbacks when that method is missing:
+while `stop()` is under way (`runner._running` false), a CANCELLED turn or one
+whose whole reply is "Operation interrupted ..." counts too. A turn that simply
+finishes inside the drain window keeps its success.
+
+What happens next is per lane, `shutdown_interrupt` (flat key for batch,
+`interactive.shutdown_interrupt` for interactive):
+
+- `fail` (default): closed as `error_code = interrupted_by_shutdown` with
+  `data.interrupted_by` = `gateway_restart` / `gateway_shutdown` and
+  `data.elapsed_seconds`; partial work may have run, nothing runs twice.
+- `retry`: NAKed with the row left `started`, so the next process re-dispatches
+  the same thread (its Hermes session holds the partial transcript); tool side
+  effects of the cut-off attempt can repeat. On the last delivery it is closed
+  as `interrupted_by_shutdown` instead.
+
+Refusal paths that cannot reach a Bloodbank command: pairing/authorization and
+the emergency stop (`hermes pause`) skip internal events, as does Hermes'
+external-drain gate (the plugin pauses on `_external_drain_active` itself). A
+known slash command at the start of a prompt (`/new`, `/status`) on an idle
+session is executed by Hermes and still reports success; no production prompt
+starts with `/`. Not detectable from the reply: a runner that believes the
+session is already running (leaked state after an unconfirmed turn-timeout
+stop) steers or queues the prompt into that turn and returns nothing; and a
+turn Hermes' own inactivity timeout interrupts mid-answer, outside a shutdown,
+whose partial text is not the "Operation interrupted" line.
+
+Find refused commands: `journalctl --user -u hermes-gateway | grep 'not run by
+Hermes'`, or `sqlite3 ~/.hermes/bloodbank-hermes-gateway-state.sqlite3 "select
+command_id, failure_code from executions where failure_code like 'hermes_%' or
+failure_code = 'interrupted_by_shutdown'"`.
+
+## Progress: interim assistant messages
+
+A long turn is mostly real work (10-25 tool rounds for a voice memo). What the
+model writes next to its tool calls ("Checking the board first.") is the only
+honest account of that work while a human waits, so the gateway publishes each
+one as `bloodbank.agent.invocation.progressed`:
+
+- correlationid = the command's; causationid = the turn's `invocation.started`;
+  ordering key `turn:<turn_id>`; a random event id (progress is never journaled
+  or replayed, and a re-run must not be deduplicated against the first run).
+- `data`: `seq` (1..n per command), `text` (the message, trimmed, at most 500
+  characters, `text_truncated` says whether it was cut), `elapsed_seconds`
+  (since dispatch to Hermes), `command_id`, `target_agent_id`, `lane`,
+  `profile_name`, `invocation_id`, `thread_id`, `turn_id`, and the command's
+  `context` echoed (a voice memo's carries `memo_id`).
+- Every non-blank interim message is published; nothing is throttled at the
+  source. Consumers throttle (the Holocene inbox watcher speaks at most one per
+  30 s per memo).
+- Never for the final reply (that stays on the completion path and is read
+  from the Hermes session), never for a blank message, never after the turn
+  is finalizing, never for a chat or anchor this adapter is not running.
+
+How the messages are told apart, from Hermes' side of `send()`: Hermes marks
+every mid-turn send with `metadata["_interim_send"] = True`, and its stream
+consumer anchors assistant commentary to the triggering message
+(`metadata["reply_to_message_id"]` = the MessageEvent id = our command id).
+Status notices (the "still working" heartbeat, background-review notes,
+warnings) are interim but unanchored, tool-progress bubbles and the final reply
+carry no interim marker. The adapter declares `SUPPORTS_MESSAGE_EDITING = False`
+(it cannot edit anything; `send()` delivers nothing): Hermes then skips token
+streaming for Bloodbank turns, so a commentary arrives as ONE whole anchored
+send instead of a streamed first chunk plus an unanchored tail. This needs
+`display.interim_assistant_messages` on (it is, in `~/.hermes/config.yaml`).
+An interim send on a live command's chat that has no anchor is logged at INFO
+(`interim send without a command anchor ignored`; the host gateway logs at
+WARNING, so raise `bloodbank_hermes_gateway` to INFO to see it): if progress
+facts stop appearing after a Hermes update, that line says why. A publish
+failure is logged at WARNING and never fails the send or the turn.
+
+Whether a turn has any progress at all is up to the model: a tool call with no
+text next to it is not a message. Measured 2026-10-20 on the last three days of
+memo turns, 0-4 of 8-18 tool rounds carried text, so the Holocene watcher's
+voice-memo prompt asks for one short sentence before each tool call. Proof run
+(holocene-pm, interactive, "before each tool call, write one short sentence...
+check the date, then count the files in /tmp"): `progressed` seq 1 at 12.8 s
+("I'll check the current date with the shell."), seq 2 at 20.4 s, then
+`completed`.
+
+```bash
+curl -s 'http://127.0.0.1:8683/events?correlationid=<id>&type=bloodbank.agent.invocation.progressed&limit=50'
+journalctl --user -u hermes-gateway.service | grep 'Bloodbank progress published'
+```
 
 ## Hermes API assumptions
 
 The implementation relies on the public platform-plugin registration seam,
 `BasePlatformAdapter.build_source()`, `MessageEvent.internal`,
-`SessionSource.profile`, and the processing lifecycle hooks. Hermes currently
+`SessionSource.profile`, the processing lifecycle hooks, and, for the per-turn
+wall clock, the `/stop` command and `cancel_session_processing()`. Hermes currently
 defines `BasePlatformAdapter.handle_message()` as background dispatch; the
 adapter therefore waits on `on_processing_complete()` before acknowledging the
 JetStream command.

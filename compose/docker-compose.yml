@@ -268,6 +268,11 @@ services:
 
   # ---------------------------------------------------------------------------
   # Candystore - durable Bloodbank event audit trail
+  # LEGACY opt-in profile (see docs/candystore-integration.md). Its 3603/3505
+  # host ports are deliberately NOT the canonical 8683 Candystore API: the
+  # contract port belongs to the standalone stack and must never be shadowed.
+  # A consumer pointed at this profile sets
+  # CANDYSTORE_URL=http://127.0.0.1:${BLOODBANK_CANDYSTORE_PORT:-3603}.
   # ---------------------------------------------------------------------------
 
   postgres:

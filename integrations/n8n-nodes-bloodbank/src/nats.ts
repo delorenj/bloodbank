@@ -157,8 +157,76 @@ function entityIdentity(data: Record<string, unknown>): string {
   return '';
 }
 
+/** messaging is one entity per chat platform (`messaging.<platform>.<action>`);
+ *  every one of those schemas pins ordering_key to `messaging:<platform>:<id>`,
+ *  never `thread:` (that bucket belongs to agent conversations). The contract
+ *  test fails if a messaging schema lands without a rule here. */
+const MESSAGING_PLATFORMS = ['email', 'telegram', 'slack', 'teams', 'whatsapp', 'google_chat'];
+const MESSAGING_BUCKET_SOURCES: Record<string, string[]> = {
+  received: ['thread_id'],
+  notified: ['thread_id', 'notification_id'],
+};
+/** Carrier texts are messaging entities too, one per transport, but they order
+ *  per operator line (`line:<line>`) so a conversation that switches SMS/MMS or
+ *  falls back from RCS stays in one bucket. */
+const CARRIER_TRANSPORTS: Record<string, string[]> = {
+  sms: ['received', 'sent', 'completed', 'failed'],
+  mms: ['received', 'sent', 'completed', 'failed'],
+  rcs: ['received', 'sent'],
+  imessage: ['received', 'sent'],
+};
+
+/** §11.1 ordering buckets some payloads/schema patterns require the derivation
+ *  to produce by name, overriding the generic `<domain>:<identity>` fallback.
+ *  Keyed on the full type so one domain can carry different rules per entity
+ *  (messaging chat platforms and carrier texts bucket differently; do not widen
+ *  an entry to a bare domain without checking every schema under that domain).
+ *  A rule fires on the first bucket source the payload actually names. */
+const ENTITY_BUCKET_RULES: Record<
+  string,
+  { sources: string[]; bucket: (value: string) => string }
+> = Object.fromEntries(
+  MESSAGING_PLATFORMS.flatMap((platform) =>
+    Object.entries(MESSAGING_BUCKET_SOURCES).map(([action, sources]) => [
+      `bloodbank.messaging.${platform}.${action}`,
+      { sources, bucket: (id: string) => `messaging:${platform}:${id}` },
+    ]),
+  ).concat(
+    Object.entries(CARRIER_TRANSPORTS).flatMap(([transport, actions]) =>
+      actions.map((action) => [
+        `bloodbank.messaging.${transport}.${action}`,
+        { sources: ['line'], bucket: (line: string) => `line:${line}` },
+      ]),
+    ),
+  ).concat(
+    // watch.target.*: every fact about one watched target orders together (watch:<watch_id>)
+    ['detected', 'routed'].map((action) => [
+      `bloodbank.watch.target.${action}`,
+      { sources: ['watch_id'], bucket: (id: string) => `watch:${id}` },
+    ]),
+  ),
+);
+
+/** §11.1 ordering bucket for an event envelope. An explicit opts.orderingKey
+ *  always wins; the generic fallback is `<domain>:<identity>` (or the event id
+ *  when the payload names no identity). */
+function deriveOrderingKey(
+  type: string,
+  domain: string,
+  data: Record<string, unknown>,
+  identity: string,
+  eventId: string,
+): string {
+  const rule = ENTITY_BUCKET_RULES[type];
+  for (const source of rule?.sources ?? []) {
+    const value = data[source];
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (trimmed) return rule!.bucket(trimmed);
+  }
+  return identity ? `${domain}:${identity}` : `${domain}:${eventId}`;
+}
+
 export function subjectFor(type: string, kind: 'event' | 'command' | 'reply'): string {
-  typeParts(type);
   const marker = kind === 'event' ? 'evt' : kind === 'command' ? 'cmd' : 'rpy';
   return `bloodbank.${marker}.${type.slice('bloodbank.'.length)}`;
 }
@@ -202,7 +270,7 @@ export function buildEnvelope(opts: EmitOptions): {
   };
   if (kind === 'event') {
     envelope.ordering_key =
-      opts.orderingKey || (identity ? `${domain}:${identity}` : `${domain}:${eventId}`);
+      opts.orderingKey || deriveOrderingKey(opts.type, domain, opts.data, identity, eventId);
   } else {
     const target = typeof opts.data.target_agent_id === 'string'
       ? opts.data.target_agent_id.trim()

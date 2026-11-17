@@ -1,0 +1,143 @@
+{
+  "verified_at": "2026-11-17T20:06:56.186925+00:00",
+  "code_revisions": {
+    "bloodbank_landed_main": "456257995d9bad42afb10eef21946cfe317f3940",
+    "reviewed_bloodbank": "059788b23979c4cdc1bc5a974ea13e19ca8bb4b1",
+    "waybill_landed_source": "76956b57412bd8331368862c4c7477e6c27891d2",
+    "waybill_integrating_superproject": "52fa51a"
+  },
+  "read_only_followthrough": true,
+  "postcheck": {
+    "ok": true,
+    "only_intended_consumers_removed": true,
+    "handler_execution_proven": false,
+    "remaining": "Attach actual fresh triage/Krebs handler evidence and a later no-recreation observation."
+  },
+  "observations": {
+    "operator_before": "2026-11-17T19:54:49.611511+00:00",
+    "immediate_after": "2026-11-17T19:54:49.690010+00:00",
+    "later": "2026-11-17T20:05:10.981076+00:00"
+  },
+  "elapsed_seconds_immediate_after_to_later": 621.291066,
+  "existing_krebs_tick_interval_seconds": 600,
+  "existing_scheduled_post_retirement_run": {
+    "id": "06893f74-9269-5d70-abc0-08a1300a866d",
+    "trigger": "scheduled",
+    "tickId": "tick:29915760",
+    "result": "success",
+    "exitCode": 0,
+    "startedAt": "2026-11-17T20:00:00.387785+00:00",
+    "finishedAt": "2026-11-17T20:00:08.154115+00:00"
+  },
+  "consumer_count_before": 25,
+  "consumer_count_after": 23,
+  "consumer_count_later": 23,
+  "only_two_exact_deletes_succeeded": true,
+  "removed_target_pending_before": {
+    "n8n-l0J53w0TsS5PwETk-8b302a2c-5f47-5294-88de-9fbd52b2822b": 1947,
+    "n8n-8mmqdMwQYA28ZwUj-d1000000-0000-4000-8000-000000000001": 1554
+  },
+  "retired_durables_absent_after_and_later": true,
+  "legacy_workflows_unchanged_inactive_unpublished": true,
+  "all_23_unrelated_consumer_configurations_and_creation_identities_unchanged": true,
+  "stream_config_creation_identity_and_broker_identity_unchanged": true,
+  "seven_remaining_n8n_polling_zero_pending_zero_unacked": true,
+  "legacy_n8n_executions_started_after_retirement": 0,
+  "live_waybill_parser": {
+    "retired_residual_candidates": 0,
+    "n8n_idle_candidates": 0,
+    "n8n_consumers": 7,
+    "fixtures_used_for_live_input": false
+  },
+  "handler_summary": {
+    "post_retirement_n8n_execution_ids": [
+      742030,
+      742034,
+      742048,
+      742049,
+      742060
+    ],
+    "actual_correlated_post_retirement_session_tool_counts": [
+      {
+        "profile": "bloodbank-pm",
+        "command_id": "fb758fac-bdb9-5b56-a2b8-1c83e23fcfd4",
+        "tool_result_count": 1,
+        "assistant_tool_call_records": 1,
+        "origin": "pre_retirement_BB41_dispatch"
+      },
+      {
+        "profile": "heyma-pm",
+        "command_id": "6b830397-6ff6-575f-a509-66db69b20e59",
+        "tool_result_count": 6,
+        "assistant_tool_call_records": 3,
+        "origin": "post_retirement_pickup_chip_event"
+      },
+      {
+        "profile": "tolt-pm",
+        "command_id": "e1a4ec36-59c3-5b39-b3a8-d195267eaf11",
+        "tool_result_count": 12,
+        "assistant_tool_call_records": 9,
+        "origin": "post_retirement_pickup_chip_event"
+      }
+    ],
+    "newly_created_post_retirement_commands": [
+      {
+        "command_id": "a97f5d82-a1f0-530b-abdc-56add9433327",
+        "profile": "heyma-pm",
+        "state": "pending",
+        "ticket": "HEYMA-28"
+      },
+      {
+        "command_id": "32cbef44-72c2-5809-a0e0-0a8f19066a6b",
+        "profile": "holocene-pm",
+        "state": "pending",
+        "ticket": "HOLOC-44"
+      }
+    ],
+    "new_post_retirement_command_agent_execution_proven": false
+  },
+  "test_commands": [
+    {
+      "command": "python3 -m unittest discover -s ops/live -p 'test_bb41_consumer_retirement.py' -v",
+      "cwd": "/home/delorenj/code/33GOD/bloodbank/.worktrees/bb-41-retire-legacy-consumers",
+      "exit": 0,
+      "tests": 23,
+      "output": "bloodbank-tests.txt",
+      "scope": "isolated private HTTP/SQLite fixtures, no production mutation"
+    },
+    {
+      "command": "python3 -m unittest discover -s tests -v",
+      "cwd": "/home/delorenj/code/33GOD/33god-platform/waybill",
+      "exit": 0,
+      "tests": 299,
+      "output": "waybill-tests.txt",
+      "scope": "unit tests, not live delivery evidence"
+    }
+  ],
+  "sanitization": [
+    {
+      "file": "before.json",
+      "forbidden_sensitive_keys_absent": true,
+      "sha256": "3b57ddb4ea9222626aed15ecede45844c88117f69865c9978cc975d0aec6fc51",
+      "workflows_summary_only": true
+    },
+    {
+      "file": "after.json",
+      "forbidden_sensitive_keys_absent": true,
+      "sha256": "39cd6f6dc3cf210ade6550046d3dfd4195cb3a6e9984d75487555a91c368e43e",
+      "workflows_summary_only": true
+    },
+    {
+      "file": "later.json",
+      "forbidden_sensitive_keys_absent": true,
+      "sha256": "5dbd39ad8c8d8a380f6ffaf83b3e3bdcbdb72515d4cd04d50a02bf328a843c6d",
+      "workflows_summary_only": true
+    }
+  ],
+  "limits": [
+    "Bounded endpoint observation across one ten-minute interval, not continuous 24-hour telemetry.",
+    "Fresh triage and pickup-chip node handler execution plus correlated post-retirement agent tools are observed.",
+    "HEYMA-28 triage and HOLOC-44 newly dispatched commands were pending at capture; do not claim they executed. TOLT-147 and HEYMA-19 commands were created before retirement.",
+    "BB-41 continuing-session tool count includes the authorized operation return; it is corroboration only, not independent new-traffic proof."
+  ]
+}

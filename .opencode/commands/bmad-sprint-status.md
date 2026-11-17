@@ -1,5 +1,5 @@
 ---
-description: "Summarize sprint status and surface risks. Use when the user says \"check sprint status\" or \"show sprint status\""
+description: Deprecated — forwards to bmad-sprint-planning (status view)
 ---
 
 @skills/bmad-sprint-status

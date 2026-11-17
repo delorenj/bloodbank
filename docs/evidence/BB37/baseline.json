@@ -1,0 +1,195 @@
+{
+  "ticket": "BB-37",
+  "sample_utc": "2026-11-17T20:13:11.527842Z",
+  "window_start_utc": "2026-11-17T20:09:26.121615Z",
+  "window_end_utc": "2026-11-18T20:09:26.121615Z",
+  "window_complete": false,
+  "pre_install_sample_utc": "2026-11-17T20:08:51.352793Z",
+  "restart_started_at_utc": "2026-11-17T20:09:14.534Z",
+  "pre_install_hub_pid": 5728,
+  "deployed_hub_pid": 3917142,
+  "deployed_hub": {
+    "state": "running",
+    "started_at": "2026-11-17T20:09:14.534Z",
+    "registry_error": null,
+    "journal_error": null,
+    "transport_error": null,
+    "socket": {
+      "path": "/run/user/1000/33god/hook-hub.sock",
+      "present": true,
+      "activated": true
+    },
+    "observation_delivery": {
+      "pending": 0,
+      "last_acked_at": "2026-11-17T20:13:11.459Z",
+      "last_acked_sequence": 31150924,
+      "error": null,
+      "enabled": true
+    }
+  },
+  "service_process_after_restart": {
+    "exe": "/usr/bin/python3.13",
+    "path": "/home/delorenj/.local/bin:/home/delorenj/.rokit/bin:/home/delorenj/.local/bin:/home/delorenj/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin",
+    "cmdline": "/usr/bin/python3 /home/delorenj/code/33GOD/bloodbank/services/hook-hub/hub.py"
+  },
+  "installed_inventory_status": "drift",
+  "handlers_dependency_status": {
+    "code-review-graph-status": {
+      "state": "configured",
+      "missing_commands": []
+    },
+    "codegraph-prompt": {
+      "state": "configured",
+      "missing_commands": []
+    },
+    "claude-notify": {
+      "state": "configured",
+      "missing_commands": []
+    },
+    "codex-turn-notify": {
+      "state": "configured",
+      "missing_commands": []
+    },
+    "code-review-graph-update": {
+      "state": "configured",
+      "missing_commands": []
+    },
+    "git-checkpoint": {
+      "state": "configured",
+      "missing_commands": []
+    }
+  },
+  "handlers": {
+    "codegraph-prompt": {
+      "pre_install_count_as_sampled": 859,
+      "window_start_count_as_sampled": 853,
+      "pre_install_last_missing_binary": {
+        "received_at": "2026-11-17T20:06:47.400Z",
+        "selected_at": "2026-11-17T20:06:47.423Z",
+        "receipt_seq": 10417461
+      },
+      "window_start_last_missing_binary": {
+        "received_at": "2026-11-17T20:06:47.400Z",
+        "selected_at": "2026-11-17T20:06:47.423Z",
+        "receipt_seq": 10417461
+      },
+      "as_of_now_window_status_reason_counts": [
+        {
+          "status": "succeeded",
+          "reason": "handler_completed",
+          "count": 2
+        },
+        {
+          "status": "timed_out",
+          "reason": "timeout",
+          "count": 1
+        }
+      ],
+      "as_of_now_window_count": 3,
+      "as_of_now_window_latest_missing_binary": null
+    },
+    "code-review-graph-status": {
+      "pre_install_count_as_sampled": 107,
+      "window_start_count_as_sampled": 104,
+      "pre_install_last_missing_binary": {
+        "received_at": "2026-11-17T20:08:22.602Z",
+        "selected_at": "2026-11-17T20:08:22.645Z",
+        "receipt_seq": 10418270
+      },
+      "window_start_last_missing_binary": {
+        "received_at": "2026-11-17T20:08:22.602Z",
+        "selected_at": "2026-11-17T20:08:22.645Z",
+        "receipt_seq": 10418270
+      },
+      "as_of_now_window_status_reason_counts": [
+        {
+          "status": "succeeded",
+          "reason": "handler_completed",
+          "count": 1
+        }
+      ],
+      "as_of_now_window_count": 1,
+      "as_of_now_window_latest_missing_binary": null
+    },
+    "code-review-graph-update": {
+      "pre_install_count_as_sampled": 12032,
+      "window_start_count_as_sampled": 11409,
+      "pre_install_last_missing_binary": {
+        "received_at": "2026-11-17T20:08:29.634Z",
+        "selected_at": "2026-11-17T20:08:29.668Z",
+        "receipt_seq": 10418363
+      },
+      "window_start_last_missing_binary": {
+        "received_at": "2026-11-17T20:08:56.567Z",
+        "selected_at": "2026-11-17T20:08:56.598Z",
+        "receipt_seq": 10418562
+      },
+      "as_of_now_window_status_reason_counts": [
+        {
+          "status": "skipped",
+          "reason": "repository_not_indexed",
+          "count": 38
+        },
+        {
+          "status": "succeeded",
+          "reason": "handler_completed",
+          "count": 28
+        }
+      ],
+      "as_of_now_window_count": 66,
+      "as_of_now_window_latest_missing_binary": null
+    },
+    "claude-notify": {
+      "pre_install_count_as_sampled": 127,
+      "window_start_count_as_sampled": 127,
+      "pre_install_last_missing_binary": {
+        "received_at": "2026-11-17T20:00:23.649Z",
+        "selected_at": "2026-11-17T20:00:23.679Z",
+        "receipt_seq": 10413394
+      },
+      "window_start_last_missing_binary": {
+        "received_at": "2026-11-17T20:00:23.649Z",
+        "selected_at": "2026-11-17T20:00:23.679Z",
+        "receipt_seq": 10413394
+      },
+      "as_of_now_window_status_reason_counts": [
+        {
+          "status": "succeeded",
+          "reason": "handler_completed",
+          "count": 1
+        }
+      ],
+      "as_of_now_window_count": 1,
+      "as_of_now_window_latest_missing_binary": null
+    },
+    "codex-turn-notify": {
+      "pre_install_count_as_sampled": 6,
+      "window_start_count_as_sampled": 6,
+      "pre_install_last_missing_binary": {
+        "received_at": "2026-11-16T20:57:16.599Z",
+        "selected_at": "2026-11-16T20:57:17.164Z",
+        "receipt_seq": 10190553
+      },
+      "window_start_last_missing_binary": {
+        "received_at": "2026-11-16T20:57:16.599Z",
+        "selected_at": "2026-11-16T20:57:17.164Z",
+        "receipt_seq": 10190553
+      },
+      "as_of_now_window_status_reason_counts": [
+        {
+          "status": "succeeded",
+          "reason": "handler_completed",
+          "count": 1
+        }
+      ],
+      "as_of_now_window_count": 1,
+      "as_of_now_window_latest_missing_binary": null
+    }
+  },
+  "notes": [
+    "Pre-install and window-start total counts are rolling receipt retention snapshots and may decrease as rows expire; compare window by received_at, never subtract totals.",
+    "Only receipt outcomes at this sample; quiet handlers are pending until actual 24-hour traffic.",
+    "Synthetic labelled notification and private graph fixtures are included in window counts; not normal traffic.",
+    "Postrestart real Claude Waybill timed out codegraph-prompt, but no missing binary was recorded in that turn."
+  ]
+}

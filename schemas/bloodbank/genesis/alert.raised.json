@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/genesis/alert.raised.json",
+  "title": "Genesis Alert Raised Event",
+  "description": "Something needs the operator's attention: a desk asked for help, the model gateway failed, or a private-content guard fired. One fact per alert. See bloodbank/docs/event-naming.md (genesis).",
+  "$comment": "No access keys, tickets, tokens, sealed grants or operator notes in data, and never a full message body: body_preview is the most it carries.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.genesis.alert.raised"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "genesis"
+    },
+    "subject": {
+      "const": "bloodbank.evt.genesis.alert.raised"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "apicurio://holyfields/bloodbank.genesis.alert.raised/versions/1"
+    },
+    "schemaref": {
+      "const": "bloodbank.genesis.alert.raised.v1"
+    },
+    "producer": {
+      "const": "genesis"
+    },
+    "service": {
+      "const": "genesis"
+    },
+    "correlationid": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUID, the base envelope requires one. uuid5(NAMESPACE_URL, 'urn:33god:genesis:alert:<data.alert_id>')."
+    },
+    "ordering_key": {
+      "type": "string",
+      "pattern": "^alert:.+$",
+      "description": "\u00a711.1 bucket alert:<alert_id>: one alert."
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.genesis.alert.raised.",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The client the fact is about."
+        },
+        "client_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The client's display name, as the operator sees it. Runtime data only."
+        },
+        "bot_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The desk that caused the fact, '<client_id>:<role>', or 'genesis' when the front desk raised it."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "One line a notification can show as-is."
+        },
+        "operator_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Operator surface page for this client."
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC3339 time the fact happened."
+        },
+        "test": {
+          "type": "boolean",
+          "description": "True on synthetic events from test clients; consumers label them."
+        },
+        "alert_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "This alert. The envelope correlationid is derived from it."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why it was raised. Known values: operator_requested, gateway_failure, private_content_blocked, private_content_leaked. Open for new reasons."
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "What happened, in prose a person can act on."
+        }
+      },
+      "required": [
+        "schema_version",
+        "client_id",
+        "client_name",
+        "bot_id",
+        "summary",
+        "operator_url",
+        "occurred_at",
+        "alert_id",
+        "reason",
+        "severity",
+        "detail"
+      ]
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "subject",
+    "time",
+    "datacontenttype",
+    "dataschema",
+    "correlationid",
+    "causationid",
+    "producer",
+    "service",
+    "kind",
+    "domain",
+    "schemaref",
+    "actor",
+    "ordering_key",
+    "data"
+  ]
+}

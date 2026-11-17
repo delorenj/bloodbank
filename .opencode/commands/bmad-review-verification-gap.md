@@ -1,5 +1,5 @@
 ---
-description: Review a code change for changed behavior that could regress without reliable verification catching it. Use when checking whether a change is adequately verified.
+description: Deprecated — forwards to bmad-review
 ---
 
 @skills/bmad-review-verification-gap

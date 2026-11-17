@@ -67,6 +67,27 @@ We are not rebuilding any of this.
 | **`<role_dir>/role.yaml`** | **Derived projection, agent-local.** `plane.identifier` becomes write-once-from-provider. | It is the input to *both* hermes-registry writers (`80-registry.sh:40` reads `yaml_get plane.identifier`; `rules.ts:553` reads `yamlGet(text,"plane.identifier")`). Fixing the value here corrects both without touching `80-registry.sh`'s 32-positional argv (A6). |
 | **CommonProject `copier.yml` `project_identifier`** | **Demoted to a proposal.** Renders alongside `"identifier_source": "proposed"`. | A scaffolded repo must not be able to claim provider provenance it does not have. |
 
+## `repo_path` spelling (multi-peer rule)
+
+`repo_path` in `.project.json` (and any hand-maintained projection of it) is
+written **`~`-relative to the operator's home** (e.g. `~/code/33GOD/bloodbank`),
+never as one host's absolute path. Reasoning, from the consumer survey
+(pjangler `src/project/index.ts` + `src/parity/rules.ts`, flume
+`flume-hr/src/org/inventory.ts`, pilot harvest, holocene hub-model):
+
+- `flume-hr` already resolves the registry with
+  `resolve(expandHome(repo_path))` — `~` works there today.
+- pjangler treats the manifest as authoritative and compares
+  `resolve(repo_path)` to `resolve(repoRoot)`; on any host whose home is not
+  the original author's, an absolute path either fails the parity rule
+  (`repo_path should be <root>`) or, worse, silently matches a *different*
+  host's directory. pjangler-side `~` expansion is tracked there (pjangler
+  lane), so until it lands, a peer whose pjangler does not expand `~` should
+  keep its own absolute `repo_path` — the manifest is per-host, derived
+  state, like the pjangler `local_path` column, not shared truth.
+- `pj init` / `pj reindex` are the writers; they stamp the current host's
+  path, so re-indexing a repo on a new host heals the manifest.
+
 ## The contract
 
 ```ts
@@ -184,7 +205,7 @@ projects:
   bb:
     name: Bloodbank
     slug: bb
-    repo_path: /home/delorenj/code/33GOD/bloodbank
+    repo_path: ~/code/33GOD/bloodbank
     aliases: [bloodbank]                      # PID-8
     ticket_provider:
       type: plane

@@ -1,0 +1,11 @@
+[candybar]
+name = "dev-journal-rollups"
+description = "Dev Journal rollups; activate only after reviewed single-clock cutover"
+schedule = "30 8 * * *"
+timezone = "America/New_York"
+enabled = false
+tags = ["dev-journal", "n8n"]
+[candybar.runner]
+kind = "n8n"
+webhook = "candybar/dev-journal-rollups"
+timeout_s = 600

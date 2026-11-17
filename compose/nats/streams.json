@@ -21,6 +21,17 @@
   },
   "streams": [
     {
+      "name": "GIB_EVENTS",
+      "subjects": ["gib.evt.>"],
+      "retention": "limits",
+      "storage": "file",
+      "discard": "old",
+      "max_age": "30d",
+      "max_msgs": -1,
+      "max_bytes": -1,
+      "num_replicas": 1
+    },
+    {
       "name": "BLOODBANK_EVENTS",
       "subjects": [
         "bloodbank.evt.>"

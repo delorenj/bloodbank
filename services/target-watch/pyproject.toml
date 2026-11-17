@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "target-watch"
+version = "0.1.0"
+description = "Target-focused alerts: any inbound message from a watched person, on any provider, becomes a ticket and a notification"
+requires-python = ">=3.12"
+dependencies = [
+  "nats-py==2.15.0",
+  # services/agent-hooks/core/validate.py validates every envelope we publish
+  "jsonschema>=4.23,<5",
+]
+
+[project.scripts]
+target-watch = "target_watch.cli:main"
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<10",
+  "pytest-asyncio>=0.24,<2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["target_watch"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

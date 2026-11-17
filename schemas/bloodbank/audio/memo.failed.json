@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/audio/memo.failed.json",
+  "title": "Audio Memo Failed Event",
+  "description": "A stage of the voice memo journey failed. stage says where; retryable says whether the watcher will try that stage again. Part of the voice memo journey: every stage fact and the agent invocation share correlationid = data.memo_id and ordering_key 'memo:<memo_id>'. See bloodbank/docs/event-naming.md.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.audio.memo.failed"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "audio"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.audio.memo.failed.",
+      "properties": {
+        "memo_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Journey id: uuid5(NAMESPACE_URL, 's3://holocene-auto/' + s3_key). Also the correlationid of this event and of the agent invocation command, so one correlationid query returns the whole journey."
+        },
+        "s3_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Object key of the voice memo in the holocene-auto bucket: inbox/<agent>/<yyyy>/<mm>/<dd>/<file>."
+        },
+        "target_agent_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Agent the memo is addressed to. Parsed from the S3 key path only, never inferred from audio."
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "record",
+            "upload",
+            "receive",
+            "download",
+            "transcribe",
+            "dispatch",
+            "agent",
+            "agent_reply",
+            "tts",
+            "reply_upload",
+            "playback",
+            "cancelled"
+          ],
+          "description": "Pipeline stage that failed. agent = the gateway turn failed or was rejected; agent_reply = no reply text arrived (error_code timeout: the watcher gave up waiting; no_reply_text: empty; turn_timeout: the gateway stopped the agent's turn at its per-turn wall clock). record = the device could not capture audio (mic unavailable, empty capture); s3_key is the key the memo would have had. upload = the PUT never completed (short body, retries exhausted on the device). playback = the Agent Pad could not play the spoken reply (autoplay blocked, decode or network error); for this stage s3_key is the reply object and the failure is always retryable. cancelled = the operator ended the memo on purpose (`mise run memo:cancel`); it is not an error: error_code is cancelled, retryable is false (only an explicit `memo:retry` revives it), error_message says where it stopped, and after_dispatch says whether the command had already been published. Consumers should not page for it."
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Short machine-readable code. For stage record: silent_capture = the pad measured the whole recording under -60 dBFS (see capture) and held it back, nothing was uploaded. For stage cancelled: cancelled. For stage transcribe: silent_audio = the recording is digital silence or near it (audio_max_dbfs below the watcher's threshold, default -60 dBFS), so the microphone delivered no sound and no transcription was run; empty_transcript = the audio was audible (see audio_max_dbfs) but no words were recognised; garbage_transcript = a typical Whisper hallucination on noise; too_short; undecodable_audio; timeout."
+        },
+        "audio_max_dbfs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -96,
+          "maximum": 0,
+          "description": "stage transcribe: loudest sample of the recording in dBFS (see memo.transcribed). Present on every transcribe-stage failure that happened after the level was measured, including silent_audio."
+        },
+        "audio_mean_dbfs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -96,
+          "maximum": 0,
+          "description": "stage transcribe: mean volume in dBFS, same measurement as audio_max_dbfs."
+        },
+        "audio_duration_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "stage transcribe: length of the recording in seconds."
+        },
+        "capture": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Input level measured on the device while it recorded (Agent Pad, from the native recorder's getMaxAmplitude or a browser AnalyserNode). Absent when the host cannot measure. peak_dbfs below -60 means no sound reached the microphone: a healthy path never produces it, a stuck emulator capture stream or muted mic always does.",
+          "properties": {
+            "peak_dbfs": {
+              "type": "number",
+              "minimum": -120,
+              "maximum": 6,
+              "description": "Loudest 100 ms window of the whole recording, dBFS. -96 is digital silence."
+            },
+            "rms_dbfs": {
+              "type": "number",
+              "minimum": -120,
+              "maximum": 6,
+              "description": "RMS of the per-window peaks over the recording, dBFS (an upper bound on true RMS)."
+            },
+            "samples": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of level windows measured."
+            },
+            "source": {
+              "type": "string",
+              "description": "native (Holocene Auto MediaRecorder) or analyser (browser Web Audio)."
+            },
+            "sent_anyway": {
+              "type": "boolean",
+              "description": "True when the pad had flagged the recording as silent and the operator chose to send it anyway."
+            }
+          },
+          "required": [
+            "peak_dbfs",
+            "rms_dbfs"
+          ],
+          "additionalProperties": true
+        },
+        "error_message": {
+          "type": "string",
+          "description": "Human-readable error, truncated."
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "True when the watcher will retry the stage; false when the journey ended here."
+        },
+        "after_dispatch": {
+          "type": ["boolean", "null"],
+          "description": "stage cancelled only: true when the agent command had already been published when the memo was cancelled, so the agent may still run and only its reply is dropped (not spoken, not mirrored; command_id is then set); false when nothing was ever sent to the agent."
+        },
+        "attempt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "1-based attempt number for this stage.",
+          "minimum": 1
+        },
+        "command_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "command_id when the failure happened after dispatch."
+        },
+        "lane": {
+          "type": ["string", "null"],
+          "enum": ["batch", "interactive", null],
+          "description": "error_code turn_timeout only: lane of the timed-out command."
+        },
+        "elapsed_seconds": {
+          "type": ["number", "null"],
+          "description": "error_code turn_timeout only: seconds the gateway let the agent turn run before stopping it."
+        },
+        "timeout_seconds": {
+          "type": ["number", "null"],
+          "description": "error_code turn_timeout only: the wall-clock budget that expired."
+        },
+        "timeout_source": {
+          "type": ["string", "null"],
+          "enum": ["lane", "envelope", null],
+          "description": "error_code turn_timeout only: lane = the lane's turn_timeout_seconds, envelope = a shorter data.deadline_seconds on the command."
+        },
+        "turn_stopped": {
+          "type": ["boolean", "null"],
+          "description": "error_code turn_timeout only: false when Hermes did not confirm the turn stopped."
+        }
+      },
+      "required": [
+        "memo_id",
+        "s3_key",
+        "target_agent_id",
+        "stage",
+        "error_message",
+        "retryable"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}

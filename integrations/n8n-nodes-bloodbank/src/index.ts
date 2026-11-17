@@ -39,6 +39,18 @@ export {
 export type { FleetRoute, TicketFacts } from './fleet';
 export { executionMode, stableObservedAt } from './nodes/Fleet/Fleet.node';
 export {
+  companyIdentityOf,
+  DEFAULT_LANE_MAP,
+  gatewayConsumerOf,
+  ownerCompanyIdentity,
+  parseLaneMap,
+  redactText,
+  reportLaneFailure,
+  slugify,
+  TASK_FAILED_TYPE,
+} from './laneFailure';
+export type { CompanyIdentity, LaneFailureInput, LaneFailureReport, LanePage } from './laneFailure';
+export {
   canonicalTypeForProviderEvent,
   classifyPlaneWebhook,
   createdDedupeKey,
@@ -49,10 +61,12 @@ export {
   planeBindingMatches,
   planeEventBindings,
   planeRoutesFromRegistry,
+  routeForLabels,
   unboundRegistryProjectPaths,
   updateDedupeKey,
 } from './plane';
 export type { PlaneClassification, PlaneProjectRoute } from './plane';
+export { labelNames, orderOwners, pickOwner, scopeFields } from './scope';
 export {
   candidateTicketKey,
   CREATED_SUBJECT,

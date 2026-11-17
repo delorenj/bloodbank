@@ -1,8 +1,10 @@
 import { providerAliases } from './nodes/Bloodbank/eventSchemas';
 import { optionName } from './options';
 import type { ProjectBoard } from './projects';
+import { labelNames, orderOwners, pickOwner, scopeFields } from './scope';
+import type { Scoped } from './scope';
 
-export interface PlaneProjectRoute {
+export interface PlaneProjectRoute extends Scoped {
   boardId: string;
   repo: string;
   slug: string;
@@ -10,6 +12,10 @@ export interface PlaneProjectRoute {
   boardKey?: string;
   /** Which enrollment record supplied this route. */
   source?: 'pjangler' | 'hermes' | 'manifest';
+  /** Only on a board several projects share: every owner of it in canonical
+   *  order (the declared default first), this route included. The table maps the
+   *  board to its default owner; `routeForLabels` picks the owner of one ticket. */
+  owners?: PlaneProjectRoute[];
 }
 
 export interface PlaneEventBinding {
@@ -92,27 +98,44 @@ export type PlaneClassification =
     }
   | { status: 'unsupported'; reason: string; providerEvent?: string; action?: string; boardId?: string };
 
+/** One board's owners as one route: the default owner, carrying every owner when
+ *  there are several. Order is declared data (default flag, then slug), never
+ *  the order rows happened to be read in. */
+function boardRoute(owners: PlaneProjectRoute[]): PlaneProjectRoute {
+  const ordered = orderOwners(owners, (route) => `${route.repo}\u0000${route.slug}`);
+  if (ordered.length === 1) return ordered[0];
+  return { ...ordered[0], owners: ordered };
+}
+
+/** The owner of one ticket on this board: the route whose scope label the ticket
+ *  carries, else the board's default. A board with one owner is that owner. */
+export function routeForLabels(route: PlaneProjectRoute, labels: readonly string[]): PlaneProjectRoute {
+  return route.owners ? pickOwner(route.owners, labels) : route;
+}
+
 /** Build the Plane board-id routing table from the shared Hermes registry. */
 export function planeRoutesFromRegistry(registryValue: unknown): Map<string, PlaneProjectRoute> {
   const root = record(registryValue);
   const agents = record(root.agents ?? root);
-  const routes = new Map<string, PlaneProjectRoute>();
+  const owners = new Map<string, PlaneProjectRoute[]>();
   for (const agent of Object.values(agents)) {
     const entry = record(agent);
     const plane = record(entry.plane);
     const boardId = firstText(plane.project_id, plane.board_id);
     const repo = firstText(entry.repo);
-    if (!boardId || !repo || routes.has(boardId)) continue;
-    routes.set(boardId, {
+    if (!boardId || !repo) continue;
+    const route: PlaneProjectRoute = {
       boardId,
       repo,
       slug: firstText(entry.slug) ?? repo,
       workspace: firstText(plane.workspace) ?? 'unknown',
       boardKey: firstText(plane.identifier),
       source: 'hermes',
-    });
+      ...scopeFields(plane),
+    };
+    owners.set(boardId, [...(owners.get(boardId) ?? []), route]);
   }
-  return routes;
+  return new Map([...owners].map(([boardId, routes]) => [boardId, boardRoute(routes)]));
 }
 
 /** Project paths of Hermes rows that name no Plane board of their own. */
@@ -144,21 +167,33 @@ export function mergePlaneRoutes(
   manifests: ProjectBoard[] = [],
 ): Map<string, PlaneProjectRoute> {
   const routes = new Map<string, PlaneProjectRoute>();
+  const manifestClaims = new Map<string, PlaneProjectRoute[]>();
   for (const board of manifests) {
-    if (routes.has(board.boardId)) continue;
-    routes.set(board.boardId, routeFromBoard(board));
+    manifestClaims.set(board.boardId, [...(manifestClaims.get(board.boardId) ?? []), routeFromBoard(board)]);
   }
+  for (const [boardId, claimed] of manifestClaims) routes.set(boardId, boardRoute(claimed));
   for (const [boardId, route] of hermes) routes.set(boardId, { ...route });
-  for (const board of projects) {
-    const known = routes.get(board.boardId);
-    routes.set(board.boardId, {
-      boardId: board.boardId,
-      repo: board.repo,
-      slug: board.repo,
-      workspace: board.workspace || usableWorkspace(known?.workspace) || 'unknown',
-      boardKey: board.identifier || known?.boardKey,
-      source: 'pjangler',
-    });
+  // A board claimed by several enrolled projects keeps every claim; which one a
+  // ticket belongs to is decided per ticket from the declared scope labels.
+  const claims = new Map<string, ProjectBoard[]>();
+  for (const board of projects) claims.set(board.boardId, [...(claims.get(board.boardId) ?? []), board]);
+  for (const [boardId, boards] of claims) {
+    const known = routes.get(boardId);
+    routes.set(
+      boardId,
+      boardRoute(
+        boards.map((board) => ({
+          boardId,
+          repo: board.repo,
+          slug: board.repo,
+          workspace: board.workspace || usableWorkspace(known?.workspace) || 'unknown',
+          boardKey: board.identifier || known?.boardKey,
+          source: 'pjangler' as const,
+          ...(board.scopeLabels ? { scopeLabels: board.scopeLabels } : {}),
+          ...(board.scopeDefault ? { scopeDefault: true } : {}),
+        })),
+      ),
+    );
   }
   return routes;
 }
@@ -171,6 +206,8 @@ function routeFromBoard(board: ProjectBoard): PlaneProjectRoute {
     workspace: board.workspace || 'unknown',
     boardKey: board.identifier,
     source: board.source,
+    ...(board.scopeLabels ? { scopeLabels: board.scopeLabels } : {}),
+    ...(board.scopeDefault ? { scopeDefault: true } : {}),
   };
 }
 
@@ -357,7 +394,12 @@ export function classifyPlaneWebhook(
     return { status: 'unsupported', reason: `Plane ${event}.${action} carries no board id`, providerEvent: event, action };
   }
 
-  const route = routes.get(boardId);
+  const boardRouteForDelivery = routes.get(boardId);
+  // On a board several projects share, the ticket's own labels pick the owner.
+  // A comment carries no labels, so it lands with the board's default.
+  const route = boardRouteForDelivery && event !== 'project'
+    ? routeForLabels(boardRouteForDelivery, labelNames(data.labels ?? record(data.issue).labels))
+    : boardRouteForDelivery;
   // A creation is observed when the ticket was created, not when it was last
   // touched: the reconcile sweep reads a ticket hours later, and its fact must
   // carry the same time as the webhook's would have.
