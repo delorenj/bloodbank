@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -135,6 +136,66 @@ def test_preflight_warns_log_and_status_but_never_runs_or_blocks(tmp_path, monke
     from facts import snapshot_projection
     projection = snapshot_projection(receipt)
     assert next(h for h in projection["handlers"] if h["id"] == "codegraph-prompt")["missing_commands"] == ["codegraph"]
+
+
+def test_git_checkpoint_fallback_status_matches_real_daemon_dispatch():
+    import tempfile
+    from test_hub import HubHarness
+
+    with tempfile.TemporaryDirectory(prefix="bb37-", dir=os.environ["TMPDIR"]) as short:
+        base = Path(short)
+        home = base / "home"
+        fallback = home / "GitMark/bin/git-checkpoint"
+        fallback.parent.mkdir(parents=True)
+        marker = base / "checkpoint.txt"
+        executable(fallback, "#!/bin/sh\nprintf '%s\\n' \"$1\" > \"$BB37_MARKER\"\n")
+        subprocess.run(["/usr/bin/git", "init", "-q", str(base)], check=True)
+        registry = f'''[[binding]]
+cli = "claude"
+native = "SessionEnd"
+role = "session_end"
+
+[[handler]]
+id = "git-checkpoint"
+mode = "async"
+on = ["session_end"]
+command = ["{sys.executable}", "{Path(concerns.__file__)}", "git-checkpoint"]
+timeout_ms = 5000
+'''
+        env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "BB37_MARKER": str(marker),
+               "HOOK_HUB_OVERLAY_DIR": str(base / "no-overlays")}
+        with HubHarness(base, registry, env_extra=env) as daemon:
+            status = daemon.request("claude", "SessionEnd", payload={}, env={})
+            assert status["handled"] == ["git-checkpoint"], status
+            deadline = time.monotonic() + 5
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert marker.read_text().strip() == str(base)
+            # The socket status path invokes the same preflight as startup.
+            import socket
+            with socket.socket(socket.AF_UNIX) as conn:
+                conn.settimeout(5)
+                conn.connect(daemon.sock)
+                conn.sendall(b'{"op":"status"}\n')
+                conn.shutdown(socket.SHUT_WR)
+                data = b""
+                while b"\n" not in data:
+                    data += conn.recv(65536)
+            snapshot = json.loads(data.split(b"\n")[0])
+            row = next(h for h in snapshot["handlers"] if h["id"] == "git-checkpoint")
+            assert row["state"] == "configured" and row["missing_commands"] == []
+            assert not any(w["handler_id"] == "git-checkpoint" for w in snapshot["dependency_warnings"])
+            assert "dependency missing: git-checkpoint" not in daemon.log.read_text()
+
+
+def test_git_checkpoint_missing_fallback_reports_attempted_path(tmp_path, monkeypatch):
+    home, _, _ = fixture(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    from dependencies import git_checkpoint_command
+    handler = hub.Handler({"id": "git-checkpoint", "on": ["session_end"],
+                           "command": [sys.executable, str(Path(concerns.__file__)), "git-checkpoint"]})
+    assert git_checkpoint_command("/usr/bin:/bin") == str(home / "code/GitMark/bin/git-checkpoint")
+    assert missing_dependencies(handler, "/usr/bin:/bin") == [str(home / "code/GitMark/bin/git-checkpoint")]
 
 
 def test_shebang_interpreter_and_dangling_link_are_reported(tmp_path):
