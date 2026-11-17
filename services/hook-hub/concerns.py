@@ -343,7 +343,7 @@ def dispatch(concern: str, raw: dict) -> dict:
                           "StopFailure": "error", "PostToolUseFailure": "tool-failure"}.get(native)
         return invoke(["~/.local/bin/nlp", "hook", event], payload, timeout=2) if event else result("skipped", "no_panel_transition")
     if concern == "claude-notify":
-        return invoke(["~/.local/bin/claude-notify"], payload, timeout=5)
+        return invoke(["claude-notify"], payload, timeout=5)
     if concern == "zellij-notify":
         if not os.environ.get("ZELLIJ_SESSION_NAME") or not os.environ.get("ZELLIJ_PANE_ID"):
             return result("skipped", "not_a_zellij_pane")
@@ -407,18 +407,13 @@ def dispatch(concern: str, raw: dict) -> dict:
         return invoke([sys.executable, str(worker), "--client", cli, "--stdin", "--hub"], payload,
                       context=True, timeout=900, environment=environment)
     if concern == "git-checkpoint":
+        from dependencies import git_checkpoint_command
         root = repository()
         if root is None:
             return result("skipped", "not_a_git_repository")
         if root == Path.home() / "code/intelliforia":
             return result("skipped", "project_checkpoint_opt_out")
-        checkpoint_bin = (
-            executable("git-checkpoint")
-            or executable("~/.local/bin/git-checkpoint")
-            or executable("~/GitMark/bin/git-checkpoint")
-            or str(Path.home() / "code/GitMark/bin/git-checkpoint")
-        )
-        return invoke([checkpoint_bin, str(root)], payload, timeout=120)
+        return invoke([git_checkpoint_command(), str(root)], payload, timeout=120)
     return result("failed", "unknown_concern", exit_code=1)
 
 
