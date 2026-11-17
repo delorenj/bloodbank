@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/agent/session.annotated.json",
+  "title": "Agent Session Annotated Event",
+  "description": "A finished agent session was rolled up by the enricher service into one summary (event count, tool-call count, working directory, short paragraph). Annotates the agent.session.ended event named by data.target_event_id (also this event's causationid); the envelope correlationid is the session's correlation id. Sibling of conversation.turn.annotated. Replaces the retired bare 'bloodbank.evt.report.session.completed' topic (33GOD-95). See bloodbank/docs/event-naming.md.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.agent.session.annotated"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "agent"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.agent.session.annotated.",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Session correlation id: the correlationid shared by every event of the session (the key of Candystore's /sessions/{id})."
+        },
+        "cwd": {
+          "type": ["string", "null"],
+          "description": "Working directory of the session, taken from its earliest event that names one; null when none does."
+        },
+        "summary": {
+          "type": "string",
+          "description": "Short paragraph describing what the session achieved (gateway model) or a heuristic one-liner."
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of events Candystore held for the session when it was rolled up."
+        },
+        "tool_call_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of those events that were tool calls."
+        },
+        "summary_source": {
+          "type": "string",
+          "enum": ["gateway", "heuristic", "gateway_failed"],
+          "description": "How the summary was produced: gateway = LLM paragraph; heuristic = no gateway key configured, counted summary; gateway_failed = gateway call errored, fallback text."
+        },
+        "target_event_id": {
+          "$ref": "../../_common/types.v1.json#/$defs/uuid",
+          "description": "id of the agent.session.ended event that caused this annotation (also this event's causationid)."
+        }
+      },
+      "required": [
+        "schema_version",
+        "session_id",
+        "cwd",
+        "summary",
+        "event_count",
+        "tool_call_count",
+        "summary_source",
+        "target_event_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}
