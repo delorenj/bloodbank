@@ -1,0 +1,1696 @@
+{
+  "captured_at": "2026-11-17T19:54:49.690010+00:00",
+  "jsz": {
+    "memory": 0,
+    "storage": 4963817351,
+    "reserved_memory": 0,
+    "reserved_storage": 0,
+    "accounts": 1,
+    "ha_assets": 0,
+    "api": {
+      "total": 2414,
+      "errors": 1
+    },
+    "server_id": "NDG2HPF7GNWIFYOTPXMZNMTCSNRPMYUWMTJB4GDUWW6X7HWJOMADY2FC",
+    "now": "2026-11-17T19:54:49.682503402Z",
+    "config": {
+      "max_memory": 101008794624,
+      "max_storage": 590359904256,
+      "store_dir": "/data/jetstream/jetstream",
+      "sync_interval": 120000000000
+    },
+    "streams": 3,
+    "consumers": 30,
+    "messages": 1149872,
+    "bytes": 4963817351,
+    "account_details": [
+      {
+        "name": "$G",
+        "id": "$G",
+        "memory": 0,
+        "storage": 4963817351,
+        "reserved_memory": 18446744073709551615,
+        "reserved_storage": 18446744073709551615,
+        "accounts": 0,
+        "ha_assets": 0,
+        "api": {
+          "total": 2414,
+          "errors": 1
+        },
+        "stream_detail": [
+          {
+            "name": "BLOODBANK_COMMANDS",
+            "created": "2026-08-28T00:00:31.023459337Z",
+            "cluster": {
+              "leader": "NDG2HPF7GNWIFYOTPXMZNMTCSNRPMYUWMTJB4GDUWW6X7HWJOMADY2FC"
+            },
+            "config": {
+              "name": "BLOODBANK_COMMANDS",
+              "subjects": [
+                "bloodbank.cmd.>",
+                "bloodbank.rpy.>"
+              ],
+              "retention": "workqueue",
+              "max_consumers": -1,
+              "max_msgs": -1,
+              "max_bytes": -1,
+              "max_age": 86400000000000,
+              "max_msgs_per_subject": -1,
+              "max_msg_size": -1,
+              "discard": "old",
+              "storage": "file",
+              "num_replicas": 1,
+              "duplicate_window": 120000000000,
+              "compression": "none",
+              "allow_direct": true,
+              "mirror_direct": false,
+              "sealed": false,
+              "deny_delete": false,
+              "deny_purge": false,
+              "allow_rollup_hdrs": false,
+              "consumer_limits": {}
+            },
+            "state": {
+              "messages": 207,
+              "bytes": 258581,
+              "first_seq": 283844,
+              "first_ts": "2026-11-16T20:26:14.615544307Z",
+              "last_seq": 299591,
+              "last_ts": "2026-11-17T19:54:00.036872223Z",
+              "num_subjects": 2,
+              "num_deleted": 15541,
+              "consumer_count": 7
+            },
+            "consumer_detail": [
+              {
+                "stream_name": "BLOODBANK_COMMANDS",
+                "name": "bloodbank-hermes-gateway",
+                "created": "2026-10-22T01:15:17.063005018Z",
+                "config": {
+                  "durable_name": "bloodbank-hermes-gateway",
+                  "description": "Hermes host gateway invocation consumer (batch lane)",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 180000000000,
+                  "max_deliver": 5,
+                  "filter_subject": "bloodbank.cmd.agent.invocation.start",
+                  "replay_policy": "instant",
+                  "max_waiting": 1,
+                  "max_ack_pending": 68,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 1978,
+                  "stream_seq": 299471,
+                  "last_active": "2026-11-17T19:54:45.79451545Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 1969,
+                  "stream_seq": 299108,
+                  "last_active": "2026-11-17T19:52:34.950996213Z"
+                },
+                "num_ack_pending": 6,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682542406Z"
+              },
+              {
+                "stream_name": "BLOODBANK_COMMANDS",
+                "name": "bloodbank-hermes-gateway-interactive",
+                "created": "2026-10-22T01:15:17.065333485Z",
+                "config": {
+                  "durable_name": "bloodbank-hermes-gateway-interactive",
+                  "description": "Hermes host gateway invocation consumer (interactive lane)",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 180000000000,
+                  "max_deliver": 8,
+                  "filter_subject": "bloodbank.cmd.agent.invocation.invoke",
+                  "replay_policy": "instant",
+                  "max_waiting": 1,
+                  "max_ack_pending": 4,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 247,
+                  "stream_seq": 284709,
+                  "last_active": "2026-11-16T21:40:37.838587025Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 247,
+                  "stream_seq": 284709,
+                  "last_active": "2026-11-16T21:41:02.589721926Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682550351Z"
+              },
+              {
+                "stream_name": "BLOODBANK_COMMANDS",
+                "name": "candybar-executor-invoke",
+                "created": "2026-10-26T04:36:24.187000961Z",
+                "config": {
+                  "durable_name": "candybar-executor-invoke",
+                  "name": "candybar-executor-invoke",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 3600000000000,
+                  "max_deliver": -1,
+                  "filter_subject": "bloodbank.cmd.cron.candybar.invoke",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 1000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 288788,
+                  "stream_seq": 299591,
+                  "last_active": "2026-11-17T19:54:00.053283464Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 288788,
+                  "stream_seq": 299591,
+                  "last_active": "2026-11-17T19:54:14.831434808Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682560189Z"
+              },
+              {
+                "stream_name": "BLOODBANK_COMMANDS",
+                "name": "candybar-steward",
+                "created": "2026-11-04T02:54:30.039800066Z",
+                "config": {
+                  "durable_name": "candybar-steward",
+                  "name": "candybar-steward",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 600000000000,
+                  "max_deliver": -1,
+                  "filter_subject": "bloodbank.cmd.cron.candybar.steward",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 1000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 43,
+                  "stream_seq": 224420,
+                  "last_active": "2026-11-12T20:03:06.139499274Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 43,
+                  "stream_seq": 224420,
+                  "last_active": "2026-11-12T20:03:06.402576727Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682563235Z"
+              },
+              {
+                "stream_name": "BLOODBANK_COMMANDS",
+                "name": "milkshake-farm-invoice",
+                "created": "2026-10-23T21:29:15.483717261Z",
+                "config": {
+                  "durable_name": "milkshake-farm-invoice",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 10000000000,
+                  "max_deliver": 5,
+                  "backoff": [
+                    10000000000,
+                    30000000000,
+                    60000000000,
+                    120000000000
+                  ],
+                  "filter_subjects": [
+                    "bloodbank.cmd.billing.cost.close",
+                    "bloodbank.cmd.billing.cost.receive",
+                    "bloodbank.cmd.billing.invoice.generate",
+                    "bloodbank.cmd.billing.payment.receive",
+                    "bloodbank.cmd.billing.rule.cancel",
+                    "bloodbank.cmd.billing.snapshot.send"
+                  ],
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 1,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 8,
+                  "stream_seq": 42443
+                },
+                "ack_floor": {
+                  "consumer_seq": 8,
+                  "stream_seq": 42443
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682566371Z"
+              },
+              {
+                "stream_name": "BLOODBANK_COMMANDS",
+                "name": "milkshake-mercury-hook",
+                "created": "2026-10-30T21:04:46.445312984Z",
+                "config": {
+                  "durable_name": "milkshake-mercury-hook",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 10000000000,
+                  "max_deliver": 5,
+                  "backoff": [
+                    10000000000,
+                    30000000000,
+                    60000000000,
+                    120000000000
+                  ],
+                  "filter_subject": "bloodbank.cmd.billing.transaction.receive",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 256,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 197,
+                  "stream_seq": 294549,
+                  "last_active": "2026-11-17T12:26:42.127381476Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 197,
+                  "stream_seq": 294549,
+                  "last_active": "2026-11-17T12:26:45.094360779Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 0,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682569276Z"
+              },
+              {
+                "stream_name": "BLOODBANK_COMMANDS",
+                "name": "pilot-harvest-worker",
+                "created": "2026-11-15T20:41:28.365239192Z",
+                "config": {
+                  "durable_name": "pilot-harvest-worker",
+                  "name": "pilot-harvest-worker",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 120000000000,
+                  "max_deliver": 5,
+                  "filter_subjects": [
+                    "bloodbank.cmd.audio.harvest.start",
+                    "bloodbank.cmd.audio.harvest.publish"
+                  ],
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 1000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 3,
+                  "stream_seq": 269113,
+                  "last_active": "2026-11-15T20:45:08.928832215Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 3,
+                  "stream_seq": 269113,
+                  "last_active": "2026-11-15T20:45:09.344593408Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682571751Z"
+              }
+            ]
+          },
+          {
+            "name": "BLOODBANK_EVENTS",
+            "created": "2026-08-28T00:00:31.024042414Z",
+            "cluster": {
+              "leader": "NDG2HPF7GNWIFYOTPXMZNMTCSNRPMYUWMTJB4GDUWW6X7HWJOMADY2FC"
+            },
+            "config": {
+              "name": "BLOODBANK_EVENTS",
+              "subjects": [
+                "bloodbank.evt.>"
+              ],
+              "retention": "limits",
+              "max_consumers": -1,
+              "max_msgs": -1,
+              "max_bytes": -1,
+              "max_age": 604800000000000,
+              "max_msgs_per_subject": -1,
+              "max_msg_size": -1,
+              "discard": "old",
+              "storage": "file",
+              "num_replicas": 1,
+              "duplicate_window": 120000000000,
+              "compression": "none",
+              "allow_direct": true,
+              "mirror_direct": false,
+              "sealed": false,
+              "deny_delete": false,
+              "deny_purge": false,
+              "allow_rollup_hdrs": false,
+              "consumer_limits": {}
+            },
+            "state": {
+              "messages": 1149260,
+              "bytes": 4961948135,
+              "first_seq": 9560545,
+              "first_ts": "2026-11-10T19:54:49.779206116Z",
+              "last_seq": 10709804,
+              "last_ts": "2026-11-17T19:54:49.413020687Z",
+              "num_subjects": 95,
+              "consumer_count": 23
+            },
+            "consumer_detail": [
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "aai-llm-observability-pull-v1",
+                "created": "2026-10-03T00:27:46.187163014Z",
+                "config": {
+                  "durable_name": "aai-llm-observability-pull-v1",
+                  "name": "aai-llm-observability-pull-v1",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": -1,
+                  "filter_subject": "bloodbank.evt.llm.>",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 1000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 1775277,
+                  "stream_seq": 10709797,
+                  "last_active": "2026-11-17T19:54:47.33640762Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 1775277,
+                  "stream_seq": 10709797,
+                  "last_active": "2026-11-17T19:54:47.340560426Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682581169Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "bloodbank-artifact-sidecar",
+                "created": "2026-10-17T18:02:08.89830613Z",
+                "config": {
+                  "durable_name": "bloodbank-artifact-sidecar",
+                  "name": "bloodbank-artifact-sidecar",
+                  "description": "Project artifact discovery sidecar (tool/turn source events)",
+                  "deliver_policy": "by_start_time",
+                  "opt_start_time": "2026-10-16T18:17:21Z",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": 10,
+                  "filter_subjects": [
+                    "bloodbank.evt.agent.tool.completed",
+                    "bloodbank.evt.conversation.turn.completed"
+                  ],
+                  "replay_policy": "instant",
+                  "max_waiting": 1,
+                  "max_ack_pending": 32,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 556381,
+                  "stream_seq": 10709801,
+                  "last_active": "2026-11-17T19:54:48.623159171Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 556381,
+                  "stream_seq": 10709801,
+                  "last_active": "2026-11-17T19:54:48.624023883Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682584124Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "bloodbank-artifact-sidecar-activity",
+                "created": "2026-10-17T19:04:39.565444432Z",
+                "config": {
+                  "durable_name": "bloodbank-artifact-sidecar-activity",
+                  "name": "bloodbank-artifact-sidecar-activity",
+                  "description": "Project artifact discovery sidecar (activity report source events)",
+                  "deliver_policy": "by_start_time",
+                  "opt_start_time": "2026-10-16T18:17:21Z",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": 10,
+                  "filter_subject": "bloodbank.evt.project.activity.recorded",
+                  "replay_policy": "instant",
+                  "max_waiting": 1,
+                  "max_ack_pending": 32,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 33,
+                  "stream_seq": 10635681,
+                  "last_active": "2026-11-17T08:34:05.273960844Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 33,
+                  "stream_seq": 10635681,
+                  "last_active": "2026-11-17T08:34:05.30066338Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682586208Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "bloodbank-artifact-vault-projector",
+                "created": "2026-10-17T17:58:14.498108257Z",
+                "config": {
+                  "durable_name": "bloodbank-artifact-vault-projector",
+                  "name": "bloodbank-artifact-vault-projector",
+                  "description": "Project artifact vault projector",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": 10,
+                  "filter_subject": "bloodbank.evt.project.artifact.created",
+                  "replay_policy": "instant",
+                  "max_waiting": 1,
+                  "max_ack_pending": 32,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 3769,
+                  "stream_seq": 10709260,
+                  "last_active": "2026-11-17T19:52:34.847899898Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 3769,
+                  "stream_seq": 10709260,
+                  "last_active": "2026-11-17T19:52:34.87160171Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 4,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682589104Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "candybar-dispatcher-ticks",
+                "created": "2026-10-26T05:24:16.460820481Z",
+                "config": {
+                  "durable_name": "candybar-dispatcher-ticks",
+                  "name": "candybar-dispatcher-ticks",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 120000000000,
+                  "max_deliver": -1,
+                  "filter_subject": "bloodbank.evt.cron.tick.>",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 1000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 32546,
+                  "stream_seq": 10709623,
+                  "last_active": "2026-11-17T19:54:00.000788627Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 32546,
+                  "stream_seq": 10709623,
+                  "last_active": "2026-11-17T19:54:00.040670491Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682591749Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "candybar-steward-notify",
+                "created": "2026-11-05T20:11:38.261596782Z",
+                "config": {
+                  "durable_name": "candybar-steward-notify",
+                  "name": "candybar-steward-notify",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 120000000000,
+                  "max_deliver": -1,
+                  "filter_subject": "bloodbank.evt.cron.steward_task.>",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 1000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 18,
+                  "stream_seq": 9951522,
+                  "last_active": "2026-11-12T20:03:06.394087493Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 18,
+                  "stream_seq": 9951522,
+                  "last_active": "2026-11-12T20:03:06.395600548Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682595185Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "candystore-events",
+                "created": "2026-08-18T21:04:25.470192121Z",
+                "config": {
+                  "durable_name": "candystore-events",
+                  "name": "candystore-events",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": -1,
+                  "filter_subject": "bloodbank.evt.>",
+                  "replay_policy": "instant",
+                  "max_ack_pending": 1000,
+                  "deliver_subject": "_INBOX.t2eMxJpd3jPL1Jh7fREDcI",
+                  "deliver_group": "candystore",
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 10269922,
+                  "stream_seq": 10709804,
+                  "last_active": "2026-11-17T19:54:49.413147336Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 10269922,
+                  "stream_seq": 10709804,
+                  "last_active": "2026-11-17T19:54:49.422986742Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 0,
+                "num_pending": 0,
+                "push_bound": true,
+                "ts": "2026-11-17T19:54:49.682598471Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "curator-drain",
+                "created": "2026-08-28T16:04:48.346344264Z",
+                "config": {
+                  "durable_name": "curator-drain",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": -1,
+                  "filter_subject": "bloodbank.evt.curator.file.received",
+                  "replay_policy": "instant",
+                  "max_ack_pending": 1,
+                  "deliver_subject": "_INBOX.D0JZkgLWnZsTBFLJbzFD5m",
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 1,
+                  "stream_seq": 733285
+                },
+                "ack_floor": {
+                  "consumer_seq": 1,
+                  "stream_seq": 733285
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 0,
+                "num_pending": 0,
+                "push_bound": true,
+                "ts": "2026-11-17T19:54:49.682600525Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "enricher-events",
+                "created": "2026-10-22T14:46:34.009062213Z",
+                "config": {
+                  "durable_name": "enricher-events",
+                  "name": "enricher-events",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 300000000000,
+                  "max_deliver": -1,
+                  "filter_subject": "bloodbank.evt.>",
+                  "replay_policy": "instant",
+                  "max_ack_pending": 32,
+                  "deliver_subject": "_INBOX.PGgVGOvp4et8Lv0ltoAKMz",
+                  "deliver_group": "enricher",
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 4126811,
+                  "stream_seq": 10709804,
+                  "last_active": "2026-11-17T19:54:49.413153567Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 4126811,
+                  "stream_seq": 10709804,
+                  "last_active": "2026-11-17T19:54:49.414659629Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 0,
+                "num_pending": 0,
+                "push_bound": true,
+                "ts": "2026-11-17T19:54:49.682602118Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "n8n-1e1599de-4198-4090-a884-e307d035a6c2-75e4d046-f5dd-48f0-ad15-3739ab8756fb",
+                "created": "2026-09-24T12:13:12.728761846Z",
+                "config": {
+                  "durable_name": "n8n-1e1599de-4198-4090-a884-e307d035a6c2-75e4d046-f5dd-48f0-ad15-3739ab8756fb",
+                  "name": "n8n-1e1599de-4198-4090-a884-e307d035a6c2-75e4d046-f5dd-48f0-ad15-3739ab8756fb",
+                  "description": "n8n \"Dev Journal \u2014 Bloodbank Ingress\" (1e1599de-4198-4090-a884-e307d035a6c2) node \"Report completed\"",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": 5,
+                  "filter_subject": "bloodbank.evt.reporting.report.completed",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 16,
+                  "inactive_threshold": 604800000000000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 79,
+                  "stream_seq": 10640643,
+                  "last_active": "2026-11-17T11:04:23.722902563Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 79,
+                  "stream_seq": 10640643,
+                  "last_active": "2026-11-17T11:04:23.754739098Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682604092Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "n8n-6wAGA5pdrmHLyhs2-f830070b-2b40-4edd-9d27-687e20fc304d",
+                "created": "2026-09-23T04:40:53.629745476Z",
+                "config": {
+                  "durable_name": "n8n-6wAGA5pdrmHLyhs2-f830070b-2b40-4edd-9d27-687e20fc304d",
+                  "name": "n8n-6wAGA5pdrmHLyhs2-f830070b-2b40-4edd-9d27-687e20fc304d",
+                  "description": "n8n \"Ticket Triage\" (6wAGA5pdrmHLyhs2) node \"onTicketCreatedOrTransitioned\"",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": 5,
+                  "filter_subjects": [
+                    "bloodbank.evt.repo.task.created",
+                    "bloodbank.evt.repo.task.updated"
+                  ],
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 16,
+                  "inactive_threshold": 604800000000000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 3227,
+                  "stream_seq": 10709754,
+                  "last_active": "2026-11-17T19:54:37.425565939Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 3227,
+                  "stream_seq": 10709754,
+                  "last_active": "2026-11-17T19:54:37.449693076Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682607569Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "n8n-OTrzey7C2VKe8dr4-2c529827-04d6-46d8-ba1e-71e4c944a839",
+                "created": "2026-10-18T14:32:22.544433571Z",
+                "config": {
+                  "durable_name": "n8n-OTrzey7C2VKe8dr4-2c529827-04d6-46d8-ba1e-71e4c944a839",
+                  "name": "n8n-OTrzey7C2VKe8dr4-2c529827-04d6-46d8-ba1e-71e4c944a839",
+                  "description": "n8n \"Telephony: Receive Wax call transcripts\" (OTrzey7C2VKe8dr4) node \"Wax transcript finalized\"",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": 5,
+                  "filter_subject": "bloodbank.evt.audio.transcription.completed",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 16,
+                  "inactive_threshold": 604800000000000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 325,
+                  "stream_seq": 10700302,
+                  "last_active": "2026-11-17T19:24:01.607430832Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 325,
+                  "stream_seq": 10700302,
+                  "last_active": "2026-11-17T19:24:01.631266522Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682613179Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "n8n-XHWRrrYCzu4ifdS7-7b344c02-578e-4f44-8665-d5b3f6c44d82",
+                "created": "2026-10-02T01:01:22.500067962Z",
+                "config": {
+                  "durable_name": "n8n-XHWRrrYCzu4ifdS7-7b344c02-578e-4f44-8665-d5b3f6c44d82",
+                  "name": "n8n-XHWRrrYCzu4ifdS7-7b344c02-578e-4f44-8665-d5b3f6c44d82",
+                  "description": "n8n \"Transcription Notifications\" (XHWRrrYCzu4ifdS7) node \"Transcription Complete\"",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": 5,
+                  "filter_subject": "bloodbank.evt.audio.transcription.completed",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 16,
+                  "inactive_threshold": 604800000000000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 411,
+                  "stream_seq": 10700302,
+                  "last_active": "2026-11-17T19:24:01.607485896Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 411,
+                  "stream_seq": 10700302,
+                  "last_active": "2026-11-17T19:24:01.677748846Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682616025Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "n8n-XHWRrrYCzu4ifdS7-f3bf0372-0cb4-447f-b0ba-bac7a2f11a6d",
+                "created": "2026-10-01T22:57:42.040552744Z",
+                "config": {
+                  "durable_name": "n8n-XHWRrrYCzu4ifdS7-f3bf0372-0cb4-447f-b0ba-bac7a2f11a6d",
+                  "name": "n8n-XHWRrrYCzu4ifdS7-f3bf0372-0cb4-447f-b0ba-bac7a2f11a6d",
+                  "description": "n8n \"Transcription Notifications\" (XHWRrrYCzu4ifdS7) node \"New Audio File\"",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": 5,
+                  "filter_subject": "bloodbank.evt.audio.file.received",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 16,
+                  "inactive_threshold": 604800000000000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 686,
+                  "stream_seq": 8465672
+                },
+                "ack_floor": {
+                  "consumer_seq": 686,
+                  "stream_seq": 8465672
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682619241Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "n8n-wWXgCZiiIBWaRRzE-1a4f5ee5-dd90-5b25-80bb-dc48568f35f0",
+                "created": "2026-09-23T04:40:53.672532479Z",
+                "config": {
+                  "durable_name": "n8n-wWXgCZiiIBWaRRzE-1a4f5ee5-dd90-5b25-80bb-dc48568f35f0",
+                  "description": "n8n \"Ticket Pickup Chip\" (wWXgCZiiIBWaRRzE) node \"Invocation Lifecycle\"",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": 5,
+                  "filter_subjects": [
+                    "bloodbank.evt.agent.invocation.completed",
+                    "bloodbank.evt.agent.invocation.failed",
+                    "bloodbank.evt.agent.invocation.started"
+                  ],
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 16,
+                  "inactive_threshold": 604800000000000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 59813,
+                  "stream_seq": 10709574,
+                  "last_active": "2026-11-17T19:53:49.393612235Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 59813,
+                  "stream_seq": 10709574,
+                  "last_active": "2026-11-17T19:53:49.394438284Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682621244Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "portal-cost-observations-v1",
+                "created": "2026-09-29T20:18:48.076105021Z",
+                "config": {
+                  "durable_name": "portal-cost-observations-v1",
+                  "name": "portal-cost-observations-v1",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 90000000000,
+                  "max_deliver": -1,
+                  "filter_subject": "bloodbank.evt.billing.cost.observed",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 32,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 8914,
+                  "stream_seq": 10657031,
+                  "last_active": "2026-11-17T15:52:59.699208755Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 8914,
+                  "stream_seq": 10657031,
+                  "last_active": "2026-11-17T15:52:59.953572262Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682624921Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "smoke-check",
+                "created": "2026-10-26T03:38:07.692083189Z",
+                "config": {
+                  "durable_name": "smoke-check",
+                  "name": "smoke-check",
+                  "deliver_policy": "all",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": -1,
+                  "filter_subject": "bloodbank.evt.cron.candybar.created",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 1000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 1,
+                  "stream_seq": 7141683
+                },
+                "ack_floor": {
+                  "consumer_seq": 1,
+                  "stream_seq": 7141683
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 0,
+                "num_pending": 28,
+                "ts": "2026-11-17T19:54:49.682626815Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "target-watch-matcher",
+                "created": "2026-11-04T18:26:45.88896646Z",
+                "config": {
+                  "durable_name": "target-watch-matcher",
+                  "name": "target-watch-matcher",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 60000000000,
+                  "max_deliver": 10,
+                  "filter_subjects": [
+                    "bloodbank.evt.messaging.>",
+                    "bloodbank.evt.telephony.>"
+                  ],
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 16,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 426,
+                  "stream_seq": 10695914,
+                  "last_active": "2026-11-17T19:14:00.18499693Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 426,
+                  "stream_seq": 10695914,
+                  "last_active": "2026-11-17T19:14:00.185254245Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682627897Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "target-watch-sink",
+                "created": "2026-11-04T18:26:29.174493478Z",
+                "config": {
+                  "durable_name": "target-watch-sink",
+                  "name": "target-watch-sink",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 300000000000,
+                  "max_deliver": 10,
+                  "filter_subject": "bloodbank.evt.watch.target.detected",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 16,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 16,
+                  "stream_seq": 9858205
+                },
+                "ack_floor": {
+                  "consumer_seq": 16,
+                  "stream_seq": 9858205
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682629811Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "u660wBU5",
+                "created": "2026-11-12T17:46:21.958537397Z",
+                "config": {
+                  "deliver_policy": "new",
+                  "ack_policy": "none",
+                  "ack_wait": 79200000000000,
+                  "max_deliver": 1,
+                  "filter_subject": "bloodbank.evt.cron.>",
+                  "replay_policy": "instant",
+                  "idle_heartbeat": 5000000000,
+                  "flow_control": true,
+                  "deliver_subject": "_INBOX.zkbFsiBN2cobqCMgzIT1Mv",
+                  "inactive_threshold": 5000000000,
+                  "num_replicas": 1,
+                  "mem_storage": true
+                },
+                "delivered": {
+                  "consumer_seq": 156254,
+                  "stream_seq": 10709690,
+                  "last_active": "2026-11-17T19:54:14.831125905Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 156254,
+                  "stream_seq": 10709690
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 0,
+                "num_pending": 0,
+                "push_bound": true,
+                "ts": "2026-11-17T19:54:49.682630983Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "pilot-harvest-enrichment",
+                "created": "2026-11-15T20:41:28.407231079Z",
+                "config": {
+                  "durable_name": "pilot-harvest-enrichment",
+                  "name": "pilot-harvest-enrichment",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 60000000000,
+                  "max_deliver": 5,
+                  "filter_subjects": [
+                    "bloodbank.evt.audio.transcription.completed",
+                    "bloodbank.evt.audio.task.exhausted"
+                  ],
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 1000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 44,
+                  "stream_seq": 10700302,
+                  "last_active": "2026-11-17T19:24:01.607420773Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 44,
+                  "stream_seq": 10700302,
+                  "last_active": "2026-11-17T19:24:01.607916586Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682637916Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "n8n-sr604yqfOwRgdmiZ-6c1f3a52-8a0b-4d3e-9c1e-0d6f7b9a1001",
+                "created": "2026-11-16T16:18:42.864034482Z",
+                "config": {
+                  "durable_name": "n8n-sr604yqfOwRgdmiZ-6c1f3a52-8a0b-4d3e-9c1e-0d6f7b9a1001",
+                  "description": "n8n \"Genesis -> ntfy\" (sr604yqfOwRgdmiZ) node \"Genesis event\"",
+                  "deliver_policy": "new",
+                  "ack_policy": "explicit",
+                  "ack_wait": 30000000000,
+                  "max_deliver": 5,
+                  "filter_subjects": [
+                    "bloodbank.evt.genesis.alert.raised",
+                    "bloodbank.evt.genesis.approval.denied",
+                    "bloodbank.evt.genesis.approval.expired",
+                    "bloodbank.evt.genesis.approval.granted",
+                    "bloodbank.evt.genesis.approval.requested"
+                  ],
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "max_ack_pending": 16,
+                  "inactive_threshold": 604800000000000,
+                  "num_replicas": 0
+                },
+                "delivered": {
+                  "consumer_seq": 10,
+                  "stream_seq": 10656183,
+                  "last_active": "2026-11-17T15:27:03.60404515Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 10,
+                  "stream_seq": 10656183,
+                  "last_active": "2026-11-17T15:27:03.639569452Z"
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 1,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682640481Z"
+              },
+              {
+                "stream_name": "BLOODBANK_EVENTS",
+                "name": "holocene_fb10efb1da9841e5a6d72cfbe5775b2c_1",
+                "created": "2026-11-16T21:26:03.22502622Z",
+                "config": {
+                  "name": "holocene_fb10efb1da9841e5a6d72cfbe5775b2c_1",
+                  "deliver_policy": "by_start_sequence",
+                  "opt_start_seq": 10565982,
+                  "ack_policy": "none",
+                  "max_deliver": 1,
+                  "filter_subject": "bloodbank.evt.>",
+                  "replay_policy": "instant",
+                  "max_waiting": 512,
+                  "inactive_threshold": 60000000000,
+                  "num_replicas": 1,
+                  "mem_storage": true
+                },
+                "delivered": {
+                  "consumer_seq": 143823,
+                  "stream_seq": 10709804,
+                  "last_active": "2026-11-17T19:54:49.413145021Z"
+                },
+                "ack_floor": {
+                  "consumer_seq": 143823,
+                  "stream_seq": 10709804
+                },
+                "num_ack_pending": 0,
+                "num_redelivered": 0,
+                "num_waiting": 5,
+                "num_pending": 0,
+                "ts": "2026-11-17T19:54:49.682642324Z"
+              }
+            ]
+          },
+          {
+            "name": "GIB_EVENTS",
+            "created": "2026-10-13T16:52:58.251955342Z",
+            "cluster": {
+              "leader": "NDG2HPF7GNWIFYOTPXMZNMTCSNRPMYUWMTJB4GDUWW6X7HWJOMADY2FC"
+            },
+            "config": {
+              "name": "GIB_EVENTS",
+              "subjects": [
+                "gib.evt.>"
+              ],
+              "retention": "limits",
+              "max_consumers": -1,
+              "max_msgs": -1,
+              "max_bytes": -1,
+              "max_age": 2592000000000000,
+              "max_msgs_per_subject": -1,
+              "max_msg_size": -1,
+              "discard": "old",
+              "storage": "file",
+              "num_replicas": 1,
+              "duplicate_window": 120000000000,
+              "compression": "none",
+              "allow_direct": true,
+              "mirror_direct": false,
+              "sealed": false,
+              "deny_delete": false,
+              "deny_purge": false,
+              "allow_rollup_hdrs": false,
+              "consumer_limits": {}
+            },
+            "state": {
+              "messages": 405,
+              "bytes": 1610635,
+              "first_seq": 1,
+              "first_ts": "2026-10-19T19:03:31.381827472Z",
+              "last_seq": 405,
+              "last_ts": "2026-11-16T13:11:09.211995248Z",
+              "num_subjects": 9,
+              "consumer_count": 0
+            }
+          }
+        ]
+      }
+    ],
+    "total": 1
+  },
+  "workflows": {
+    "6wAGA5pdrmHLyhs2": {
+      "definition_sha256": "736330201aac1bec4bb5949d18dd0dd0edf05d43afec697fd97c5803e5cef4ed",
+      "id": "6wAGA5pdrmHLyhs2",
+      "name": "Ticket Triage",
+      "active": true,
+      "updated_at": "2026-11-14 11:47:37.997",
+      "active_version_id": "9dd24f30-0469-4805-a85d-d6a0835d1229",
+      "nodes": [
+        {
+          "id": "f830070b-2b40-4edd-9d27-687e20fc304d",
+          "name": "onTicketCreatedOrTransitioned",
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "operation": null,
+          "phase_guard": null,
+          "events": [
+            "plane.ticket.created",
+            "plane.ticket.transitioned"
+          ]
+        },
+        {
+          "id": "c4ffd75f-2742-4622-8b41-e12a990cc1dc",
+          "name": "Triage Ticket",
+          "type": "n8n-nodes-bloodbank.bloodbankFleet",
+          "operation": null,
+          "phase_guard": "Todo",
+          "events": null
+        },
+        {
+          "id": "131499e0-b2d5-56ee-9c8f-aec549ae915b",
+          "name": "Triage Started",
+          "type": "n8n-nodes-ntfy-client.ntfySend",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "20930189-e5ce-52dd-93d2-1264956e826b",
+          "name": "Triage Skipped",
+          "type": "n8n-nodes-ntfy-client.ntfySend",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "7a1a9e00-0000-4000-8000-00000000f17e",
+          "name": "Notable Skip?",
+          "type": "n8n-nodes-base.filter",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        }
+      ]
+    },
+    "8mmqdMwQYA28ZwUj": {
+      "definition_sha256": "cbc6c1d1d98a376feabdb320e27f2edc8e7771435c726f80d49c132f514458c0",
+      "id": "8mmqdMwQYA28ZwUj",
+      "name": "Ticket Delegation",
+      "active": false,
+      "updated_at": "2026-11-05 22:51:57.178",
+      "active_version_id": null,
+      "nodes": [
+        {
+          "id": "d1000000-0000-4000-8000-000000000001",
+          "name": "onTicketTransitioned",
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "operation": null,
+          "phase_guard": null,
+          "events": [
+            "plane.ticket.transitioned"
+          ]
+        },
+        {
+          "id": "d1000000-0000-4000-8000-000000000002",
+          "name": "Delegate Ticket",
+          "type": "n8n-nodes-bloodbank.bloodbankFleet",
+          "operation": "delegateTicket",
+          "phase_guard": "Todo,unstarted",
+          "events": null
+        },
+        {
+          "id": "a8cb1095-3013-5dc4-bfb9-f4b5eb4686d2",
+          "name": "Delegation Started",
+          "type": "n8n-nodes-ntfy-client.ntfySend",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "dfc1a299-9913-509b-9c32-9add6a10a4dd",
+          "name": "Notable Skip?",
+          "type": "n8n-nodes-base.filter",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "6c9aa266-7ec2-5bcb-a449-d6c6fa37f587",
+          "name": "Delegation Skipped",
+          "type": "n8n-nodes-ntfy-client.ntfySend",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        }
+      ]
+    },
+    "wWXgCZiiIBWaRRzE": {
+      "definition_sha256": "62c483cc5c9a910e31400cc9bfde11c3c070237c6495dcc97faa64108b122324",
+      "id": "wWXgCZiiIBWaRRzE",
+      "name": "Ticket Pickup Chip",
+      "active": true,
+      "updated_at": "2026-11-06 16:31:33.983",
+      "active_version_id": "be0a6847-04f2-4e33-90c1-e45ea028ea8d",
+      "nodes": [
+        {
+          "id": "1a4f5ee5-dd90-5b25-80bb-dc48568f35f0",
+          "name": "Invocation Lifecycle",
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "operation": null,
+          "phase_guard": null,
+          "events": [
+            "bloodbank.agent.invocation.started",
+            "bloodbank.agent.invocation.completed",
+            "bloodbank.agent.invocation.failed"
+          ]
+        },
+        {
+          "id": "71ecb74c-efa7-5a3a-ba68-25fee01f33cb",
+          "name": "Chip \u2014 Target",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "28bc0124-1d9e-50a5-9580-84fb6880b0ff",
+          "name": "Chip \u2014 List Labels",
+          "type": "n8n-nodes-base.httpRequest",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "d0f5133d-74f3-5f78-92de-4d44d2e23919",
+          "name": "Chip \u2014 Resolve Label",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "9db897ff-0fd2-53c4-ac4b-5b7f6007eed3",
+          "name": "Chip \u2014 Read Issue",
+          "type": "n8n-nodes-base.httpRequest",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "ea99ff99-1fad-5a00-8af9-a2e214683968",
+          "name": "Chip \u2014 Read Activity",
+          "type": "n8n-nodes-base.httpRequest",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "6d8bb350-2c37-5d59-845c-d86f9e0dd73e",
+          "name": "Chip \u2014 Plan Write",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "432a2e52-9686-510b-97f0-9de41c4ec91f",
+          "name": "Chip \u2014 Write Labels",
+          "type": "n8n-nodes-base.httpRequest",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "383e33d1-d973-52c7-bee0-9a65b9ce70ee",
+          "name": "Chip \u2014 Check Write",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "962a8550-6614-5ce8-9cd1-a358fe5e934d",
+          "name": "Stale Chip Sweep",
+          "type": "n8n-nodes-base.webhook",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "d4b9c781-b6fc-5a89-9161-4b1042195471",
+          "name": "Sweep \u2014 Ended Turns",
+          "type": "n8n-nodes-base.httpRequest",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "37f3ccd4-695b-5620-96d4-e13df57b4e4f",
+          "name": "Sweep \u2014 Ended Tickets",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "5d0f3c2a-8e47-4b9f-a1c6-2e7b9d4f6a13",
+          "name": "Chip \u2014 Needs Write",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "8a4b2c1d-6e5f-4a3b-9c8d-7e6f5a4b3c2d",
+          "name": "Sweep \u2014 Verdict",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "9b5c3d2e-7f6a-4b4c-8d9e-8f7a6b5c4d3e",
+          "name": "Sweep \u2014 Answer Candybar",
+          "type": "n8n-nodes-base.respondToWebhook",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        }
+      ]
+    },
+    "1e1599de-4198-4090-a884-e307d035a6c2": {
+      "definition_sha256": "b8bd2c9a9999044e41bb2a3da03e32d13c40f2867f749edfb4cf406f8702c859",
+      "id": "1e1599de-4198-4090-a884-e307d035a6c2",
+      "name": "Dev Journal \u2014 Bloodbank Ingress",
+      "active": true,
+      "updated_at": "2026-10-01 23:09:57.904",
+      "active_version_id": "b16efea4-fd55-4d56-a987-dd3987db0b6a",
+      "nodes": [
+        {
+          "id": "75e4d046-f5dd-48f0-ad15-3739ab8756fb",
+          "name": "Report completed",
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "operation": null,
+          "phase_guard": null,
+          "events": [
+            "bloodbank.reporting.report.completed"
+          ]
+        },
+        {
+          "id": "897bd2e0-2c21-4595-a639-f9f245870dea",
+          "name": "Persist verified snapshot",
+          "type": "n8n-nodes-bloodbank.devJournal",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "b7d40aea-61e9-4657-ab90-625c1824c066",
+          "name": "Journal received receipt",
+          "type": "n8n-nodes-bloodbank.bloodbank",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        }
+      ]
+    },
+    "XHWRrrYCzu4ifdS7": {
+      "definition_sha256": "c1156f99cc216dadcf0ba8ed32ce844229c22e4579d6d9b672a78a47633b8c26",
+      "id": "XHWRrrYCzu4ifdS7",
+      "name": "Transcription Notifications",
+      "active": true,
+      "updated_at": "2026-11-03 21:56:54.970",
+      "active_version_id": "839bf222-c5c4-4c59-8c59-b1b0859a14b9",
+      "nodes": [
+        {
+          "id": "78830535-6437-4f73-a823-ce6db002d9b4",
+          "name": "Ntfy Topic: audio",
+          "type": "n8n-nodes-ntfy-client.ntfySend",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "f3bf0372-0cb4-447f-b0ba-bac7a2f11a6d",
+          "name": "New Audio File",
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "operation": null,
+          "phase_guard": null,
+          "events": [
+            "bloodbank.audio.file.received"
+          ]
+        },
+        {
+          "id": "7b344c02-578e-4f44-8665-d5b3f6c44d82",
+          "name": "Transcription Complete",
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "operation": null,
+          "phase_guard": null,
+          "events": [
+            "bloodbank.audio.transcription.completed"
+          ]
+        },
+        {
+          "id": "05297d6b-a06d-4ae7-8bd9-4be42dc8edc3",
+          "name": "Audio: Transcription Complete",
+          "type": "n8n-nodes-ntfy-client.ntfySend",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        }
+      ]
+    },
+    "OTrzey7C2VKe8dr4": {
+      "definition_sha256": "41fd997a0a7a0bd8d71c18b792e5113eadda6f6ba2af60483aa6333d8f265fb1",
+      "id": "OTrzey7C2VKe8dr4",
+      "name": "Telephony: Receive Wax call transcripts",
+      "active": true,
+      "updated_at": "2026-10-18 14:37:43.424",
+      "active_version_id": "a9e57bcc-f26c-4f65-a031-e81da317073d",
+      "nodes": [
+        {
+          "id": "2c529827-04d6-46d8-ba1e-71e4c944a839",
+          "name": "Wax transcript finalized",
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "operation": null,
+          "phase_guard": null,
+          "events": [
+            "bloodbank.audio.transcription.completed"
+          ]
+        },
+        {
+          "id": "6ff7f444-ddfa-4a84-a0d3-f6479ed32e32",
+          "name": "Identify native call recording",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "070b4d26-60d7-4cc0-a881-94fd703fa849",
+          "name": "Cache finalized transcript",
+          "type": "n8n-nodes-base.redis",
+          "operation": "set",
+          "phase_guard": null,
+          "events": null
+        }
+      ]
+    },
+    "l0J53w0TsS5PwETk": {
+      "definition_sha256": "0ebca8a7c95d82a3dc73f19d158107d4ed0e7f48abc3db47f294bd12d8eb2372",
+      "id": "l0J53w0TsS5PwETk",
+      "name": "Ticket Delegation \u2014 Groomed in Todo",
+      "active": false,
+      "updated_at": "2026-11-05 21:52:55.158",
+      "active_version_id": null,
+      "nodes": [
+        {
+          "id": "8b302a2c-5f47-5294-88de-9fbd52b2822b",
+          "name": "onGroomingCompleted",
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "operation": null,
+          "phase_guard": null,
+          "events": [
+            "bloodbank.agent.invocation.completed"
+          ]
+        },
+        {
+          "id": "1ae6e6d3-cdca-50d5-85ef-237e2a1eefd4",
+          "name": "Groomed \u2014 Target",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "f50f4cb2-5e3c-5415-a6f9-aae2bf4e3fe5",
+          "name": "Read Ticket",
+          "type": "n8n-nodes-base.httpRequest",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "b0d2adc0-dcc9-59c6-935c-110a1b0c1f33",
+          "name": "Groomed in Todo?",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "251c05a1-8f0d-5516-a2b1-b03f77c34bde",
+          "name": "Delegate Ticket",
+          "type": "n8n-nodes-bloodbank.bloodbankFleet",
+          "operation": "delegateTicket",
+          "phase_guard": "Todo",
+          "events": null
+        },
+        {
+          "id": "0da19162-c1cc-58c4-a169-f9b748dcc8cd",
+          "name": "Delegation Started",
+          "type": "n8n-nodes-ntfy-client.ntfySend",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "f1a77599-f362-5721-b718-c632a62d1a31",
+          "name": "Notable Skip?",
+          "type": "n8n-nodes-base.filter",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "3ab75988-0d33-53a1-9582-2caa46b4261f",
+          "name": "Delegation Skipped",
+          "type": "n8n-nodes-ntfy-client.ntfySend",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        }
+      ]
+    },
+    "sr604yqfOwRgdmiZ": {
+      "definition_sha256": "b9df230200672b85214332b5702d130b9696b09042bcc2de9e253e5d7b6e65b4",
+      "id": "sr604yqfOwRgdmiZ",
+      "name": "Genesis -> ntfy",
+      "active": true,
+      "updated_at": "2026-11-16 16:18:42.595",
+      "active_version_id": "7c040fff-e934-4406-8960-acd8f4d63cc2",
+      "nodes": [
+        {
+          "id": "6c1f3a52-8a0b-4d3e-9c1e-0d6f7b9a1001",
+          "name": "Genesis event",
+          "type": "n8n-nodes-bloodbank.bloodbankTrigger",
+          "operation": null,
+          "phase_guard": null,
+          "events": [
+            "bloodbank.genesis.approval.requested",
+            "bloodbank.genesis.approval.granted",
+            "bloodbank.genesis.approval.denied",
+            "bloodbank.genesis.approval.expired",
+            "bloodbank.genesis.alert.raised"
+          ]
+        },
+        {
+          "id": "6c1f3a52-8a0b-4d3e-9c1e-0d6f7b9a1002",
+          "name": "Format ntfy",
+          "type": "n8n-nodes-base.code",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        },
+        {
+          "id": "6c1f3a52-8a0b-4d3e-9c1e-0d6f7b9a1003",
+          "name": "Publish to ntfy",
+          "type": "n8n-nodes-base.httpRequest",
+          "operation": null,
+          "phase_guard": null,
+          "events": null
+        }
+      ]
+    }
+  }
+}
