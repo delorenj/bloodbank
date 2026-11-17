@@ -278,7 +278,7 @@ def dispatch(concern: str, raw: dict) -> dict:
                 return result("skipped", "context_already_requested")
             os.close(descriptor)
         command = [str(Path.home() / ".local/bin/candystore"), "context", "latest",
-                   "--cwd", str(payload["cwd"]), "--timeout", "4"]
+                   "--cwd", str(payload["cwd"]), "--timeout", "4", "--hook-outcome"]
         session_id = payload["session_id"]
         try:
             # Claude Code's hook payload carries the session ID under its own
@@ -301,9 +301,18 @@ def dispatch(concern: str, raw: dict) -> dict:
         output = invoke(command, payload, context=True, timeout=4.5)
         if output["_hook_hub"]["status"] != "succeeded":
             output["stdout"] = ""
-        else:
-            output["stdout"] = context_output(output["stdout"], cli, native)
-        return output
+            return output
+        try:
+            outcome = json.loads(output["stdout"])
+            if not isinstance(outcome, dict) or outcome.get("status") not in {"skipped", "succeeded"}:
+                raise ValueError("invalid startup outcome")
+            if outcome["status"] == "skipped" and outcome.get("reason") in {"no_project", "no_history"} and set(outcome) == {"status", "reason"}:
+                return result("skipped", outcome["reason"])
+            if outcome["status"] == "succeeded" and set(outcome) == {"status", "context"} and isinstance(outcome["context"], str) and outcome["context"].strip():
+                return result("succeeded", "handler_completed", context_output(outcome["context"], cli, native))
+        except (ValueError, TypeError):
+            pass
+        return result("failed", "handler_invalid_outcome", exit_code=1)
     if concern.startswith("hindsight-"):
         from hindsight import dispatch as memory_dispatch
         return memory_dispatch(concern, payload, cli, native)

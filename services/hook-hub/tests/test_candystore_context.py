@@ -29,7 +29,7 @@ class CandyStoreContextTests(unittest.TestCase):
                 "XDG_STATE_HOME": state,
             }), mock.patch.object(concerns, "disabled", return_value=False), \
                  mock.patch.object(concerns, "invoke", return_value=concerns.result(
-                     "succeeded", "handler_completed", "A prior session's handoff"
+                     "succeeded", "handler_completed", json.dumps({"status": "succeeded", "context": "A prior session's handoff"})
                  )) as invoke:
                 output = concerns.dispatch("candystore-context", {
                     "sessionId": "current-native", "cwd": "/code/project",
@@ -71,7 +71,7 @@ class CandyStoreContextTests(unittest.TestCase):
              mock.patch.object(concerns, "disabled", return_value=False), \
              mock.patch.object(concerns.urllib.request, "urlopen", urlopen), \
              mock.patch.object(concerns, "invoke", return_value=concerns.result(
-                 "succeeded", "handler_completed", "A prior session's handoff"
+                 "succeeded", "handler_completed", json.dumps({"status": "succeeded", "context": "A prior session's handoff"})
              )) as invoke:
             concerns.dispatch("candystore-context", {
                 "sessionId": f"claude-{uuid_session}", "cwd": "/code/project",
@@ -90,7 +90,7 @@ class CandyStoreContextTests(unittest.TestCase):
              mock.patch.object(concerns, "disabled", return_value=False), \
              mock.patch.object(concerns.urllib.request, "urlopen", not_found), \
              mock.patch.object(concerns, "invoke", return_value=concerns.result(
-                 "succeeded", "handler_completed", "A prior session's handoff"
+                 "succeeded", "handler_completed", json.dumps({"status": "succeeded", "context": "A prior session's handoff"})
              )) as invoke:
             concerns.dispatch("candystore-context", {
                 "sessionId": "claude-not-yet-stored", "cwd": "/code/project",
@@ -152,7 +152,7 @@ class CandyStoreContextTests(unittest.TestCase):
             binary.write_text(
                 f"#!{sys.executable}\nimport json,sys\nfrom pathlib import Path\n"
                 f"Path({str(home / 'command.json')!r}).write_text(json.dumps(sys.argv[1:]))\n"
-                "print('Recent project work')\n"
+                "print(json.dumps({'status': 'succeeded', 'context': 'Recent project work'}))\n"
             )
             binary.chmod(0o700)
             process = subprocess.run(
@@ -165,9 +165,9 @@ class CandyStoreContextTests(unittest.TestCase):
             )
             output = json.loads(process.stdout)
             self.assertEqual(output["_hook_hub"]["status"], "succeeded")
-            self.assertEqual(json.loads(output["stdout"]), {"context": "Recent project work\n"})
+            self.assertEqual(json.loads(output["stdout"]), {"context": "Recent project work"})
             self.assertEqual(json.loads((home / "command.json").read_text()),
-                             ["context", "latest", "--cwd", temporary, "--timeout", "4",
+                             ["context", "latest", "--cwd", temporary, "--timeout", "4", "--hook-outcome",
                               "--exclude-session", "current"])
 
     def test_kimi_retrieves_once_per_session_across_concurrent_handler_processes(self):
@@ -175,7 +175,7 @@ class CandyStoreContextTests(unittest.TestCase):
             home = Path(temporary)
             binary = home / ".local/bin/candystore"
             binary.parent.mkdir(parents=True)
-            binary.write_text(f"#!{sys.executable}\nprint('Recent project work')\n")
+            binary.write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({{'status': 'succeeded', 'context': 'Recent project work'}}))\n")
             binary.chmod(0o700)
 
             def dispatch(session, native="UserPromptSubmit", enabled="1"):
@@ -194,11 +194,11 @@ class CandyStoreContextTests(unittest.TestCase):
             self.assertEqual(dispatch("one", enabled="0")["_hook_hub"]["reason"], "context_disabled")
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
                 outputs = list(pool.map(dispatch, ["one"] * 4))
-            self.assertEqual(sum(output["stdout"] == "Recent project work\n" for output in outputs), 1)
+            self.assertEqual(sum(output["stdout"] == "Recent project work" for output in outputs), 1)
             self.assertEqual(sum(output["_hook_hub"]["reason"] == "context_already_requested"
                                  for output in outputs), 3)
             self.assertEqual(dispatch("one")["stdout"], "")
-            self.assertEqual(dispatch("two")["stdout"], "Recent project work\n")
+            self.assertEqual(dispatch("two")["stdout"], "Recent project work")
 
     def test_failure_never_injects_diagnostics_or_blocks_the_cli(self):
         with mock.patch.object(concerns, "disabled", return_value=False), \
@@ -208,6 +208,34 @@ class CandyStoreContextTests(unittest.TestCase):
             output = concerns.dispatch("candystore-context", {"cwd": "/code/project"})
         self.assertEqual(output["stdout"], "")
         self.assertEqual(output["_hook_hub"]["status"], "failed")
+
+    def test_outcome_contract_and_failure_isolation(self):
+        with mock.patch.dict(os.environ, {"BB_HOOK_CLI": "claude", "BB_HOOK_NATIVE": "SessionStart",
+                                          "CANDYSTORE_CONTEXT": "1"}), \
+             mock.patch.object(concerns, "disabled", return_value=False), \
+             mock.patch.object(concerns.urllib.request, "urlopen", side_effect=urllib.error.URLError("not found")):
+            for reason in ("no_project", "no_history"):
+                with self.subTest(reason=reason), mock.patch.object(
+                    concerns, "invoke", return_value=concerns.result(
+                        "succeeded", "handler_completed", json.dumps({"status": "skipped", "reason": reason})
+                    )
+                ):
+                    output = concerns.dispatch("candystore-context", {"cwd": "/tmp"})
+                    self.assertEqual(output, concerns.result("skipped", reason))
+            for text in ("", "partial handoff", "{}", '{"status":"skipped","reason":"other"}',
+                         '{"status":"succeeded","context":""}',
+                         '{"status":"skipped","reason":"no_project","context":"leak"}'):
+                with self.subTest(text=text), mock.patch.object(
+                    concerns, "invoke", return_value=concerns.result("succeeded", "handler_completed", text)
+                ):
+                    output = concerns.dispatch("candystore-context", {"cwd": "/tmp"})
+                    self.assertEqual(output, concerns.result("failed", "handler_invalid_outcome", exit_code=1))
+            for reason in ("handler_exit_nonzero", "handler_deadline_exceeded", "handler_spawn_failed"):
+                with self.subTest(reason=reason), mock.patch.object(
+                    concerns, "invoke", return_value=concerns.result("failed", reason, "partial", exit_code=1)
+                ):
+                    output = concerns.dispatch("candystore-context", {"cwd": "/tmp"})
+                    self.assertEqual(output, concerns.result("failed", reason, exit_code=1))
 
     def test_opt_out_and_antigravity_only_first_invocation(self):
         with mock.patch.object(concerns, "disabled", return_value=False), \
