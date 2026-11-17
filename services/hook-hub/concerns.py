@@ -334,7 +334,7 @@ def dispatch(concern: str, raw: dict) -> dict:
                           "StopFailure": "error", "PostToolUseFailure": "tool-failure"}.get(native)
         return invoke(["~/.local/bin/nlp", "hook", event], payload, timeout=2) if event else result("skipped", "no_panel_transition")
     if concern == "claude-notify":
-        return invoke(["~/.local/bin/claude-notify"], payload, timeout=5)
+        return invoke(["claude-notify"], payload, timeout=5)
     if concern == "zellij-notify":
         if not os.environ.get("ZELLIJ_SESSION_NAME") or not os.environ.get("ZELLIJ_PANE_ID"):
             return result("skipped", "not_a_zellij_pane")
