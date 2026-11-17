@@ -2,8 +2,17 @@
 
 Ticket: <https://plane.delo.sh/33god/browse/BB-41/>
 
-**This change has not retired anything.** Independent review and separate live
-execution authorization are required. The implementation worker performed only
+**This change has not retired anything.** The first independent review of
+`286ed32606b9b69a758d1c1e1efcd69c56de1dca` blocked live execution:
+`capture()` dropped both target workflows after consumer deletion, causing
+`postcheck()` to fail after two irreversible DELETEs. The corrected branch
+retains the exact workflow IDs regardless of consumer inventory and tests the
+actual HTTP/SQLite snapshot-to-postcheck path, including a reactivation refusal.
+**Do not use the blocked review record as approval.** Independently review the
+corrected revision before running the live step. The user's existing BB-41
+instruction already authorizes the exact targeted retirement after a passing
+independent safety gate; `--authorization-ref` attests that instruction, not a
+new permission request. The implementation worker performed only
 read-only live diagnostics. No workflow, consumer, stream, Plane record, service,
 scheduler or other repository was changed. Branch publication is not live-step
 approval or ticket completion.
@@ -152,9 +161,11 @@ The reviewer must verify:
    workflow checks precede them; no wildcard, fetch/ack/replay, purge or activation.
 5. Tests pass and remaining Waybill ownership work is explicitly unresolved.
 
-Record independent review approval **and separate live-step authorization**.
-The script's reference fields are operator attestations; they do not independently
+Record a passing independent review of the **corrected exact revision** and
+cite the existing user BB-41 retirement authorization for the live step. The
+script's reference fields are operator attestations; they do not independently
 validate a review service. Do not fabricate either reference to pass its guards.
+The earlier blocked F1 review is not a passing review and cannot be used here.
 Parent coordinates landing/review and any later operator execution; implementer
 must not approve or merge itself.
 
@@ -168,7 +179,9 @@ the NATS client and monitoring pair to local ports 4222/8222 and verifies server
 identity; it does not change their security configuration.
 
 The following is a **future operator command**, NOT executed by this worker.
-Replace review/authorization placeholders with real records before invoking:
+Use the passing corrected-revision independent review record for `--review-ref`;
+use the existing user BB-41 instruction as `--authorization-ref` (a truthful
+reference to the authorization already given, not invented new approval):
 
 ```bash
 python3 ops/live/bb41_delete_consumers.py \
@@ -242,12 +255,18 @@ All paths below are relative to `ops/live/`:
   no event payloads; initial snapshot hash embedded.
 - `evidence/bb41/handler-evidence.json`: sanitized n8n run-data summaries, Krebs
   journal subset, gateway terminal metadata and actual session tool-record hashes.
-- `evidence/bb41/tests.txt`: **22 passing isolated tests**, no production writes.
+- `evidence/bb41/tests.txt`: **22 passing isolated tests on the original
+  blocked revision**, no production writes. The corrected revision's 23-test
+  run must be checked separately; this file is historical evidence, not new proof.
 - `evidence/bb41/SHA256SUMS`: content digests; verify with `sha256sum -c` from
   the evidence directory.
 
 Tests exercise health cases, guard refusals, exact deletion subjects, fail-stop
-on first deletion error and the complete live-runner flow with injected offline
-responses. **No real deletion was tested or performed.** Real read-only broker
-INFO responses were checked against monitor configs/identity and matched. The
-live runner's delete branch remains subject to independent operational review.
+on first deletion error, the complete live-runner flow with injected offline
+responses, and real capture/postcheck CLIs against private local HTTP monitoring
+and SQLite fixtures. The latter removes exactly the two target consumers from
+its broker fixture and checks both legacy workflows remain visible and inactive;
+a subsequently reactivated legacy workflow fails the postcheck. **No real
+deletion was tested or performed.** Real read-only broker INFO responses were
+checked against monitor configs/identity and matched. The live runner's delete
+branch remains subject to independent operational review.

@@ -71,8 +71,10 @@ def capture(monitor, database):
                            "phase_guard": n.get("parameters", {}).get("phaseGuard"),
                            "events": n.get("parameters", {}).get("events")} for n in nodes],
             }
+        # Workflow-off evidence must survive deletion of the durables that once named their owners.
+        required_workflows = {TRIAGE, CHIP, *(wid for wid, _ in TARGETS.values())}
         owners = {wid: wf for wid, wf in workflows.items()
-                  if wid in (TRIAGE, CHIP) or any(c["name"].startswith("n8n-" + wid + "-") for c in consumers)}
+                  if wid in required_workflows or any(c["name"].startswith("n8n-" + wid + "-") for c in consumers)}
     return {"captured_at": datetime.now(timezone.utc).isoformat(), "jsz": jsz, "workflows": owners}
 
 

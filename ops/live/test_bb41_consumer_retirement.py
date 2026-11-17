@@ -4,7 +4,11 @@ import importlib.util
 import asyncio
 import hashlib
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import sqlite3
+import subprocess
+import threading
 import sys
 from types import SimpleNamespace
 import tempfile
@@ -190,6 +194,82 @@ class GuardTests(unittest.TestCase):
             with r.sqlite_ro(path) as db:
                 with self.assertRaises(sqlite3.OperationalError):
                     db.execute("CREATE TABLE forbidden (id int)")
+
+
+class CaptureBoundaryTests(unittest.TestCase):
+    def test_http_sqlite_snapshots_postcheck_and_workflow_reactivation_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "n8n.sqlite"
+            with sqlite3.connect(database) as db:
+                db.execute('''CREATE TABLE workflow_entity (
+                    id TEXT, name TEXT, active INTEGER, nodes TEXT, connections TEXT,
+                    settings TEXT, updatedAt TEXT, activeVersionId TEXT)''')
+                for wid in (*[entry[0] for entry in r.TARGETS.values()], r.TRIAGE, r.CHIP, "unrelated"):
+                    db.execute('INSERT INTO workflow_entity VALUES (?,?,?,?,?,?,?,?)',
+                               (wid, wid, int(wid in (r.TRIAGE, r.CHIP)), "[]", "{}", "{}",
+                                "2026-11-17T19:00:00Z", None))
+            state = {"jsz": copy.deepcopy(fixture()["jsz"]), "paths": []}
+
+            class Handler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    state["paths"].append(self.path)
+                    if self.path != "/jsz?streams=true&consumers=true&config=true":
+                        self.send_error(404)
+                        return
+                    body = json.dumps(state["jsz"]).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+                def log_message(self, format, *args):
+                    pass
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            command = [sys.executable, "-B", str(Path(__file__).with_name("bb41_consumer_retirement.py"))]
+
+            def run(*arguments):
+                return subprocess.run([*command, *map(str, arguments)], capture_output=True, text=True, timeout=15)
+
+            def snapshot(name):
+                path = root / name
+                proc = run("snapshot", "--monitor", f"http://127.0.0.1:{server.server_port}",
+                           "--n8n-db", database, "--out", path)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                return path, json.loads(path.read_text())
+
+            try:
+                before_path, before = snapshot("before.json")
+                self.assertEqual(set(before["workflows"]), {r.TRIAGE, r.CHIP, *[v[0] for v in r.TARGETS.values()]})
+                self.assertEqual(run("plan", before_path).returncode, 0)
+                stream = r.stream(state["jsz"])
+                stream["consumer_detail"] = [c for c in stream["consumer_detail"] if c["name"] not in r.TARGETS]
+                stream["state"]["consumer_count"] = len(stream["consumer_detail"])
+                after_path, after = snapshot("after.json")
+                self.assertEqual(set(r.consumer_map(before)) - set(r.consumer_map(after)), set(r.TARGETS))
+                for wid, _ in r.TARGETS.values():
+                    self.assertIn(wid, after["workflows"])
+                    self.assertFalse(after["workflows"][wid]["active"])
+                checked = run("postcheck", before_path, after_path)
+                self.assertEqual(checked.returncode, 0, checked.stderr)
+                self.assertTrue(json.loads(checked.stdout)["only_intended_consumers_removed"])
+
+                with sqlite3.connect(database) as db:
+                    db.execute("UPDATE workflow_entity SET active=1 WHERE id=?", (next(iter(r.TARGETS.values()))[0],))
+                reactivated_path, reactivated = snapshot("reactivated.json")
+                self.assertTrue(reactivated["workflows"][next(iter(r.TARGETS.values()))[0]]["active"])
+                denied = run("postcheck", before_path, reactivated_path)
+                self.assertNotEqual(denied.returncode, 0)
+                self.assertIn("workflow changed", denied.stderr)
+                self.assertEqual(state["paths"], ["/jsz?streams=true&consumers=true&config=true"] * 3)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
 
 
 class DeleteTests(unittest.TestCase):
