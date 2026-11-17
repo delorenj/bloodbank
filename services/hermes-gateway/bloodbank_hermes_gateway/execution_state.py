@@ -444,6 +444,7 @@ class ExecutionStateStore:
         """Freeze model output, NOT platform success or a publishable outbox."""
         if outcome not in {"success", "failure", "cancelled"}:
             raise ValueError(f"unsupported capture outcome: {outcome}")
+        encoded_capture = _events_json(events)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             current = self._select(db, command_id)
@@ -451,7 +452,12 @@ class ExecutionStateStore:
                 raise RuntimeError("execution journal has no started command to capture")
             self._require_digest(current, digest)
             if current.capture_outcome is not None:
-                if current.capture_outcome != outcome or current.captured_events != events:
+                stored_capture = db.execute(
+                    "SELECT captured_events FROM executions WHERE command_id = ?",
+                    (command_id,),
+                ).fetchone()[0]
+                # Decoded equality conflates JSON true/1 and 1/1.0.
+                if current.capture_outcome != outcome or stored_capture != encoded_capture:
                     raise RuntimeError("captured execution journal result is immutable")
                 return current
             if current.state != "started":
@@ -459,7 +465,7 @@ class ExecutionStateStore:
             db.execute(
                 """UPDATE executions SET capture_outcome = ?, captured_events = ?,
                        updated_at = ? WHERE command_id = ?""",
-                (outcome, _events_json(events), _now(), command_id),
+                (outcome, encoded_capture, _now(), command_id),
             )
             record = self._select(db, command_id)
         if record is None:
@@ -508,10 +514,14 @@ class ExecutionStateStore:
                     "command_id collides with a different command envelope"
                 )
             if current.state == "completed":
+                stored_terminal = db.execute(
+                    "SELECT terminal_events FROM executions WHERE command_id = ?",
+                    (command_id,),
+                ).fetchone()[0]
                 if (
                     current.outcome != outcome
                     or current.failure_code != failure_code
-                    or current.terminal_events != terminal_events
+                    or stored_terminal != encoded_terminal
                 ):
                     db.rollback()
                     raise RuntimeError(

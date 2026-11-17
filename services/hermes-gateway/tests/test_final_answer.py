@@ -421,6 +421,128 @@ async def test_duplicate_capture_immutable_conflict_fails_closed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "original_value,conflicting_value", [(True, 1), (1, 1.0)],
+    ids=["bool-int", "int-float"],
+)
+async def test_schema_valid_numeric_capture_conflict_poisons_observer_and_restart(
+    tmp_path, valid_command, monkeypatch, original_value, conflicting_value
+):
+    from bloodbank_hermes_gateway import plugin
+
+    valid_command["actor"]["metadata"] = {"nested": [{"value": original_value}]}
+    adapter = make_adapter(tmp_path)
+    captured_bytes = []
+
+    async def handler(_event):
+        binding = command_binding.get()
+        assert binding is not None
+        original = final_answer_event(
+            binding.invocation, role="assistant", final_answer=True, text=BODY,
+            native_session_id=NATIVE["session_id"], native_turn_id=NATIVE["turn_id"],
+        )
+        adapter.execution_state.mark_captured(
+            command_id=binding.invocation.invocation_id, digest=binding.digest,
+            outcome="success", events=(original,),
+        )
+        captured_bytes.append(wire(original))
+        conflicting = copy.deepcopy(original)
+        conflicting["data"]["issuer"]["metadata"]["nested"][0]["value"] = conflicting_value
+        validate_fact(original)
+        validate_fact(conflicting)
+        assert original == conflicting and wire(original) != wire(conflicting)
+        monkeypatch.setattr(plugin, "final_answer_event", lambda *_args, **_kwargs: conflicting)
+        with pytest.raises(RuntimeError, match="immutable"):
+            capture()
+        assert binding.error is not None
+        return "receipt"
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    assert message.nacked == 1 and message.acked == 0
+    stored = adapter.execution_state.get(valid_command["command_id"])
+    assert stored is not None
+    assert stored.capture_error == "conflicting_native_capture"
+    assert [wire(event) for event in stored.captured_events] == captured_bytes
+    assert not any(event["type"] == MESSAGE_APPENDED for event in adapter._js.events)
+
+    for _ in range(2):
+        restarted = make_adapter(tmp_path)
+
+        async def forbidden(_event):
+            pytest.fail("conflicting captured execution must not run again")
+
+        restarted.set_message_handler(forbidden)
+        replay = FakeMessage(valid_command)
+        await restarted._handle_broker_message(replay)
+        assert replay.acked == 1 and replay.nacked == 0
+        result = restarted.execution_state.get(valid_command["command_id"])
+        assert result is not None
+        assert result.outcome == "failure"
+        assert result.failure_code == "conflicting_native_capture"
+        assert [wire(event) for event in result.captured_events] == captured_bytes
+        assert not any(event["type"] == MESSAGE_APPENDED for event in restarted._js.events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "original_value,conflicting_value", [(True, 1), (1, 1.0)],
+    ids=["bool-int", "int-float"],
+)
+async def test_schema_valid_numeric_outbox_conflict_replays_only_original_wire_bytes(
+    tmp_path, valid_command, original_value, conflicting_value
+):
+    valid_command["actor"]["metadata"] = {"nested": [{"value": original_value}]}
+    adapter = make_adapter(tmp_path)
+    executions = 0
+
+    async def handler(_event):
+        nonlocal executions
+        executions += 1
+        capture()
+        return "receipt"
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    assert message.acked == 1
+    stored = adapter.execution_state.get(valid_command["command_id"])
+    assert stored is not None
+    conflicting = copy.deepcopy(stored.terminal_events)
+    conflicting[0]["data"]["issuer"]["metadata"]["nested"][0]["value"] = conflicting_value
+    assert conflicting == stored.terminal_events
+    assert wire(conflicting[0]) != wire(stored.terminal_events[0])
+    for event in conflicting:
+        validate_fact(event)
+    with pytest.raises(RuntimeError, match="immutable"):
+        adapter.execution_state.mark_completed(
+            command_id=stored.command_id, digest=stored.envelope_digest,
+            outcome="success", terminal_events=conflicting,
+        )
+    expected = [wire(event) for event in (*stored.started_events, *stored.terminal_events)]
+    for _ in range(2):
+        restarted = make_adapter(tmp_path)
+        published = []
+        publish = restarted._js.publish
+
+        async def record_publish(subject, payload, *, published=published, publish=publish, **kwargs):
+            published.append((payload, kwargs["headers"]["Nats-Msg-Id"]))
+            await publish(subject, payload, **kwargs)
+
+        restarted._js.publish = record_publish
+        restarted.set_message_handler(handler)
+        replay = FakeMessage(valid_command)
+        await restarted._handle_broker_message(replay)
+        assert replay.acked == 1 and replay.nacked == 0
+        assert [payload for payload, _ in published] == expected
+        assert [message_id for _, message_id in published] == [
+            event["id"] for event in (*stored.started_events, *stored.terminal_events)
+        ]
+    assert executions == 1
+
+
+@pytest.mark.asyncio
 async def test_profile_isolation_child_exclusion_and_real_execution_thread_context(
     tmp_path, valid_command
 ):
