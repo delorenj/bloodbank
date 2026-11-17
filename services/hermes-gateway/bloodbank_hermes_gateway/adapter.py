@@ -50,6 +50,7 @@ from .contract import (
     terminal_events,
 )
 from .execution_state import ExecutionRecord, ExecutionStateStore, envelope_digest
+from .plugin import CommandBinding, command_binding, prepare_capture, register_hooks
 from .refusals import NOT_RUN, HermesNotice, NoticeClassifier, is_interrupt_text
 
 logger = logging.getLogger(__name__)
@@ -293,6 +294,7 @@ class PendingInvocation:
     broker_message: Any
     completion: asyncio.Future[None]
     envelope_digest: str
+    binding: CommandBinding | None = None
     # The MessageEvent handed to Hermes (its source addresses the session a
     # timeout must stop).
     event: Any = None
@@ -537,6 +539,31 @@ class BloodbankAdapter(BasePlatformAdapter):
     @property
     def name(self) -> str:
         return "Bloodbank"
+
+    def set_message_handler(self, handler: Any) -> None:
+        self._capture_handler = handler
+
+        async def bound_handler(event: MessageEvent) -> Any:
+            record = self._records.get(str(event.message_id or ""))
+            binding = None
+            if record is not None:
+                binding = CommandBinding(
+                    record.invocation, record.envelope_digest, self.execution_state
+                )
+                record.binding = binding
+            token = command_binding.set(binding)
+            try:
+                response = await handler(event)
+                if binding is not None and binding.error is not None:
+                    raise binding.error
+                return response
+            finally:
+                if binding is not None:
+                    with binding.lock:
+                        binding.closed = True
+                command_binding.reset(token)
+
+        super().set_message_handler(bound_handler)
 
     @property
     def lanes(self) -> tuple[LaneRuntime, ...]:
@@ -1068,6 +1095,24 @@ class BloodbankAdapter(BasePlatformAdapter):
                             "command_id collides with a different command envelope"
                         )
 
+                if persisted.capture_outcome is not None and persisted.state == "started":
+                    # A finalizer ran, but no durable processing decision survived.
+                    # Never infer platform success from model completion or rerun it.
+                    invocation = Invocation.from_envelope(envelope, persisted.profile, lane.name)
+                    code = persisted.capture_error or "processing_outcome_unknown"
+                    persisted = await asyncio.to_thread(
+                        self.execution_state.mark_completed,
+                        command_id=command_id,
+                        digest=digest,
+                        outcome="failure",
+                        terminal_events=terminal_events(
+                            invocation,
+                            outcome="failure",
+                            failure_code=code,
+                            failure_message="Native output captured; final processing outcome unavailable",
+                        ),
+                        failure_code=code,
+                    )
                 if persisted.state in {"pending", "started"}:
                     invocation = Invocation.from_envelope(
                         envelope, persisted.profile, lane.name
@@ -1165,6 +1210,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                         # claimed or restarted pending command must not execute on
                         # a route disabled while lifecycle publication was in flight.
                         await self._assert_dispatch_route(invocation)
+                        prepare_capture(self._capture_handler, event)
                         # Last look before the hand-off (no await from here on): a
                         # drain that began while the started facts were published.
                         self._refuse_if_not_accepting()
@@ -1181,9 +1227,6 @@ class BloodbankAdapter(BasePlatformAdapter):
                         if getattr(event, "_gateway_accepted", True) is not True:
                             record.finalizing = True
                             if invocation.prompt.lstrip().startswith("/"):
-                                # A bypass slash command (/stop, /new, /approve, ...)
-                                # on a busy session runs inline without admission: it
-                                # may have acted, so a redelivery must not repeat it.
                                 raise TurnNotRun(
                                     "not_accepted_slash_command",
                                     "Hermes handled the prompt as a slash command inline "
@@ -1221,6 +1264,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                         digest=record.envelope_digest,
                         persisted=persisted,
                         replay_started=not started_publish_complete,
+                        reason=getattr(exc, "reason", ROUTE_REJECTION_REASON),
                     )
                 except Exception as journal_error:
                     logger.error(
@@ -1538,6 +1582,7 @@ class BloodbankAdapter(BasePlatformAdapter):
         digest: str,
         persisted: ExecutionRecord,
         replay_started: bool,
+        reason: str = ROUTE_REJECTION_REASON,
     ) -> ExecutionRecord:
         """Persist rejection evidence and close any lifecycle that may have opened."""
 
@@ -1546,7 +1591,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 self.execution_state.reject_pre_start,
                 command_id=invocation.invocation_id,
                 digest=digest,
-                reason=ROUTE_REJECTION_REASON,
+                reason=reason,
             )
 
         if persisted.state == "started":
@@ -1554,7 +1599,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 self.execution_state.begin_rejection,
                 command_id=invocation.invocation_id,
                 digest=digest,
-                reason=ROUTE_REJECTION_REASON,
+                reason=reason,
             )
         if persisted.state == "rejected_closing":
             if persisted.rejected_at is None:
@@ -1562,8 +1607,12 @@ class BloodbankAdapter(BasePlatformAdapter):
             events = terminal_events(
                 invocation,
                 outcome="failure",
-                failure_code=ROUTE_REJECTION_REASON,
-                failure_message=ROUTE_REJECTION_MESSAGE,
+                failure_code=persisted.rejection_reason or reason,
+                failure_message=(
+                    ROUTE_REJECTION_MESSAGE
+                    if persisted.rejection_reason == ROUTE_REJECTION_REASON
+                    else "Hermes final-answer capture capability is unavailable"
+                ),
                 occurred_at=persisted.rejected_at,
             )
             persisted = await asyncio.to_thread(
@@ -1963,6 +2012,10 @@ class BloodbankAdapter(BasePlatformAdapter):
             if result in {"cancelled", "canceled"}
             else "failure"
         )
+        binding = record.binding
+        captured = binding.result if binding is not None else None
+        if terminal_outcome == "success" and captured is not None:
+            terminal_outcome = captured.capture_outcome or terminal_outcome
         # A turn Hermes' stop() cut off reports its partial text (or nothing, or
         # a cancellation at adapter teardown) like a finished one: not an answer.
         interrupted = self._shutdown_interruption(record, terminal_outcome)
@@ -1977,7 +2030,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 if record.detached_at is not None
                 else lane.shutdown_interrupt
             )
-            if mode == "retry":
+            if mode == "retry" and captured is None:
                 logger.warning(
                     "Bloodbank turn cut off by Hermes %s lane=%s profile=%s "
                     "command_id=%s: NAK, the next process re-dispatches the same thread",
@@ -2014,7 +2067,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 else None
             )
             failure_code = failure_message = failure_data = None
-        if notice is not None and notice.disposition == NOT_RUN:
+        if notice is not None and notice.disposition == NOT_RUN and captured is None:
             record.completion.set_exception(
                 TurnNotRun(
                     notice.key,
@@ -2048,6 +2101,8 @@ class BloodbankAdapter(BasePlatformAdapter):
                 record.final_reply,
             )
         try:
+            if binding is not None and binding.error is not None:
+                raise binding.error
             events = terminal_events(
                 record.invocation,
                 outcome=terminal_outcome,
@@ -2056,7 +2111,9 @@ class BloodbankAdapter(BasePlatformAdapter):
                 failure_data=failure_data,
                 extra_data=self._turn_annotations(record),
             )
-            await asyncio.to_thread(
+            if captured is not None and terminal_outcome == "success":
+                events = (*captured.captured_events, *events)
+            resolved = await asyncio.to_thread(
                 self.execution_state.mark_completed,
                 command_id=record.invocation.invocation_id,
                 digest=record.envelope_digest,
@@ -2064,7 +2121,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 terminal_events=events,
                 failure_code=failure_code,
             )
-            await self._publish_many(events)
+            await self._publish_many(resolved.terminal_events)
         except Exception as exc:
             record.completion.set_exception(exc)
             raise
@@ -2307,6 +2364,7 @@ class BloodbankAdapter(BasePlatformAdapter):
 
 def check_requirements() -> bool:
     try:
+        import jsonschema  # noqa: F401
         import nats  # noqa: F401
         import yaml  # noqa: F401
     except ImportError:
@@ -2340,6 +2398,7 @@ def is_connected(config: Any) -> bool:
 
 
 def register(ctx: Any) -> None:
+    register_hooks(ctx)
     ctx.register_platform(
         name="bloodbank",
         label="Bloodbank",

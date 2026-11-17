@@ -1,0 +1,213 @@
+{
+  "base": "ec8f5c1332bc0653092f4a4c91737bc614f88c34",
+  "reviewed_commit": "f168ba8f7071ba775096e790cfc3c0e34f2c8116",
+  "paths": [
+    {
+      "path": "services/hermes-gateway/bloodbank_hermes_gateway/execution_state.py",
+      "baseline": {
+        "exit": 1,
+        "count": 2,
+        "findings": [
+          {
+            "cell": null,
+            "code": "UP017",
+            "end_location": {
+              "column": 37,
+              "row": 22
+            },
+            "filename": "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/hermes-gateway/bloodbank_hermes_gateway/execution_state.py",
+            "fix": {
+              "applicability": "safe",
+              "edits": [
+                {
+                  "content": "from datetime import datetime, timezone, UTC",
+                  "end_location": {
+                    "column": 40,
+                    "row": 16
+                  },
+                  "location": {
+                    "column": 1,
+                    "row": 16
+                  }
+                },
+                {
+                  "content": "UTC",
+                  "end_location": {
+                    "column": 37,
+                    "row": 22
+                  },
+                  "location": {
+                    "column": 25,
+                    "row": 22
+                  }
+                }
+              ],
+              "message": "Convert to `datetime.UTC` alias"
+            },
+            "location": {
+              "column": 25,
+              "row": 22
+            },
+            "message": "Use `datetime.UTC` alias",
+            "name": "datetime-timezone-utc",
+            "noqa_row": 22,
+            "severity": "error",
+            "url": "https://docs.astral.sh/ruff/rules/datetime-timezone-utc"
+          },
+          {
+            "cell": null,
+            "code": "RUF100",
+            "end_location": {
+              "column": 53,
+              "row": 205
+            },
+            "filename": "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/hermes-gateway/bloodbank_hermes_gateway/execution_state.py",
+            "fix": {
+              "applicability": "safe",
+              "edits": [
+                {
+                  "content": "",
+                  "end_location": {
+                    "column": 90,
+                    "row": 205
+                  },
+                  "location": {
+                    "column": 39,
+                    "row": 205
+                  }
+                }
+              ],
+              "message": "Remove unused `noqa` directive"
+            },
+            "location": {
+              "column": 41,
+              "row": 205
+            },
+            "message": "Unused `noqa` directive (non-enabled: `S608`)",
+            "name": "unused-noqa",
+            "noqa_row": 205,
+            "severity": "error",
+            "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+          }
+        ]
+      },
+      "candidate": {
+        "exit": 1,
+        "count": 2,
+        "findings": [
+          {
+            "cell": null,
+            "code": "UP017",
+            "end_location": {
+              "column": 37,
+              "row": 22
+            },
+            "filename": "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/hermes-gateway/bloodbank_hermes_gateway/execution_state.py",
+            "fix": {
+              "applicability": "safe",
+              "edits": [
+                {
+                  "content": "from datetime import datetime, timezone, UTC",
+                  "end_location": {
+                    "column": 40,
+                    "row": 16
+                  },
+                  "location": {
+                    "column": 1,
+                    "row": 16
+                  }
+                },
+                {
+                  "content": "UTC",
+                  "end_location": {
+                    "column": 37,
+                    "row": 22
+                  },
+                  "location": {
+                    "column": 25,
+                    "row": 22
+                  }
+                }
+              ],
+              "message": "Convert to `datetime.UTC` alias"
+            },
+            "location": {
+              "column": 25,
+              "row": 22
+            },
+            "message": "Use `datetime.UTC` alias",
+            "name": "datetime-timezone-utc",
+            "noqa_row": 22,
+            "severity": "error",
+            "url": "https://docs.astral.sh/ruff/rules/datetime-timezone-utc"
+          },
+          {
+            "cell": null,
+            "code": "RUF100",
+            "end_location": {
+              "column": 53,
+              "row": 205
+            },
+            "filename": "/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/hermes-gateway/bloodbank_hermes_gateway/execution_state.py",
+            "fix": {
+              "applicability": "safe",
+              "edits": [
+                {
+                  "content": "",
+                  "end_location": {
+                    "column": 90,
+                    "row": 205
+                  },
+                  "location": {
+                    "column": 39,
+                    "row": 205
+                  }
+                }
+              ],
+              "message": "Remove unused `noqa` directive"
+            },
+            "location": {
+              "column": 41,
+              "row": 205
+            },
+            "message": "Unused `noqa` directive (non-enabled: `S608`)",
+            "name": "unused-noqa",
+            "noqa_row": 205,
+            "severity": "error",
+            "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+          }
+        ]
+      },
+      "added": []
+    },
+    {
+      "path": "services/hermes-gateway/tests/test_capture_journal.py",
+      "baseline": {
+        "exit": 0,
+        "count": 0,
+        "findings": []
+      },
+      "candidate": {
+        "exit": 0,
+        "count": 0,
+        "findings": []
+      },
+      "added": []
+    },
+    {
+      "path": "services/hermes-gateway/tests/test_final_answer.py",
+      "baseline": {
+        "exit": 0,
+        "count": 0,
+        "findings": []
+      },
+      "candidate": {
+        "exit": 0,
+        "count": 0,
+        "findings": []
+      },
+      "added": []
+    }
+  ],
+  "new_findings": []
+}

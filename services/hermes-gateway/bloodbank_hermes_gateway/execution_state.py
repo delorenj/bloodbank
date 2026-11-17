@@ -1,9 +1,9 @@
 """Durable execution journal for Bloodbank command delivery.
 
-JetStream is at-least-once. This journal does not claim exactly-once transport;
-it records the local execution boundary so a completed Hermes command can be
-replayed through terminal publication and acknowledgement without executing
-the command again.
+JetStream is at-least-once. This journal does not claim exactly-once transport.
+Native model finalization and later platform processing are recorded separately,
+so capture survives a crash without declaring success early. Publishers replay
+the resolved immutable outbox without executing Hermes.
 """
 
 from __future__ import annotations
@@ -64,10 +64,20 @@ class ExecutionRecord:
     # detached (gave its slot back and ran on); None when it never detached and
     # for rows written before the column existed.
     detached_at: str | None = None
+    # Native model finalization is durable before platform processing settles.
+    # A started row with capture_outcome set must never execute Hermes again.
+    capture_outcome: str | None = None
+    captured_events: tuple[dict[str, Any], ...] = ()
+    capture_error: str | None = None
 
 
 class ExecutionStateStore:
-    """SQLite-backed command state with crash-safe lifecycle transitions."""
+    """SQLite command journal and ordered result outbox.
+
+    Native output is captured separately from final platform processing.
+    terminal_events is the resolved immutable publishable batch; old records
+    retain their original meaning and bytes.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path.expanduser()
@@ -86,24 +96,29 @@ class ExecutionStateStore:
                 str(row[1])
                 for row in db.execute("PRAGMA table_info(executions)").fetchall()
             }
-            if not columns:
-                self._create_schema(db)
-            else:
+            if columns:
                 version = int(db.execute("PRAGMA user_version").fetchone()[0])
-                if version > 3:
+                if version > 4:
                     raise RuntimeError(
                         f"execution journal schema version {version} is unsupported"
                     )
-                if version != 3 or "rejected_at" not in columns:
+                if version < 3 or "rejected_at" not in columns:
                     self._migrate_to_current_schema(db, columns)
-                else:
-                    # Additive and nullable: older rows read back as NULL, and an
-                    # older gateway ignores columns it does not select.
-                    for column in ("lane", "failure_code", "detached_at"):
-                        if column not in columns:
-                            db.execute(
-                                f"ALTER TABLE executions ADD COLUMN {column} TEXT"
-                            )
+            else:
+                self._create_schema(db)
+            columns = {
+                str(row[1])
+                for row in db.execute("PRAGMA table_info(executions)").fetchall()
+            }
+            # Nullable additions preserve every historical row and outbox byte.
+            for column in (
+                "lane", "failure_code", "detached_at", "capture_outcome",
+                "captured_events", "capture_error",
+            ):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE executions ADD COLUMN {column} TEXT")
+            # Older gateways must refuse this journal, not rerun captured turns.
+            db.execute("PRAGMA user_version = 4")
         os.chmod(self.path, 0o600)
 
     @staticmethod
@@ -271,6 +286,9 @@ class ExecutionStateStore:
             lane=str(row[9]) if row[9] is not None else None,
             failure_code=str(row[10]) if row[10] is not None else None,
             detached_at=str(row[11]) if row[11] is not None else None,
+            capture_outcome=str(row[12]) if row[12] is not None else None,
+            captured_events=_decode_events(row[13]),
+            capture_error=str(row[14]) if row[14] is not None else None,
         )
 
     @classmethod
@@ -278,7 +296,8 @@ class ExecutionStateStore:
         row = db.execute(
             """SELECT command_id, envelope_digest, profile, state, outcome,
                       started_events, terminal_events, rejection_reason, rejected_at,
-                      lane, failure_code, detached_at
+                      lane, failure_code, detached_at, capture_outcome,
+                      captured_events, capture_error
                FROM executions WHERE command_id = ?""",
             (command_id,),
         ).fetchone()
@@ -348,11 +367,9 @@ class ExecutionStateStore:
             if current is None:
                 db.rollback()
                 raise RuntimeError("execution journal has no pending command to start")
-            try:
-                self._require_digest(current, digest)
-            except RuntimeError:
-                db.rollback()
-                raise
+            self._require_digest(current, digest)
+            if current.capture_outcome is not None:
+                raise RuntimeError("captured execution cannot be dispatched again")
             if current.state == "started":
                 if current.detached_at is None:
                     db.commit()
@@ -382,9 +399,10 @@ class ExecutionStateStore:
         return record
 
     def mark_detached(self, *, command_id: str, digest: str) -> ExecutionRecord:
-        """Stamp ``detached_at`` on a started command whose turn runs on past its
-        lane's wall clock. The row stays 'started' (still dispatchable on a
-        redelivery); the first stamp is kept if an attempt detaches again."""
+        """Stamp ``detached_at`` when a turn runs past its lane's wall clock.
+
+        Keep the first stamp. A captured row stays non-dispatchable even while
+        its platform processing has not resolved yet."""
 
         now = _now()
         with self._connect() as db:
@@ -415,6 +433,60 @@ class ExecutionStateStore:
             raise RuntimeError("execution journal failed to persist detached command")
         return record
 
+    def mark_captured(
+        self,
+        *,
+        command_id: str,
+        digest: str,
+        outcome: str,
+        events: tuple[dict[str, Any], ...],
+    ) -> ExecutionRecord:
+        """Freeze model output, NOT platform success or a publishable outbox."""
+        if outcome not in {"success", "failure", "cancelled"}:
+            raise ValueError(f"unsupported capture outcome: {outcome}")
+        encoded_capture = _events_json(events)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None:
+                raise RuntimeError("execution journal has no started command to capture")
+            self._require_digest(current, digest)
+            if current.capture_outcome is not None:
+                stored_capture = db.execute(
+                    "SELECT captured_events FROM executions WHERE command_id = ?",
+                    (command_id,),
+                ).fetchone()[0]
+                # Decoded equality conflates JSON true/1 and 1/1.0.
+                if current.capture_outcome != outcome or stored_capture != encoded_capture:
+                    raise RuntimeError("captured execution journal result is immutable")
+                return current
+            if current.state != "started":
+                raise RuntimeError("execution must be started before capture")
+            db.execute(
+                """UPDATE executions SET capture_outcome = ?, captured_events = ?,
+                       updated_at = ? WHERE command_id = ?""",
+                (outcome, encoded_capture, _now(), command_id),
+            )
+            record = self._select(db, command_id)
+        if record is None:
+            raise RuntimeError("execution journal failed to persist capture")
+        return record
+
+    def poison_capture(self, *, command_id: str, digest: str) -> None:
+        """Keep contradictory observer evidence fail-closed across restart."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None:
+                raise RuntimeError("execution journal has no capture to poison")
+            self._require_digest(current, digest)
+            if current.state == "started" and current.capture_outcome is not None:
+                db.execute(
+                    """UPDATE executions SET capture_error = 'conflicting_native_capture',
+                           updated_at = ? WHERE command_id = ?""",
+                    (_now(), command_id),
+                )
+
     def mark_completed(
         self,
         *,
@@ -442,9 +514,14 @@ class ExecutionStateStore:
                     "command_id collides with a different command envelope"
                 )
             if current.state == "completed":
+                stored_terminal = db.execute(
+                    "SELECT terminal_events FROM executions WHERE command_id = ?",
+                    (command_id,),
+                ).fetchone()[0]
                 if (
                     current.outcome != outcome
-                    or current.terminal_events != terminal_events
+                    or current.failure_code != failure_code
+                    or stored_terminal != encoded_terminal
                 ):
                     db.rollback()
                     raise RuntimeError(
@@ -455,6 +532,8 @@ class ExecutionStateStore:
             if current.state != "started":
                 db.rollback()
                 raise RuntimeError("execution must be started before completion")
+            if current.capture_error is not None and outcome == "success":
+                raise RuntimeError("poisoned capture cannot resolve as success")
             db.execute(
                 """UPDATE executions
                    SET state = 'completed', outcome = ?, terminal_events = ?,

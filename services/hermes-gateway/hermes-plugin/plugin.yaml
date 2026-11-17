@@ -8,6 +8,7 @@ kind: platform
 pip_dependencies:
   - nats-py==2.15.0
   - PyYAML==6.0.3
+  - jsonschema>=4.23,<5
 optional_env:
   - name: BLOODBANK_NATS_URL
     description: "NATS endpoint; defaults to nats://127.0.0.1:4222"

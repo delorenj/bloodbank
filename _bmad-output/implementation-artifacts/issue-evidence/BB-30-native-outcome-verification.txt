@@ -1,0 +1,356 @@
+BB-30 offline native-outcome repair verification
+cwd: /home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication
+PYTHONDONTWRITEBYTECODE=1
+BB30_HERMES_RELEASE=/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-native-release
+BLOODBANK_SCHEMAS_DIR=/home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/schemas
+
+$ /home/delorenj/code/33GOD/bloodbank/services/hermes-gateway/.venv/bin/python -c 'import pathlib,sys; import conftest; from bloodbank_hermes_gateway import contract; sys.path.insert(0, str(pathlib.Path(contract.__file__).resolve().parents[2] / '"'"'agent-hooks'"'"')); from core import validate; root=pathlib.Path.cwd(); assert pathlib.Path(validate.__file__).resolve()==root/'"'"'services/agent-hooks/core/validate.py'"'"'; assert validate._schemas_root().resolve()==root/'"'"'schemas'"'"'; print('"'"'validator:'"'"', validate.__file__); print('"'"'schemas:'"'"', validate._schemas_root())'
+validator: /home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/agent-hooks/core/validate.py
+schemas: /home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/schemas
+EXIT=0
+
+$ /home/delorenj/code/33GOD/bloodbank/services/hermes-gateway/.venv/bin/python -m pytest -s -q -p no:cacheprovider --basetemp=/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-final-probes /home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-fresh-probes.py
+{"probe": "actual-primary-handler", "ack": 1, "answers": 1}
+.{"probe": "native-model-metadata", "ack": 1, "answer": true, "terminal_data": {"command_id": "f0f0b3fe-1910-4bca-9a35-8e3ef972e160", "context": {"priority": "normal"}, "idempotency_key": "agent.invocation.start:turn:f0f0b3fe-1910-4bca-9a35-8e3ef972e160", "invocation_id": "f0f0b3fe-1910-4bca-9a35-8e3ef972e160", "lane": "batch", "model_override": {"applied": true, "requested": "automaticai/auto/fast"}, "profile_name": "bloodbank-pm", "target_agent_id": "bloodbank-pm", "thread_id": "thread-1", "turn_id": "turn-1"}}
+.{"probe": "native-delivery-failure", "ack": 1, "nak": 0, "state": "completed", "outcome": "failure", "events": ["bloodbank.conversation.turn.started", "bloodbank.agent.invocation.started", "bloodbank.agent.invocation.failed", "bloodbank.conversation.turn.completed"]}
+{"probe": "delivery-failure-restart", "ack": 1, "outcome": "failure", "answer_count": 0}
+.{"probe": "native-send-cancel", "ack": 1, "nak": 0, "state": "completed", "outcome": "cancelled", "events": ["bloodbank.conversation.turn.started", "bloodbank.agent.invocation.started", "bloodbank.agent.invocation.failed", "bloodbank.conversation.turn.completed"]}
+{"probe": "cancel-restart", "ack": 1, "outcome": "cancelled", "answer_count": 0}
+.{"probe": "native-detached-metadata", "ack": 1, "terminal_data": {"command_id": "22905b2e-0daf-4efa-a98f-dc4531705b16", "context": {"priority": "normal"}, "detached": true, "detached_after_seconds": 0.0, "elapsed_seconds": 0.0, "idempotency_key": "agent.invocation.start:turn:22905b2e-0daf-4efa-a98f-dc4531705b16", "invocation_id": "22905b2e-0daf-4efa-a98f-dc4531705b16", "lane": "batch", "profile_name": "bloodbank-pm", "target_agent_id": "bloodbank-pm", "thread_id": "thread-1", "turn_id": "turn-1"}}
+.{"probe": "native-shutdown-machine-code", "ack": 1, "state": "completed", "outcome": "failure", "failure_code": "interrupted_by_shutdown", "terminal_data": {"command_id": "61f26ad8-b864-4c23-900c-7d53032a2c08", "context": {"priority": "normal"}, "elapsed_seconds": 0.0, "error_code": "interrupted_by_shutdown", "error_message": "Hermes was restarting and interrupted the turn after 0s before it finished (its stop drain ran out; Hermes reported cancelled); partial work may have run", "idempotency_key": "agent.invocation.start:turn:61f26ad8-b864-4c23-900c-7d53032a2c08", "interrupted_by": "gateway_restart", "invocation_id": "61f26ad8-b864-4c23-900c-7d53032a2c08", "lane": "batch", "profile_name": "bloodbank-pm", "target_agent_id": "bloodbank-pm", "thread_id": "thread-1", "turn_id": "turn-1"}}
+.
+6 passed in 2.28s
+EXIT=0
+
+$ /home/delorenj/code/33GOD/bloodbank/services/hermes-gateway/.venv/bin/python -m pytest -vv -p no:cacheprovider --basetemp=/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-final-suite services/hermes-gateway/tests
+============================= test session starts ==============================
+platform linux -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0 -- /home/delorenj/code/33GOD/bloodbank/services/hermes-gateway/.venv/bin/python
+rootdir: /home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/services/hermes-gateway
+configfile: pyproject.toml
+plugins: asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 278 items
+
+services/hermes-gateway/tests/test_adapter.py::test_stale_durable_contract_is_rejected PASSED [  0%]
+services/hermes-gateway/tests/test_adapter.py::test_execution_state_is_private_and_refuses_symlink PASSED [  0%]
+services/hermes-gateway/tests/test_adapter.py::test_connect_binds_one_bounded_durable_pull_consumer PASSED [  1%]
+services/hermes-gateway/tests/test_adapter.py::test_batch_lookahead_admits_other_profile_behind_hot_thread PASSED [  1%]
+services/hermes-gateway/tests/test_adapter.py::test_lookahead_waiting_delivery_replays_after_restart PASSED [  1%]
+services/hermes-gateway/tests/test_adapter.py::test_consume_loop_treats_asyncio_timeout_as_idle_poll PASSED [  2%]
+services/hermes-gateway/tests/test_adapter.py::test_close_nats_bounds_drain_and_falls_back_to_close PASSED [  2%]
+services/hermes-gateway/tests/test_adapter.py::test_ack_waits_for_hermes_and_sends_progress PASSED [  2%]
+services/hermes-gateway/tests/test_adapter.py::test_failed_hermes_turn_publishes_failure_then_acks PASSED [  3%]
+services/hermes-gateway/tests/test_adapter.py::test_invalid_and_unknown_targets_are_terminal PASSED [  3%]
+services/hermes-gateway/tests/test_adapter.py::test_registry_outage_is_retryable_not_terminal PASSED [  3%]
+services/hermes-gateway/tests/test_adapter.py::test_invalid_registry_is_transient_and_cannot_use_direct_fallback[empty-file] PASSED [  4%]
+services/hermes-gateway/tests/test_adapter.py::test_invalid_registry_is_transient_and_cannot_use_direct_fallback[missing-agents] PASSED [  4%]
+services/hermes-gateway/tests/test_adapter.py::test_invalid_registry_is_transient_and_cannot_use_direct_fallback[unsupported-version] PASSED [  5%]
+services/hermes-gateway/tests/test_adapter.py::test_invalid_registry_is_transient_and_cannot_use_direct_fallback[non-string-agent-key] PASSED [  5%]
+services/hermes-gateway/tests/test_adapter.py::test_invalid_registry_is_transient_and_cannot_use_direct_fallback[malformed-agent-metadata] PASSED [  5%]
+services/hermes-gateway/tests/test_adapter.py::test_invalid_registry_is_transient_and_cannot_use_direct_fallback[padded-disabled-agent-key] PASSED [  6%]
+services/hermes-gateway/tests/test_adapter.py::test_invalid_registry_is_transient_and_cannot_use_direct_fallback[case-variant-disabled-agent-key] PASSED [  6%]
+services/hermes-gateway/tests/test_adapter.py::test_active_registry_route_dispatches_and_completes PASSED [  6%]
+services/hermes-gateway/tests/test_adapter.py::test_policy_disabled_registry_route_is_terminal_before_claim PASSED [  7%]
+services/hermes-gateway/tests/test_adapter.py::test_route_disabled_between_claim_and_dispatch_is_durably_rejected PASSED [  7%]
+services/hermes-gateway/tests/test_adapter.py::test_route_disabled_after_started_publish_closes_and_replays_exactly PASSED [  7%]
+services/hermes-gateway/tests/test_adapter.py::test_partial_started_publish_is_closed_on_disabled_redelivery PASSED [  8%]
+services/hermes-gateway/tests/test_adapter.py::test_rejection_persistence_failure_naks_then_restart_closes_without_execution PASSED [  8%]
+services/hermes-gateway/tests/test_adapter.py::test_partial_terminal_publish_naks_and_exact_restart_replays_closure PASSED [  8%]
+services/hermes-gateway/tests/test_adapter.py::test_pending_restart_rechecks_policy_and_rejected_redelivery_cannot_bypass PASSED [  9%]
+services/hermes-gateway/tests/test_adapter.py::test_pending_restart_with_unreadable_registry_remains_retryable PASSED [  9%]
+services/hermes-gateway/tests/test_adapter.py::test_explicit_static_route_intentionally_bypasses_registry_policy PASSED [ 10%]
+services/hermes-gateway/tests/test_adapter.py::test_execution_journal_migrates_legacy_pending_as_possibly_started PASSED [ 10%]
+services/hermes-gateway/tests/test_adapter.py::test_v2_rejected_row_migrates_to_closure_without_execution PASSED [ 10%]
+services/hermes-gateway/tests/test_adapter.py::test_terminal_publish_failure_naks_instead_of_acking PASSED [ 11%]
+services/hermes-gateway/tests/test_adapter.py::test_completed_command_replays_after_terminal_publish_failure_without_execution PASSED [ 11%]
+services/hermes-gateway/tests/test_adapter.py::test_completed_command_replays_after_ack_failure_without_execution PASSED [ 11%]
+services/hermes-gateway/tests/test_adapter.py::test_concurrent_redelivery_never_dispatches_second_hermes_turn PASSED [ 12%]
+services/hermes-gateway/tests/test_adapter.py::test_command_id_collision_is_terminal_and_never_reexecutes PASSED [ 12%]
+services/hermes-gateway/tests/test_adapter.py::test_interactive_lane_is_off_unless_explicitly_enabled PASSED [ 12%]
+services/hermes-gateway/tests/test_adapter.py::test_interactive_lane_configuration_is_strict PASSED [ 13%]
+services/hermes-gateway/tests/test_adapter.py::test_stale_interactive_durable_contract_is_rejected PASSED [ 13%]
+services/hermes-gateway/tests/test_adapter.py::test_connect_binds_a_second_bounded_durable_per_lane PASSED [ 14%]
+services/hermes-gateway/tests/test_adapter.py::test_one_lane_failing_to_bind_fails_the_whole_connect PASSED [ 14%]
+services/hermes-gateway/tests/test_adapter.py::test_saturated_batch_lane_never_blocks_an_interactive_command PASSED [ 14%]
+services/hermes-gateway/tests/test_adapter.py::test_interactive_command_uses_the_same_journal_and_lifecycle PASSED [ 15%]
+services/hermes-gateway/tests/test_adapter.py::test_batch_lane_stamps_its_lane_on_the_journal_and_lifecycle PASSED [ 15%]
+services/hermes-gateway/tests/test_adapter.py::test_a_command_on_the_wrong_lane_is_terminal PASSED [ 15%]
+services/hermes-gateway/tests/test_adapter.py::test_a_command_id_can_never_run_twice_across_lanes PASSED [ 16%]
+services/hermes-gateway/tests/test_adapter.py::test_interactive_redelivery_replays_without_reexecuting PASSED [ 16%]
+services/hermes-gateway/tests/test_adapter.py::test_interactive_concurrent_redelivery_is_nakked_with_the_lane_delay PASSED [ 16%]
+services/hermes-gateway/tests/test_adapter.py::test_journal_gains_a_nullable_lane_column_without_losing_rows PASSED [ 17%]
+services/hermes-gateway/tests/test_adapter.py::test_concurrent_cross_lane_twin_of_a_running_command_is_terminated PASSED [ 17%]
+services/hermes-gateway/tests/test_adapter.py::test_a_lane_loop_that_hits_an_unexpected_error_resumes_pulling PASSED [ 17%]
+services/hermes-gateway/tests/test_adapter.py::test_interactive_lane_defaults_give_a_retry_horizon_beyond_a_registry_rewrite PASSED [ 18%]
+services/hermes-gateway/tests/test_adapter.py::test_turn_timeout_defaults_and_validation PASSED [ 18%]
+services/hermes-gateway/tests/test_adapter.py::test_batch_turn_timeout_is_opt_in_and_strict PASSED [ 19%]
+services/hermes-gateway/tests/test_adapter.py::test_timeout_stops_the_turn_publishes_failed_and_acks_once PASSED [ 19%]
+services/hermes-gateway/tests/test_adapter.py::test_timeout_frees_the_slot_so_a_third_interactive_command_runs PASSED [ 19%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_inside_its_budget_is_unaffected PASSED [ 20%]
+services/hermes-gateway/tests/test_adapter.py::test_late_completion_after_timeout_is_ignored PASSED [ 20%]
+services/hermes-gateway/tests/test_adapter.py::test_completion_racing_the_stop_cannot_flip_the_outcome PASSED [ 20%]
+services/hermes-gateway/tests/test_adapter.py::test_unconfirmed_stop_is_reported_not_hidden PASSED [ 21%]
+services/hermes-gateway/tests/test_adapter.py::test_envelope_deadline_can_shorten_but_never_extend_the_lane_limit PASSED [ 21%]
+services/hermes-gateway/tests/test_adapter.py::test_batch_lane_has_no_wall_clock_unless_configured PASSED [ 21%]
+services/hermes-gateway/tests/test_adapter.py::test_timed_out_command_replays_its_failure_without_rerunning PASSED [ 22%]
+services/hermes-gateway/tests/test_adapter.py::test_failed_terminal_publish_after_timeout_naks_and_replays PASSED [ 22%]
+services/hermes-gateway/tests/test_adapter.py::test_deadline_seconds_is_validated_at_the_boundary PASSED [ 23%]
+services/hermes-gateway/tests/test_adapter.py::test_journal_gains_a_nullable_failure_code_column_without_losing_rows PASSED [ 23%]
+services/hermes-gateway/tests/test_adapter.py::test_bloodbank_turns_never_auto_voice PASSED [ 23%]
+services/hermes-gateway/tests/test_adapter.py::test_adapter_declares_no_message_editing PASSED [ 24%]
+services/hermes-gateway/tests/test_adapter.py::test_interim_messages_of_a_running_turn_become_progress_facts PASSED [ 24%]
+services/hermes-gateway/tests/test_adapter.py::test_final_reply_status_notices_and_blank_text_publish_no_progress PASSED [ 24%]
+services/hermes-gateway/tests/test_adapter.py::test_send_for_an_unknown_chat_or_after_the_turn_never_crashes_or_publishes PASSED [ 25%]
+services/hermes-gateway/tests/test_adapter.py::test_a_progress_publish_failure_never_fails_the_send_or_the_turn PASSED [ 25%]
+services/hermes-gateway/tests/test_adapter.py::test_progress_text_is_cut_to_500_characters_and_marked PASSED [ 25%]
+services/hermes-gateway/tests/test_adapter.py::test_progress_seq_is_per_command_and_lane_is_stamped PASSED [ 26%]
+services/hermes-gateway/tests/test_adapter.py::test_no_lane_fetches_while_hermes_refuses_new_turns_and_both_resume_after[draining] PASSED [ 26%]
+services/hermes-gateway/tests/test_adapter.py::test_no_lane_fetches_while_hermes_refuses_new_turns_and_both_resume_after[external] PASSED [ 26%]
+services/hermes-gateway/tests/test_adapter.py::test_no_lane_fetches_while_hermes_refuses_new_turns_and_both_resume_after[restart] PASSED [ 27%]
+services/hermes-gateway/tests/test_adapter.py::test_a_thirty_minute_drain_spends_no_delivery_and_the_command_runs_after PASSED [ 27%]
+services/hermes-gateway/tests/test_adapter.py::test_a_command_fetched_just_before_the_drain_is_nakked_and_runs_after[batch] PASSED [ 28%]
+services/hermes-gateway/tests/test_adapter.py::test_a_command_fetched_just_before_the_drain_is_nakked_and_runs_after[interactive] PASSED [ 28%]
+services/hermes-gateway/tests/test_adapter.py::test_a_drain_that_starts_while_started_facts_publish_is_never_dispatched PASSED [ 28%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[\u23f3 Gateway is restarting and is not accepting new work right now.-batch] PASSED [ 29%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[\u23f3 Gateway is restarting and is not accepting new work right now.-interactive] PASSED [ 29%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[\u23f3 Gateway is shutting down and is not accepting new work right now.-batch] PASSED [ 29%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[\u23f3 Gateway is shutting down and is not accepting new work right now.-interactive] PASSED [ 30%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[\u23f3 Gateway is restarting and is not accepting another turn right now.-batch] PASSED [ 30%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[\u23f3 Gateway is restarting and is not accepting another turn right now.-interactive] PASSED [ 30%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[Hermes is at the active session limit (8/8). Try again when another session finishes.-batch] PASSED [ 31%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[Hermes is at the active session limit (8/8). Try again when another session finishes.-interactive] PASSED [ 31%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[\u23f3 Gateway is restarting and is not accepting new work right now.\n\n`gpt-5 \xb7 0.1s`-batch] PASSED [ 32%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[\u23f3 Gateway is restarting and is not accepting new work right now.\n\n`gpt-5 \xb7 0.1s`-interactive] PASSED [ 32%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[\u26a0\ufe0f This session's history is temporarily unavailable, so this message was not processed. Ask the operator to inspect state.db, then resend after it is healthy.-batch] PASSED [ 32%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_hermes_refused_is_not_success_and_reruns_on_redelivery[\u26a0\ufe0f This session's history is temporarily unavailable, so this message was not processed. Ask the operator to inspect state.db, then resend after it is healthy.-interactive] PASSED [ 33%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u26a0\ufe0f Something went wrong and I couldn't finish this reply. You are being rate-limited. Please wait a moment and try again.\nUse /retry to try again, or /new to start a fresh conversation. Technical details are in the gateway log (`hermes logs`).\n\nThis turn did not complete. Some actions may already have run; verify their effects before resending.-hermes_turn_error-gateway.errors.generic_failed_with_hint] PASSED [ 33%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u23f1\ufe0f The AI model service is rate-limiting requests. Wait a moment, then use /retry.-hermes_turn_error-gateway.errors.rate_limited] PASSED [ 33%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u23f3 Another turn is still running on this session. To protect the transcript, this message was not processed. Wait for the active turn to finish, then resend it.-hermes_refused-gateway.busy.another_turn_running] PASSED [ 34%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[Unknown command `/frobnicate`. Type /commands to see what's available, or resend without the leading slash to send as a regular message.-hermes_refused-gateway.unknown_command] PASSED [ 34%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u23f3 Gateway restarting \u2014 queued for the next turn after it comes back.-hermes_refused-gateway.busy.drain_queued] PASSED [ 34%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u26a0\ufe0f Session storage was temporarily unavailable, so this turn was stopped to protect your conversation history. Your message should already be saved \u2014 please send it again.-hermes_turn_error-gateway.errors.session_storage_unavailable] PASSED [ 35%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u26a0\ufe0f Session storage was temporarily unavailable, so this turn was stopped to protect your conversation history. Please check available disk space, then send your message again.-hermes_turn_error-gateway.errors.session_storage_unavailable_disk] PASSED [ 35%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u26a0\ufe0f This conversation has grown too long for me to read all at once. Use /compress to shorten the history, or /new to start a fresh conversation.-hermes_turn_error-gateway.errors.context_overflow] PASSED [ 35%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u26a0\ufe0f I had to stop before finishing: Response truncated due to output length limit. Use /retry to try again, or /compress if this conversation has grown very long.-hermes_turn_error-gateway.errors.stopped_before_finishing] PASSED [ 36%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u26a0\ufe0f The AI model service rejected this request. Try rephrasing your message, or use /model to switch models.-hermes_turn_error-gateway.errors.bad_request] PASSED [ 36%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u26a0\ufe0f Hermes could not reach the AI model service (no further detail from the SDK). Use /retry to try again; if it persists, run `hermes doctor` on the host.-hermes_turn_error-gateway.errors.connection_unknown] PASSED [ 37%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[\u26a0\ufe0f The model returned only a silence marker for a message that needed a reply. Try again or rephrase.-hermes_turn_error-gateway.errors.unexpected_silence] PASSED [ 37%]
+services/hermes-gateway/tests/test_adapter.py::test_an_error_notice_in_place_of_an_answer_closes_as_an_explicit_failure[Operation interrupted: waiting for model response (12.3s elapsed).-hermes_turn_error-agent.operation_interrupted] PASSED [ 37%]
+services/hermes-gateway/tests/test_adapter.py::test_on_its_last_delivery_a_command_hermes_did_not_run_is_closed_as_failed[before_dispatch] PASSED [ 38%]
+services/hermes-gateway/tests/test_adapter.py::test_on_its_last_delivery_a_command_hermes_did_not_run_is_closed_as_failed[refused_by_hermes] PASSED [ 38%]
+services/hermes-gateway/tests/test_adapter.py::test_on_its_last_delivery_a_command_hermes_did_not_run_is_closed_as_failed[not_admitted] PASSED [ 38%]
+services/hermes-gateway/tests/test_adapter.py::test_an_event_hermes_does_not_admit_is_nakked_instead_of_waiting_forever PASSED [ 39%]
+services/hermes-gateway/tests/test_adapter.py::test_normal_turns_are_unaffected_by_the_refusal_checks[done] PASSED [ 39%]
+services/hermes-gateway/tests/test_adapter.py::test_normal_turns_are_unaffected_by_the_refusal_checks[I checked: earlier the gateway said it is restarting and is not accepting new work right now, but it is back.] PASSED [ 39%]
+services/hermes-gateway/tests/test_adapter.py::test_normal_turns_are_unaffected_by_the_refusal_checks[Gateway status: running.] PASSED [ 40%]
+services/hermes-gateway/tests/test_adapter.py::test_normal_turns_are_unaffected_by_the_refusal_checks[Hermes is at the active session limit (8/8) is what the board said an hour ago. Since then the queue drained and I groomed POOL-12: acceptance criteria added, estimate set to 3, and the dependency on POOL-9 recorded. Hermes is at the active session limit (8/8) is what the board said an hour ago. Since then the queue drained and I groomed POOL-12: acceptance criteria added, estimate set to 3, and the dependency on POOL-9 recorded. ] PASSED [ 40%]
+services/hermes-gateway/tests/test_adapter.py::test_normal_turns_are_unaffected_by_the_refusal_checks[\u26a0\ufe0f Your message wasn't processed (the previous turn was still being cleaned up). Please send it again. \u2014 that is what Hermes told me last time; this time I finished the job and here is the full summary of what changed on the board \u26a0\ufe0f Your message wasn't processed (the previous turn was still being cleaned up). Please send it again. \u2014 that is what Hermes told me last time; this time I finished the job and here is the full summary of what changed on the board \u26a0\ufe0f Your message wasn't processed (the previous turn was still being cleaned up). Please send it again. \u2014 that is what Hermes told me last time; this time I finished the job and here is the full summary of what changed on the board ] PASSED [ 41%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_already_running_when_the_drain_begins_still_completes PASSED [ 41%]
+services/hermes-gateway/tests/test_adapter.py::test_notices_are_read_from_hermes_catalog_when_it_is_importable PASSED [ 41%]
+services/hermes-gateway/tests/test_adapter.py::test_every_hermes_error_notice_is_classified_never_success PASSED [ 42%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_the_stop_drain_cut_off_closes_as_interrupted_never_success[I groomed the acceptance criteria and was about to set-True] PASSED [ 42%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_the_stop_drain_cut_off_closes_as_interrupted_never_success[I groomed the acceptance criteria and was about to set-False] PASSED [ 42%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_the_stop_drain_cut_off_closes_as_interrupted_never_success[Operation interrupted: waiting for model response (61.8s elapsed).-True] PASSED [ 43%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_the_stop_drain_cut_off_closes_as_interrupted_never_success[Operation interrupted: waiting for model response (61.8s elapsed).-False] PASSED [ 43%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_the_stop_drain_cut_off_closes_as_interrupted_never_success[None-True] PASSED [ 43%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_the_stop_drain_cut_off_closes_as_interrupted_never_success[None-False] PASSED [ 44%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_cancelled_at_adapter_teardown_during_stop_is_interrupted_not_cancelled PASSED [ 44%]
+services/hermes-gateway/tests/test_adapter.py::test_an_interrupted_line_after_stop_began_is_interrupted_without_the_hook PASSED [ 44%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_that_finished_inside_the_stop_drain_is_still_success PASSED [ 45%]
+services/hermes-gateway/tests/test_adapter.py::test_the_interrupt_only_marks_turns_hermes_is_still_running PASSED [ 45%]
+services/hermes-gateway/tests/test_adapter.py::test_retry_mode_naks_a_cut_off_turn_and_the_next_process_reruns_its_thread[batch] PASSED [ 46%]
+services/hermes-gateway/tests/test_adapter.py::test_retry_mode_naks_a_cut_off_turn_and_the_next_process_reruns_its_thread[interactive] PASSED [ 46%]
+services/hermes-gateway/tests/test_adapter.py::test_retry_mode_on_the_last_delivery_closes_as_interrupted PASSED [ 46%]
+services/hermes-gateway/tests/test_adapter.py::test_the_runner_interrupt_is_wrapped_once_for_every_adapter PASSED [ 47%]
+services/hermes-gateway/tests/test_adapter.py::test_shutdown_interrupt_mode_is_strict PASSED [ 47%]
+services/hermes-gateway/tests/test_adapter.py::test_an_unadmitted_slash_prompt_is_closed_not_redelivered PASSED [ 47%]
+services/hermes-gateway/tests/test_adapter.py::test_a_pause_that_lasts_is_logged_again PASSED [ 48%]
+services/hermes-gateway/tests/test_adapter.py::test_detach_is_off_by_default_and_its_configuration_is_strict PASSED [ 48%]
+services/hermes-gateway/tests/test_adapter.py::test_the_consumer_contract_counts_detached_turns PASSED [ 48%]
+services/hermes-gateway/tests/test_adapter.py::test_connect_raises_an_existing_durables_max_ack_pending_for_detach PASSED [ 49%]
+services/hermes-gateway/tests/test_adapter.py::test_a_detached_turn_runs_on_and_closes_completed_once_as_a_late_reply PASSED [ 49%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_inside_its_budget_never_detaches PASSED [ 50%]
+services/hermes-gateway/tests/test_adapter.py::test_detaching_frees_the_slot_so_the_next_memo_runs_while_both_run_on PASSED [ 50%]
+services/hermes-gateway/tests/test_adapter.py::test_a_detached_turn_still_running_at_the_ceiling_is_stopped PASSED [ 50%]
+services/hermes-gateway/tests/test_adapter.py::test_with_max_detached_reached_the_turn_is_stopped_as_before PASSED [ 51%]
+services/hermes-gateway/tests/test_adapter.py::test_an_envelope_deadline_still_stops_the_turn PASSED [ 51%]
+services/hermes-gateway/tests/test_adapter.py::test_a_detached_turn_a_reload_cuts_off_closes_failed_and_is_never_rerun PASSED [ 51%]
+services/hermes-gateway/tests/test_adapter.py::test_a_detached_turn_a_reload_cuts_off_is_nakked_when_configured_to_retry PASSED [ 52%]
+services/hermes-gateway/tests/test_adapter.py::test_detached_shutdown_interrupt_is_strict PASSED [ 52%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_that_closes_while_its_detach_is_journaled_publishes_no_detached_fact PASSED [ 52%]
+services/hermes-gateway/tests/test_adapter.py::test_a_new_attempt_of_a_started_command_clears_the_last_attempts_detached_at PASSED [ 53%]
+services/hermes-gateway/tests/test_adapter.py::test_a_failed_turn_after_detach_closes_failed_once_with_detached PASSED [ 53%]
+services/hermes-gateway/tests/test_adapter.py::test_disconnect_settles_detached_turns_too PASSED [ 53%]
+services/hermes-gateway/tests/test_adapter.py::test_a_detached_journal_or_publish_failure_never_fails_the_turn PASSED [ 54%]
+services/hermes-gateway/tests/test_adapter.py::test_journal_gains_a_nullable_detached_at_column_without_losing_rows PASSED [ 54%]
+services/hermes-gateway/tests/test_adapter.py::test_data_model_switches_only_that_turn_through_model_once PASSED [ 55%]
+services/hermes-gateway/tests/test_adapter.py::test_a_refused_model_route_leaves_the_turn_on_the_profile_model PASSED [ 55%]
+services/hermes-gateway/tests/test_adapter.py::test_model_override_can_be_switched_off PASSED [ 55%]
+services/hermes-gateway/tests/test_adapter.py::test_a_slow_model_switch_is_bounded_and_the_turn_still_runs PASSED [ 56%]
+services/hermes-gateway/tests/test_adapter.py::test_the_runner_view_decides_whether_the_model_was_applied PASSED [ 56%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_refused_after_its_model_switch_does_not_leave_the_switch_armed[drain] PASSED [ 56%]
+services/hermes-gateway/tests/test_adapter.py::test_a_turn_refused_after_its_model_switch_does_not_leave_the_switch_armed[route] PASSED [ 57%]
+services/hermes-gateway/tests/test_adapter.py::test_data_model_is_validated_at_the_boundary PASSED [ 57%]
+services/hermes-gateway/tests/test_capture_journal.py::test_v3_upgrade_preserves_terminal_bytes_and_lane_metadata PASSED [ 57%]
+services/hermes-gateway/tests/test_capture_journal.py::test_v4_pending_capture_survives_reopen_and_cannot_start_again PASSED [ 58%]
+services/hermes-gateway/tests/test_capture_journal.py::test_future_journal_version_refused_without_downgrade PASSED [ 58%]
+services/hermes-gateway/tests/test_contract.py::test_decode_command_is_strict PASSED [ 58%]
+services/hermes-gateway/tests/test_contract.py::test_profile_routing_precedence_and_fleet_registry PASSED [ 59%]
+services/hermes-gateway/tests/test_contract.py::test_active_registry_route_requires_exact_bloodbank_policy PASSED [ 59%]
+services/hermes-gateway/tests/test_contract.py::test_registry_route_policy_rejects_ineligible_records[missing-bloodbank] PASSED [ 60%]
+services/hermes-gateway/tests/test_contract.py::test_registry_route_policy_rejects_ineligible_records[unrelated-runtime-signals] PASSED [ 60%]
+services/hermes-gateway/tests/test_contract.py::test_registry_route_policy_rejects_ineligible_records[null-bloodbank] PASSED [ 60%]
+services/hermes-gateway/tests/test_contract.py::test_registry_route_policy_rejects_ineligible_records[malformed-bloodbank] PASSED [ 61%]
+services/hermes-gateway/tests/test_contract.py::test_registry_route_policy_rejects_ineligible_records[false-enabled] PASSED [ 61%]
+services/hermes-gateway/tests/test_contract.py::test_registry_route_policy_rejects_ineligible_records[non-boolean-enabled] PASSED [ 61%]
+services/hermes-gateway/tests/test_contract.py::test_registry_route_policy_rejects_ineligible_records[wrong-scope] PASSED [ 62%]
+services/hermes-gateway/tests/test_contract.py::test_registry_route_policy_rejects_ineligible_records[mismatched-target] PASSED [ 62%]
+services/hermes-gateway/tests/test_contract.py::test_registry_route_policy_rejects_ineligible_records[blank-profile] PASSED [ 62%]
+services/hermes-gateway/tests/test_contract.py::test_absent_enabled_key_means_enabled PASSED [ 63%]
+services/hermes-gateway/tests/test_contract.py::test_present_non_boolean_enabled_is_invalid_disabled_and_loud[string-true] PASSED [ 63%]
+services/hermes-gateway/tests/test_contract.py::test_present_non_boolean_enabled_is_invalid_disabled_and_loud[string-yes] PASSED [ 64%]
+services/hermes-gateway/tests/test_contract.py::test_present_non_boolean_enabled_is_invalid_disabled_and_loud[integer] PASSED [ 64%]
+services/hermes-gateway/tests/test_contract.py::test_present_non_boolean_enabled_is_invalid_disabled_and_loud[explicit-null] PASSED [ 64%]
+services/hermes-gateway/tests/test_contract.py::test_static_target_profile_is_an_explicit_registry_independent_override PASSED [ 65%]
+services/hermes-gateway/tests/test_contract.py::test_direct_profile_fallback_cannot_bypass_disabled_registry_record PASSED [ 65%]
+services/hermes-gateway/tests/test_contract.py::test_noncanonical_registry_id_invalidates_before_direct_fallback[padded] PASSED [ 65%]
+services/hermes-gateway/tests/test_contract.py::test_noncanonical_registry_id_invalidates_before_direct_fallback[case-variant] PASSED [ 66%]
+services/hermes-gateway/tests/test_contract.py::test_unknown_and_direct_profile_routes_fail_closed PASSED [ 66%]
+services/hermes-gateway/tests/test_contract.py::test_missing_or_invalid_registry_is_transient PASSED [ 66%]
+services/hermes-gateway/tests/test_contract.py::test_structurally_invalid_registry_is_transient_before_direct_fallback[empty-file] PASSED [ 67%]
+services/hermes-gateway/tests/test_contract.py::test_structurally_invalid_registry_is_transient_before_direct_fallback[missing-agents] PASSED [ 67%]
+services/hermes-gateway/tests/test_contract.py::test_structurally_invalid_registry_is_transient_before_direct_fallback[unsupported-version] PASSED [ 67%]
+services/hermes-gateway/tests/test_contract.py::test_structurally_invalid_registry_is_transient_before_direct_fallback[numeric-key-direct-bypass] PASSED [ 68%]
+services/hermes-gateway/tests/test_contract.py::test_structurally_invalid_registry_is_transient_before_direct_fallback[malformed-metadata] PASSED [ 68%]
+services/hermes-gateway/tests/test_contract.py::test_lifecycle_events_use_existing_schema_contracts[success-bloodbank.agent.invocation.completed-completed] PASSED [ 69%]
+services/hermes-gateway/tests/test_contract.py::test_lifecycle_events_use_existing_schema_contracts[failure-bloodbank.agent.invocation.failed-failed] PASSED [ 69%]
+services/hermes-gateway/tests/test_contract.py::test_lifecycle_events_use_existing_schema_contracts[cancelled-bloodbank.agent.invocation.failed-canceled] PASSED [ 69%]
+services/hermes-gateway/tests/test_contract.py::test_invocation_events_omit_context_when_command_has_none PASSED [ 70%]
+services/hermes-gateway/tests/test_contract.py::test_ticket_context_rides_on_started_completed_and_failed PASSED [ 70%]
+services/hermes-gateway/tests/test_contract.py::test_decode_command_enforces_the_lane_command_type PASSED [ 70%]
+services/hermes-gateway/tests/test_contract.py::test_lifecycle_events_carry_the_lane_and_validate PASSED [ 71%]
+services/hermes-gateway/tests/test_contract.py::test_interactive_command_schema_matches_the_batch_data_contract PASSED [ 71%]
+services/hermes-gateway/tests/test_contract.py::test_turn_timeout_failed_fact_validates_and_cannot_override_owned_fields PASSED [ 71%]
+services/hermes-gateway/tests/test_contract.py::test_detached_event_validates_and_is_not_a_terminal_fact PASSED [ 72%]
+services/hermes-gateway/tests/test_contract.py::test_a_detached_turns_terminal_facts_validate_and_keep_owned_fields PASSED [ 72%]
+services/hermes-gateway/tests/test_contract.py::test_progress_event_validates_and_echoes_the_command PASSED [ 73%]
+services/hermes-gateway/tests/test_contract.py::test_hermes_refusal_failed_fact_validates[hermes_refused-gateway_restarting] PASSED [ 73%]
+services/hermes-gateway/tests/test_contract.py::test_hermes_refusal_failed_fact_validates[hermes_refused-gateway.busy.another_turn_running] PASSED [ 73%]
+services/hermes-gateway/tests/test_contract.py::test_hermes_refusal_failed_fact_validates[hermes_turn_error-gateway.errors.generic_failed_with_hint] PASSED [ 74%]
+services/hermes-gateway/tests/test_contract.py::test_interrupted_by_shutdown_failed_fact_validates[gateway_restart] PASSED [ 74%]
+services/hermes-gateway/tests/test_contract.py::test_interrupted_by_shutdown_failed_fact_validates[gateway_shutdown] PASSED [ 74%]
+services/hermes-gateway/tests/test_final_answer.py::test_full_answer_capture_precedes_publish_and_preserves_exact_lineage PASSED [ 75%]
+services/hermes-gateway/tests/test_final_answer.py::test_empty_silent_failed_interrupted_never_answer[-flags0] PASSED [ 75%]
+services/hermes-gateway/tests/test_final_answer.py::test_empty_silent_failed_interrupted_never_answer[  \n-flags1] PASSED [ 75%]
+services/hermes-gateway/tests/test_final_answer.py::test_empty_silent_failed_interrupted_never_answer[None-flags2] PASSED [ 76%]
+services/hermes-gateway/tests/test_final_answer.py::test_empty_silent_failed_interrupted_never_answer[[SILENT]-flags3] PASSED [ 76%]
+services/hermes-gateway/tests/test_final_answer.py::test_empty_silent_failed_interrupted_never_answer[NO_REPLY-flags4] PASSED [ 76%]
+services/hermes-gateway/tests/test_final_answer.py::test_empty_silent_failed_interrupted_never_answer[SILENT-flags5] PASSED [ 77%]
+services/hermes-gateway/tests/test_final_answer.py::test_empty_silent_failed_interrupted_never_answer[no reply-flags6] PASSED [ 77%]
+services/hermes-gateway/tests/test_final_answer.py::test_empty_silent_failed_interrupted_never_answer[  Full answer: caf\xe9 \U0001f426\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\n\n\u5c3e\n-flags7] PASSED [ 78%]
+services/hermes-gateway/tests/test_final_answer.py::test_empty_silent_failed_interrupted_never_answer[  Full answer: caf\xe9 \U0001f426\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\n\n\u5c3e\n-flags8] PASSED [ 78%]
+services/hermes-gateway/tests/test_final_answer.py::test_empty_silent_failed_interrupted_never_answer[  Full answer: caf\xe9 \U0001f426\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\nDo not truncate this paragraph.\n\n\u5c3e\n-flags9] PASSED [ 78%]
+services/hermes-gateway/tests/test_final_answer.py::test_unqualified_output_never_answer[send] PASSED [ 79%]
+services/hermes-gateway/tests/test_final_answer.py::test_unqualified_output_never_answer[history] PASSED [ 79%]
+services/hermes-gateway/tests/test_final_answer.py::test_unqualified_output_never_answer[post_without_pre] PASSED [ 79%]
+services/hermes-gateway/tests/test_final_answer.py::test_unqualified_output_never_answer[post_without_end] PASSED [ 80%]
+services/hermes-gateway/tests/test_final_answer.py::test_unqualified_output_never_answer[cancelled] PASSED [ 80%]
+services/hermes-gateway/tests/test_final_answer.py::test_unqualified_output_never_answer[failed] PASSED [ 80%]
+services/hermes-gateway/tests/test_final_answer.py::test_unqualified_output_never_answer[rejected] PASSED [ 81%]
+services/hermes-gateway/tests/test_final_answer.py::test_publish_ack_failure_restart_replays_exact_bytes_without_execution[answer] PASSED [ 81%]
+services/hermes-gateway/tests/test_final_answer.py::test_publish_ack_failure_restart_replays_exact_bytes_without_execution[terminal] PASSED [ 82%]
+services/hermes-gateway/tests/test_final_answer.py::test_publish_ack_failure_restart_replays_exact_bytes_without_execution[turn] PASSED [ 82%]
+services/hermes-gateway/tests/test_final_answer.py::test_publish_ack_failure_restart_replays_exact_bytes_without_execution[ack] PASSED [ 82%]
+services/hermes-gateway/tests/test_final_answer.py::test_puback_for_answer_and_each_terminal_blocks_command_ack PASSED [ 83%]
+services/hermes-gateway/tests/test_final_answer.py::test_capture_failure_is_sticky_despite_hermes_swallowing_hook_errors PASSED [ 83%]
+services/hermes-gateway/tests/test_final_answer.py::test_restart_after_capture_before_processing_callback_never_reinvokes PASSED [ 83%]
+services/hermes-gateway/tests/test_final_answer.py::test_duplicate_capture_immutable_conflict_fails_closed PASSED [ 84%]
+services/hermes-gateway/tests/test_final_answer.py::test_profile_isolation_child_exclusion_and_real_execution_thread_context PASSED [ 84%]
+services/hermes-gateway/tests/test_final_answer.py::test_same_profile_thread_serializes_commands_and_isolates_finals PASSED [ 84%]
+services/hermes-gateway/tests/test_final_answer.py::test_final_schema_is_additive_and_requires_explicit_role_body_lineage PASSED [ 85%]
+services/hermes-gateway/tests/test_final_answer.py::test_recapture_semantics_are_sticky[] PASSED [ 85%]
+services/hermes-gateway/tests/test_final_answer.py::test_recapture_semantics_are_sticky[ \n] PASSED [ 85%]
+services/hermes-gateway/tests/test_final_answer.py::test_recapture_semantics_are_sticky[NO_REPLY] PASSED [ 86%]
+services/hermes-gateway/tests/test_final_answer.py::test_native_compaction_session_rotation_preserves_root_execution PASSED [ 86%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_full_pinned_finalizer_native_provenance[normal] PASSED [ 87%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_full_pinned_finalizer_native_provenance[surrogate] PASSED [ 87%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_full_pinned_finalizer_native_provenance[reasoning] PASSED [ 87%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_full_pinned_finalizer_native_provenance[empty] PASSED [ 88%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_full_pinned_finalizer_native_provenance[partial] PASSED [ 88%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_full_pinned_finalizer_native_provenance[history] PASSED [ 88%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_full_pinned_finalizer_native_provenance[failed] PASSED [ 89%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_full_pinned_finalizer_native_provenance[interrupted] PASSED [ 89%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_actual_native_callback_payloads_and_executor_context PASSED [ 89%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_home_scoped_manager_capture_preflight[True] PASSED [ 90%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_home_scoped_manager_capture_preflight[False] PASSED [ 90%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_native_proxy_route_checked_in_execution_profile[False-True] PASSED [ 91%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_native_proxy_route_checked_in_execution_profile[True-False] PASSED [ 91%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_pinned_finalizer_orders_one_post_before_one_end PASSED [ 91%]
+services/hermes-gateway/tests/test_hermes_seam.py::test_full_pinned_codex_runtime_has_no_hooks_and_is_rejected_before_execution PASSED [ 92%]
+services/hermes-gateway/tests/test_native_outcome.py::test_actual_primary_handler_closure_accepts_and_captures PASSED [ 92%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_capture_then_actual_failed_processing_never_replays_answer[False-send_failure] PASSED [ 92%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_capture_then_actual_failed_processing_never_replays_answer[False-send_cancel] PASSED [ 93%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_capture_then_actual_failed_processing_never_replays_answer[False-handler_failure] PASSED [ 93%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_capture_then_actual_failed_processing_never_replays_answer[False-handler_cancel] PASSED [ 93%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_capture_then_actual_failed_processing_never_replays_answer[True-send_failure] PASSED [ 94%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_capture_then_actual_failed_processing_never_replays_answer[True-send_cancel] PASSED [ 94%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_capture_then_actual_failed_processing_never_replays_answer[True-handler_failure] PASSED [ 94%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_capture_then_actual_failed_processing_never_replays_answer[True-handler_cancel] PASSED [ 95%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_finalizer_preserves_model_and_detached_terminal_metadata PASSED [ 95%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_interrupted_finalizer_retains_shutdown_code_without_rerun[fail] PASSED [ 96%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_interrupted_finalizer_retains_shutdown_code_without_rerun[retry] PASSED [ 96%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_captured_pending_restart_fails_closed_without_inference[before_processing] PASSED [ 96%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_captured_pending_restart_fails_closed_without_inference[resolution_write] PASSED [ 97%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_success_outbox_replays_immutable_bytes_at_each_boundary[answer] PASSED [ 97%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_success_outbox_replays_immutable_bytes_at_each_boundary[invocation] PASSED [ 97%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_success_outbox_replays_immutable_bytes_at_each_boundary[turn] PASSED [ 98%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_success_outbox_replays_immutable_bytes_at_each_boundary[ack] PASSED [ 98%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_capture_then_wall_clock_timeout_excludes_answer PASSED [ 98%]
+services/hermes-gateway/tests/test_native_outcome.py::test_native_capture_survives_abrupt_process_exit PASSED [ 99%]
+services/hermes-gateway/tests/test_registration.py::test_registers_standalone_platform_factory PASSED [ 99%]
+services/hermes-gateway/tests/test_registration.py::test_entrypoint_loads_module_with_register_function PASSED [100%]
+
+============================= 278 passed in 29.96s =============================
+EXIT=0
+
+$ mise run validate:schemas
+[validate:schemas] $ bash scripts/validate_schemas.sh
+Bloodbank schema validation
+Schema directory: /home/delorenj/code/33GOD/bloodbank/.worktrees/feat-bb-30-final-assistant-publication/schemas
+
+Validated 227 schema files
+Registered 227 schema IDs
+EXIT=0
+
+$ python3 /home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-repair-lint.py
+{
+  "report": "/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb30-repair-ruff-comparison.json",
+  "baseline_findings": 53,
+  "candidate_findings": 53,
+  "new_findings": []
+}
+EXIT=0
+
+$ uvx ruff check services/hermes-gateway/bloodbank_hermes_gateway/plugin.py services/hermes-gateway/tests/test_final_answer.py services/hermes-gateway/tests/test_native_outcome.py services/hermes-gateway/tests/test_capture_journal.py
+All checks passed!
+EXIT=0
+
+$ git diff --check
+EXIT=0
+
+$ python3 cli/bb.py emit --check --type bloodbank.evt.conversation.message.appended
+bb-emit: --check, nothing published
+PASS  bloodbank.conversation.message.appended
+  kind        event
+  type        bloodbank.conversation.message.appended
+  subject     bloodbank.evt.conversation.message.appended
+  schemaref   bloodbank.conversation.message.appended.v1
+  dataschema  apicurio://holyfields/bloodbank.conversation.message.appended/versions/1
+  domain      conversation
+  actor       {"type":"service","agent_id":"bloodbank.service.inbox-transcribe","cli":null,"provider":null,"model":null}
+  ordering_key  conversation:2083cfbc-fe11-4229-864c-cd59bb3cca0b
+  correlationid a600b016-e9c9-51b9-9a72-992f9246444d
+  causationid   None
+  validated   yes (core.validate.assert_contract)
+  schema      skipped (empty payload; pipe the data in to validate it)
+EXIT=0

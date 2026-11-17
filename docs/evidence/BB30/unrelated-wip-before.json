@@ -1,0 +1,22 @@
+{
+  "services/target-watch/target_watch/targets.py": {
+    "sha256": "9c45bdf7e590b908bc0f520d268d1658de28afcd4947f1bb2857aa4b242b7f2f",
+    "size": 15025,
+    "mode": "0o664"
+  },
+  "services/target-watch/target_watch/alert_cli.py": {
+    "sha256": "a3981196f8a9494d1d81fc9f6e1333eb0044d90ed43d327559e1e2f38d48790f",
+    "size": 3922,
+    "mode": "0o664"
+  },
+  "services/target-watch/target_watch/alert_mode.py": {
+    "sha256": "09922fe419c52e16f2c8c47d988a6583af4a9890a5e3c614a6df4db90c299f80",
+    "size": 12922,
+    "mode": "0o664"
+  },
+  "services/target-watch/tests/test_alert_mode.py": {
+    "sha256": "46efa03bbe0c3a6b3cb628905a701341d5811f83eb1b45455732d29734d9a42a",
+    "size": 8598,
+    "mode": "0o664"
+  }
+}
