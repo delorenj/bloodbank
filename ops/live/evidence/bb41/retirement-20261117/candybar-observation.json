@@ -1,0 +1,62 @@
+{
+  "captured_at": "2026-11-17T20:05:11.163595+00:00",
+  "read_only": true,
+  "manifest_get": "http://127.0.0.1:8700/candybars/01a1d9de-d3cb-7d23-9a8b-2bc34e3bdac5",
+  "history_get": "http://127.0.0.1:8700/candybars/01a1d9de-d3cb-7d23-9a8b-2bc34e3bdac5/invocations?limit=5",
+  "manifest": {
+    "id": "01a1d9de-d3cb-7d23-9a8b-2bc34e3bdac5",
+    "name": "krebs-tick",
+    "schedule": "*/10 * * * *",
+    "timezone": "America/New_York",
+    "enabled": true,
+    "archived": false
+  },
+  "invocations": [
+    {
+      "id": "06893f74-9269-5d70-abc0-08a1300a866d",
+      "trigger": "scheduled",
+      "tickId": "tick:29915760",
+      "result": "success",
+      "exitCode": 0,
+      "startedAt": "2026-11-17T20:00:00.387785+00:00",
+      "finishedAt": "2026-11-17T20:00:08.154115+00:00"
+    },
+    {
+      "id": "ba3e6207-75ac-5836-a9ee-ab24c2dc3d2c",
+      "trigger": "scheduled",
+      "tickId": "tick:29915750",
+      "result": "success",
+      "exitCode": 0,
+      "startedAt": "2026-11-17T19:50:00.209565+00:00",
+      "finishedAt": "2026-11-17T19:50:07.192816+00:00"
+    },
+    {
+      "id": "da1ef0c7-54ea-56cd-b554-3678135307d2",
+      "trigger": "scheduled",
+      "tickId": "tick:29915740",
+      "result": "success",
+      "exitCode": 0,
+      "startedAt": "2026-11-17T19:40:00.293727+00:00",
+      "finishedAt": "2026-11-17T19:40:07.061605+00:00"
+    },
+    {
+      "id": "9c8ba5d3-7dd9-5535-81d7-9be767b28c13",
+      "trigger": "scheduled",
+      "tickId": "tick:29915730",
+      "result": "success",
+      "exitCode": 0,
+      "startedAt": "2026-11-17T19:30:00.612426+00:00",
+      "finishedAt": "2026-11-17T19:30:09.803479+00:00"
+    },
+    {
+      "id": "1926f0e2-beb5-55f7-afc0-c319c3c175f9",
+      "trigger": "scheduled",
+      "tickId": "tick:29915720",
+      "result": "success",
+      "exitCode": 0,
+      "startedAt": "2026-11-17T19:20:00.419445+00:00",
+      "finishedAt": "2026-11-17T19:20:05.863197+00:00"
+    }
+  ],
+  "seconds_after_immediate_after_snapshot": 621.473602
+}
