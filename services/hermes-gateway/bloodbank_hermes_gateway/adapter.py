@@ -35,7 +35,6 @@ from .contract import (
     DETACHED_CEILING_SOURCE,
     EVENT_STREAM,
     INTERACTIVE,
-    MESSAGE_APPENDED,
     TURN_TIMEOUT_CODE,
     CommandInvalid,
     Invocation,
@@ -1096,6 +1095,24 @@ class BloodbankAdapter(BasePlatformAdapter):
                             "command_id collides with a different command envelope"
                         )
 
+                if persisted.capture_outcome is not None and persisted.state == "started":
+                    # A finalizer ran, but no durable processing decision survived.
+                    # Never infer platform success from model completion or rerun it.
+                    invocation = Invocation.from_envelope(envelope, persisted.profile, lane.name)
+                    code = persisted.capture_error or "processing_outcome_unknown"
+                    persisted = await asyncio.to_thread(
+                        self.execution_state.mark_completed,
+                        command_id=command_id,
+                        digest=digest,
+                        outcome="failure",
+                        terminal_events=terminal_events(
+                            invocation,
+                            outcome="failure",
+                            failure_code=code,
+                            failure_message="Native output captured; final processing outcome unavailable",
+                        ),
+                        failure_code=code,
+                    )
                 if persisted.state in {"pending", "started"}:
                     invocation = Invocation.from_envelope(
                         envelope, persisted.profile, lane.name
@@ -1995,6 +2012,10 @@ class BloodbankAdapter(BasePlatformAdapter):
             if result in {"cancelled", "canceled"}
             else "failure"
         )
+        binding = record.binding
+        captured = binding.result if binding is not None else None
+        if terminal_outcome == "success" and captured is not None:
+            terminal_outcome = captured.capture_outcome or terminal_outcome
         # A turn Hermes' stop() cut off reports its partial text (or nothing, or
         # a cancellation at adapter teardown) like a finished one: not an answer.
         interrupted = self._shutdown_interruption(record, terminal_outcome)
@@ -2009,7 +2030,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 if record.detached_at is not None
                 else lane.shutdown_interrupt
             )
-            if mode == "retry":
+            if mode == "retry" and captured is None:
                 logger.warning(
                     "Bloodbank turn cut off by Hermes %s lane=%s profile=%s "
                     "command_id=%s: NAK, the next process re-dispatches the same thread",
@@ -2046,7 +2067,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 else None
             )
             failure_code = failure_message = failure_data = None
-        if notice is not None and notice.disposition == NOT_RUN:
+        if notice is not None and notice.disposition == NOT_RUN and captured is None:
             record.completion.set_exception(
                 TurnNotRun(
                     notice.key,
@@ -2080,32 +2101,27 @@ class BloodbankAdapter(BasePlatformAdapter):
                 record.final_reply,
             )
         try:
-            binding = record.binding
             if binding is not None and binding.error is not None:
                 raise binding.error
-            captured = binding.result if binding is not None else None
-            if captured is None:
-                events = terminal_events(
-                    record.invocation,
-                    outcome=terminal_outcome,
-                    failure_code=failure_code,
-                    failure_message=failure_message,
-                    failure_data=failure_data,
-                    extra_data=self._turn_annotations(record),
-                )
-                captured = await asyncio.to_thread(
-                    self.execution_state.mark_completed,
-                    command_id=record.invocation.invocation_id,
-                    digest=record.envelope_digest,
-                    outcome=terminal_outcome,
-                    terminal_events=events,
-                    failure_code=failure_code,
-                )
-            elif captured.outcome == "success" and terminal_outcome != "success" and any(
-                event["type"] == MESSAGE_APPENDED for event in captured.terminal_events
-            ):
-                raise RuntimeError("gateway rejected a captured final assistant answer")
-            await self._publish_many(captured.terminal_events)
+            events = terminal_events(
+                record.invocation,
+                outcome=terminal_outcome,
+                failure_code=failure_code,
+                failure_message=failure_message,
+                failure_data=failure_data,
+                extra_data=self._turn_annotations(record),
+            )
+            if captured is not None and terminal_outcome == "success":
+                events = (*captured.captured_events, *events)
+            resolved = await asyncio.to_thread(
+                self.execution_state.mark_completed,
+                command_id=record.invocation.invocation_id,
+                digest=record.envelope_digest,
+                outcome=terminal_outcome,
+                terminal_events=events,
+                failure_code=failure_code,
+            )
+            await self._publish_many(resolved.terminal_events)
         except Exception as exc:
             record.completion.set_exception(exc)
             raise

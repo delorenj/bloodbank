@@ -301,13 +301,13 @@ async def test_capture_failure_is_sticky_despite_hermes_swallowing_hook_errors(
     tmp_path, valid_command
 ):
     adapter = make_adapter(tmp_path)
-    mark = adapter.execution_state.mark_completed
+    mark = adapter.execution_state.mark_captured
     invoked = 0
 
     def fail_capture(**_kwargs):
         raise OSError("disk unavailable before capture")
 
-    adapter.execution_state.mark_completed = fail_capture
+    adapter.execution_state.mark_captured = fail_capture
 
     async def handler(_event):
         nonlocal invoked
@@ -325,7 +325,7 @@ async def test_capture_failure_is_sticky_despite_hermes_swallowing_hook_errors(
     assert adapter.execution_state.get(valid_command["command_id"]).state == "started"
     assert not any(e["type"] == MESSAGE_APPENDED for e in adapter._js.events)
     # This is pre-capture ambiguity: retry can execute Hermes again.
-    adapter.execution_state.mark_completed = mark
+    adapter.execution_state.mark_captured = mark
     retry = FakeMessage(valid_command)
     await adapter._handle_broker_message(retry)
     assert invoked == 2 and retry.acked == 1
@@ -350,7 +350,10 @@ async def test_restart_after_capture_before_processing_callback_never_reinvokes(
     task = asyncio.create_task(first._handle_broker_message(message))
     await asyncio.wait_for(captured.wait(), 2)
     stored = first.execution_state.get(valid_command["command_id"])
-    assert stored.state == "completed" and len(first._js.events) == 2
+    assert stored is not None
+    assert stored.state == "started" and len(first._js.events) == 2
+    assert stored.outcome is None and stored.capture_outcome == "success"
+    assert stored.captured_events[0]["data"]["text"] == BODY
     restarted = make_adapter(tmp_path)
 
     async def forbidden(_event):
@@ -360,11 +363,17 @@ async def test_restart_after_capture_before_processing_callback_never_reinvokes(
     replay = FakeMessage(valid_command)
     await restarted._handle_broker_message(replay)
     assert replay.acked == 1
-    assert [wire(e) for e in restarted._js.events] == [
-        wire(e) for e in (*stored.started_events, *stored.terminal_events)
-    ]
+    resolved = restarted.execution_state.get(valid_command["command_id"])
+    assert resolved is not None
+    assert resolved.failure_code == "processing_outcome_unknown"
+    assert resolved.outcome == "failure"
+    assert not any(e["type"] == MESSAGE_APPENDED for e in restarted._js.events)
+    assert resolved.captured_events == stored.captured_events
+    # The old process is only a crash-boundary fixture. Its late callback cannot
+    # change the already resolved failed result or publish its captured answer.
     pause.set()
     await asyncio.wait_for(task, 2)
+    assert not message.acked and message.nacked == 1
 
 
 @pytest.mark.asyncio
@@ -389,20 +398,26 @@ async def test_duplicate_capture_immutable_conflict_fails_closed(
     await adapter._handle_broker_message(message)
     assert message.acked == 0 and message.nacked == 1
     stored = adapter.execution_state.get(valid_command["command_id"])
-    original_bytes = [wire(e) for e in stored.terminal_events]
-    assert stored.terminal_events[0]["data"]["text"] == BODY
-    changed = copy.deepcopy(stored.terminal_events)
+    original_bytes = [wire(e) for e in stored.captured_events]
+    assert stored.captured_events[0]["data"]["text"] == BODY
+    changed = copy.deepcopy(stored.captured_events)
     changed[0]["data"]["text"] = "replacement"
     with pytest.raises(RuntimeError, match="immutable"):
-        adapter.execution_state.mark_completed(
+        adapter.execution_state.mark_captured(
             command_id=stored.command_id,
             digest=stored.envelope_digest,
             outcome="success",
-            terminal_events=changed,
+            events=changed,
         )
     assert [
-        wire(e) for e in adapter.execution_state.get(stored.command_id).terminal_events
+        wire(e) for e in adapter.execution_state.get(stored.command_id).captured_events
     ] == original_bytes
+    restarted = make_adapter(tmp_path)
+    replay = FakeMessage(valid_command)
+    await restarted._handle_broker_message(replay)
+    assert replay.acked == 1
+    assert not any(e["type"] == MESSAGE_APPENDED for e in restarted._js.events)
+    assert restarted.execution_state.get(stored.command_id).failure_code == "conflicting_native_capture"
 
 
 @pytest.mark.asyncio
@@ -604,7 +619,7 @@ async def test_recapture_semantics_are_sticky(tmp_path, valid_command, replaceme
     async def handler(_event):
         capture()
         binding = command_binding.get()
-        original.extend(wire(e) for e in binding.result.terminal_events)
+        original.extend(wire(e) for e in binding.result.captured_events)
         post_llm_call(**NATIVE, assistant_response=replacement)
         assert binding.error is not None
         on_session_end(**NATIVE, completed=False, failed=False, interrupted=False,
@@ -616,7 +631,7 @@ async def test_recapture_semantics_are_sticky(tmp_path, valid_command, replaceme
     await adapter._handle_broker_message(message)
     assert message.acked == 0 and message.nacked == 1
     stored = adapter.execution_state.get(valid_command["command_id"])
-    assert [wire(e) for e in stored.terminal_events] == original
+    assert [wire(e) for e in stored.captured_events] == original
 
 
 @pytest.mark.asyncio

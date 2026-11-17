@@ -1,4 +1,49 @@
+---
+title: 'BB-30 final assistant publication repair'
+type: 'bugfix'
+created: '2026-11-17'
+status: 'in-review'
+route: 'oneshot'
+---
+
 # BB-30 implementation plan
+
+## Intent
+
+<frozen-after-approval>
+Repair native capture versus final processing-outcome durability without
+post-capture reruns, preserving all seven original ACs, model/detached terminal
+annotations and `interrupted_by_shutdown`. A captured model answer is not proof
+of platform success; ambiguous restart must fail closed, not claim answered.
+Only BB-30 gateway/schema/tests/evidence may change. Push the candidate, with
+no main landing until fresh separate SPEC then QUALITY. No live/runtime/config,
+board mutation, inference, restart or unrelated target-watch changes.
+</frozen-after-approval>
+
+## Implementation Notes
+
+- Repair base: `71e6d428e85f7f2c1b959b6e59fc15a61927fc33`; existing worktree
+  strict-clean preflight passed. `origin/main` remains its ancestor.
+- GoF Adapter plus existing journal/outbox retained. Native end persists
+  `capture_outcome` / immutable optional answer separately from final processing.
+  Version 4 nullable columns preserve old rows; version bump makes old code
+  refuse the journal instead of rerunning captured `started` rows.
+- Processing completion commits the resolved outbox with earned annotations;
+  actual failure/cancellation excludes the captured answer. Pending capture on
+  restart closes `processing_outcome_unknown`, retains capture bytes, no rerun.
+- Known shutdown preserves its machine reason; pre-capture retry semantics stay
+  intact, while captured turns cannot retry inference. Contradictory post-end
+  captures poison pending capture durably without replacing its bytes.
+- Permanent pinned-native tests cover primary handler, send/handler failure and
+  cancellation, failed terminal PubAck, metadata, shutdown fail/retry policies,
+  pending-capture restart and resolution-write failure, and all four successful
+  outbox publication/ACK boundaries. Journal upgrade and capture guards tested.
+- Fresh independent SPEC then QUALITY are delegated to parent; this worker cannot
+  certify either gate or authorize landing. Current evidence supersedes the
+  historical plan assumptions below.
+
+## Historical implementation plan
+
 
 Implementer: bb30-codex-implementer. Base: a3ec3b53fb9fd40f854680e0e72949d184c7d979.
 Scope: gateway, additive message schema, deterministic tests and this evidence.

@@ -15,7 +15,6 @@ from .contract import (
     Invocation,
     RouteInvalid,
     final_answer_event,
-    terminal_events,
     validate_fact,
 )
 from .execution_state import ExecutionRecord, ExecutionStateStore
@@ -47,6 +46,9 @@ class CommandBinding:
                 # Hermes swallows observer exceptions. Keep a sticky error for
                 # on_processing_complete so a failed capture cannot become ACK.
                 self.error = exc
+                self.store.poison_capture(
+                    command_id=self.invocation.invocation_id, digest=self.digest
+                )
                 raise
 
     def _observe(self, phase: str, payload: dict[str, Any]) -> None:
@@ -107,9 +109,7 @@ class CommandBinding:
             if completed and not failed
             else "failure"
         )
-        events: tuple[dict[str, Any], ...] = terminal_events(
-            self.invocation, outcome=outcome
-        )
+        events: tuple[dict[str, Any], ...] = ()
         eligible = reason in {
             "text_response(finish_reason=stop)",
             "text_response(finish_reason=end_turn)",
@@ -128,11 +128,11 @@ class CommandBinding:
             events = (answer, *events)
         for event in events:
             validate_fact(event)
-        self.result = self.store.mark_completed(
+        self.result = self.store.mark_captured(
             command_id=self.invocation.invocation_id,
             digest=self.digest,
             outcome=outcome,
-            terminal_events=events,
+            events=events,
         )
         self.end_flags = evidence
 

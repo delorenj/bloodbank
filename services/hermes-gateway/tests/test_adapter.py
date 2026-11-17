@@ -980,7 +980,7 @@ def test_execution_journal_migrates_legacy_pending_as_possibly_started(tmp_path)
     assert rejected.rejection_reason == ROUTE_REJECTION_REASON
     assert rejected.rejected_at is not None
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 @pytest.mark.asyncio

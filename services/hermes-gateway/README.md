@@ -421,9 +421,11 @@ and an explicit route takes its effort from a model-specific providers entry.
 - A mode-`0600` SQLite execution journal persists the command digest, selected
   profile, and exact lifecycle payloads. `pending` means no started-event
   publication has been attempted; `started` is recorded before publication and
-  means one or both started events may have escaped. `completed` means the
-  Hermes outcome and ordered result facts (optional answer, then terminals)
-  were committed before publication.
+  means one or both started events may have escaped. A nonnull `capture_outcome`
+  on a `started` row means model finalization is durable, but platform processing
+  has not been resolved; it must never be dispatched again. `completed` means
+  the final processing outcome and ordered result facts (optional answer, then
+  terminals) were committed before publication.
   Rejection states distinguish an eventless pre-start decision from a
   post-start closure in progress or durably closed.
 - A target profile whose Hermes proxy URL is configured is rejected before
@@ -453,10 +455,11 @@ and an explicit route takes its effort from a model-specific providers entry.
 
 This is not an exactly-once transport claim. JetStream delivery and lifecycle
 publication remain at-least-once. The local guarantee is at-most-once Hermes
-execution for a command whose `completed` record is durable. A restart while a
-record is `pending` or `started` rechecks current routing eligibility before
-retrying execution because the capture boundary is unknown; a process crash
-after an external side effect but before durable finalizer capture
+execution for a command whose capture or `completed` record is durable. A restart
+while a record is `pending` or `started` **without capture** rechecks current routing
+eligibility before retrying execution because the capture boundary is unknown;
+a captured `started` row is never dispatched again (see final-answer semantics
+below). A process crash after an external side effect but before durable capture
 can therefore repeat an eligible started command. Do not delete the
 execution-state database unless intentionally discarding this deduplication
 history.
@@ -714,20 +717,35 @@ lineage. The answering envelope actor identifies the resolved target.
 
 At `on_session_end`, the adapter validates the final fact through canonical
 `core.validate.validate_envelope` and the additive message schema. It atomically
-captures the immutable answer-plus-terminal batch in the existing execution
-journal before publication. Its deterministic event/message IDs and exact
-timestamps/body/lineage survive every replay. Identical callback duplicates are
-ignored; conflicting body or outcome fails closed without overwriting the stored
-result. Observer failures are sticky because Hermes itself swallows hook errors.
-The processing-complete waiter surfaces these failures to the command lane.
+persists model finalization in `capture_outcome` and the immutable optional answer
+in `captured_events`, while the row stays `started` with no terminal outbox or
+final processing outcome. This is a durable no-rerun boundary, **not** proof of
+platform processing success. Exact event/message IDs, timestamps, body and lineage
+are frozen here. Identical callback duplicates are ignored; contradictory
+callbacks poison the pending capture durably without replacing its bytes.
+Observer failures remain sticky despite Hermes swallowing hook exceptions.
 
-Native execution outcome is authoritative after capture. Later platform delivery
-failures/cancellation cannot change an already completed Hermes result; retry
-replays it, never runs the command again. Before capture, failed/cancelled native
-execution produces terminals without an answer. A crash after post-call candidate
-observation but before the durable finalizer transaction remains ambiguous and
-can repeat execution/external effects. This is a local post-capture guarantee,
-not global exactly-once delivery.
+`on_processing_complete` separately resolves the final execution result. Only
+successful model finalization **and** successful platform processing, without a
+shutdown/refusal/interrupt, admit the captured answer into the terminal outbox.
+Known failure/cancellation excludes it; shutdown retains
+`interrupted_by_shutdown`. Model override and detached annotations are taken at
+terminal resolution just as on noncaptured turns. The entire resolved batch is
+committed before any answer/terminal publication. Once resolved, it is immutable.
+
+After capture, a restart never reruns Hermes. If processing resolution was not
+durable, redelivery closes as `failure` / `processing_outcome_unknown` (or the
+recorded capture-conflict code), publishes **no answer**, and preserves captured
+bytes for audit. This deliberately sacrifices answer availability when outcome
+is ambiguous rather than inventing success. Captured turns also cannot use the
+pre-capture shutdown `retry` policy to rerun. A crash before durable finalizer
+capture can still repeat execution/external effects. This is a local no-rerun
+guarantee, not global exactly-once delivery.
+
+Journal version 4 adds nullable capture columns without changing historical
+outbox bytes. Older gateways reject version 4 instead of interpreting a captured
+`started` row as dispatchable. Rollback requires compatible source; do not lower
+`user_version` or delete capture columns to force an older gateway to start.
 
 The stored batch publishes in order: answer (when present), invocation terminal,
 turn terminal. Each awaited JetStream publish requires PubAck and carries
