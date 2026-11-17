@@ -1,272 +1,228 @@
-# BB-41: exact consumer retirement, review before live step
+# BB-41: retired legacy delegation consumers
 
 Ticket: <https://plane.delo.sh/33god/browse/BB-41/>
 
-**This change has not retired anything.** The first independent review of
-`286ed32606b9b69a758d1c1e1efcd69c56de1dca` blocked live execution:
-`capture()` dropped both target workflows after consumer deletion, causing
-`postcheck()` to fail after two irreversible DELETEs. The corrected branch
-retains the exact workflow IDs regardless of consumer inventory and tests the
-actual HTTP/SQLite snapshot-to-postcheck path, including a reactivation refusal.
-**Do not use the blocked review record as approval.** Independently review the
-corrected revision before running the live step. The user's existing BB-41
-instruction already authorizes the exact targeted retirement after a passing
-independent safety gate; `--authorization-ref` attests that instruction, not a
-new permission request. The implementation worker performed only
-read-only live diagnostics. No workflow, consumer, stream, Plane record, service,
-scheduler or other repository was changed. Branch publication is not live-step
-approval or ticket completion.
+**The exact two obsolete durables were retired successfully on 2026-11-17,
+between 19:54:49.611511Z and 19:54:49.690010Z. Do not rerun the deletion.**
+Both workflows remain inactive/unpublished. A read-only observation at
+20:05:10.981076Z, **621.291066 seconds after the immediate after-snapshot**,
+passed the landed postcheck against the operator's before-snapshot. It found
+exactly the two intended removals, no recreated targets, unchanged unrelated
+consumer configurations/creation identities, and active polling replacements.
+
+Bloodbank code `059788b23979c4cdc1bc5a974ea13e19ca8bb4b1` landed in main
+`456257995d9bad42afb10eef21946cfe317f3940` before the operation. The corrected
+independent safety review passed; its record is retained with the operation.
+The older F1-blocked review of `286ed326` was **not** the approval used.
+Waybill's diagnostic correction `76956b57412bd8331368862c4c7477e6c27891d2`
+landed in 33GOD superproject main `52fa51a`. This followthrough changed only
+Bloodbank documentation/evidence; it did not repeat any live mutation, generate
+test traffic, replay, purge, activate, restart, schedule, or write Plane state.
+
+Fresh post-retirement **n8n node execution and correlated agent tool records**
+were observed, not just receipts. However, the newly created HEYMA-28 triage and
+HOLOC-44 Krebs commands were still pending at capture. Do not claim that a
+command created after retirement reached agent tools or completed. The actual
+post-retirement tools below belong to authorized commands created earlier.
+Parent/reviewer decides whether that bounded evidence satisfies AC4; this record
+does not turn the pending commands into successes or assert ticket closure.
+
+## Acceptance-criterion evidence index
+
+Paths in this table are relative to `ops/live/evidence/bb41/`.
+
+| AC | Observed outcome | Evidence |
+|---|---|---|
+| 1 — identify ownership/mode and verify replacement | Both exact durables were pull, filtered as below, zero waiting/unacked, owned by inactive/unpublished legacy workflows. Ticket Triage and Pickup Chip active; Krebs owns dispatch. Prior actual BB-41 triage/implementation tool execution was independently reviewed. | `reviewed.json`, `handler-evidence.json`, `retirement-20261117/before.json`, `retirement-20261117/independent-review.md` |
+| 2 — retire only obsolete durables, keep workflows off | Two exact DELETE responses are `success:true`; operation complete. Inventory 25 → 23; both legacy workflows unchanged/inactive/unpublished before, immediately after, and later. | `retirement-20261117/{operation,before,after,later,verification}.json` |
+| 3 — no replay, record skipped backlog | Initial exact filtered retained enumeration preserved; operator-before pending was 1,947 / 1,554. Skip obsolete delegation positions, not stream data. Stream limits retention/config/creation and all 23 unrelated consumer configs/creation identities unchanged. | `retained-ranges.json`, `retirement-20261117/{before,operation,later,verification}.json` |
+| 4 — no recreation and fresh supported handler execution | Targets absent after 621.291066 s and a scheduled Krebs tick. Fresh triage/skip and Pickup Chip nodes executed; TOLT-147 and HEYMA-19 have correlated actual post-cutoff tool records. **Limit:** their commands predate retirement; the two new commands remain pending, so new-command agent execution is not proven. | `retirement-20261117/{later,later-postcheck,candybar-observation,post-handler-evidence,gateway-followup,verification}.json` |
+| 5 — same-stream survey and existing diagnostic | All seven remaining n8n pull durables waiting, zero pending/unacked. Landed Waybill parser on actual monitoring GET reports no n8n idle/residual candidates. Tests cover >24h idle candidate, waiting/bound, zero backlog, short age, and exact retired identity. No continuous 24h history claimed. | `retirement-20261117/{later-audit,waybill-live-parser}.json`, `retirement-20261117/waybill-tests.txt`, Waybill commit `76956b5` |
+| 6 — operating notes and evidence | This runbook, immutable operation copies, independent review, source-summary capture script, regression outputs and checksum manifest distinguish fixtures from live observations and pending commands from execution. | `retirement-20261117/README.md`, `retirement-20261117/verification.json`, `retirement-20261117/SHA256SUMS` |
 
 ## Diagnosis and backlog disposition
 
-`BLOODBANK_EVENTS` uses **limits** retention and a seven-day maximum age.
-Deleting these consumers discards only their positions, not stored events. The
-backlog is obsolete delegation work, not work to re-drive. **Skip it permanently
-for these two lanes; never replay, fetch/ack to drain, purge, or activate them.**
-Krebs lifecycle v2 reserves implementation dispatch to `krebs tick`. Todo entry
-starts triage, not implementation. See `krebs/docs/lifecycle.md` and
-`krebs/spec/lifecycle.v2.yaml` in the existing Krebs checkout.
+`BLOODBANK_EVENTS` uses **limits** retention with a seven-day maximum age.
+Deleting these consumers discarded only their positions, not stored events.
+The backlog is obsolete delegation work, not work to re-drive. **Skip it
+permanently for these two lanes; never replay, fetch/ack to drain, purge, or
+activate them.** Krebs lifecycle v2 reserves implementation dispatch to
+`krebs tick`; Todo entry starts triage, not implementation.
 
-| Exact durable | Workflow | Actual mode/filter | Before at 19:24:21Z | Reviewed at 19:31:41Z |
-|---|---|---|---|---|
-| `n8n-l0J53w0TsS5PwETk-8b302a2c-5f47-5294-88de-9fbd52b2822b` | `l0J53w0TsS5PwETk`, Ticket Delegation — Groomed in Todo | pull; `bloodbank.evt.agent.invocation.completed` | 1,894 pending, 0 unacked, 0 waiting | 1,897 pending, 0 unacked, 0 waiting |
-| `n8n-8mmqdMwQYA28ZwUj-d1000000-0000-4000-8000-000000000001` | `8mmqdMwQYA28ZwUj`, Ticket Delegation | pull; `bloodbank.evt.repo.task.updated` | 1,532 pending, 0 unacked, 0 waiting | 1,536 pending, 0 unacked, 0 waiting |
+| Exact durable | Workflow | Actual mode/filter | Operator-before, 19:54:49.611511Z |
+|---|---|---|---|
+| `n8n-l0J53w0TsS5PwETk-8b302a2c-5f47-5294-88de-9fbd52b2822b` | `l0J53w0TsS5PwETk`, Ticket Delegation — Groomed in Todo | pull; `bloodbank.evt.agent.invocation.completed` | 1,947 pending, 0 unacked, 0 waiting |
+| `n8n-8mmqdMwQYA28ZwUj-d1000000-0000-4000-8000-000000000001` | `8mmqdMwQYA28ZwUj`, Ticket Delegation | pull; `bloodbank.evt.repo.task.updated` | 1,554 pending, 0 unacked, 0 waiting |
 
-Both workflows were inactive with null `activeVersionId` at both observations.
-Last delivered: 2026-11-14T11:46:50.628482681Z and
-2026-11-14T11:46:39.226867414Z respectively. Neither config has a
-`deliver_subject`, so neither is a push consumer. Missing `push_bound` is normal
-for pull. Original report counts (1,732/1,420) were an earlier baseline, not the
-current backlog.
+Both had null `activeVersionId`. Last delivered was
+2026-11-14T11:46:50.628482681Z / 2026-11-14T11:46:39.226867414Z.
+Neither config had `deliver_subject`; missing `push_bound` is normal for pull.
+The original 1,732 / 1,420 report was an earlier baseline, not live backlog.
 
-Read-only **direct stream GET, next_by_subj**, bounded to the initial snapshot's
-last sequence 10,700,394, enumerated exactly:
+The initial read-only **direct stream GET, next_by_subj** enumeration was
+bounded to sequence **10,700,394**, at the earlier 19:24:21Z snapshot:
 
-- l0J53: **1,894** retained matching events, first sequence **10,154,805**, last
-  **10,700,071**. Last delivered was 10,154,632.
-- 8mmqd: **1,532** retained matching events, first sequence **10,155,132**, last
-  **10,698,845**. Last delivered was 10,154,588.
+- l0J53: **1,894** retained matching events, first **10,154,805**, last
+  **10,700,071**; last delivered 10,154,632.
+- 8mmqd: **1,532** retained matching events, first **10,155,132**, last
+  **10,698,845**; last delivered 10,154,588.
 
-The exact sequence lists are in `evidence/bb41/retained-ranges.json`. These are
-as-of counts/ranges, **not** a claim that every sequence between endpoints
-matches. New matching events continue to accumulate and natural stream expiry
-continues. The live runner saves a new before-snapshot and its exact pending
-counts immediately before deletion; its sequence bounds are explicitly labelled
-candidate bounds, not enumerated filtered ranges. All backlog then present is
-intentionally skipped under the same no-replay disposition.
+These exact lists are in `evidence/bb41/retained-ranges.json`. They do not mean
+every sequence between the endpoints matched. Natural traffic and expiry
+continued before retirement. `operation.json` records the fresh pending counts
+and candidate sequence bounds through **10,709,804**; those bounds are **not**
+a fresh filtered enumeration. All obsolete backlog then present was deliberately
+skipped under the reviewed no-replay disposition.
 
-## Replacement: actual execution, not just receipt
+## Review, operation and no-recreation observation
 
-Read-only evidence is in `evidence/bb41/handler-evidence.json`:
+The independent corrected-revision review is retained as
+`evidence/bb41/retirement-20261117/independent-review.md`. It verified the F1 fix:
+`capture()` retains both legacy workflow IDs even after their consumers are
+absent; real snapshot/postcheck CLI fixtures also reject reactivation. The review
+was conditional on fresh guards and a cooperative workflow/consumer change
+freeze, not an atomic-delete guarantee or a blanket completion verdict.
 
-- Ticket Triage `6wAGA5pdrmHLyhs2` is active, listening to repo.task.created and
-  repo.task.updated through a pull durable, with a `Todo` phase guard and no
-  `delegateTicket` operation. Its default Fleet operation is `groomTicket`.
-- BB-41 triage ran as n8n execution **741382**, command
-  `849e2e44-6e65-503f-ad27-59a22e7868df`, at 18:21:28Z. Gateway execution
-  completed successfully at 18:43:54Z. The correlated bloodbank-pm session has
-  **54 actual tool-result records and 29 assistant tool-call records** inside
-  that triage window. The records include names, timestamps and content hashes,
-  not secret-bearing payloads. This is agent execution, not a publish receipt.
-- Krebs journal records BB-41 dispatch.write and dispatch.publish at
-  19:19:45Z, dispatch `876e72e5-eb8f-570c-9858-15e1593e2317`, command
-  `fb758fac-bdb9-5b56-a2b8-1c83e23fcfd4`. The same correlated agent session has
-  **five actual tool-result records and three assistant tool-call records after
-  this command started**. It is still running, not claimed completed.
-- n8n execution **741762** actually ran Triage Ticket for that In Progress
-  transition and took its skip branch, not implementation dispatch.
-- Active Pickup Chip `wWXgCZiiIBWaRRzE`, execution **741761**, actually ran
-  label lookup, live issue read and Needs Write (correct no-op: no write needed).
-- Additional fresh triage execution **741626** at 19:00:27Z for HOLOC-41 ran
-  Triage Ticket and Triage Started; its command completed successfully at
-  19:07:47Z. This corroborates the live lane, but completion alone is not used
-  as the BB-41 agent-handler proof above.
+The parent performed the already-authorized operation with the landed guarded
+runner. Original records remain at the active profile's scratch directory
+`bb41-authorized-operation-20261117/`; the committed before/operation/after files
+are byte-identical copies. Both exact broker responses succeeded and the
+immediate postcheck passed. The operation's nested
+`disposition.live_mutation_authorized:false` is the read-only planner's static
+output, **not** a failed authorization check: the enclosing real operation record
+contains the authorization/review attestations, successful responses and
+`complete:true`.
 
-The before/reviewed snapshots contain full consumer configurations and activation
-state plus non-payload node summaries. The reviewed snapshot additionally hashes
-complete workflow nodes/connections/settings without storing their code, headers
-or credentials. A second read-only snapshot passed `validate-fresh` with both
-consumers still present, no legacy progress, and unrelated config unchanged.
+The existing Candybar API returned `krebs-tick`, enabled/non-archived,
+`*/10 * * * *`, America/New_York. One bounded foreground wait was used; no clock
+or polling loop was created. Scheduled invocation
+`06893f74-9269-5d70-abc0-08a1300a866d` ran at 20:00:00.387785Z and finished
+20:00:08.154115Z, success, exit 0. The later snapshot at 20:05:10.981076Z
+spans more than one full 600-second interval after deletion:
 
-## Same-stream n8n audit and existing health seam
+- Both exact retired durables absent; both legacy workflows unchanged/off with
+  null active versions; no legacy workflow execution started after cutoff.
+- All **23** unrelated consumer configs and creation identities, stream config
+  and creation identity, and broker identity unchanged.
+- Ticket Triage and Pickup Chip active/polling; all **seven** remaining n8n pull
+  consumers had one waiting pull, zero pending and zero unacked.
 
-Nine n8n consumers were found. All are pull. The seven outside this repair were
-polling (`num_waiting=1`), with zero pending and zero unacked:
+This is a bounded pair of endpoint observations plus intervening natural handler
+execution, **not** uninterrupted 24-hour telemetry or proof against all future
+recreation. Do not recreate a retired durable as rollback.
 
-- Dev Journal ingress: `n8n-1e1599de-4198-4090-a884-e307d035a6c2-75e4d046-f5dd-48f0-ad15-3739ab8756fb`
-- Ticket Triage: `n8n-6wAGA5pdrmHLyhs2-f830070b-2b40-4edd-9d27-687e20fc304d`
-- Wax transcripts: `n8n-OTrzey7C2VKe8dr4-2c529827-04d6-46d8-ba1e-71e4c944a839`
-- Transcription Notifications, complete: `n8n-XHWRrrYCzu4ifdS7-7b344c02-578e-4f44-8665-d5b3f6c44d82`
-- Transcription Notifications, new file: `n8n-XHWRrrYCzu4ifdS7-f3bf0372-0cb4-447f-b0ba-bac7a2f11a6d`
-- Genesis ntfy: `n8n-sr604yqfOwRgdmiZ-6c1f3a52-8a0b-4d3e-9c1e-0d6f7b9a1001`
-- Pickup Chip: `n8n-wWXgCZiiIBWaRRzE-1a4f5ee5-dd90-5b25-80bb-dc48568f35f0`
+## Actual post-retirement handler execution
 
-No additional same-stream n8n orphan candidate was observed. This is a point-in-
-time audit, **not** continuous 24-hour binding history. The two targets have
-multi-day delivery inactivity and no waiting pull at each observation; JetStream
-pull consumer INFO does not expose a last-disconnected timestamp.
+`retirement-20261117/post-handler-evidence.json` is derived from read-only n8n
+`execution_entity`/`execution_data`, gateway execution metadata, correlated
+profile session/message databases and the existing Krebs journal. It retains
+node status/timing/branch counts, allowlisted identifiers, timestamps and hashes,
+not prompt bodies, tool arguments/results, node code, headers or credentials.
 
-No standing consumer health check covering this seam was found **in Bloodbank**.
-The existing diagnostic is in the separate repository
-`/home/delorenj/code/33GOD/33god-platform/waybill/waybill/collectors/nats.py`,
-`idle_consumers()` (lines 154–168 when inspected). It checks turn-matching
-subjects, uses a one-hour idle threshold, and can report a pull durable stale
-from last delivery despite a waiting pull. It lacks workflow retirement state
-and a 24-hour outage observation distinction. **It has not been edited:** this
-worker is authorized to write only Bloodbank. AC5's conditional existing-check
-extension therefore remains open for the parent to scope/authorize in its owning
-repository; this one-shot audit is not represented as that extension.
+- **742030**, 19:54:55.993Z: Ticket Triage ran Triage Ticket and Triage Started
+  for natural HEYMA-28 Todo traffic; `groomTicket`, correlation
+  `79e769d6-964b-5f15-8cec-f3205e68b962`, command
+  `a97f5d82-a1f0-530b-abdc-56add9433327`. The nodes succeeded, but the gateway
+  command remained **pending**; no agent-execution claim for this command.
+- **742034**, 19:54:56.781Z: Triage Ticket correctly skipped HEYMA-27 because
+  the phase was Done. **742060**, 20:00:04.101Z: it correctly skipped HOLOC-44
+  because the phase was In Progress. These are executed guards, not dispatch.
+- **742048**, 19:58:06.203Z: Pickup Chip handled the natural TOLT-147 completion
+  event `3d3941a8-3e59-5792-836e-efd481ac95e6`; label lookup, issue/activity
+  reads, planning, write and check nodes all ran successfully. Exact event-ID
+  matching joins gateway command `e1a4ec36-59c3-5b39-b3a8-d195267eaf11` to
+  correlation `ce7e8beb-8187-555a-98d8-92e8a5ca3f9b` and session
+  `20261117_145235_0337f180`. That session has **12 actual tool-result records
+  and nine assistant tool-call records after retirement**, 19:55:03–19:57:54Z;
+  the command completed successfully at 19:58:06.180453Z. It was created at
+  19:39:35Z, **before** retirement; this is fresh completion/continued execution,
+  not a new post-retirement command.
+- **742049**, 19:58:06.454Z: Pickup Chip handled HEYMA-19's natural started
+  event `df7b00ab-c566-57e5-84ab-2a3556d14814`, ran label/issue reads and
+  Needs Write (no write needed). The exact event joins command
+  `6b830397-6ff6-575f-a509-66db69b20e59`, thread correlation
+  `43c120da-2093-5b39-b20e-8b7e9bdbdc30`, session
+  `20261113_142125_9a986331`: **six actual post-retirement tool-result records
+  and three assistant tool-call records**, 19:58:22–19:58:37Z. It was created
+  19:40:03Z, before retirement, and remained started, not completed.
+- The scheduled 20:00 Krebs tick wrote/published HOLOC-44 command
+  `32cbef44-72c2-5809-a0e0-0a8f19066a6b`. `gateway-followup.json` records it
+  **pending**, not proven agent execution. The continuing BB-41 implementation
+  has one post-cutoff tool result (the operation return); that is corroboration
+  only, not independent fresh-handler proof.
 
-The local `audit` helper distinguishes an inactive exact retirement from an
-active-lane candidate. A healthy bound push or waiting pull, zero pending, or a
-short outage does not receive an orphan finding. One old delivery timestamp is
-only a candidate. `audit --previous` can flag two unhealthy endpoint observations
-more than 24 hours apart with unchanged consumer identity/config/delivery/ack
-positions and pending backlog. This is stronger evidence, not proof of
-uninterrupted disconnect between samples. **No recurring check was installed or
-clock added. Candybar remains the sole scheduler.**
+No synthetic ticket, command or event was produced and nothing was replayed.
+The evidence gap is specifically **agent execution of a command created after
+retirement**. It does not erase the real post-retirement node runs and correlated
+tool execution above, but must remain visible rather than upgrading a receipt.
 
-## Read-only commands (safe before review)
+## Existing Waybill diagnostic resolved and exercised
 
-Run from the task worktree or the landed Bloodbank checkout. Set `E` to a new
-private directory under the active profile's scratch; never system `/tmp`.
+The owning source is
+`33god-platform/waybill/waybill/collectors/nats.py` in the 33GOD superproject.
+Landed `76956b5` preserves its on-demand, turn-subject-matched behavior. An n8n
+durable with pending backlog, no waiting pull/bound push and delivery older than
+24 hours is an **orphan candidate**, never proof of continuous outage. The two
+exact historical names get a visible `retired_lane_residual` diagnosis requiring
+current ownership verification, not a prefix-based healthy exemption. A waiting
+pull, bound push, zero pending, shorter age or missing delivery time does not
+produce that n8n idle finding. The NATS snapshot cannot infer workflow activation.
+
+The **landed parser** (`parse_jsz` → `idle_consumers`) was exercised on the
+actual monitoring GET saved in `later.json`, not fixture data. Subject inputs
+were live n8n filters plus the exact retired filters; no event was published.
+`waybill-live-parser.json` records seven n8n consumers, **zero retired residuals
+and zero n8n idle candidates**. This is an explicit parser survey, not a claimed
+production end-to-end Waybill turn capture. `later-audit.json` separately joins
+current workflow state. No additional same-stream n8n candidate was observed;
+no continuous 24-hour absence claim is possible from these snapshots. The
+conditional existing-check extension is landed; no new monitoring platform or
+recurring schedule was installed. Candybar remains the only recurring clock.
+
+## Recheck read-only; do not repeat the live step
+
+From the landed checkout (or the task worktree), use a **new** private scratch
+output path. `snapshot` refuses overwrite; it uses HTTP monitoring GET and SQLite
+`mode=ro`/`query_only`. These commands never fetch/ack/create/delete a consumer:
 
 ```bash
-E=/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb41-review-next
+E=/home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb41-observe-next
 mkdir -m 700 "$E"
-python3 ops/live/bb41_consumer_retirement.py snapshot --out "$E/before.json"
-python3 ops/live/bb41_consumer_retirement.py plan "$E/before.json"
-python3 ops/live/bb41_consumer_retirement.py audit "$E/before.json"
-python3 -m unittest discover -s ops/live -p 'test_bb41_consumer_retirement.py' -v
+python3 ops/live/bb41_consumer_retirement.py snapshot --out "$E/later.json"
+python3 ops/live/bb41_consumer_retirement.py postcheck \
+  ops/live/evidence/bb41/retirement-20261117/before.json "$E/later.json"
+python3 ops/live/bb41_consumer_retirement.py audit "$E/later.json"
 ```
 
-`snapshot` uses HTTP monitoring GET and SQLite `mode=ro`/`query_only`. It refuses
-an existing output file. `plan`, `audit`, `validate-fresh` and `postcheck` only
-read saved JSON. None calls consumer fetch, ack, create or delete APIs. They are
-stdlib-only. `bb41_delete_consumers.py --help` is safe; **do not invoke its live
-runner during review**.
+A mismatch requires attribution, not modifying unrelated consumers to force a
+pass. If either target returns, investigate current ownership read-only; never
+activate, replay, automatically delete again or recreate a durable as rollback.
+The retained runner has no atomic two-object delete or automatic rollback; its
+historical operation record is not authorization for another live action.
 
-## Independent review gate
+## Verification and evidence retention
 
-Review exact code revision, this procedure, full snapshots and handler evidence.
-The reviewer must verify:
+- Landed Bloodbank isolated suite: **23 tests, OK**, exit 0; includes real private
+  HTTP/SQLite capture/postcheck boundary and reactivation refusal, guard failures,
+  exact DELETE subjects, fail-stop and injected runner. These tests use fixtures,
+  not production deletion.
+- Landed Waybill suite: **299 tests, OK**, exit 0; includes corrected n8n idle
+  boundaries and `collect` integration with mocked GETs. Live parser input is
+  separately evidenced as above.
+- Real `postcheck operator-before later`: **exit 0**, `ok:true`,
+  `only_intended_consumers_removed:true`. Its intentional
+  `handler_execution_proven:false` means the postcheck validates state, not
+  handler execution; the separate node/session sources supply the latter.
+- `retirement-20261117/verification.json` indexes actual commands, timestamps,
+  assertions, source revisions, test counts and limits. `README.md` explains each
+  file; `SHA256SUMS` covers the package. Verify with `sha256sum -c SHA256SUMS`
+  inside that directory; the original six-file manifest remains unchanged.
 
-1. Exactly the two listed durable/workflow/node identities; pull mode, filters,
-   inactive/unpublished legacy workflows, zero unacked/waiting, no legacy progress.
-2. Supported Ticket Triage/Pickup Chip polling, current Krebs authority and actual
-   correlated agent/tool execution, not solely invocation start or publish receipt.
-3. Backlog disposition accepted: deliberately skip all legacy backlog, preserve
-   stream retention/configuration and unrelated consumer definitions.
-4. Script permits only two hardcoded DELETE subjects; fresh identity/config/
-   workflow checks precede them; no wildcard, fetch/ack/replay, purge or activation.
-5. Tests pass and remaining Waybill ownership work is explicitly unresolved.
-
-Record a passing independent review of the **corrected exact revision** and
-cite the existing user BB-41 retirement authorization for the live step. The
-script's reference fields are operator attestations; they do not independently
-validate a review service. Do not fabricate either reference to pass its guards.
-The earlier blocked F1 review is not a passing review and cannot be used here.
-Parent coordinates landing/review and any later operator execution; implementer
-must not approve or merge itself.
-
-## Live step — ONLY after the gate above
-
-Use the reviewed snapshot `evidence/bb41/reviewed.json` and handler evidence (or
-newly reviewed replacements if anything drifted). Existing environment already
-has `nats-py`; check `python3 -c 'import nats'`. Do not install/restart services.
-Do not put credentials in argv, files or output. This runner intentionally fixes
-the NATS client and monitoring pair to local ports 4222/8222 and verifies server
-identity; it does not change their security configuration.
-
-The following is a **future operator command**, NOT executed by this worker.
-Use the passing corrected-revision independent review record for `--review-ref`;
-use the existing user BB-41 instruction as `--authorization-ref` (a truthful
-reference to the authorization already given, not invented new approval):
-
-```bash
-python3 ops/live/bb41_delete_consumers.py \
-  --reviewed ops/live/evidence/bb41/reviewed.json \
-  --reviewed-sha256 b214e2e9d14348b6ce5b372bdfdb812b79ef1d5ec272b102b51e66d1b196d06a \
-  --handler-evidence ops/live/evidence/bb41/handler-evidence.json \
-  --handler-sha256 ba651b5cf941880b0d09cd5b6dcf38f2ad7a44d50ed8e79d39dff4522202a3f9 \
-  --review-ref '<independent-review-record>' \
-  --authorization-ref '<live-execution-authorization-record>' \
-  --execute DELETE-ONLY-BB-41-RETIRED-DURABLES-NO-REPLAY \
-  --evidence-dir /home/delorenj/.hermes/profiles/bloodbank-pm/cache/scratch/bb41-authorized-operation
-```
-
-It captures a fresh before-snapshot and blocks on drift (including unrelated
-consumer identities/configs or workflow definition hash). New backlog counts
-are allowed; legacy delivery/ack progress is not. Broker/capture clocks must
-agree within 30 seconds. It then re-reads INFO for each target, persists the new
-before-snapshot and operation record, and sends only:
-
-```text
-$JS.API.CONSUMER.DELETE.BLOODBANK_EVENTS.n8n-l0J53w0TsS5PwETk-8b302a2c-5f47-5294-88de-9fbd52b2822b
-$JS.API.CONSUMER.DELETE.BLOODBANK_EVENTS.n8n-8mmqdMwQYA28ZwUj-d1000000-0000-4000-8000-000000000001
-```
-
-It requires `success:true` for each, saves responses and an after-snapshot, and
-checks exactly those consumers disappeared while every unrelated consumer's
-config/creation identity and the stream config/identity stayed unchanged. It
-also checks both legacy workflows stayed unchanged/off and replacement pulls
-are polling. No stream purge or publish exists in the script.
-
-**Stop on any mismatch, timeout, I/O failure, partial deletion or postcheck
-failure.** Inspect `operation.json` and re-snapshot read-only. Never retry blindly,
-recreate a removed durable, restore a legacy workflow, drain or replay. There is
-no automatic rollback: recreating a durable could dispatch historical work.
-Consumer deletes are not an atomic two-object transaction; evidence may show a
-partial operation, and the next safe action requires renewed review.
-
-There is a narrow check/delete race: NATS offers no conditional delete by config
-version. A cooperative operator change freeze on these workflows/consumers is a
-precondition. If another operator can activate/change them concurrently, **do
-not execute**. Stop and coordinate rather than pretending the guard is atomic.
-
-## Postconditions still required after authorized execution
-
-1. Retain operator before/after/operation records and verify only intended
-   removals; `postcheck` explicitly does **not** claim handler execution.
-2. Observe normal fresh authorized lifecycle traffic without generating a ticket
-   or replaying a command just to test. Retain actual n8n node run-data and
-   correlated agent/tool execution for triage/Krebs; no dispatch receipt alone.
-3. After normal traffic and a full existing Candybar `krebs-tick` interval,
-   capture another snapshot and run:
-   `python3 ops/live/bb41_consumer_retirement.py postcheck <operator-before.json> <later.json>`.
-   Both targets must remain absent and legacy workflows inactive. No new polling
-   loop/timer is needed; use the existing clock/normal observation window.
-4. If unrelated configuration changed concurrently, stop and attribute it; do
-   not “repair” unrelated consumers to force a passing comparison.
-5. Parent must resolve the existing Waybill health seam and land through the
-   authorized main integration flow before ticket handback. This branch's tests
-   and pre-retirement evidence are not full BB-41 completion.
-
-## Evidence files and verification limits
-
-All paths below are relative to `ops/live/`:
-
-- `evidence/bb41/before.json`: full initial broker/workflow snapshot.
-- `evidence/bb41/reviewed.json`: full reviewed candidate snapshot with workflow
-  definition hashes; this is the live runner's comparison baseline.
-- `evidence/bb41/readonly-check.json`: later read-only comparison; targets still
-  present, not an after-retirement snapshot.
-- `evidence/bb41/retained-ranges.json`: enumerated retained matching sequences,
-  no event payloads; initial snapshot hash embedded.
-- `evidence/bb41/handler-evidence.json`: sanitized n8n run-data summaries, Krebs
-  journal subset, gateway terminal metadata and actual session tool-record hashes.
-- `evidence/bb41/tests.txt`: **22 passing isolated tests on the original
-  blocked revision**, no production writes. The corrected revision's 23-test
-  run must be checked separately; this file is historical evidence, not new proof.
-- `evidence/bb41/SHA256SUMS`: content digests; verify with `sha256sum -c` from
-  the evidence directory.
-
-Tests exercise health cases, guard refusals, exact deletion subjects, fail-stop
-on first deletion error, the complete live-runner flow with injected offline
-responses, and real capture/postcheck CLIs against private local HTTP monitoring
-and SQLite fixtures. The latter removes exactly the two target consumers from
-its broker fixture and checks both legacy workflows remain visible and inactive;
-a subsequently reactivated legacy workflow fails the postcheck. **No real
-deletion was tested or performed.** Real read-only broker INFO responses were
-checked against monitor configs/identity and matched. The live runner's delete
-branch remains subject to independent operational review.
+Older `evidence/bb41/{before,reviewed,readonly-check,retained-ranges,handler-evidence}.json`
+are **pre-retirement** evidence. `evidence/bb41/tests.txt` is the historical
+22-test run on the blocked revision, not the corrected 23-test result. The copied
+independent review's future-tense remaining work is a historical safety decision;
+this later operational record supplies subsequent facts without rewriting it.
+Parent retains responsibility for external-handle verification, review, main
+integration of this evidence branch, and any ticket verdict. No Plane state or
+labels were changed by this followthrough.
