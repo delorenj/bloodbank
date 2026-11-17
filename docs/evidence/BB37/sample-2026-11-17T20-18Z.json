@@ -1,0 +1,94 @@
+{
+  "sample_utc": "2026-11-17T20:18:37.559511Z",
+  "window_start_utc": "2026-11-17T20:09:26.121615Z",
+  "window_end_utc": "2026-11-18T20:09:26.121615Z",
+  "window_elapsed": false,
+  "hub": {
+    "state": "running",
+    "pid": 3917142,
+    "registry_error": null,
+    "journal_error": null,
+    "transport_error": null,
+    "observation_delivery": {
+      "pending": 0,
+      "last_acked_at": "2026-11-17T20:18:37.511Z",
+      "last_acked_sequence": 31158170,
+      "error": null,
+      "enabled": true
+    }
+  },
+  "installed_inventory_status": "drift",
+  "handlers": {
+    "codegraph-prompt": {
+      "count": 7,
+      "status_reason_counts": [
+        {
+          "status": "skipped",
+          "reason": "repository_not_indexed",
+          "count": 2
+        },
+        {
+          "status": "succeeded",
+          "reason": "handler_completed",
+          "count": 4
+        },
+        {
+          "status": "timed_out",
+          "reason": "timeout",
+          "count": 1
+        }
+      ],
+      "latest_missing_binary": null
+    },
+    "code-review-graph-status": {
+      "count": 2,
+      "status_reason_counts": [
+        {
+          "status": "succeeded",
+          "reason": "handler_completed",
+          "count": 2
+        }
+      ],
+      "latest_missing_binary": null
+    },
+    "code-review-graph-update": {
+      "count": 122,
+      "status_reason_counts": [
+        {
+          "status": "skipped",
+          "reason": "repository_not_indexed",
+          "count": 61
+        },
+        {
+          "status": "succeeded",
+          "reason": "handler_completed",
+          "count": 61
+        }
+      ],
+      "latest_missing_binary": null
+    },
+    "claude-notify": {
+      "count": 1,
+      "status_reason_counts": [
+        {
+          "status": "succeeded",
+          "reason": "handler_completed",
+          "count": 1
+        }
+      ],
+      "latest_missing_binary": null
+    },
+    "codex-turn-notify": {
+      "count": 1,
+      "status_reason_counts": [
+        {
+          "status": "succeeded",
+          "reason": "handler_completed",
+          "count": 1
+        }
+      ],
+      "latest_missing_binary": null
+    }
+  },
+  "interpretation": "Do not certify a quiet handler; synthetic BB-37 fixture traffic is not normal load. Receipt retention may prune older rows before the window ends; retain intermediate samples if checking the complete 24 hours."
+}
