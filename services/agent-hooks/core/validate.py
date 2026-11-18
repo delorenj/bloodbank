@@ -106,6 +106,8 @@ ALLOWED_ENTITIES = frozenset({
     # crank: a Wingman duty session and the lines it says to the operator;
     # genesis reuses alert (alert.raised) and approval (approval.requested|granted|denied|expired)
     "duty", "alert",
+    # crank: one crank bound to one live interactive agent session (crank v2, BB-42)
+    "binding",
     # messaging: one entity per chat platform (messaging.<platform>.received|notified)
     "email", "telegram", "slack", "teams", "whatsapp", "google_chat",
     # messaging: one entity per carrier-text transport (messaging.<transport>.*)

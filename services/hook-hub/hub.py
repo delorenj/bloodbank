@@ -330,6 +330,9 @@ def _child_env(req: dict[str, Any], role: str | None) -> dict[str, str]:
     env["BB_HOOK_INVOCATION_ID"] = str(req.get("invocation_id", ""))
     env["BB_HOOK_SESSION_ID"] = native_session_id(req)
     env["BB_HOOK_PARENT_PID"] = str(req.get("parent_pid", ""))
+    # The agent process itself (bb-hook walks past the launcher shell): crank v2 binds by it.
+    env["BB_HOOK_AGENT_PID"] = str(req.get("agent_pid", "") or "")
+    env["BB_HOOK_AGENT_START"] = str(req.get("agent_start", "") or "")
     # Handlers that re-enter an agent CLI must not re-enter the hub.
     env["BB_HOOK_HUB"] = "off"
     return env

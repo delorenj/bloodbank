@@ -373,6 +373,34 @@ def exchange(request: bytes) -> dict:
             pass
 
 
+
+# Launchers between an agent CLI and this process: the agent runs hooks through `sh -c`, and dash
+# does not exec, so the parent is a transient shell. The first ancestor that is not one of these is
+# the agent itself. Captured HERE, synchronously, because the shell is gone by the time an async
+# hub handler runs (crank v2 binds a crank to pid + start time, PJAN-214 / BB-42).
+_LAUNCHERS = frozenset({"sh", "dash", "bash", "zsh", "fish", "env", "timeout", "nice", "bb-hook",
+                        "python", "python3"})
+
+
+def agent_process() -> dict:
+    """{"agent_pid": N, "agent_start": "<stat field 22>"} of the calling agent, or {}."""
+    try:
+        pid = int(os.environ.get("BB_HOOK_CALLER_PID", str(os.getppid())))
+        for _ in range(6):
+            if pid <= 1:
+                return {}
+            with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as fh:
+                stat = fh.read()
+            comm = stat[stat.index("(") + 1:stat.rindex(")")]
+            rest = stat[stat.rindex(")") + 2:].split()
+            if comm not in _LAUNCHERS:
+                return {"agent_pid": pid, "agent_start": rest[19]}
+            pid = int(rest[1])
+    except (OSError, ValueError, IndexError):
+        return {}
+    return {}
+
+
 def main(argv: list[str]) -> int:
     global TOTAL_BUDGET
     trailer = None
@@ -426,6 +454,7 @@ def main(argv: list[str]) -> int:
         "cwd": working_directory(payload),
         "pid": os.getpid(),
         "parent_pid": int(os.environ.get("BB_HOOK_CALLER_PID", str(os.getppid()))),
+        **agent_process(),
         "budget_s": max(left() - 0.25, 0.0),
         "env": captured_env(),
         "payload": payload,

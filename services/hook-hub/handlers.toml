@@ -453,3 +453,31 @@ timeout_ms = 5000
 order = 90
 enabled = true
 
+
+[[handler]]
+# Crank v2 (PJAN-214 / BB-42): every interactive agent session that starts in a project whose
+# .project.json crank block (or the install default in ~/.config/33god/crank.toml) has crank ON
+# gets its own Candybar-clocked crank. pj proves the session (agent pid + start time from
+# bb-hook, pane from that process's environ, Claude kind=interactive) and refuses everything
+# else, so this row may run for every CLI. Decisions land in ~/.local/state/crank/hooks.jsonl.
+id = "crank-attach"
+mode = "async"
+on = ["session_start"]
+clis = ["claude", "codex", "kimi", "opencode", "copilot", "gemini"]
+command = ["pj", "crank", "attach", "--hook"]
+timeout_ms = 20000
+order = 60
+enabled = true
+
+[[handler]]
+# The fast path for ending a crank. SessionEnd is not reliable on pane close or reboot, so every
+# crank fire also checks its own agent and ends itself (bloodbank.crank.binding.ended
+# reason=orphan_reaped); this row only makes the common case immediate.
+id = "crank-detach"
+mode = "async"
+on = ["session_end"]
+clis = ["claude", "codex", "kimi", "opencode", "copilot", "gemini"]
+command = ["pj", "crank", "detach", "--hook"]
+timeout_ms = 20000
+order = 60
+enabled = true
