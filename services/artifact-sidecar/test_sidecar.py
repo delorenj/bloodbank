@@ -1676,6 +1676,68 @@ class ProjectorTests(unittest.TestCase):
         self.assertEqual(result["kind"], "held", result)
         self.assertEqual(list((vault / "Elsewhere").iterdir()), [])
 
+    def _decision(self, slug, action, target, hold_kind="unmapped"):
+        import resolver
+        return resolver.Decision(slug=slug, hold_kind=hold_kind, action=action, target=target,
+                                 confidence=0.9, decider="jev", reason="test", candidates=[],
+                                 fingerprint="fp")
+
+    def test_resolution_maps_existing_folder_and_projects_held(self):
+        h = self._world()
+        vault = h.tmp / "vault"
+        (vault / "Projects" / "Other").mkdir(parents=True)
+        (vault / "Projects" / "BB-Home").mkdir(parents=True)
+        mapping_file = h.tmp / "mapping.json"
+        mapping_file.write_text(json.dumps({"$comment": "keep me", "other": "Projects/Other"}))
+        proj = self._projector(h, {"other": "Projects/Other"}, vault)
+        proj.mapping_path = mapping_file
+        self.assertEqual(proj.handle(self._artifact_event(h))["kind"], "held")
+        result = proj.finish_resolution(self._decision("bb", "map", "Projects/BB-Home"), apply=True)
+        self.assertEqual(result["outcome"]["projected"], 1, result)
+        self.assertTrue((vault / "Projects" / "BB-Home" / "2026-10-16" / "note.md").exists())
+        written = json.loads(mapping_file.read_text())
+        self.assertEqual(written["$comment"], "keep me")  # operator comments survive
+        self.assertEqual(written["bb"], "Projects/BB-Home")
+        self.assertEqual(proj.writer.mapping["bb"], "Projects/BB-Home")
+        self.assertEqual(proj.state.holds(), [])
+        [row] = proj.state.resolutions()
+        self.assertEqual((row["slug"], row["action"], row["applied"]), ("bb", "map", 1))
+
+    def test_resolution_create_makes_only_the_leaf(self):
+        h = self._world()
+        vault = h.tmp / "vault"
+        (vault / "Projects").mkdir(parents=True)
+        mapping_file = h.tmp / "mapping.json"
+        mapping_file.write_text(json.dumps({"other": "Projects/Other"}))
+        proj = self._projector(h, {"other": "Projects/Other"}, vault)
+        proj.mapping_path = mapping_file
+        proj.handle(self._artifact_event(h))
+        out = proj.apply_decision(self._decision("bb", "create", "Projects/Bloodbank"))
+        self.assertTrue(out["applied"], out)
+        self.assertTrue((vault / "Projects" / "Bloodbank" / "2026-10-16" / "note.md").exists())
+        # A create under a missing parent is refused, never mkdir -p:
+        out2 = proj.apply_decision(self._decision("zz", "create", "Nowhere/Deep/ZZ"))
+        self.assertFalse(out2["applied"])
+        self.assertFalse((vault / "Nowhere").exists())
+
+    def test_resolution_refuses_unsafe_target(self):
+        h = self._world()
+        vault = h.tmp / "vault"
+        proj = self._projector(h, {"other": "Projects/Other"}, vault)
+        proj.mapping_path = h.tmp / "mapping.json"
+        for bad in ("../escape", "/abs", "Projects/.hidden"):
+            self.assertFalse(proj.apply_decision(self._decision("bb", "create", bad))["applied"], bad)
+
+    def test_mapping_allows_shared_folder_but_not_two_spellings(self):
+        f = Path(tempfile.mkdtemp()) / "m.json"
+        self.addCleanup(shutil.rmtree, f.parent, True)
+        f.write_text(json.dumps({"tolt": "Projects/TowerOfLostThings",
+                                 "lost-things-forge": "Projects/TowerOfLostThings"}))
+        self.assertEqual(len(projector_main.load_mapping(str(f))), 2)
+        f.write_text(json.dumps({"a": "Projects/Tolt", "b": "Projects/tolt"}))
+        with self.assertRaises(projector_main.MappingError):
+            projector_main.load_mapping(str(f))
+
     def test_hold_retry_cli_projects_once_dir_restored(self):
         h = self._world()
         vault = h.tmp / "vault"

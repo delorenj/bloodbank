@@ -100,6 +100,7 @@ from artifact_lib import (
     sha256_bytes,
 )
 from sidecar import SidecarState  # state-db conventions shared for perms
+import resolver
 
 sys.path.insert(0, str(_HERE.parents[1] / "agent-hooks"))
 from core.validate import ContractViolation, validate_envelope  # type: ignore[import-not-found] # noqa: E402
@@ -132,7 +133,23 @@ CREATE TABLE IF NOT EXISTS holds (
     resolution TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_holds_unresolved ON holds(resolution) WHERE resolution IS NULL;
+CREATE TABLE IF NOT EXISTS resolutions (
+    slug TEXT NOT NULL,
+    decided_at TEXT NOT NULL,
+    hold_kind TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target TEXT,
+    confidence REAL,
+    decider TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    applied INTEGER NOT NULL DEFAULT 0,
+    outcome_json TEXT,
+    decision_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_resolutions_slug ON resolutions(slug, decided_at);
 """
+
+RESOLVABLE_HOLDS = ("unmapped", "missing-target")
 
 _SLUG_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._()+,@^-]*$")
@@ -190,7 +207,10 @@ def load_mapping(path: str | None) -> dict[str, str]:
         if any(p.startswith(".") and p not in (".", "..") for p in parts):
             raise MappingError(f"mapping[{slug!r}] = {target!r} has hidden components")
         folded = target.casefold()
-        if folded in seen_folded:
+        # Several slugs may share one folder (tolt, tower-of-lost-things and
+        # lost-things-forge all live in Projects/TowerOfLostThings); only two
+        # spellings of one folder are ambiguous.
+        if folded in seen_folded and seen_folded[folded] != target:
             raise MappingError(
                 f"mapping[{slug!r}] = {target!r} case-collides with "
                 f"{seen_folded[folded]!r}"
@@ -513,6 +533,55 @@ class ProjectorState:
             )
             return True
 
+    def held_slugs(self) -> dict[str, str]:
+        """slug -> hold kind for every unresolved resolvable hold (missing-target wins)."""
+        cur = self._db.execute(
+            "SELECT json_extract(envelope_json, '$.data.project.slug') AS slug, kind "
+            "FROM holds WHERE resolution IS NULL AND kind IN (?, ?)",
+            RESOLVABLE_HOLDS,
+        )
+        out: dict[str, str] = {}
+        for row in cur.fetchall():
+            if isinstance(row["slug"], str):
+                if out.get(row["slug"]) != "missing-target":
+                    out[row["slug"]] = row["kind"]
+        return out
+
+    def held_for_slug(self, slug: str) -> list[str]:
+        cur = self._db.execute(
+            "SELECT hold_id FROM holds WHERE resolution IS NULL AND kind IN (?, ?) "
+            "AND json_extract(envelope_json, '$.data.project.slug') = ? ORDER BY held_at",
+            (*RESOLVABLE_HOLDS, slug),
+        )
+        return [row["hold_id"] for row in cur.fetchall()]
+
+    def record_resolution(self, decision: dict[str, Any], *, applied: bool, outcome: dict[str, Any] | None) -> None:
+        with self._db:
+            self._db.execute(
+                "INSERT INTO resolutions (slug, decided_at, hold_kind, action, target, confidence, decider, "
+                "fingerprint, applied, outcome_json, decision_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    decision["slug"], _now(), decision["hold_kind"], decision["action"], decision.get("target"),
+                    decision.get("confidence"), decision["decider"], decision["fingerprint"], int(applied),
+                    json.dumps(outcome) if outcome is not None else None, json.dumps(decision, default=str),
+                ),
+            )
+
+    def last_resolution(self, slug: str) -> dict[str, Any] | None:
+        cur = self._db.execute(
+            "SELECT * FROM resolutions WHERE slug = ? ORDER BY rowid DESC LIMIT 1", (slug,)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def resolutions(self, limit: int = 100) -> list[dict[str, Any]]:
+        cur = self._db.execute(
+            "SELECT slug, decided_at, hold_kind, action, target, confidence, decider, applied, outcome_json, "
+            "json_extract(decision_json, '$.reason') AS reason FROM resolutions ORDER BY rowid DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
     def counts(self) -> dict[str, Any]:
         cur = self._db.execute(
             "SELECT project_slug, COUNT(*) AS n FROM projections GROUP BY project_slug"
@@ -530,11 +599,20 @@ class ProjectorState:
 
 
 class Projector:
-    def __init__(self, *, state: ProjectorState, writer: VaultWriter, store_root: Path, tz: str):
+    def __init__(
+        self,
+        *,
+        state: ProjectorState,
+        writer: VaultWriter,
+        store_root: Path,
+        tz: str,
+        mapping_path: Path | None = None,
+    ):
         self.state = state
         self.writer = writer
         self.store_root = store_root
         self.tz = tz
+        self.mapping_path = mapping_path
 
     def handle(self, envelope: dict[str, Any]) -> dict[str, Any]:
         """Project one artifact.created event. Returns a status dict.
@@ -579,6 +657,8 @@ class Projector:
             )
             return {
                 "kind": "held",
+                "slug": slug,
+                "hold_kind": "unmapped",
                 "detail": (
                     f"slug {slug!r} has no explicit vault mapping; held ({hold_id[:8]}…), "
                     "never a guessed directory"
@@ -595,6 +675,8 @@ class Projector:
             log.warning("slug %r held: %s", slug, missing)
             return {
                 "kind": "held",
+                "slug": slug,
+                "hold_kind": "missing-target",
                 "detail": (
                     f"{missing}; held ({hold_id[:8]}…), never a recreated shadow "
                     "directory — restore the dir or remap, then --hold-retry"
@@ -681,13 +763,161 @@ class Projector:
             detail += f" (render {render_outcome} at {render_actual.relative_to(self.writer.root)})"
         return {"kind": "projected", "detail": detail, "write": outcome}
 
+    # ── resolution (resolver.py decides; this applies) ─────────────────────
+
+    def decide(self, slug: str, hold_kind: str, *, registry: dict | None, use_jev: bool = True,
+               known_fingerprint: str | None = None) -> resolver.Decision:
+        return resolver.decide(
+            slug, hold_kind,
+            vault_root=self.writer.root,
+            mapping=dict(self.writer.mapping),
+            registry=registry,
+            projects_dir=_env("ARTIFACT_VAULT_PROJECTS_DIR", "Projects"),
+            min_confidence=float(_env("ARTIFACT_VAULT_RESOLVE_MIN_CONFIDENCE", "0.65")),
+            agree_confidence=float(_env("ARTIFACT_VAULT_RESOLVE_AGREE_CONFIDENCE", "0.4")),
+            use_jev=use_jev,
+            jev_url=_env("JEV_URL", resolver.DEFAULT_JEV_URL),
+            known_fingerprint=known_fingerprint,
+        )
+
+    def _write_mapping(self, slug: str, target: str) -> None:
+        if self.mapping_path is None:
+            raise MappingError("no mapping file configured; cannot record a resolution")
+        raw: dict[str, Any] = {}
+        if self.mapping_path.exists():
+            raw = json.loads(self.mapping_path.read_text())
+        raw[slug] = target
+        candidate = {k: v for k, v in raw.items() if not str(k).startswith("$")}
+        tmp = self.mapping_path.with_name(f".{self.mapping_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+        tmp.write_text(json.dumps(raw, indent=2) + "\n")
+        try:
+            validated = load_mapping(str(tmp))  # same rules as startup, before it goes live
+            if validated != candidate:
+                raise MappingError("mapping changed shape during validation")
+            os.replace(tmp, self.mapping_path)
+        finally:
+            tmp.unlink(missing_ok=True)
+        self.writer.mapping = validated
+
+    def apply_decision(self, decision: resolver.Decision) -> dict[str, Any]:
+        """Map (and for `create`, mkdir) the slug, then project its held envelopes."""
+        if decision.action not in ("map", "create") or not decision.target:
+            return {"applied": False, "detail": decision.reason}
+        target = decision.target
+        parts = Path(target).parts
+        if target.startswith(("/", "\\")) or ".." in parts or any(x.startswith(".") for x in parts):
+            return {"applied": False, "detail": f"unsafe target {target!r}"}
+        path = self.writer.root / target
+        if decision.action == "create":
+            parent = path.parent
+            if not parent.is_dir() or parent.is_symlink():
+                return {"applied": False, "detail": f"cannot create {target}: parent missing"}
+            try:
+                os.mkdir(path, 0o755)
+            except FileExistsError:
+                pass
+        if path.is_symlink() or not path.is_dir():
+            return {"applied": False, "detail": f"{target} is not a usable directory"}
+        self._write_mapping(decision.slug, target)
+        projected = held = errors = 0
+        for hold_id in self.state.held_for_slug(decision.slug):
+            envelope = self.state.hold_envelope(hold_id) or {}
+            result = self.handle(envelope)
+            if result["kind"] in ("projected", "duplicate"):
+                self.state.resolve_hold(hold_id, {
+                    "resolved_by": "resolver", "target": target,
+                    "decider": decision.decider, "confidence": decision.confidence,
+                })
+                projected += 1
+            elif result["kind"] == "held":
+                held += 1
+            else:
+                errors += 1
+        log.info("resolved %r -> %s (%s, %s): %d projected, %d still held, %d errors",
+                 decision.slug, target, decision.decider, decision.confidence, projected, held, errors)
+        return {"applied": True, "target": target, "projected": projected, "still_held": held, "errors": errors}
+
+    def resolve(self, slug: str, hold_kind: str, *, registry: dict | None, apply: bool,
+                use_jev: bool = True, force: bool = False) -> dict[str, Any]:
+        """Decide (skipping an unchanged, already-held question) and optionally apply."""
+        last = self.state.last_resolution(slug)
+        known = None
+        if not force and last and last["action"] == "hold":
+            known = last["fingerprint"]
+        decision = self.decide(slug, hold_kind, registry=registry, use_jev=use_jev, known_fingerprint=known)
+        return self.finish_resolution(decision, apply=apply)
+
+    def finish_resolution(self, decision: resolver.Decision, *, apply: bool) -> dict[str, Any]:
+        if decision.action == "skip":
+            return {"slug": decision.slug, "action": "skip", "detail": decision.reason}
+        outcome = self.apply_decision(decision) if apply else None
+        self.state.record_resolution(decision.to_json(), applied=bool(outcome and outcome.get("applied")),
+                                     outcome=outcome)
+        return {**decision.to_json(), "outcome": outcome}
+
 
 class Runtime:
-    def __init__(self, projector: Projector):
+    def __init__(self, projector: Projector, *, resolve_mode: str = "auto"):
         self.projector = projector
         self._nc: Any = None
         self._js: Any = None
         self._stop = asyncio.Event()
+        # auto: decide + apply; advise: decide + record only; off: nothing.
+        self.resolve_mode = resolve_mode
+        self._resolving: set[str] = set()
+        self._resolve_lock = asyncio.Lock()
+        self._tasks: set[asyncio.Task] = set()
+        self._last_hold_at: dict[str, float] = {}
+
+    def schedule_resolution(self, slug: str, hold_kind: str) -> None:
+        """Event-driven: a resolvable hold asks the resolver once per slug at a time."""
+        if self.resolve_mode == "off" or slug in self._resolving:
+            return
+        # A slug the resolver just held is not re-examined on every further
+        # artifact; the cooldown bounds evidence scans (git logs) per slug.
+        cooldown = float(_env("ARTIFACT_VAULT_RESOLVE_COOLDOWN_S", "900"))
+        last = self._last_hold_at.get(slug)
+        if last is not None and time.monotonic() - last < cooldown:
+            return
+        self._resolving.add(slug)
+        task = asyncio.get_running_loop().create_task(self._resolve(slug, hold_kind))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _resolve(self, slug: str, hold_kind: str) -> None:
+        try:
+            async with self._resolve_lock:  # FIFO: parents (scheduled first) land first
+                proj = self.projector
+                registry = await asyncio.to_thread(
+                    resolver.fetch_registry, _env("ARTIFACT_VAULT_REGISTRY_URL", resolver.DEFAULT_REGISTRY_URL)
+                )
+                last = proj.state.last_resolution(slug)
+                known = last["fingerprint"] if last and last["action"] == "hold" else None
+                decision = await asyncio.to_thread(
+                    proj.decide, slug, hold_kind, registry=registry, known_fingerprint=known
+                )
+                result = proj.finish_resolution(decision, apply=self.resolve_mode == "auto")
+                applied = bool((result.get("outcome") or {}).get("applied"))
+                if applied:
+                    self._last_hold_at.pop(slug, None)
+                else:
+                    self._last_hold_at[slug] = time.monotonic()
+                if result.get("action") != "skip":
+                    log.info("resolution %r: %s %s (%s, %s) — %s", slug, result.get("action"),
+                             result.get("target"), result.get("decider"), result.get("confidence"),
+                             result.get("reason"))
+        except Exception:  # noqa: BLE001 - a resolver failure must not stop projection
+            log.exception("resolution for %r failed; artifacts stay held", slug)
+        finally:
+            self._resolving.discard(slug)
+
+    def schedule_all_held(self) -> None:
+        held = self.projector.state.held_slugs()
+        if not held or self.resolve_mode == "off":
+            return
+        registry = resolver.fetch_registry(_env("ARTIFACT_VAULT_REGISTRY_URL", resolver.DEFAULT_REGISTRY_URL))
+        for slug in resolver.order_slugs(list(held), registry):
+            self.schedule_resolution(slug, held[slug])
 
     async def connect(self, nats_url: str, durable: str, *, backfill: bool = False) -> None:
         self._nc = await nats.connect(
@@ -741,6 +971,8 @@ class Runtime:
             await msg.nak(delay=5)
             return
         log.info("projection kind=%s :: %s", result["kind"], result["detail"])
+        if result["kind"] == "held" and result.get("hold_kind") in RESOLVABLE_HOLDS:
+            self.schedule_resolution(result["slug"], result["hold_kind"])
         # held (unmapped) and deadletter (malformed) are durable terminal
         # states -> ack (their outcome is durably recorded in the holds
         # table with an explicit CLI). errors (missing blob, digest
@@ -758,6 +990,7 @@ class Runtime:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._stop.set)
+        self.schedule_all_held()  # startup sweep: every slug already waiting
         idle_since: float | None = None
         while not self._stop.is_set():
             try:
@@ -800,7 +1033,9 @@ async def amain(args: argparse.Namespace) -> int:
         writer = VaultWriter(vault_root, mapping)
         store_root = Path(_env("ARTIFACT_VAULT_STORE", str(_default_state_dir() / "../artifact-sidecar/store")))
         tz = _env("ARTIFACT_VAULT_TZ", "America/New_York")
-        projector = Projector(state=state, writer=writer, store_root=store_root, tz=tz)
+        mapping_file = args.mapping or _env("ARTIFACT_VAULT_MAPPING", "")
+        projector = Projector(state=state, writer=writer, store_root=store_root, tz=tz,
+                              mapping_path=Path(mapping_file) if mapping_file else None)
 
         if args.holds:
             print(json.dumps(state.holds(include_resolved=args.all), indent=2))
@@ -834,6 +1069,29 @@ async def amain(args: argparse.Namespace) -> int:
                     resolved += 1
                     projected.append(projector.handle(envelope))
             print(json.dumps({"mapping_file": str(mapping_path), "resolved_holds": resolved, "projections": projected}))
+            return 0
+        if getattr(args, "resolutions", False):
+            print(json.dumps(state.resolutions(), indent=2))
+            return 0
+        if getattr(args, "resolve", None) is not None:
+            # Dry run unless --apply: show what the resolver would do per held slug.
+            registry = resolver.fetch_registry(_env("ARTIFACT_VAULT_REGISTRY_URL", resolver.DEFAULT_REGISTRY_URL))
+            held = state.held_slugs()
+            slugs = args.resolve or resolver.order_slugs(list(held), registry)
+            out = []
+            for slug in slugs:
+                if slug in held:
+                    kind = held[slug]
+                elif slug in writer.mapping and writer.project_dir_missing(slug):
+                    kind = "missing-target"
+                else:
+                    kind = "unmapped"
+                if getattr(args, "apply", False):
+                    out.append(projector.resolve(slug, kind, registry=registry, apply=True, force=getattr(args, "force", False)))
+                else:
+                    d = projector.decide(slug, kind, registry=registry)
+                    out.append(d.to_json())
+            print(json.dumps(out, indent=2, default=str))
             return 0
         if args.hold_retry:
             # Re-project every missing-target hold whose project dir is back
@@ -890,7 +1148,7 @@ async def amain(args: argparse.Namespace) -> int:
         backfill = _env("ARTIFACT_VAULT_BACKFILL", "") == "1"
         for slug, reason in writer.missing_targets().items():
             log.warning("mapping %r: %s — its artifacts will be held", slug, reason)
-        runtime = Runtime(projector)
+        runtime = Runtime(projector, resolve_mode=_env("ARTIFACT_VAULT_RESOLVE", "auto"))
         log.info("connecting %s durable=%s subject=%s", nats_url, durable, PROJECTOR_SUBJECT)
         await runtime.connect(nats_url, durable, backfill=backfill)
         log.info("subscribed; projecting")
@@ -909,6 +1167,13 @@ def main() -> int:
     parser.add_argument("--holds", action="store_true", help="list unresolved holds/deadletters")
     parser.add_argument("--all", action="store_true", help="include resolved holds")
     parser.add_argument("--hold-resolve-map", nargs=2, metavar=("SLUG", "VAULT_DIR"))
+    parser.add_argument(
+        "--resolve", nargs="*", metavar="SLUG",
+        help="ask the resolver (evidence + Jev) where held slugs belong; dry run unless --apply",
+    )
+    parser.add_argument("--apply", action="store_true", help="with --resolve: apply map/create decisions")
+    parser.add_argument("--force", action="store_true", help="with --resolve --apply: re-ask unchanged holds")
+    parser.add_argument("--resolutions", action="store_true", help="list recent resolver decisions")
     parser.add_argument(
         "--hold-retry", action="store_true",
         help="re-project missing-target holds whose project dir exists again",
