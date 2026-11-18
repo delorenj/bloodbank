@@ -69,6 +69,10 @@ class ExecutionRecord:
     capture_outcome: str | None = None
     captured_events: tuple[dict[str, Any], ...] = ()
     capture_error: str | None = None
+    # The bloodbank.agent.invocation.queued fact stored at claim and replayed
+    # with the same id; empty for rows claimed before the column existed (their
+    # lifecycle opened at started, so nothing closes a queued).
+    queued_events: tuple[dict[str, Any], ...] = ()
 
 
 class ExecutionStateStore:
@@ -98,7 +102,7 @@ class ExecutionStateStore:
             }
             if columns:
                 version = int(db.execute("PRAGMA user_version").fetchone()[0])
-                if version > 4:
+                if version > 5:
                     raise RuntimeError(
                         f"execution journal schema version {version} is unsupported"
                     )
@@ -113,12 +117,14 @@ class ExecutionStateStore:
             # Nullable additions preserve every historical row and outbox byte.
             for column in (
                 "lane", "failure_code", "detached_at", "capture_outcome",
-                "captured_events", "capture_error",
+                "captured_events", "capture_error", "queued_events",
             ):
                 if column not in columns:
                     db.execute(f"ALTER TABLE executions ADD COLUMN {column} TEXT")
-            # Older gateways must refuse this journal, not rerun captured turns.
-            db.execute("PRAGMA user_version = 4")
+            # Older gateways must refuse this journal: v4 added capture state (a
+            # captured turn must never rerun); v5 builds started facts at the
+            # real start, so a pending row no longer carries them.
+            db.execute("PRAGMA user_version = 5")
         os.chmod(self.path, 0o600)
 
     @staticmethod
@@ -289,6 +295,7 @@ class ExecutionStateStore:
             capture_outcome=str(row[12]) if row[12] is not None else None,
             captured_events=_decode_events(row[13]),
             capture_error=str(row[14]) if row[14] is not None else None,
+            queued_events=_decode_events(row[15]),
         )
 
     @classmethod
@@ -297,7 +304,7 @@ class ExecutionStateStore:
             """SELECT command_id, envelope_digest, profile, state, outcome,
                       started_events, terminal_events, rejection_reason, rejected_at,
                       lane, failure_code, detached_at, capture_outcome,
-                      captured_events, capture_error
+                      captured_events, capture_error, queued_events
                FROM executions WHERE command_id = ?""",
             (command_id,),
         ).fetchone()
@@ -325,23 +332,31 @@ class ExecutionStateStore:
         command_id: str,
         digest: str,
         profile: str,
-        started_events: tuple[dict[str, Any], ...],
+        started_events: tuple[dict[str, Any], ...] = (),
+        queued_events: tuple[dict[str, Any], ...] = (),
         lane: str | None = None,
     ) -> ExecutionRecord:
+        """Durably claim a command as pending, with its queued fact.
+
+        ``started_events`` is optional and normally empty: ``mark_started``
+        builds them so ``invocation.started.time`` is the real start."""
+
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 """INSERT OR IGNORE INTO executions
                    (command_id, envelope_digest, profile, state, outcome,
-                    started_events, terminal_events, lane, created_at, updated_at)
-                   VALUES (?, ?, ?, 'pending', NULL, ?, NULL, ?, ?, ?)""",
+                    started_events, terminal_events, lane, queued_events,
+                    created_at, updated_at)
+                   VALUES (?, ?, ?, 'pending', NULL, ?, NULL, ?, ?, ?, ?)""",
                 (
                     command_id,
                     digest,
                     profile,
                     _events_json(started_events),
                     lane,
+                    _events_json(queued_events) if queued_events else None,
                     now,
                     now,
                 ),
@@ -352,8 +367,61 @@ class ExecutionStateStore:
             raise RuntimeError("execution journal failed to persist pending command")
         return record
 
-    def mark_started(self, *, command_id: str, digest: str) -> ExecutionRecord:
+    def set_queued_events(
+        self,
+        *,
+        command_id: str,
+        digest: str,
+        queued_events: tuple[dict[str, Any], ...],
+    ) -> ExecutionRecord:
+        """Backfill the queued fact on a row claimed before the column existed.
+
+        Only a still-pending row with none stored takes it (a started row opened
+        its lifecycle without one, so nothing would close it). Idempotent: a row
+        that already has queued events is returned unchanged."""
+
+        if not queued_events:
+            raise ValueError("queued events must not be empty")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None:
+                db.rollback()
+                raise RuntimeError("execution journal has no pending command to queue")
+            try:
+                self._require_digest(current, digest)
+            except RuntimeError:
+                db.rollback()
+                raise
+            if current.queued_events or current.state != "pending":
+                db.commit()
+                return current
+            db.execute(
+                """UPDATE executions SET queued_events = ?, updated_at = ?
+                   WHERE command_id = ? AND state = 'pending'
+                     AND queued_events IS NULL""",
+                (_events_json(queued_events), now, command_id),
+            )
+            record = self._select(db, command_id)
+            db.commit()
+        if record is None:
+            raise RuntimeError("execution journal lost a pending command")
+        return record
+
+    def mark_started(
+        self,
+        *,
+        command_id: str,
+        digest: str,
+        started_events: tuple[dict[str, Any], ...] | None = None,
+    ) -> ExecutionRecord:
         """Record that started-event publication may begin before publishing.
+
+        ``started_events``, when given, replaces whatever a pending row holds
+        (nothing was ever published for a pending row), so the started facts'
+        ``time`` is the real start, not the claim. A row that is already
+        'started' keeps the facts it stored.
 
         On a row that is already 'started' this is a new attempt of the same
         command (a NAK or an unclean exit cut the last one off): the last
@@ -387,11 +455,19 @@ class ExecutionStateStore:
             if current.state != "pending":
                 db.rollback()
                 raise RuntimeError("finalized execution journal state is immutable")
-            db.execute(
-                """UPDATE executions SET state = 'started', updated_at = ?
-                   WHERE command_id = ? AND state = 'pending'""",
-                (now, command_id),
-            )
+            if started_events:
+                db.execute(
+                    """UPDATE executions
+                       SET state = 'started', started_events = ?, updated_at = ?
+                       WHERE command_id = ? AND state = 'pending'""",
+                    (_events_json(started_events), now, command_id),
+                )
+            else:
+                db.execute(
+                    """UPDATE executions SET state = 'started', updated_at = ?
+                       WHERE command_id = ? AND state = 'pending'""",
+                    (now, command_id),
+                )
             record = self._select(db, command_id)
             db.commit()
         if record is None or record.state != "started":

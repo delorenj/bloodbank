@@ -419,15 +419,36 @@ and an explicit route takes its effort from a model-specific providers entry.
 - Lifecycle publications use deterministic event IDs and `Nats-Msg-Id`, so
   broker-level retries deduplicate within the stream's duplicate window.
 - A mode-`0600` SQLite execution journal persists the command digest, selected
-  profile, and exact lifecycle payloads. `pending` means no started-event
-  publication has been attempted; `started` is recorded before publication and
+  profile, and exact lifecycle payloads. `pending` means the `queued` fact is
+  stored (and published at claim) and no started-event publication has been
+  attempted: the started facts are built when the row moves to `started`, so
+  `invocation.started.time` is the real start, not the claim. `started` is recorded before publication and
   means one or both started events may have escaped. A nonnull `capture_outcome`
   on a `started` row means model finalization is durable, but platform processing
   has not been resolved; it must never be dispatched again. `completed` means
   the final processing outcome and ordered result facts (optional answer, then
   terminals) were committed before publication.
-  Rejection states distinguish an eventless pre-start decision from a
-  post-start closure in progress or durably closed.
+  Rejection states distinguish a pre-start decision from a post-start closure
+  in progress or durably closed. A pre-start rejection is closed with
+  `invocation.failed` (`error_code: rejected_pre_start`, no `conversation.turn.*`
+  facts) because the command was already announced as `queued`; the failed fact
+  is rebuilt deterministically from the envelope and `rejected_at` on replay.
+  Only a row claimed by a gateway that predates `queued` (journal `user_version`
+  below 5) is rejected eventlessly.
+- `bloodbank.agent.invocation.queued` is published once per accepted command, at
+  durable claim and before the command waits for a conversation lock or an
+  execution slot. It is stored in the journal (`queued_events`) and replayed with
+  the same event id on redelivery; a publish failure NAKs and the row stays
+  `pending`. Its `data` carries `invocation_id` (the same value the later
+  `started` / `completed` / `failed` carry), `thread_id`, `turn_id`, `context`
+  (echo of the command's `data.context`), `issuer` (the command's `actor`),
+  `command_service` (the command envelope's `service`) and `lane_inflight` /
+  `lane_queued` at claim time. Every `queued` closes with exactly one `completed`
+  or `failed`. A row claimed before this fact existed is announced when it is
+  still `pending` at the next fetch; a legacy `started` row is not.
+- Journal `user_version` is 5: v4 added capture state, v5 added `queued_events`
+  and moved the started facts to `mark_started`. An older gateway refuses a v5
+  journal rather than publish a pending row with no started facts.
 - A target profile whose Hermes proxy URL is configured is rejected before
   dispatch because the proxy does not invoke the local finalizer hooks. The
   preflight reads the proxy setting inside the resolved execution profile's

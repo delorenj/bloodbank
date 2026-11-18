@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/agent/invocation.queued.json",
+  "title": "Agent Invocation Queued Event",
+  "description": "The Hermes gateway durably claimed an agent command and it now waits for a conversation lock and an execution slot. Published once per accepted command, at claim and before the wait; every queued fact closes with exactly one invocation.completed or invocation.failed, and invocation.started is optional in between. See bloodbank/docs/event-naming.md.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.agent.invocation.queued"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "agent"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.agent.invocation.queued.",
+      "properties": {
+        "invocation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Echo of the originating bloodbank.agent.invocation.start or .invoke command's data.context, verbatim. Ticket turns carry reason (ticket-grooming|ticket-delegation), repo, ticket_key, ticket_id, board_id, workspace, title and phase, so a consumer can tell what is pending for a ticket without knowing who sent the command. Omitted when the command carried no context.",
+          "additionalProperties": true
+        },
+        "lane": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "batch",
+            "interactive",
+            null
+          ],
+          "description": "Delivery lane of the originating command: batch (bloodbank.agent.invocation.start) or interactive (bloodbank.agent.invocation.invoke). Stamped by the Hermes gateway on every lifecycle fact; absent on facts written before the interactive lane existed."
+        },
+        "issuer": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The command envelope's actor, verbatim (who asked for the turn).",
+          "additionalProperties": true
+        },
+        "command_service": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The command envelope's service (the sender, for example krebs-tick or n8n-ticket-grooming)."
+        },
+        "lane_inflight": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Turns running on the command's lane at claim time (capacity diagnostic)."
+        },
+        "lane_queued": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Commands claimed and waiting for a slot on the command's lane at claim time, including this one (capacity diagnostic)."
+        }
+      },
+      "required": [
+        "invocation_id"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}

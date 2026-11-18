@@ -720,3 +720,75 @@ def test_interrupted_by_shutdown_failed_fact_validates(valid_command, repo_root,
     bad = dict(failed["data"], interrupted_by="gateway_hiccup")
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(bad, schema["properties"]["data"])
+
+
+def test_queued_event_is_a_valid_fact_with_the_announced_contract(valid_command, repo_root):
+    import sys
+
+    from bloodbank_hermes_gateway.contract import queued_event
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    valid_command["service"] = "krebs-tick"
+    invocation = Invocation.from_envelope(valid_command, "bloodbank-pm")
+    event = queued_event(invocation, lane_inflight=1, lane_queued=3)
+    validate_envelope(event)
+
+    assert event["type"] == "bloodbank.agent.invocation.queued"
+    assert event["subject"] == "bloodbank.evt.agent.invocation.queued"
+    assert event["kind"] == "event"
+    assert event["correlationid"] == valid_command["correlationid"]
+    assert event["causationid"] == valid_command["id"]
+    data = event["data"]
+    assert data["invocation_id"] == invocation.invocation_id
+    assert data["command_id"] == valid_command["command_id"]
+    assert data["target_agent_id"] == "bloodbank-pm"
+    assert data["profile_name"] == "bloodbank-pm"
+    assert data["lane"] == "batch"
+    assert data["context"] == valid_command["data"]["context"]
+    assert data["issuer"] == valid_command["actor"]
+    assert data["command_service"] == "krebs-tick"
+    assert (data["lane_inflight"], data["lane_queued"]) == (1, 3)
+    # Same invocation_id as the later facts, and a derived (replayable) id.
+    _, started = started_events(invocation)
+    assert started["data"]["invocation_id"] == data["invocation_id"]
+    assert event["id"] == invocation.event_id("bloodbank.agent.invocation.queued")
+    assert queued_event(invocation)["id"] == event["id"]
+
+
+def test_queued_event_omits_context_when_the_command_carried_none(valid_command):
+    from bloodbank_hermes_gateway.contract import queued_event
+
+    del valid_command["data"]["context"]
+    event = queued_event(Invocation.from_envelope(valid_command, "bloodbank-pm"))
+    assert "context" not in event["data"]
+    assert "lane_inflight" not in event["data"]
+
+
+def test_rejected_pre_start_event_closes_a_queued_fact(valid_command, repo_root):
+    import sys
+
+    from bloodbank_hermes_gateway.contract import queued_event, rejected_pre_start_event
+
+    sys.path.insert(0, str(repo_root / "services" / "agent-hooks"))
+    from core.validate import validate_envelope
+
+    invocation = Invocation.from_envelope(valid_command, "bloodbank-pm")
+    queued = queued_event(invocation)
+    failed = rejected_pre_start_event(
+        invocation, reason="route_gone", message="route gone",
+        occurred_at="2026-11-18T12:00:00Z",
+    )
+    validate_envelope(failed)
+    assert failed["type"] == "bloodbank.agent.invocation.failed"
+    assert failed["causationid"] == queued["id"]
+    assert failed["time"] == "2026-11-18T12:00:00Z"
+    assert failed["data"]["error_code"] == "rejected_pre_start"
+    assert failed["data"]["rejection_reason"] == "route_gone"
+    assert failed["data"]["invocation_id"] == queued["data"]["invocation_id"]
+    # Byte-stable on rebuild: a replay re-derives the identical fact.
+    assert failed == rejected_pre_start_event(
+        invocation, reason="route_gone", message="route gone",
+        occurred_at="2026-11-18T12:00:00Z",
+    )

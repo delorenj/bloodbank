@@ -56,6 +56,10 @@ COMMAND_STREAM = "BLOODBANK_COMMANDS"
 EVENT_STREAM = "BLOODBANK_EVENTS"
 
 TURN_STARTED = "bloodbank.conversation.turn.started"
+INVOCATION_QUEUED = "bloodbank.agent.invocation.queued"
+# invocation.failed error_code: the command was claimed (queued) and refused
+# before any turn started.
+REJECTED_PRE_START_CODE = "rejected_pre_start"
 INVOCATION_STARTED = "bloodbank.agent.invocation.started"
 INVOCATION_COMPLETED = "bloodbank.agent.invocation.completed"
 INVOCATION_FAILED = "bloodbank.agent.invocation.failed"
@@ -515,6 +519,77 @@ def final_answer_event(
             "command_causationid": invocation.envelope.get("causationid"),
             "native_session_id": native_session_id,
             "native_turn_id": native_turn_id,
+            **_command_context(invocation),
+        },
+    )
+    validate_fact(event)
+    return event
+
+
+def queued_event(
+    invocation: Invocation,
+    *,
+    lane_inflight: int | None = None,
+    lane_queued: int | None = None,
+) -> dict[str, Any]:
+    """bloodbank.agent.invocation.queued: the gateway durably claimed a command.
+
+    Published once per accepted command, at claim and before the command waits
+    for a conversation lock or an execution slot, so the bus can answer "is a
+    turn pending for this ticket" whoever sent the command. Every queued fact
+    closes with exactly one completed or failed fact; started is optional in
+    between. Stored in the journal and replayed with the same id (derived from
+    the invocation id) on redelivery. ``issuer`` is the command's ``actor`` and
+    ``command_service`` the command envelope's ``service``. ``lane_inflight`` /
+    ``lane_queued`` are capacity diagnostics at claim time."""
+
+    data: dict[str, Any] = {
+        "invocation_id": invocation.invocation_id,
+        "thread_id": invocation.thread_id,
+        "turn_id": invocation.turn_id,
+        "issuer": invocation.envelope["actor"],
+        "command_service": invocation.envelope.get("service"),
+        **_command_context(invocation),
+    }
+    if lane_inflight is not None:
+        data["lane_inflight"] = lane_inflight
+    if lane_queued is not None:
+        data["lane_queued"] = lane_queued
+    event = lifecycle_event(
+        invocation,
+        INVOCATION_QUEUED,
+        causation_id=invocation.envelope["id"],
+        data=data,
+    )
+    validate_fact(event)
+    return event
+
+
+def rejected_pre_start_event(
+    invocation: Invocation,
+    *,
+    reason: str,
+    message: str,
+    occurred_at: str,
+) -> dict[str, Any]:
+    """bloodbank.agent.invocation.failed closing a ``queued`` fact whose turn
+    never began (error_code ``rejected_pre_start``; ``rejection_reason`` names
+    why). No conversation.turn.* fact: no turn started. Deterministic from the
+    envelope and the journaled ``rejected_at``, so a replay is byte-stable and
+    the journal row (which forbids terminal events) needs no extra column."""
+
+    event = lifecycle_event(
+        invocation,
+        INVOCATION_FAILED,
+        causation_id=invocation.event_id(INVOCATION_QUEUED),
+        occurred_at=occurred_at,
+        data={
+            "invocation_id": invocation.invocation_id,
+            "thread_id": invocation.thread_id,
+            "turn_id": invocation.turn_id,
+            "error_code": REJECTED_PRE_START_CODE,
+            "error_message": message,
+            "rejection_reason": reason,
             **_command_context(invocation),
         },
     )

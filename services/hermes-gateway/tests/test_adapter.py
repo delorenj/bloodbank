@@ -382,6 +382,7 @@ async def test_ack_waits_for_hermes_and_sends_progress(tmp_path, valid_command):
     assert message.acked == 1
     assert message.nacked == 0
     assert [event["type"] for event in adapter._js.events] == [
+        "bloodbank.agent.invocation.queued",
         "bloodbank.conversation.turn.started",
         "bloodbank.agent.invocation.started",
         "bloodbank.agent.invocation.completed",
@@ -578,12 +579,23 @@ async def test_route_disabled_between_claim_and_dispatch_is_durably_rejected(
     assert executions == 0
     assert message.termed == 1
     assert message.nacked == 0
-    assert adapter._js.events == []
+    # The command was announced as queued, so the refusal closes it: failed
+    # (rejected_pre_start), and no conversation.turn.* since no turn began.
+    assert [event["type"] for event in adapter._js.events] == [
+        "bloodbank.agent.invocation.queued",
+        "bloodbank.agent.invocation.failed",
+    ]
+    queued, failed = adapter._js.events
+    assert failed["data"]["error_code"] == "rejected_pre_start"
+    assert failed["data"]["rejection_reason"] == ROUTE_REJECTION_REASON
+    assert failed["data"]["invocation_id"] == queued["data"]["invocation_id"]
+    assert failed["causationid"] == queued["id"]
     rejected = adapter.execution_state.get(valid_command["command_id"])
     assert rejected is not None
     assert rejected.state == "rejected_pre_start"
     assert rejected.rejection_reason == ROUTE_REJECTION_REASON
     assert rejected.terminal_events == ()
+    assert failed["time"] == rejected.rejected_at
 
 
 @pytest.mark.asyncio
@@ -600,7 +612,7 @@ async def test_route_disabled_after_started_publish_closes_and_replays_exactly(
         nonlocal publish_calls
         await original_publish_many(events)
         publish_calls += 1
-        if publish_calls == 1:
+        if publish_calls == 2:  # call 1 is queued, call 2 the started facts
             write_registry(tmp_path, enabled=False)
 
     async def handler(_event):
@@ -615,6 +627,7 @@ async def test_route_disabled_after_started_publish_closes_and_replays_exactly(
     assert executions == 0
     assert message.termed == 1
     assert [event["type"] for event in adapter._js.events] == [
+        "bloodbank.agent.invocation.queued",
         "bloodbank.conversation.turn.started",
         "bloodbank.agent.invocation.started",
         "bloodbank.agent.invocation.failed",
@@ -649,6 +662,7 @@ async def test_route_disabled_after_started_publish_closes_and_replays_exactly(
     assert exact_redelivery.termed == 1
     assert exact_redelivery.nacked == 0
     assert tuple(restarted._js.events) == (
+        *rejected.queued_events,
         *rejected.started_events,
         *rejected.terminal_events,
     )
@@ -668,7 +682,7 @@ async def test_partial_started_publish_is_closed_on_disabled_redelivery(
         nonlocal publish_count
         del subject, kwargs
         publish_count += 1
-        if publish_count == 2:
+        if publish_count == 3:  # queued, turn.started, then the started fact
             raise RuntimeError("second started event was not acknowledged")
         published.append(json.loads(payload))
 
@@ -685,7 +699,8 @@ async def test_partial_started_publish_is_closed_on_disabled_redelivery(
     assert first_delivery.nacked == 1
     assert first_delivery.termed == 0
     assert [event["type"] for event in published] == [
-        "bloodbank.conversation.turn.started"
+        "bloodbank.agent.invocation.queued",
+        "bloodbank.conversation.turn.started",
     ]
     opened = first.execution_state.get(valid_command["command_id"])
     assert opened is not None and opened.state == "started"
@@ -700,6 +715,7 @@ async def test_partial_started_publish_is_closed_on_disabled_redelivery(
     assert redelivery.termed == 1
     assert redelivery.nacked == 0
     assert [event["type"] for event in restarted._js.events] == [
+        "bloodbank.agent.invocation.queued",
         "bloodbank.conversation.turn.started",
         "bloodbank.agent.invocation.started",
         "bloodbank.agent.invocation.failed",
@@ -725,7 +741,7 @@ async def test_rejection_persistence_failure_naks_then_restart_closes_without_ex
         nonlocal publish_calls
         await original_publish_many(events)
         publish_calls += 1
-        if publish_calls == 1:
+        if publish_calls == 2:  # call 1 is queued, call 2 the started facts
             write_registry(tmp_path, enabled=False)
 
     def fail_first_finalize(**kwargs):
@@ -788,7 +804,7 @@ async def test_partial_terminal_publish_naks_and_exact_restart_replays_closure(
         nonlocal publish_calls
         await original_publish_many(events)
         publish_calls += 1
-        if publish_calls == 1:
+        if publish_calls == 2:  # call 1 is queued, call 2 the started facts
             write_registry(tmp_path, enabled=False)
 
     async def handler(_event):
@@ -805,6 +821,7 @@ async def test_partial_terminal_publish_naks_and_exact_restart_replays_closure(
     assert first_delivery.nacked == 1
     assert first_delivery.termed == 0
     assert [event["type"] for event in published] == [
+        "bloodbank.agent.invocation.queued",
         "bloodbank.conversation.turn.started",
         "bloodbank.agent.invocation.started",
         "bloodbank.agent.invocation.failed",
@@ -822,6 +839,7 @@ async def test_partial_terminal_publish_naks_and_exact_restart_replays_closure(
     assert redelivery.termed == 1
     assert redelivery.nacked == 0
     assert tuple(restarted._js.events) == (
+        *closed.queued_events,
         *closed.started_events,
         *closed.terminal_events,
     )
@@ -858,6 +876,13 @@ async def test_pending_restart_rechecks_policy_and_rejected_redelivery_cannot_by
     assert disabled_redelivery.termed == 1
     rejected = restarted.execution_state.get(valid_command["command_id"])
     assert rejected is not None and rejected.state == "rejected_pre_start"
+    # A row claimed before queued facts existed is announced when this gateway
+    # picks it up, so its refusal has something to close.
+    assert [e["type"] for e in restarted._js.events] == [
+        "bloodbank.agent.invocation.queued",
+        "bloodbank.agent.invocation.failed",
+    ]
+    assert len(rejected.queued_events) == 1
 
     write_registry(tmp_path, enabled=True)
     reenabled = make_adapter(tmp_path, target_profiles={})
@@ -869,7 +894,8 @@ async def test_pending_restart_rechecks_policy_and_rejected_redelivery_cannot_by
     assert later_redelivery.termed == 1
     assert later_redelivery.acked == 0
     assert later_redelivery.nacked == 0
-    assert reenabled._js.events == []
+    # Replay of the refusal: the same two facts again (same ids), nothing runs.
+    assert reenabled._js.events == restarted._js.events
 
 
 @pytest.mark.asyncio
@@ -980,7 +1006,7 @@ def test_execution_journal_migrates_legacy_pending_as_possibly_started(tmp_path)
     assert rejected.rejection_reason == ROUTE_REJECTION_REASON
     assert rejected.rejected_at is not None
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 @pytest.mark.asyncio
@@ -1066,7 +1092,7 @@ async def test_terminal_publish_failure_naks_instead_of_acking(tmp_path, valid_c
         nonlocal publish_count
         del subject, payload, kwargs
         publish_count += 1
-        if publish_count >= 3:
+        if publish_count >= 4:  # queued, turn.started, started, then it fails
             raise RuntimeError("broker unavailable")
 
     adapter._js.publish = publish
@@ -1093,7 +1119,7 @@ async def test_completed_command_replays_after_terminal_publish_failure_without_
         nonlocal publish_count
         del subject, payload, kwargs
         publish_count += 1
-        if publish_count >= 3:
+        if publish_count >= 4:  # queued, turn.started, started, then it fails
             raise RuntimeError("broker unavailable after Hermes completed")
 
     first._js.publish = failing_publish
@@ -1127,10 +1153,12 @@ async def test_completed_command_replays_after_terminal_publish_failure_without_
     assert redelivery.acked == 1
     assert redelivery.nacked == 0
     assert tuple(restarted._js.events) == (
+        *completed.queued_events,
         *completed.started_events,
         *completed.terminal_events,
     )
     assert [event["type"] for event in restarted._js.events] == [
+        "bloodbank.agent.invocation.queued",
         "bloodbank.conversation.turn.started",
         "bloodbank.agent.invocation.started",
         "bloodbank.agent.invocation.completed",
@@ -1549,6 +1577,7 @@ async def test_interactive_command_uses_the_same_journal_and_lifecycle(
 
     assert message.acked == 1 and message.termed == 0 and message.nacked == 0
     assert [event["type"] for event in adapter._js.events] == [
+        "bloodbank.agent.invocation.queued",
         "bloodbank.conversation.turn.started",
         "bloodbank.agent.invocation.started",
         "bloodbank.agent.invocation.completed",
@@ -1556,7 +1585,7 @@ async def test_interactive_command_uses_the_same_journal_and_lifecycle(
     ]
     assert {event["data"]["lane"] for event in adapter._js.events} == {"interactive"}
     # The lifecycle fact types and subjects are the batch lane's, unchanged.
-    assert adapter._js.events[1]["subject"] == "bloodbank.evt.agent.invocation.started"
+    assert adapter._js.events[2]["subject"] == "bloodbank.evt.agent.invocation.started"
     record = adapter.execution_state.get(memo["command_id"])
     assert record is not None and record.state == "completed"
     assert record.lane == "interactive"
@@ -1916,6 +1945,7 @@ async def test_timeout_stops_the_turn_publishes_failed_and_acks_once(
     assert message.acked == 1 and message.nacked == 0 and message.termed == 0
 
     assert lifecycle_types(adapter, memo) == [
+        "bloodbank.agent.invocation.queued",
         "bloodbank.conversation.turn.started",
         "bloodbank.agent.invocation.started",
         "bloodbank.agent.invocation.failed",
@@ -2180,7 +2210,7 @@ async def test_timed_out_command_replays_its_failure_without_rerunning(
     await adapter._handle_broker_message(again, interactive)
     assert runs == [memo["command_id"]]
     assert again.acked == 1 and again.nacked == 0
-    assert len(adapter._js.events) == count + 4  # identical facts, same Nats-Msg-Id
+    assert len(adapter._js.events) == count + 5  # identical facts, same Nats-Msg-Id
 
 
 @pytest.mark.asyncio
@@ -2291,6 +2321,7 @@ async def test_interim_messages_of_a_running_turn_become_progress_facts(tmp_path
     assert message.acked == 1
     assert all(r.success for r in sent)
     assert [e["type"] for e in adapter._js.events] == [
+        "bloodbank.agent.invocation.queued",
         "bloodbank.conversation.turn.started",
         "bloodbank.agent.invocation.started",
         "bloodbank.agent.invocation.progressed",
@@ -2299,7 +2330,7 @@ async def test_interim_messages_of_a_running_turn_become_progress_facts(tmp_path
         "bloodbank.conversation.turn.completed",
     ]
     first, second = _progressed(adapter)
-    started = adapter._js.events[1]
+    started = adapter._js.events[2]
     for seq, event in ((1, first), (2, second)):
         assert event["subject"] == "bloodbank.evt.agent.invocation.progressed"
         assert event["correlationid"] == valid_command["correlationid"]
@@ -2588,8 +2619,11 @@ async def test_a_command_fetched_just_before_the_drain_is_nakked_and_runs_after(
     assert calls == []
     assert (message.acked, message.nacked, message.termed) == (0, 1, 0)
     assert message.nak_delays == [lane_runtime.nak_delay]
-    # nothing published (not even started) and the row is still dispatchable
-    assert adapter._js.events == []
+    # only the queued fact went out (claimed, never started) and the row is
+    # still dispatchable
+    assert [e["type"] for e in adapter._js.events] == [
+        "bloodbank.agent.invocation.queued"
+    ]
     assert adapter.execution_state.get(command["command_id"]).state == "pending"
 
     adapter.gateway_runner = make_runner()  # the new process
@@ -2611,7 +2645,8 @@ async def test_a_drain_that_starts_while_started_facts_publish_is_never_dispatch
 
     async def publish(subject, payload, **kwargs):
         await real_publish(subject, payload, **kwargs)
-        runner._draining = True  # SIGUSR1 lands mid-publication
+        if json.loads(payload)["type"] == "bloodbank.conversation.turn.started":
+            runner._draining = True  # SIGUSR1 lands mid-publication
 
     adapter._js.publish = publish
     calls = []
@@ -2807,6 +2842,7 @@ async def test_on_its_last_delivery_a_command_hermes_did_not_run_is_closed_as_fa
 
     assert (message.acked, message.nacked) == (1, 0)
     assert lifecycle_types(adapter, valid_command) == [
+        "bloodbank.agent.invocation.queued",
         "bloodbank.conversation.turn.started",
         "bloodbank.agent.invocation.started",
         "bloodbank.agent.invocation.failed",
@@ -4155,3 +4191,250 @@ def test_data_model_is_validated_at_the_boundary(valid_command):
         command["data"]["model"] = bad
         with pytest.raises(CommandInvalid, match="data.model"):
             decode_command(json.dumps(command).encode(), lane=INTERACTIVE)
+
+
+# --- bloodbank.agent.invocation.queued (ADR 0001) ---------------------------
+
+
+def _events_of(adapter, command, event_type):
+    return [
+        e for e in adapter._js.events
+        if e["type"] == event_type and e["data"]["command_id"] == command["command_id"]
+    ]
+
+
+QUEUED = "bloodbank.agent.invocation.queued"
+STARTED = "bloodbank.agent.invocation.started"
+COMPLETED = "bloodbank.agent.invocation.completed"
+
+
+@pytest.mark.asyncio
+async def test_queued_is_published_at_claim_before_a_slot_and_started_time_is_the_real_start(
+    tmp_path, valid_command
+):
+    adapter = make_adapter(tmp_path)
+    first_cmd = valid_command
+    second_cmd = json.loads(json.dumps(valid_command))
+    second_cmd["command_id"] = second_cmd["id"] = str(uuid.uuid4())
+    second_cmd["idempotency_key"] = second_cmd["command_id"]
+    second_cmd["service"] = "n8n-ticket-grooming"
+    second_cmd["data"]["context"] = {"reason": "ticket-grooming", "ticket_key": "PJAN-1"}
+    # Same thread: the second waits for the first's conversation lock.
+    release = asyncio.Event()
+    running = asyncio.Event()
+
+    async def handler(event):
+        if event.raw_message["command_id"] == first_cmd["command_id"]:
+            running.set()
+            await release.wait()
+        return "done"
+
+    adapter.set_message_handler(handler)
+    m1, m2 = FakeMessage(first_cmd), FakeMessage(second_cmd)
+    t1 = asyncio.create_task(adapter._handle_broker_message(m1))
+    await asyncio.wait_for(running.wait(), 2)
+    t2 = asyncio.create_task(adapter._handle_broker_message(m2))
+    for _ in range(200):
+        if _events_of(adapter, second_cmd, QUEUED):
+            break
+        await asyncio.sleep(0.01)
+
+    # The waiting command is already on the bus as queued, with no started yet.
+    (queued,) = _events_of(adapter, second_cmd, QUEUED)
+    assert _events_of(adapter, second_cmd, STARTED) == []
+    row = adapter.execution_state.get(second_cmd["command_id"])
+    assert row.state == "pending"
+    assert row.started_events == ()  # built at mark_started, not at claim
+    assert row.queued_events == (queued,)
+    assert queued["correlationid"] == second_cmd["correlationid"]
+    assert queued["causationid"] == second_cmd["id"]
+    data = queued["data"]
+    assert data["invocation_id"] == second_cmd["command_id"]
+    assert data["command_service"] == "n8n-ticket-grooming"
+    assert data["issuer"] == second_cmd["actor"]
+    assert data["context"] == second_cmd["data"]["context"]
+    assert data["lane"] == "batch"
+
+    await asyncio.sleep(0.05)
+    release.set()
+    await asyncio.wait_for(asyncio.gather(t1, t2), 5)
+    assert (m1.acked, m2.acked) == (1, 1)
+
+    (started,) = _events_of(adapter, second_cmd, STARTED)
+    (completed,) = _events_of(adapter, second_cmd, COMPLETED)
+    assert started["data"]["invocation_id"] == queued["data"]["invocation_id"]
+    assert completed["data"]["invocation_id"] == queued["data"]["invocation_id"]
+    # started.time is the real start: after the wait, not the claim time.
+    assert started["time"] > queued["time"]
+    assert row.queued_events[0]["time"] == queued["time"]
+    done = adapter.execution_state.get(second_cmd["command_id"])
+    assert started in done.started_events
+    # Every queued closes with exactly one terminal fact.
+    for command in (first_cmd, second_cmd):
+        assert len(_events_of(adapter, command, QUEUED)) == 1
+        assert len(terminal_types(adapter, command)) == 1
+
+
+@pytest.mark.asyncio
+async def test_queued_replays_with_the_same_id_and_bytes_on_redelivery(tmp_path, valid_command):
+    first = make_adapter(tmp_path)
+    real = first._js.publish
+    published = []
+
+    async def publish(subject, payload, **kwargs):
+        envelope = json.loads(payload)
+        if envelope["type"] == "bloodbank.conversation.turn.started":
+            raise RuntimeError("broker unavailable")
+        published.append(payload)
+        await real(subject, payload, **kwargs)
+
+    first._js.publish = publish
+
+    async def handler(_event):
+        return "done"
+
+    first.set_message_handler(handler)
+    nak = FakeMessage(valid_command)
+    await first._handle_broker_message(nak)
+    assert nak.nacked == 1
+    row = first.execution_state.get(valid_command["command_id"])
+    assert row.state == "started"  # started publication may have begun; queued is stored
+    assert len(row.queued_events) == 1
+
+    first._js.publish = real
+    again = FakeMessage(valid_command)
+    await first._handle_broker_message(again)
+    assert again.acked == 1
+    # The redelivery replays the stored fact: identical id and bytes both times.
+    queued = _events_of(first, valid_command, QUEUED)
+    assert queued == [row.queued_events[0]] * 2
+    wire = json.dumps(row.queued_events[0], separators=(",", ":"), sort_keys=True).encode()
+    assert published == [wire]  # the first attempt's bytes are the stored ones
+
+
+@pytest.mark.asyncio
+async def test_a_queued_publish_failure_naks_and_leaves_the_row_pending(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    real = adapter._js.publish
+    fail = True
+
+    async def publish(subject, payload, **kwargs):
+        if fail:
+            raise RuntimeError("broker unavailable")
+        await real(subject, payload, **kwargs)
+
+    adapter._js.publish = publish
+    calls = []
+
+    async def handler(event):
+        calls.append(event)
+        return "done"
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    assert (message.acked, message.nacked) == (0, 1) and calls == []
+    row = adapter.execution_state.get(valid_command["command_id"])
+    assert row.state == "pending" and len(row.queued_events) == 1
+
+    fail = False
+    again = FakeMessage(valid_command)
+    await adapter._handle_broker_message(again)
+    assert again.acked == 1 and len(calls) == 1
+    assert [e["type"] for e in adapter._js.events][0] == QUEUED
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_pending_row_is_announced_as_queued_then_runs(tmp_path, valid_command):
+    write_registry(tmp_path)
+    first = make_adapter(tmp_path, target_profiles={})
+    profile = first.profile_resolver.resolve(valid_command["data"]["target_agent_id"])
+    invocation = Invocation.from_envelope(valid_command, profile)
+    # Claimed by a gateway that predates queued facts (started facts prebuilt).
+    first.execution_state.claim_pending(
+        command_id=valid_command["command_id"],
+        digest=envelope_digest(valid_command),
+        profile=profile,
+        started_events=started_events(invocation),
+    )
+
+    async def handler(_event):
+        return "done"
+
+    restarted = make_adapter(tmp_path, target_profiles={})
+    restarted.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await restarted._handle_broker_message(message)
+    assert message.acked == 1
+    types = [e["type"] for e in restarted._js.events]
+    assert types[0] == QUEUED
+    assert types.count(QUEUED) == 1 and COMPLETED in types
+    row = restarted.execution_state.get(valid_command["command_id"])
+    assert row.queued_events == (restarted._js.events[0],)
+    # The started fact carries the real start, not the prebuilt claim-time one.
+    (started,) = _events_of(restarted, valid_command, STARTED)
+    assert started["time"] > restarted._js.events[0]["time"]
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_started_row_is_not_given_a_queued_fact(tmp_path, valid_command):
+    adapter = make_adapter(tmp_path)
+    profile = "bloodbank-pm"
+    invocation = Invocation.from_envelope(valid_command, profile)
+    store = adapter.execution_state
+    store.claim_pending(
+        command_id=valid_command["command_id"], digest=envelope_digest(valid_command),
+        profile=profile, started_events=started_events(invocation),
+    )
+    store.mark_started(command_id=valid_command["command_id"], digest=envelope_digest(valid_command))
+
+    async def handler(_event):
+        return "done"
+
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    assert message.acked == 1
+    assert _events_of(adapter, valid_command, QUEUED) == []  # its lifecycle opened at started
+
+
+@pytest.mark.asyncio
+async def test_a_pre_start_refusal_before_queued_existed_stays_eventless(tmp_path, valid_command):
+    write_registry(tmp_path)
+    first = make_adapter(tmp_path, target_profiles={})
+    store = first.execution_state
+    # A pre-start rejection journaled by an older gateway: no queued_events.
+    digest = envelope_digest(valid_command)
+    store.claim_pending(command_id=valid_command["command_id"], digest=digest,
+                        profile="bloodbank-pm")
+    store.reject_pre_start(command_id=valid_command["command_id"], digest=digest,
+                           reason=ROUTE_REJECTION_REASON)
+    message = FakeMessage(valid_command)
+    await first._handle_broker_message(message)
+    assert message.termed == 1
+    assert first._js.events == []
+
+
+@pytest.mark.asyncio
+async def test_not_run_then_last_delivery_closes_the_queued_fact(tmp_path, valid_command):
+    # A TurnNotRun retry leaves the row pending so queued stays open; the last
+    # delivery closes it as failed (see also the last-delivery closure tests).
+    adapter = make_adapter(tmp_path)
+    runner = make_runner()
+    adapter.gateway_runner = runner
+
+    async def handler(_event):
+        runner._restart_requested = True
+        return DRAIN_REFUSAL
+
+    adapter.set_message_handler(handler)
+    retry = JsMessage(valid_command)
+    await adapter._handle_broker_message(retry)
+    assert retry.nacked == 1
+    assert len(_events_of(adapter, valid_command, QUEUED)) >= 1
+    assert terminal_types(adapter, valid_command) == []  # still open
+    runner._restart_requested = False
+    last = JsMessage(valid_command, delivered=adapter.max_deliver)
+    await adapter._handle_broker_message(last)
+    assert terminal_types(adapter, valid_command) == ["bloodbank.agent.invocation.failed"]
+    assert len({e["id"] for e in _events_of(adapter, valid_command, QUEUED)}) == 1

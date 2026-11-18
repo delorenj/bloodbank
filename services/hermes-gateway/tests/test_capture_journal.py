@@ -51,7 +51,7 @@ def test_v3_upgrade_preserves_terminal_bytes_and_lane_metadata(tmp_path):
     assert row.capture_outcome is None and row.captured_events == ()
     assert row.terminal_events == tuple(json.loads(serialized))
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
         assert db.execute("SELECT terminal_events FROM executions").fetchone()[0] == serialized
     assert ExecutionStateStore(path).get("old") == row
 
@@ -169,8 +169,45 @@ def test_future_journal_version_refused_without_downgrade(tmp_path):
     path = tmp_path / "future.sqlite3"
     ExecutionStateStore(path)
     with sqlite3.connect(path) as db:
-        db.execute("PRAGMA user_version = 5")
-    with pytest.raises(RuntimeError, match="schema version 5 is unsupported"):
+        db.execute("PRAGMA user_version = 6")
+    with pytest.raises(RuntimeError, match="schema version 6 is unsupported"):
         ExecutionStateStore(path)
     with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 6
+
+
+def test_v4_journal_upgrades_to_v5_with_queued_events_and_keeps_every_row(tmp_path):
+    """A v4 journal (capture columns, no queued_events) opens as v5, loses nothing."""
+    path = tmp_path / "v4.sqlite3"
+    ExecutionStateStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE executions DROP COLUMN queued_events")
+        db.execute("PRAGMA user_version = 4")
+        db.execute(
+            "INSERT INTO executions(command_id, envelope_digest, profile, state, "
+            "started_events, created_at, updated_at) "
+            "VALUES ('p', 'd', 'prof', 'pending', '[{\"id\":\"prebuilt\"}]', 't', 't')"
+        )
+    store = ExecutionStateStore(path)
+    pending = store.get("p")
+    assert pending is not None and pending.state == "pending"
+    assert pending.queued_events == ()
+    assert pending.started_events == ({"id": "prebuilt"},)
+    with sqlite3.connect(path) as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 5
+        columns = {r[1] for r in db.execute("PRAGMA table_info(executions)")}
+    assert "queued_events" in columns
+    # Backfill is idempotent and only for a pending row.
+    event = {"id": "q", "type": "bloodbank.agent.invocation.queued"}
+    filled = store.set_queued_events(command_id="p", digest="d", queued_events=(event,))
+    assert filled.queued_events == (event,)
+    assert store.set_queued_events(
+        command_id="p", digest="d", queued_events=({"id": "other"},)
+    ).queued_events == (event,)
+    # mark_started replaces never-published prebuilt facts; a restart keeps them.
+    started = store.mark_started(command_id="p", digest="d", started_events=({"id": "real"},))
+    assert started.started_events == ({"id": "real"},)
+    assert store.mark_started(
+        command_id="p", digest="d", started_events=({"id": "ignored"},)
+    ).started_events == ({"id": "real"},)
+    assert ExecutionStateStore(path).get("p") == store.get("p")

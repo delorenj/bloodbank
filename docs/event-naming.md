@@ -203,10 +203,29 @@ slots, so interactive work never queues behind batch work:
 | `bloodbank.agent.invocation.invoke` | `bloodbank.cmd.agent.invocation.invoke` | Interactive lane. A human is waiting on the answer (a voice memo, a chat nudge). Durable `bloodbank-hermes-gateway-interactive`, 2 reserved slots. |
 
 `invoke` is for commands where a human is waiting, nothing else. The gateway
-still emits `agent.invocation.started/completed/failed` for both (not
+still emits `agent.invocation.queued/started/completed/failed` for both (not
 `agent.invocation.invoked`; Section 8.2 pairing is by review, not enforced),
 stamping `data.lane` (`batch` | `interactive`) on every lifecycle fact. Design:
 `docs/interactive-command-lane.md`.
+
+`agent.invocation.queued` is the gateway's durable-claim fact: exactly one per
+command the gateway accepted, published when the claim is journaled and before
+the command waits for a conversation lock or an execution slot (up to the
+batch lane's queue wait of about an hour). Whoever sent the command, the bus now
+shows that a turn is pending. It carries the same `invocation_id` as the later
+`started` / `completed` / `failed` facts, the command's `correlationid`,
+`causationid` = the command envelope `id`, and in `data`: `command_id`,
+`target_agent_id`, `profile_name`, `lane`, `context` (echo of the command's
+`data.context`), `issuer` (the command's `actor`, verbatim), `command_service`
+(the command envelope's `service`, e.g. `krebs-tick`, `n8n-ticket-grooming`),
+and capacity diagnostics `lane_inflight` / `lane_queued`. It is stored in the
+gateway journal and replayed with the same event id on redelivery. Every
+`queued` closes with exactly one `completed` or `failed`; `started` is optional
+in between, and `started.time` is the real start, so the wait is
+`started.time - queued.time`. A command refused after the claim and before any
+turn began closes with `agent.invocation.failed`, `data.error_code:
+rejected_pre_start` (and no `conversation.turn.*` facts). Decision:
+`krebs/docs/adr/0001-turn-queue-visibility.md`.
 
 The fleet-shared Hermes consumer treats registry routing as an explicit
 eligibility contract. The registry root must be a mapping with exact integer
@@ -233,7 +252,9 @@ must durably store and publish the existing canonical
 `agent.invocation.failed` -> `conversation.turn.completed` closure before
 terminally acknowledging the command. Failed closure persistence/publication is
 retryable, and exact redelivery replays the stored envelopes without executing
-the agent. Only a journal-proven pre-start rejection may be eventless. Explicit
+the agent. A pre-start rejection is eventless only for a row the gateway claimed
+before `agent.invocation.queued` existed; otherwise the `queued` fact it
+published is closed by `agent.invocation.failed` (`rejected_pre_start`). Explicit
 adapter `target_profiles` entries are separate, operator-owned static overrides
 and do not inherit registry eligibility.
 
@@ -340,7 +361,7 @@ Segment 4 of `type` MUST be one of:
 | `mms`              | `messaging`              | Carrier MMS (media): `messaging.mms.{received,sent,completed,failed}` and the `messaging.mms.send` command (Telnyx). |
 | `rcs`              | `messaging`              | RCS chat through Google Messages / BlueBubbles: `messaging.rcs.{received,sent}`. |
 | `imessage`         | `messaging`              | iMessage through BlueBubbles: `messaging.imessage.{received,sent}`. |
-| `invocation`       | `agent`                  | One round of agent runtime calling an LLM. `started` -> `progressed` (0..n: an interim assistant message of the running turn, `data.seq` 1..n per command, `data.text` <= 500 chars; the Hermes gateway publishes every non-blank one, consumers throttle) -> `detached` (0..1 per attempt: the turn outlived its interactive lane's wall clock and gave its slot back; it runs on, and its terminal fact carries `detached: true`) -> `completed` or `failed`. |
+| `invocation`       | `agent`                  | One round of agent runtime calling an LLM. For a Hermes gateway command: `queued` (exactly one per command the gateway accepted, at durable claim, before it waits for a slot; every `queued` closes with exactly one terminal fact) -> `started` (0..1 per attempt, the real start) -> `progressed` (0..n: an interim assistant message of the running turn, `data.seq` 1..n per command, `data.text` <= 500 chars; the Hermes gateway publishes every non-blank one, consumers throttle) -> `detached` (0..1 per attempt: the turn outlived its interactive lane's wall clock and gave its slot back; it runs on, and its terminal fact carries `detached: true`) -> `completed` or `failed`. |
 | `session`          | `cli`                    | One CLI session (e.g. `claude` or `copilot` process tree). Also used under `agent` for the agent-session lifecycle: `agent.session.started`, `agent.session.ended`, and `agent.session.annotated` (the enricher's roll-up of a finished session: `data.session_id`, `cwd`, `summary`, `event_count`, `tool_call_count`, `summary_source`, `target_event_id`; `causationid` = the `session.ended` event id, `correlationid` = the session's; it replaces the retired bare `report.session.completed` topic). |
 | `process`          | `cli`                    | An OS process spawned within a CLI session.                 |
 | `stdout`           | `cli`                    | A stdout chunk emitted by a CLI process.                    |
@@ -449,7 +470,7 @@ covers every inbound human message, texts included.
 `delegated`, `raised`, `released`, `expired`, `skipped`, `notified`,
 `revoked` (`billing.rule.revoked`: a rule was revoked; the rule's recording stays), `issued` (`billing.invoice.issued`: a statement was frozen on the ledger), `delivered` (`billing.invoice.delivered`: an issued statement was raised on a delivery rail),
 `fired` (`cron.tick.fired`: the UTC minute heartbeat every candybar schedule keys off),
-`queued` (`cron.steward_task.queued`: a steward task was accepted and waits for the steward; `audio.harvest.queued`: the harvest worker accepted a start command and waits for wax enrichment),
+`queued` (`agent.invocation.queued`: the Hermes gateway durably claimed a command and it waits for a slot; `cron.steward_task.queued`: a steward task was accepted and waits for the steward; `audio.harvest.queued`: the harvest worker accepted a start command and waits for wax enrichment),
 `published` (`audio.harvest.published`: a reviewed harvest was published as tickets),
 `detected` (`watch.target.detected`: an inbound message was matched to a watched target), `routed` (`watch.target.routed`: the watch sink acted on a detection),
 `uploaded`, `transcribed`, `dispatched`, `replied`, `played` (the `audio.memo.*`
@@ -902,6 +923,7 @@ normalized event sequence is:
 bloodbank.conversation.thread.created         # only on first turn of a thread
                                                   # OR
 bloodbank.conversation.thread.resumed         # if a known thread is reopened
+bloodbank.agent.invocation.queued             # gateway-dispatched commands only: at durable claim, before waiting for a slot
 bloodbank.conversation.turn.started
 bloodbank.agent.invocation.started
 bloodbank.agent.session.started               # agent CLI session (supersedes cli.session.started)

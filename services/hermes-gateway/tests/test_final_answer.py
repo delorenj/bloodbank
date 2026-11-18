@@ -114,6 +114,7 @@ async def test_full_answer_capture_precedes_publish_and_preserves_exact_lineage(
     assert data["native_session_id"] != data["thread_id"]
     assert data["command_event_id"] == valid_command["id"]
     assert [e["type"] for e in adapter._js.events] == [
+        "bloodbank.agent.invocation.queued",
         "bloodbank.conversation.turn.started",
         "bloodbank.agent.invocation.started",
         MESSAGE_APPENDED,
@@ -242,7 +243,10 @@ async def test_publish_ack_failure_restart_replays_exact_bytes_without_execution
     assert original.acked == 0 and original.nacked == 1
     stored = first.execution_state.get(valid_command["command_id"])
     assert stored.state == "completed"
-    expected = [wire(e) for e in (*stored.started_events, *stored.terminal_events)]
+    expected = [
+        wire(e)
+        for e in (*stored.queued_events, *stored.started_events, *stored.terminal_events)
+    ]
     assert stored.terminal_events[0]["data"]["text"] == BODY
 
     for _ in range(2):
@@ -351,7 +355,7 @@ async def test_restart_after_capture_before_processing_callback_never_reinvokes(
     await asyncio.wait_for(captured.wait(), 2)
     stored = first.execution_state.get(valid_command["command_id"])
     assert stored is not None
-    assert stored.state == "started" and len(first._js.events) == 2
+    assert stored.state == "started" and len(first._js.events) == 3  # queued + started pair
     assert stored.outcome is None and stored.capture_outcome == "success"
     assert stored.captured_events[0]["data"]["text"] == BODY
     restarted = make_adapter(tmp_path)
@@ -520,7 +524,10 @@ async def test_schema_valid_numeric_outbox_conflict_replays_only_original_wire_b
             command_id=stored.command_id, digest=stored.envelope_digest,
             outcome="success", terminal_events=conflicting,
         )
-    expected = [wire(event) for event in (*stored.started_events, *stored.terminal_events)]
+    expected = [
+        wire(event)
+        for event in (*stored.queued_events, *stored.started_events, *stored.terminal_events)
+    ]
     for _ in range(2):
         restarted = make_adapter(tmp_path)
         published = []
@@ -537,7 +544,8 @@ async def test_schema_valid_numeric_outbox_conflict_replays_only_original_wire_b
         assert replay.acked == 1 and replay.nacked == 0
         assert [payload for payload, _ in published] == expected
         assert [message_id for _, message_id in published] == [
-            event["id"] for event in (*stored.started_events, *stored.terminal_events)
+            event["id"]
+            for event in (*stored.queued_events, *stored.started_events, *stored.terminal_events)
         ]
     assert executions == 1
 

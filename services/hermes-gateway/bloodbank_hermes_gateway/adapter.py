@@ -46,6 +46,8 @@ from .contract import (
     detached_event,
     progress_event,
     progress_text,
+    queued_event,
+    rejected_pre_start_event,
     started_events,
     terminal_events,
 )
@@ -1082,18 +1084,46 @@ class BloodbankAdapter(BasePlatformAdapter):
                         envelope["data"]["target_agent_id"],
                     )
                     invocation = Invocation.from_envelope(envelope, profile, lane.name)
+                    # The queued fact is built and stored in the same INSERT as the
+                    # claim; started facts wait for mark_started so their time is
+                    # the real start.
                     persisted = await asyncio.to_thread(
                         self.execution_state.claim_pending,
                         command_id=command_id,
                         digest=digest,
                         profile=profile,
-                        started_events=started_events(invocation),
+                        queued_events=(
+                            queued_event(
+                                invocation,
+                                lane_inflight=len(lane.inflight),
+                                lane_queued=len(lane.queued),
+                            ),
+                        ),
                         lane=lane.name,
                     )
                     if persisted.envelope_digest != digest:
                         raise CommandInvalid(
                             "command_id collides with a different command envelope"
                         )
+                elif persisted.state == "pending" and not persisted.queued_events:
+                    # Claimed by a gateway that predates queued facts: announce it
+                    # now so its eventual terminal fact closes something. (A started
+                    # row opened its lifecycle without one and stays that way.)
+                    invocation = Invocation.from_envelope(
+                        envelope, persisted.profile, lane.name
+                    )
+                    persisted = await asyncio.to_thread(
+                        self.execution_state.set_queued_events,
+                        command_id=command_id,
+                        digest=digest,
+                        queued_events=(
+                            queued_event(
+                                invocation,
+                                lane_inflight=len(lane.inflight),
+                                lane_queued=len(lane.queued),
+                            ),
+                        ),
+                    )
 
                 if persisted.capture_outcome is not None and persisted.state == "started":
                     # A finalizer ran, but no durable processing decision survived.
@@ -1121,12 +1151,21 @@ class BloodbankAdapter(BasePlatformAdapter):
                     record = PendingInvocation(invocation, message, completion, digest)
                     self._records[invocation.invocation_id] = record
 
+            # The queued fact goes out at claim, before the command waits for a
+            # conversation lock or an execution slot. A publish failure NAKs and
+            # the row stays pending; a redelivery replays the stored fact (same id).
+            await self._publish_many(persisted.queued_events)
             if persisted.state == "completed":
                 await self._publish_many(persisted.started_events)
                 await self._publish_many(persisted.terminal_events)
                 await message.ack()
                 return
             if persisted.state == "rejected_pre_start":
+                # Redelivery of a refusal: close its queued fact (if it has one) again.
+                await self._publish_pre_start_closure(
+                    Invocation.from_envelope(envelope, persisted.profile, lane.name),
+                    persisted,
+                )
                 await message.term()
                 return
             if persisted.state in {"rejected_closing", "rejected_closed"}:
@@ -1166,6 +1205,8 @@ class BloodbankAdapter(BasePlatformAdapter):
                             self.execution_state.mark_started,
                             command_id=invocation.invocation_id,
                             digest=record.envelope_digest,
+                            # Built now, so started.time is the real start.
+                            started_events=started_events(invocation),
                         )
                     if persisted.state != "started":
                         raise RuntimeError(
@@ -1547,6 +1588,7 @@ class BloodbankAdapter(BasePlatformAdapter):
             self.execution_state.mark_started,
             command_id=invocation.invocation_id,
             digest=record.envelope_digest,
+            started_events=started_events(invocation),
         )
         if replay_started or before is None or before.state == "pending":
             await self._publish_many(persisted.started_events)
@@ -1575,6 +1617,37 @@ class BloodbankAdapter(BasePlatformAdapter):
         )
         await self._publish_many(events)
 
+    @staticmethod
+    def _rejection_message(reason: str | None) -> str:
+        return (
+            ROUTE_REJECTION_MESSAGE
+            if reason == ROUTE_REJECTION_REASON
+            else "Hermes final-answer capture capability is unavailable"
+        )
+
+    async def _publish_pre_start_closure(
+        self, invocation: Invocation, persisted: ExecutionRecord
+    ) -> None:
+        """invocation.failed (rejected_pre_start) for a refused command whose queued
+        fact was published. Rebuilt from the envelope and ``rejected_at`` (the
+        journal row forbids stored terminal events), so a replay is byte-stable.
+        A refusal journaled before queued facts existed has none to close."""
+
+        if not persisted.queued_events:
+            return
+        if persisted.rejected_at is None or persisted.rejection_reason is None:
+            raise RuntimeError("pre-start rejection is missing its stable evidence")
+        await self._publish_many(
+            (
+                rejected_pre_start_event(
+                    invocation,
+                    reason=persisted.rejection_reason,
+                    message=self._rejection_message(persisted.rejection_reason),
+                    occurred_at=persisted.rejected_at,
+                ),
+            )
+        )
+
     async def _persist_and_publish_route_rejection(
         self,
         *,
@@ -1587,12 +1660,15 @@ class BloodbankAdapter(BasePlatformAdapter):
         """Persist rejection evidence and close any lifecycle that may have opened."""
 
         if persisted.state == "pending":
-            return await asyncio.to_thread(
+            rejected = await asyncio.to_thread(
                 self.execution_state.reject_pre_start,
                 command_id=invocation.invocation_id,
                 digest=digest,
                 reason=reason,
             )
+            # No turn began, but the command was announced as queued: close it.
+            await self._publish_pre_start_closure(invocation, rejected)
+            return rejected
 
         if persisted.state == "started":
             persisted = await asyncio.to_thread(
@@ -1608,11 +1684,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 invocation,
                 outcome="failure",
                 failure_code=persisted.rejection_reason or reason,
-                failure_message=(
-                    ROUTE_REJECTION_MESSAGE
-                    if persisted.rejection_reason == ROUTE_REJECTION_REASON
-                    else "Hermes final-answer capture capability is unavailable"
-                ),
+                failure_message=self._rejection_message(persisted.rejection_reason),
                 occurred_at=persisted.rejected_at,
             )
             persisted = await asyncio.to_thread(
