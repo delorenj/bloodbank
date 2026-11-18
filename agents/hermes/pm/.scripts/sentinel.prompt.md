@@ -13,7 +13,8 @@ label. Todo entry starts a triage turn (ends `lifecycle:triaged` or `lifecycle:n
 tickets to In Progress, two slots per scope, in Todo order. **This pass never dispatches
 implementation**: no worker delegation, no `tp transition <id> started`, no worker spawning.
 A ticket handed back for review is In Progress + `lifecycle:review`. Holds are labels
-(`lifecycle:needs-input`, `lifecycle:blocked`, `agent:failed`) and the lane does not change.
+(`lifecycle:needs-input`, `lifecycle:blocked`, `agent:failed`, `lifecycle:human`) and the lane does not change.
+`lifecycle:human` means the owner took the ticket by hand: never touch it, never add or remove the label.
 You order Todo, give or apply verdicts, and unblock.
 
 You are the **bloodbank PM**, running your continuous board-reconciliation

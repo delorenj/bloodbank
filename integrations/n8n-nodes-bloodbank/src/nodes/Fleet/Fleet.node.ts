@@ -32,8 +32,14 @@ const INVOCATION_COMMAND_TYPE = 'bloodbank.agent.invocation.start';
 const INVOCATION_SKIPPED_TYPE = 'bloodbank.agent.invocation.skipped';
 const GROOMED_LABEL = 'lifecycle:triaged';
 /** Krebs lifecycle v2 hold labels: a ticket carrying one is waiting on a person,
- *  a blocker or a failure, and no lane may start a turn on it. */
-export const HOLD_LABELS = ['lifecycle:needs-input', 'lifecycle:blocked', 'agent:failed'] as const;
+ *  a blocker or a failure, and no lane may start a turn on it. `lifecycle:human`
+ *  means the owner took the ticket by hand: agents never add, remove or work it. */
+export const HOLD_LABELS = [
+  'lifecycle:needs-input',
+  'lifecycle:blocked',
+  'agent:failed',
+  'lifecycle:human',
+] as const;
 const FLEET_SOURCE = 'urn:33god:integration:n8n:agent-fleet';
 const LANE_ERROR_SERVICE = 'n8n-lifecycle-lane-errors';
 

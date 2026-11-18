@@ -289,7 +289,7 @@ const LABEL_RULES =
  *
  * The lane that sends this prompt is deterministic: it has already refused a
  * ticket that carries `lifecycle:triaged` or a hold label, so this prompt never
- * has to police those. It must still never change state or start the work.
+ * has to police those (it still re-checks `lifecycle:human`, which a person can add late). It must still never change state or start the work.
  * The function keeps its pre-v2 name (`groomingPrompt`) because callers import it.
  */
 export function groomingPrompt(
@@ -311,6 +311,9 @@ export function groomingPrompt(
     `Triage the ticket that just entered Todo on the ${facts.repo || 'project'} board: ` +
     `${ticketRef(facts)}.\n` +
     `${whereThingsAre(facts, projectPath)}\n` +
+    'First re-read the ticket live from Plane. If it carries `lifecycle:human` ' +
+    '(the owner took it by hand), stop: write nothing (no comment, no label, no ' +
+    'edit), end the turn, and never add or remove that label.\n' +
     'This is a TRIAGE turn on one existing ticket. Refine that ticket in place: ' +
     'acceptance criteria, scope and labels. Never change the ticket\'s state ' +
     '(it stays in Todo; Krebs, not you, moves it to In Progress). Do NOT create, ' +
@@ -356,10 +359,13 @@ export function delegationPrompt(
     'Before anything else, re-read the ticket live from Plane: its state, ' +
     'labels and latest comments. This request may be older than the ticket. If ' +
     'it is no longer In Progress, if it carries a hold label ' +
-    '(`lifecycle:needs-input`, `lifecycle:blocked` or `agent:failed`), or if it ' +
+    '(`lifecycle:needs-input`, `lifecycle:blocked`, `agent:failed` or ' +
+    '`lifecycle:human`), or if it ' +
     'already carries `lifecycle:review`, stop: say so in your reply and change ' +
     'nothing. The `agent:working` label alone is not a claim; the pipeline puts ' +
-    'it on for this very turn.\n\n';
+    'it on for this very turn. `lifecycle:human` is the owner holding the ticket ' +
+    'by hand: if it carries that label, stop, write nothing (no comment, no label, ' +
+    'no state change) and end the turn. Never add or remove it.\n\n';
   const gate = requiredLabel
     ? `The ticket should carry \`${requiredLabel}\` (triage finished). If it ` +
       'does not, say so in a comment and stop; do not triage it yourself.\n\n'

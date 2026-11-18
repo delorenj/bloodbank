@@ -390,7 +390,7 @@ machine-readable `code` and a readable `reason`:
 | `invalid_policy` | `bloodbank.enabled` is present but not a YAML boolean |
 | `fenced` | The repo's `.project.json` puts execution under Krebs (`execution.mode` other than `legacy`) |
 | `no_route` | No agent owns the board |
-| `held` | Groom Ticket (triage): the ticket carries a hold label (`lifecycle:needs-input`, `lifecycle:blocked`, `agent:failed`). Krebs lifecycle v2, 0.9.0 |
+| `held` | Groom Ticket (triage): the ticket carries a hold label (`lifecycle:needs-input`, `lifecycle:blocked`, `agent:failed`, `lifecycle:human`; the last is the owner holding the ticket by hand). Krebs lifecycle v2, 0.9.0 |
 | `already_triaged` | Groom Ticket (triage): the ticket already carries `lifecycle:triaged` |
 | `hitl_blocked` | Delegate Ticket: a hold label is present. Delegation is driven by `krebs tick`; this path only refuses safely |
 | `not_triaged` | Delegate Ticket: the ticket lacks `lifecycle:triaged` |

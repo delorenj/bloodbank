@@ -48,6 +48,7 @@ FUNCTIONAL_LABELS = [
     ("lifecycle:triaged",     "#3F76FF"),  # grooming finished; delegation gates on it
     ("lifecycle:needs-input", "#7BA4FF"),  # parked on a human answer
     ("lifecycle:blocked",     "#1E3A8A"),  # parked on something outside this ticket
+    ("lifecycle:human",       "#F59E0B"),  # owner took it by hand (emergency); agents never add, remove or work it
     ("agent:working",         "#8B5CF6"),  # a turn is live on this ticket; self-clearing
     ("agent:failed",          "#C4B5FD"),  # the turn ended badly; needs a look
     ("xp:internal",           "#586A7A"),  # audience: client-admin board

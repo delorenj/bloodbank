@@ -336,7 +336,7 @@ def fetch_ticket(repo: Path, ref: str) -> dict:
         "origin": "agent" if (t.get("external_id") or t.get("external_source")) else "owner",
         "working": "agent:working" in labels,
         "review": "lifecycle:review" in labels,
-        "held": any(l in labels for l in ("lifecycle:needs-input", "lifecycle:blocked", "agent:failed")),
+        "held": any(l in labels for l in ("lifecycle:needs-input", "lifecycle:blocked", "agent:failed", "lifecycle:human")),
         "activity": activity,
         "waiting": waiting,
         "comments": cs,

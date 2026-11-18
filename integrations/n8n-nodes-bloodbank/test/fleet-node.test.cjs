@@ -352,6 +352,14 @@ test('with no board id and no checkout path there is nothing to point at', () =>
   assert.doesNotMatch(prompt, /Where things are/);
 });
 
+test('both lanes tell the agent to stop and write nothing on a lifecycle:human ticket', () => {
+  const facts = ticketFactsFromEnvelope(CREATED);
+  for (const prompt of [groomingPrompt(facts, ''), delegationPrompt(facts, '')]) {
+    assert.match(prompt, /lifecycle:human/);
+    assert.match(prompt, /write nothing/);
+  }
+});
+
 test('both lanes tell the agent agent:working is pipeline-owned and labels change one at a time', () => {
   // 33GOD-69: a grooming turn removed agent:working as "stale" because nothing said who owns it.
   const facts = ticketFactsFromEnvelope(CREATED);
@@ -371,6 +379,8 @@ test('the delegation prompt hands back by label and never moves the ticket', () 
   assert.match(prompt, /close the ticket Done, with the evidence comment/);
   assert.match(prompt, /lifecycle:needs-input/);
   assert.match(prompt, /lifecycle:blocked/);
+  assert.match(prompt, /lifecycle:human/);
+  assert.match(prompt, /write nothing/);
   assert.match(prompt, /Never change lanes/);
   assert.match(prompt, /assignee empty/);
   assert.doesNotMatch(prompt, /Move the ticket to In Progress|you do not write the code yourself/);
@@ -486,7 +496,7 @@ test('triage: lifecycle:triaged skips with already_triaged and publishes the ski
   assert.equal(rec.skips()[0].data.skip_code, 'already_triaged');
 });
 
-for (const hold of ['lifecycle:needs-input', 'lifecycle:blocked', 'agent:failed']) {
+for (const hold of ['lifecycle:needs-input', 'lifecycle:blocked', 'agent:failed', 'lifecycle:human']) {
   test(`triage: ${hold} skips with held`, async (t) => {
     const { skipped, rec } = await run(t, { operation: 'groomTicket', phaseGuard: 'Todo' }, [
       { json: TODO_UNTRIAGED([hold]) },
