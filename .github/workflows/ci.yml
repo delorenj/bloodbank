@@ -81,6 +81,20 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
         run: python -m unittest discover -s services/agent-hooks/tests -p 'test_asm.py' -v
 
+      - name: Validate statekit and daemon hot-reload against owned disposable Redis
+        # statekit is the shared kit under the ASM (and crank); hotreload is
+        # what keeps asm-tabpaint / asm-orcapaint on the core/ on disk.
+        env:
+          BLOODBANK_ASM: "false"
+          # Deliberately hostile ambient settings: the suite must ignore them.
+          ASM_TEST_REDIS_URL: redis://127.0.0.1:6379
+          ASM_REDIS_URL: redis://127.0.0.1:6379
+          TOOLING_REDIS_URL: redis://127.0.0.1:6379
+          REDIS_URL: redis://127.0.0.1:6379
+        run: |
+          python -m unittest discover -s services/agent-hooks/tests -p 'test_statekit.py' -v
+          python -m unittest discover -s services/agent-hooks/tests -p 'test_hotreload.py' -v
+
       - name: Platform bootstrap check
         # Pure file-presence validator; no Docker, no network.
         run: bash ops/bootstrap/check-platform.sh

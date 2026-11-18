@@ -42,6 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core.hotreload import HotReload        # noqa: E402
 from core.resp import Connection, RedisError  # noqa: E402
 
 URL = (os.environ.get("ASM_REDIS_URL") or os.environ.get("TOOLING_REDIS_URL")
@@ -377,7 +378,9 @@ class Painter:
         conn = sub = None
         next_cards = next_lanes = next_boards = 0.0
         dirty = True
+        reloader = HotReload()
         while self.running:
+            reloader.check()
             now = time.monotonic()
             try:
                 if conn is None:

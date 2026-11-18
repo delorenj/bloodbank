@@ -48,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import asm                       # noqa: E402
+from core.hotreload import HotReload       # noqa: E402
 from core.resp import Connection, RedisError  # noqa: E402
 
 URL = (os.environ.get("ASM_REDIS_URL") or os.environ.get("TOOLING_REDIS_URL")
@@ -99,6 +100,7 @@ class Painter:
         self.topology_every = int(os.environ.get("TABPAINT_TOPOLOGY_EVERY", "10"))
         self.rendered: dict[int, str] = {}
         self.running = True
+        self._ack_logged = float("-inf")
 
     # -- zellij ---------------------------------------------------------------
     def _zellij(self, *args: str) -> str | None:
@@ -196,7 +198,16 @@ class Painter:
             if entry and entry[1] in BELL and ackable(entry[2]):
                 try:
                     asm.fire(conn, entry[0], "ack", entry[2])
-                except (RedisError, OSError):
+                except (RedisError, OSError) as exc:
+                    # Loud, not silent: this is the one write a surface makes,
+                    # and a swallowed RedisError here hid a stale-asm.py bug
+                    # (every ack failing on a missing global) for a whole day.
+                    # Once per 30 s: the loop retries every frame.
+                    now = time.monotonic()
+                    if now - self._ack_logged >= 30.0:
+                        self._ack_logged = now
+                        print(f"asm-tabpaint: ack {entry[0]} failed: {exc!r}",
+                              file=sys.stderr, flush=True)
                     return
 
     # -- loop -----------------------------------------------------------------
@@ -237,7 +248,9 @@ class Painter:
         topo = None
         phase = tick = 0
         conn = sub = None
+        reloader = HotReload()
         while self.running:
+            reloader.check()
             try:
                 if conn is None:
                     conn = Connection(URL, timeout=5.0)

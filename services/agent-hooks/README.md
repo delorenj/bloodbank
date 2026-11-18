@@ -24,6 +24,7 @@ agent-hooks/
 │   ├── session.py        # file-backed SessionState (correlation/causation chain)
 │   ├── asm.py            # Agent State Machine — the hook-side proposer
 │   ├── asm.lua           # …and its arbiter. The ONLY writer of asm:*
+│   ├── hotreload.py      # a long-lived daemon re-execs itself when core/ changes
 │   ├── statekit.py       # the shared kit for Redis state machines (ASM = consumer 1)
 │   ├── statekit_prelude.lua  # `sk`: the Lua half, prepended to every arbiter
 │   ├── sweep.py          # `stale` / `gone` — the two states no event can produce
@@ -528,6 +529,18 @@ no `os.date`); `sk.json_list(list)` (cjson encodes an empty list as `{}`).
 the transition payload has always carried exactly that.
 
 Tests: `tests/test_statekit.py` (disposable Redis, never 6379).
+
+### Daemons that import `core/` (`core/hotreload.py`)
+
+A hook loads the `core/` on disk every run; a systemd daemon (`bin/asm-tabpaint`,
+`bin/asm-orcapaint`) loads it once and keeps it for weeks. After d7ce6aa the
+running painters held the pre-statekit `asm.py` and sent `asm.lua` without its
+prelude, so every tab-focus `ack` failed. A long-lived importer of `core`
+therefore creates `reloader = HotReload()` and calls `reloader.check()` once per
+loop: when any `core/*.py`, `core/*.lua` or the daemon's own script changed
+mtime (or appeared/vanished) it `os.execv`s itself, same PID. A changed `.py`
+that does not compile is not exec'd into; the daemon logs it and keeps its good
+copy. Tests: `tests/test_hotreload.py`.
 
 ## Verify
 

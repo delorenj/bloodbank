@@ -33,8 +33,14 @@ function sk.str(v)
   local t = type(v)
   if t == 'string' then return v end
   if t == 'number' then
-    if v == math.floor(v) then return string.format('%d', v) end
-    return tostring(v)
+    -- NaN and +-inf have no JSON/Redis spelling ('%d' of inf is garbage).
+    if v ~= v or v == math.huge or v == -math.huge then return '' end
+    -- An integral double is exact up to 2^53; '%d' prints it as an integer.
+    if v == math.floor(v) and math.abs(v) < 9007199254740992 then
+      return string.format('%d', v)
+    end
+    -- Everything else round-trips through %.17g (tostring's %.14g does not).
+    return string.format('%.17g', v)
   end
   if t == 'boolean' then return v and '1' or '0' end
   return ''

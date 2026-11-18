@@ -23,7 +23,7 @@ Two ways to ship an arbiter, both here:
               only the function name: pjangler (TypeScript) calls crank through
               `redis-cli FCALL` without shipping a copy of crank.lua. A
               `<lib>_version` function returns the body's sha; `ensure()`
-              reloads when it differs, and `call()` loads on "Function not
+              reloads when it differs, and `call()` loads on "ERR Function not
               found" and retries once.
 
 Usable from outside agent-hooks: put this directory's parent on sys.path and
@@ -92,6 +92,17 @@ class Script:
         return conn.command("EVALSHA", sha, len(keys), *keys, *args)
 
 
+# What Redis answers (7.x and 8.0.2 alike, FCALL and FCALL_RO) for a function it
+# does not hold. Anchored at the START of the error: a function that fails for
+# its own reasons may well say "function not found" in its own words, and a
+# substring match would reload and run that WRITE function a second time.
+_FN_NOT_FOUND = "ERR Function not found"
+
+
+def _is_function_not_found(exc: RedisError) -> bool:
+    return str(exc).startswith(_FN_NOT_FOUND)
+
+
 class Library:
     """A Redis Functions arbiter named `name`, from a Lua body that registers its functions.
 
@@ -137,7 +148,7 @@ class Library:
         try:
             return conn.command(verb, fn, len(keys), *keys, *args)
         except RedisError as exc:
-            if "Function not found" not in str(exc) and "function not found" not in str(exc).lower():
+            if not _is_function_not_found(exc):
                 raise
         self.load(conn)
         return conn.command(verb, fn, len(keys), *keys, *args)

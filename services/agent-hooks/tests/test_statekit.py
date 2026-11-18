@@ -180,6 +180,31 @@ class LibraryTest(KitCase):
             lib.call(self.conn, "demo_nope")
         self.assertEqual(lib.loaded_version(self.conn), lib.version())   # it did load once
 
+    def test_not_found_text_is_what_redis_says_for_both_verbs(self):
+        # The anchor in Library.call is only as good as this: pin the server text.
+        for verb in ("FCALL", "FCALL_RO"):
+            with self.assertRaises(RedisError) as ctx:
+                self.conn.command(verb, "demo_absent", 0)
+            self.assertTrue(str(ctx.exception).startswith("ERR Function not found"), str(ctx.exception))
+
+    def test_a_write_function_whose_own_error_says_not_found_runs_once(self):
+        # Regression (asm-2): a substring match on "function not found" took the
+        # function's OWN error for a missing function, reloaded, and ran the
+        # write a second time.
+        body = ("redis.register_function('demo_once', function(keys, args)\n"
+                "  redis.call('INCR', keys[1])\n"
+                "  return redis.error_reply('lookup failed: function not found in registry')\n"
+                "end)\n")
+        lib = self.lib(body=body)
+        lib.ensure(self.conn)
+        with self.assertRaises(RedisError) as ctx:
+            lib.call(self.conn, "demo_once", [self.key])
+        self.assertIn("function not found in registry", str(ctx.exception))
+        self.assertEqual(self.conn.command("GET", self.key), "1")        # not "2"
+        with self.assertRaises(RedisError):
+            lib.call(self.conn, "demo_once", [self.key], ro=False)
+        self.assertEqual(self.conn.command("GET", self.key), "2")
+
     def test_two_libraries_coexist(self):
         a, b = self.lib("alpha"), self.lib("beta")
         a.ensure(self.conn), b.ensure(self.conn)
@@ -229,6 +254,22 @@ class PreludeTest(KitCase):
             "sk.str(m.neg)})",
             args=['{"n": null, "i": 42, "f": 1.5, "w": 3.0, "s": "text", "neg": -7}']))
         self.assertEqual(got, ["", "", "", "1", "0", "42", "1.5", "3", "text", "", "-7"])
+
+    def test_str_numbers_nan_inf_big_and_fractions(self):
+        # Regression (asm-3): '%d' of inf/2^64 is garbage and tostring() is %.14g.
+        got = json.loads(self.run_lua(
+            "local nan, inf = 0/0, math.huge "
+            "return cjson.encode({sk.str(nan), sk.str(inf), sk.str(-inf), "
+            "sk.str(2^53 - 1), sk.str(-(2^53 - 1)), sk.str(2^53), sk.str(1e20), "
+            "sk.str(-1e20), sk.str(0.1), sk.str(1/3), sk.str(-0.0), sk.str(0), sk.str(1.5)})"))
+        self.assertEqual(got, ["", "", "", "9007199254740991", "-9007199254740991",
+                               "9007199254740992", "1e+20", "-1e+20",
+                               "0.10000000000000001", "0.33333333333333331", "0", "0", "1.5"])
+
+    def test_str_fraction_round_trips_exactly(self):
+        for v in (0.1, 1 / 3, 123456.789012345678, 2.0 ** -40, 1.7976931348623157e308):
+            got = self.run_lua("return sk.str(tonumber(ARGV[1]))", args=[repr(v)])
+            self.assertEqual(float(got), v, got)
 
     def test_str_makes_a_null_safe_redis_argument(self):
         # The reason sk.str exists: a bare cjson.null aborts the whole script.
