@@ -208,7 +208,8 @@ no-absolute-path hygiene across all of `data`.
   (the rename trail the registry missed: `tower-of-dumb-things`), and a moved
   folder for a missing target. Jev (`typesafe/jev`, key via `jev-secrets`)
   then picks a scored folder, `create:` a new leaf (registered projects only,
-  never beside a candidate scoring >= 0.8), or `hold`. Jev alone must reach
+  never beside a candidate scoring >= 0.6, so `infra` never gets
+  `Projects/Infra` next to `Projects/Infrastructure`), or `hold`. Jev alone must reach
   0.65; Jev agreeing with the top evidence 0.4; without Jev only an
   unambiguous match (>= 0.9, runner-up < 0.6) is taken. Applying writes the
   mapping file atomically (validated, `$` keys kept) and re-projects the held

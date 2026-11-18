@@ -187,9 +187,12 @@ class ResolverTests(unittest.TestCase):
         subj = r.build_subject("infra", "unmapped", {}, self.registry, git_search=False)
         cands = r.score_candidates(subj, self.vault, "Projects", {}, self.registry)
         self.assertEqual((cands[0].target, cands[0].score), ("Projects/Infrastructure", 0.6))
-        # ...so "create Infra" no longer gets the agreement discount:
-        d = self.decide("infra", key_fn=lambda: "k", post=fake_jev("create:Projects/Infra", 0.5))
+        # ...so "create Infra" beside it is not even offered:
+        post = fake_jev("create:Projects/Infra", 0.99)
+        d = self.decide("infra", key_fn=lambda: "k", post=post)
         self.assertEqual(d.action, "hold")
+        self.assertFalse(any(k.startswith("create:")
+                             for k in post.calls[0]["questions"]["target"]["criteria"]))
 
     def test_unhashable_jev_choice_does_not_crash(self):
         self.folder("Milkshake")

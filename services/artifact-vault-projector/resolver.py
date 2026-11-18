@@ -41,7 +41,7 @@ SKIP_DIRS = {".trash", ".obsidian", ".git", ".stversions", ".stfolder", "agents"
 DEFAULT_JEV_URL = "https://jev.delo.sh/typesafe/v1/systemone"
 DEFAULT_REGISTRY_URL = "http://127.0.0.1:8764/v1/registry"
 MAX_CANDIDATES = 10
-STRONG = 0.8          # a candidate this strong suppresses the "create" option
+STRONG = 0.6          # a candidate this strong suppresses the "create" option (Infra vs Infrastructure)
 HOLD = "hold"
 CREATE_PREFIX = "create:"
 
