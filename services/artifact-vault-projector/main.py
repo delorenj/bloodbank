@@ -1103,6 +1103,10 @@ class Runtime:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._stop.set)
+        if self.resolve_mode != "off":
+            has_key = await asyncio.to_thread(resolver.jev_key)
+            log.info("resolver mode=%s jev=%s", self.resolve_mode,
+                     "key ok" if has_key else "NO KEY (deterministic matches only)")
         self.schedule_all_held()  # startup sweep: every slug already waiting
         idle_since: float | None = None
         while not self._stop.is_set():

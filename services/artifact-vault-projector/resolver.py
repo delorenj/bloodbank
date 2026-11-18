@@ -442,9 +442,16 @@ def jev_key() -> str | None:
         "jev-secrets",
     )
     key = None
+    # systemd units get a bare PATH; the fleet's `op` wrapper (which loads the
+    # service-account token) lives in ~/.local/bin, so put it first.
+    env = dict(os.environ)
+    local_bin = str(Path.home() / ".local/bin")
+    if local_bin not in env.get("PATH", "").split(os.pathsep):
+        env["PATH"] = os.pathsep.join(p for p in (local_bin, env.get("PATH", "/usr/bin:/bin")) if p)
     try:
         out = subprocess.run(
-            [tool, "export", "JEV_API_KEY"], capture_output=True, text=True, timeout=30, check=False
+            [tool, "export", "JEV_API_KEY"], capture_output=True, text=True, timeout=30, check=False,
+            env=env,
         ).stdout
         for line in out.splitlines():
             parts = shlex.split(line)
