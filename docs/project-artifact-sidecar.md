@@ -190,6 +190,14 @@ no-absolute-path hygiene across all of `data`.
   (never acked-and-lost, never retried forever). Unmapped slugs are durable
   holds with `--holds` / `--hold-resolve-map` CLIs — never a RAM set, never
   a guessed shadow directory.
+- A mapped project dir must already exist: the projector creates only
+  `<date>/` folders and files beneath it. A missing (or symlinked) project
+  dir is a durable `missing-target` hold, logged as a WARNING at startup and
+  per event, and `--status` exits nonzero listing `missing_targets`. Restore
+  the dir or remap the slug, then `--hold-retry` (or `--hold-resolve-map`).
+  Why: on 2026-11-14 the vault's `Projects/` was moved to `Ideas/Projects/`
+  and the old mkdir-everything walk regrew a shadow `Projects/` at the vault
+  root for four days (516 files) before anyone noticed.
 - VaultWriter walks project/date components via directory fds with
   O_NOFOLLOW (planted symlinks refused, not followed); files land via
   O_EXCL tmp + fsync + atomic no-clobber hard link; directories fsynced. A

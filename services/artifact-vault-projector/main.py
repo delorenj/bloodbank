@@ -17,6 +17,11 @@ Safety contract (every point is tested):
     acked-and-lost and not retried forever.
   - Unmapped slugs are durable holds with an explicit resolve CLI. They are
     never acked-and-lost and never guessed into a shadow directory.
+  - A mapped project dir that does not exist (vault reorganised) is a
+    durable `missing-target` hold, never recreated: the projector only
+    creates date folders below an existing project dir. Restore the dir or
+    remap, then `--hold-retry`. `--status` exits nonzero while any mapped
+    dir is missing.
   - VaultWriter traverses project/date components through directory fds with
     O_NOFOLLOW — a symlink planted anywhere below the root is refused, not
     followed; nothing can redirect a write outside the root at any race.
@@ -45,7 +50,8 @@ Usage:
   python3 main.py --holds       # list unmapped/malformed dead-letter holds
   python3 main.py --hold-resolve-map <slug> <vault-dir>
       # record an explicit mapping for a held unmapped slug (writes the
-      # mapping file), then the hold is projectable with --hold-project
+      # mapping file) and project the slug's held envelopes
+  python3 main.py --hold-retry  # re-project missing-target holds whose dir is back
 
 Environment:
   ARTIFACT_VAULT_NATS_URL     default nats://127.0.0.1:4222
@@ -257,6 +263,33 @@ class VaultWriter:
                 f"project slug {slug!r} has no explicit vault mapping; holding"
             )
         return self.root / target
+
+    def project_dir_missing(self, slug: str) -> str | None:
+        """Why the mapped project dir is unusable, or None when it exists.
+
+        The projector creates ONLY date folders and files below an existing
+        project dir — never the project dir itself. When the vault is
+        reorganised (2026-11-14: Projects/ was moved to Ideas/Projects/ and
+        the old mkdir-everything walk silently regrew a shadow Projects/ at
+        the root for four days), the artifact is held instead, so the
+        mismatch is loud (--status nonzero, --holds, a WARNING per event)
+        rather than a parallel tree nobody notices.
+        """
+        target = self.project_dir_for(slug)
+        if target.is_symlink():
+            return f"mapped project dir {target} is a symlink"
+        if not target.is_dir():
+            return f"mapped project dir {target} does not exist (vault reorganised? fix the mapping or restore the dir)"
+        return None
+
+    def missing_targets(self) -> dict[str, str]:
+        """slug -> reason for every mapped project dir that is unusable."""
+        out: dict[str, str] = {}
+        for slug in self.mapping:
+            reason = self.project_dir_missing(slug)
+            if reason:
+                out[slug] = reason
+        return out
 
     def destination(self, *, slug: str, date_folder: str, title: str, render: bool = False, render_media_type: str | None = None) -> Path:
         if not _DATE_RE.match(date_folder):
@@ -551,6 +584,22 @@ class Projector:
                     "never a guessed directory"
                 ),
             }
+        missing = self.writer.project_dir_missing(slug)
+        if missing:
+            hold_id = self.state.add_hold(
+                kind="missing-target",
+                reason=missing,
+                event_id=event_id,
+                envelope=envelope,
+            )
+            log.warning("slug %r held: %s", slug, missing)
+            return {
+                "kind": "held",
+                "detail": (
+                    f"{missing}; held ({hold_id[:8]}…), never a recreated shadow "
+                    "directory — restore the dir or remap, then --hold-retry"
+                ),
+            }
 
         # Source blob: read + verify digest and declared length BEFORE writes.
         try:
@@ -780,22 +829,44 @@ async def amain(args: argparse.Namespace) -> int:
             for hold in state.holds():
                 envelope = state.hold_envelope(hold["hold_id"]) or {}
                 held_slug = ((envelope.get("data") or {}).get("project") or {}).get("slug")
-                if hold["kind"] == "unmapped" and held_slug == slug:
+                if hold["kind"] in ("unmapped", "missing-target") and held_slug == slug:
                     state.resolve_hold(hold["hold_id"], {"mapped_to": vault_dir})
                     resolved += 1
                     projected.append(projector.handle(envelope))
             print(json.dumps({"mapping_file": str(mapping_path), "resolved_holds": resolved, "projections": projected}))
             return 0
+        if args.hold_retry:
+            # Re-project every missing-target hold whose project dir is back
+            # (restored, or remapped in the mapping file). Still-missing ones
+            # stay held; nothing is ever created at the project level.
+            retried = []
+            for hold in state.holds():
+                if hold["kind"] != "missing-target":
+                    continue
+                envelope = state.hold_envelope(hold["hold_id"]) or {}
+                held_slug = ((envelope.get("data") or {}).get("project") or {}).get("slug")
+                if not isinstance(held_slug, str) or held_slug not in writer.mapping:
+                    continue
+                if writer.project_dir_missing(held_slug):
+                    continue
+                result = projector.handle(envelope)
+                if result["kind"] in ("projected", "duplicate"):
+                    state.resolve_hold(hold["hold_id"], {"retried_to": writer.mapping[held_slug]})
+                retried.append({"hold_id": hold["hold_id"], "slug": held_slug, **result})
+            print(json.dumps({"retried": retried}, indent=2))
+            return 0
         if args.status:
             holds = state.holds()
+            missing_targets = writer.missing_targets()
             print(json.dumps({
                 "vault_root": str(writer.root),
                 "mapping": writer.mapping,
+                "missing_targets": missing_targets,
                 "projections": state.counts(),
                 "unresolved_holds": len(holds),
                 "unresolved_hold_kinds": sorted({h["kind"] for h in holds}),
             }, indent=2))
-            return 1 if holds else 0
+            return 1 if (holds or missing_targets) else 0
         if args.plan:
             print(json.dumps({
                 "vault_root": str(writer.root),
@@ -805,6 +876,7 @@ async def amain(args: argparse.Namespace) -> int:
                     "full canonical schema+invariants validated before any write",
                     "date folder = origin.created_at (source event time) in " + tz,
                     "explicit mapping only; unmapped slug -> durable hold, no shadow dirs",
+                    "mapped project dir must already exist; missing -> durable missing-target hold, never recreated",
                     "malformed envelope -> durable deadletter hold",
                     "existing files never overwritten; deterministic -<sha8> suffix; actual path recorded",
                     "source/render digests+lengths verified pre-write; render ext from its own media type",
@@ -816,6 +888,8 @@ async def amain(args: argparse.Namespace) -> int:
         nats_url = _env("ARTIFACT_VAULT_NATS_URL", "nats://127.0.0.1:4222")
         durable = _env("ARTIFACT_VAULT_DURABLE", "bloodbank-artifact-vault-projector")
         backfill = _env("ARTIFACT_VAULT_BACKFILL", "") == "1"
+        for slug, reason in writer.missing_targets().items():
+            log.warning("mapping %r: %s — its artifacts will be held", slug, reason)
         runtime = Runtime(projector)
         log.info("connecting %s durable=%s subject=%s", nats_url, durable, PROJECTOR_SUBJECT)
         await runtime.connect(nats_url, durable, backfill=backfill)
@@ -835,6 +909,10 @@ def main() -> int:
     parser.add_argument("--holds", action="store_true", help="list unresolved holds/deadletters")
     parser.add_argument("--all", action="store_true", help="include resolved holds")
     parser.add_argument("--hold-resolve-map", nargs=2, metavar=("SLUG", "VAULT_DIR"))
+    parser.add_argument(
+        "--hold-retry", action="store_true",
+        help="re-project missing-target holds whose project dir exists again",
+    )
     parser.add_argument("--once", action="store_true", help="drain the pending backlog, then exit")
     parser.add_argument("--mapping", help="path to explicit slug->dir mapping JSON")
     parser.add_argument("--vault-root", help="vault root directory")

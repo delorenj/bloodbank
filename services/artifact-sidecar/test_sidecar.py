@@ -849,6 +849,7 @@ class EndToEndHermesTests(unittest.TestCase):
         self.assertEqual(event["data"]["origin"]["session"]["cli"], "hermes")
 
         # Projector lands it in the vault:
+        (h.tmp / "vault" / "Projects" / "Bloodbank").mkdir(parents=True)
         writer = projector_main.VaultWriter(h.tmp / "vault", {"bb": "Projects/Bloodbank"})
         with projector_main.ProjectorState(h.tmp / "proj-e2e.sqlite3") as pstate:
             proj = projector_main.Projector(
@@ -1553,7 +1554,11 @@ class ProjectorTests(unittest.TestCase):
         h.sidecar = sidecar
         return h
 
-    def _projector(self, harness, mapping: dict[str, str], vault: Path):
+    def _projector(self, harness, mapping: dict[str, str], vault: Path, *, create_targets: bool = True):
+        if create_targets:
+            # The projector never creates a project dir; a real vault has them.
+            for target in mapping.values():
+                (vault / target).mkdir(parents=True, exist_ok=True)
         writer = projector_main.VaultWriter(vault, mapping)
         state = projector_main.ProjectorState(harness.tmp / "proj.sqlite3")
         self.addCleanup(state.close)
@@ -1614,6 +1619,7 @@ class ProjectorTests(unittest.TestCase):
         self.assertEqual(env["id"], event["id"])
         # Replay after mapping is added projects it:
         proj.writer.mapping["bb"] = "Projects/Bloodbank"
+        (vault / "Projects" / "Bloodbank").mkdir(parents=True)
         proj.state.resolve_hold(holds[0]["hold_id"], {"mapped_to": "Projects/Bloodbank"})
         result2 = proj.handle(env)
         self.assertEqual(result2["kind"], "projected", result2)
@@ -1629,10 +1635,11 @@ class ProjectorTests(unittest.TestCase):
         proj.state = projector_main.ProjectorState(state_db)
         self.assertEqual(proj.handle(self._artifact_event(h))["kind"], "held")
         proj.state.close()
+        (vault / "Projects" / "Bloodbank").mkdir(parents=True)
         import argparse
         args = argparse.Namespace(
             status=False, plan=False, holds=False, all=False, once=False,
-            hold_resolve_map=["bb", "Projects/Bloodbank"],
+            hold_resolve_map=["bb", "Projects/Bloodbank"], hold_retry=False,
             mapping=str(mapping_file), vault_root=str(vault),
         )
         env = {"ARTIFACT_VAULT_STATE_DB": str(state_db), "ARTIFACT_VAULT_STORE": str(h.store)}
@@ -1642,6 +1649,69 @@ class ProjectorTests(unittest.TestCase):
         self.assertTrue((vault / "Projects" / "Bloodbank" / "2026-10-16" / "note.md").exists())
         with projector_main.ProjectorState(state_db) as st:
             self.assertEqual(st.holds(), [])
+
+    def test_missing_project_dir_is_held_never_recreated(self):
+        # 2026-11-14: the vault's Projects/ moved to Ideas/Projects/ and the
+        # projector regrew a shadow Projects/ at the root. Never again.
+        h = self._world()
+        vault = h.tmp / "vault"
+        vault.mkdir()
+        proj = self._projector(h, {"bb": "Projects/Bloodbank"}, vault, create_targets=False)
+        self.assertIn("bb", proj.writer.missing_targets())
+        result = proj.handle(self._artifact_event(h))
+        self.assertEqual(result["kind"], "held", result)
+        self.assertFalse((vault / "Projects").exists())  # no shadow tree
+        [hold] = proj.state.holds()
+        self.assertEqual(hold["kind"], "missing-target")
+        self.assertIn("does not exist", hold["reason"])
+
+    def test_symlinked_project_dir_is_held(self):
+        h = self._world()
+        vault = h.tmp / "vault"
+        (vault / "Elsewhere").mkdir(parents=True)
+        (vault / "Projects").mkdir()
+        (vault / "Projects" / "Bloodbank").symlink_to(vault / "Elsewhere")
+        proj = self._projector(h, {"bb": "Projects/Bloodbank"}, vault, create_targets=False)
+        result = proj.handle(self._artifact_event(h))
+        self.assertEqual(result["kind"], "held", result)
+        self.assertEqual(list((vault / "Elsewhere").iterdir()), [])
+
+    def test_hold_retry_cli_projects_once_dir_restored(self):
+        h = self._world()
+        vault = h.tmp / "vault"
+        vault.mkdir()
+        mapping_file = h.tmp / "mapping.json"
+        mapping_file.write_text(json.dumps({"bb": "Projects/Bloodbank"}))
+        state_db = h.tmp / "projector.sqlite3"
+        proj = self._projector(h, {"bb": "Projects/Bloodbank"}, vault, create_targets=False)
+        proj.state = projector_main.ProjectorState(state_db)
+        self.assertEqual(proj.handle(self._artifact_event(h))["kind"], "held")
+        proj.state.close()
+        import argparse
+
+        def run(**kw):
+            base = dict(
+                status=False, plan=False, holds=False, all=False, once=False,
+                hold_resolve_map=None, hold_retry=False,
+                mapping=str(mapping_file), vault_root=str(vault),
+            )
+            base.update(kw)
+            env = {"ARTIFACT_VAULT_STATE_DB": str(state_db), "ARTIFACT_VAULT_STORE": str(h.store)}
+            with unittest.mock.patch.dict(os.environ, env):
+                return asyncio.run(projector_main.amain(argparse.Namespace(**base)))
+
+        # Status is loud while the dir is missing:
+        self.assertEqual(run(status=True), 1)
+        # Retry while still missing: stays held, nothing created.
+        self.assertEqual(run(hold_retry=True), 0)
+        self.assertFalse((vault / "Projects").exists())
+        # Operator restores the dir; retry projects and resolves the hold.
+        (vault / "Projects" / "Bloodbank").mkdir(parents=True)
+        self.assertEqual(run(hold_retry=True), 0)
+        self.assertTrue((vault / "Projects" / "Bloodbank" / "2026-10-16" / "note.md").exists())
+        with projector_main.ProjectorState(state_db) as st:
+            self.assertEqual(st.holds(), [])
+        self.assertEqual(run(status=True), 0)
 
     def test_malformed_envelope_deadlettered_before_writes(self):
         h = self._world()
@@ -1654,8 +1724,8 @@ class ProjectorTests(unittest.TestCase):
         self.assertEqual(result["kind"], "deadletter")
         holds = proj.state.holds()
         self.assertEqual(holds[0]["kind"], "malformed")
-        # Nothing was written to the vault:
-        self.assertFalse(list(vault.rglob("*")) if vault.exists() else [])
+        # Nothing was written to the vault (the pre-existing project dir only):
+        self.assertEqual([p for p in vault.rglob("*") if not p.is_dir()], [])
 
     def test_missing_source_blob_is_retryable_error_not_projected(self):
         h = self._world()
@@ -1814,7 +1884,7 @@ class ProjectorTests(unittest.TestCase):
         event = self._artifact_event(h)
         # Attacker pre-plants a symlinked DATE dir inside the project dir:
         proj_dir = vault / "Projects" / "Bloodbank"
-        proj_dir.mkdir(parents=True)
+        proj_dir.mkdir(parents=True, exist_ok=True)
         (proj_dir / "2026-10-16").symlink_to(target, target_is_directory=True)
         result = proj.handle(event)
         self.assertEqual(result["kind"], "error", result)
@@ -2408,6 +2478,7 @@ class ActivityReportCaptureTests(unittest.TestCase):
         h.sidecar.process(real_activity_recorded())
         [event] = h.drain()
         vault = h.tmp / "vault"
+        (vault / "Projects" / "james-brennan").mkdir(parents=True)
         writer = projector_main.VaultWriter(vault, {"james-brennan": "Projects/james-brennan"})
         pstate = projector_main.ProjectorState(h.tmp / "proj.sqlite3")
         self.addCleanup(pstate.close)
