@@ -47,6 +47,7 @@ carries a transcription_id/id, project:<data.project.slug> for the project
 domain, line:<data.line> for messaging carrier texts (sms/mms/rcs/imessage),
 messaging:<platform>:<thread_id|notification_id> for messaging chat platforms,
 watch:<data.watch_id> for the watch domain,
+multiplexer:<data.multiplexer>:<data.session> for system.multiplexer.*,
 else <domain>:<uuid4>.
 
 Every event envelope carries an `actor` (§10, and REQUIRED_EVENT_FIELDS in
@@ -158,6 +159,11 @@ def _derive_ordering_key(domain, entity, data, tid):
     # watch.target.*: every fact about one watched target orders together
     if domain == "watch" and isinstance(data.get("watch_id"), str) and data["watch_id"].strip():
         return f"watch:{data['watch_id'].strip()}"
+    # system.multiplexer.*: a session's failure, the resume command and its outcome order together
+    if domain == "system" and entity == "multiplexer":
+        mux, session = data.get("multiplexer"), data.get("session")
+        if isinstance(mux, str) and mux.strip() and isinstance(session, str) and session.strip():
+            return f"multiplexer:{mux.strip()}:{session.strip()}"
     # messaging carrier texts order per operator line, whatever the transport
     if domain == "messaging" and entity in CARRIER_TRANSPORTS and isinstance(data.get("line"), str) and data["line"].strip():
         return f"line:{data['line'].strip()}"
@@ -193,7 +199,8 @@ def main():
                     help="explicit §11.1 ordering bucket (default derived from data: "
                          "transcription:<id>, project:<data.project.slug>, line:<data.line> for "
                          "messaging carrier texts, messaging:<platform>:<thread_id> for "
-                         "messaging chat platforms, else <domain>:<uuid4>)")
+                         "messaging chat platforms, multiplexer:<multiplexer>:<session> for "
+                         "system.multiplexer.*, else <domain>:<uuid4>)")
     ap.add_argument("--actor-type", default="service",
                     help="actor.type archetype: service|operator|scheduler|agent_cli|... (default: service)")
     ap.add_argument("--actor-id",

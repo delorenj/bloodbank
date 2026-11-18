@@ -77,6 +77,9 @@ ALLOWED_ENTITIES = frozenset({
     "request", "response", "usage", "allowance",
     "tool", "hook",
     "heartbeat",
+    # system: one terminal multiplexer session (zellij) hosting operator agent panes:
+    # its server failed, a resume was commanded, the agent panes were re-driven
+    "multiplexer",
     "decision", "intake", "task", "board", "maintenance", "skill",
     "approval_request",
     "worktree", "branch", "diff",
@@ -1120,11 +1123,24 @@ def _is_rfc3339_datetime(value: object) -> bool:
     return True
 
 
+def _format_date_time(value: object) -> bool:
+    """JSON Schema `format: date-time` assertion.
+
+    A format asserts only on strings (Draft 2020-12 §7.1); every other instance
+    passes and is left to `type`. Registering _is_rfc3339_datetime directly
+    refused null in every `"type": ["string", "null"], "format": "date-time"`
+    field (attendance clock requested_at, audio file detected_at,
+    system.multiplexer.failed server_started_at), so a declared-nullable
+    timestamp could never be null.
+    """
+    return not isinstance(value, str) or _is_rfc3339_datetime(value)
+
+
 def _draft202012_format_checker(validator_class: Any) -> Any:
     """Use Draft 2020-12 formats, filling the optional date-time checker gap."""
     checker = validator_class.FORMAT_CHECKER
     if "date-time" not in checker.checkers:
-        checker.checks("date-time")(_is_rfc3339_datetime)
+        checker.checks("date-time")(_format_date_time)
     return checker
 
 

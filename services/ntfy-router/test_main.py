@@ -172,6 +172,37 @@ def message_of(envelope: dict, apk_bytes=None) -> dict:
 # -- the dispositions, buckets and pushback (unchanged behaviour) ------------------
 
 
+class MultiplexerFormatTest(unittest.TestCase):
+    def test_failed_names_session_cause_and_host(self):
+        event = env(main.MULTIPLEXER_FAILED, multiplexer="zellij", session="Workspace", host="big-chungus",
+                    server_pid=4242, server_started_at="2026-11-18T09:00:00+00:00",
+                    detected_at="2026-11-18T18:30:00+00:00", reason="panic",
+                    panic={"thread": "screen", "location": "tab/mod.rs:1:2", "message": "boom",
+                           "originating": None},
+                    log_path="/tmp/zellij.log", zellij_version="zellij 0.44.3")
+        title, body = main.format_route(event, "s")
+        self.assertEqual(title, "zellij Workspace panicked on big-chungus")
+        self.assertIn("panic: boom (tab/mod.rs:1:2)", body)
+        self.assertIn("log: /tmp/zellij.log", body)
+        self.assertEqual(main.header_text(title), title)
+
+    def test_resumed_counts_relaunched_panes(self):
+        panes = [
+            {"pane_id": 1, "tab_name": "api", "agent": "claude", "status": "launched", "error": None},
+            {"pane_id": 2, "tab_name": "web", "agent": "codex", "status": "failed", "error": "no shell"},
+            {"pane_id": 3, "tab_name": "logs", "agent": None, "status": "skipped", "error": "not an agent"},
+        ]
+        event = env(main.MULTIPLEXER_RESUMED, multiplexer="zellij", session="Workspace", outcome="partial",
+                    trigger="failure", command_id=None, panes=panes, duration_ms=4100, error=None)
+        title, body = main.format_route(event, "s")
+        self.assertEqual(title, "zellij Workspace reconstituted: 1/2 agents relaunched")
+        self.assertIn("web: codex failed (no shell)", body)
+        self.assertIn("trigger: failure, 4.1s", body)
+        noop = env(main.MULTIPLEXER_RESUMED, multiplexer="zellij", session="zrtest-x", outcome="noop",
+                   trigger="manual", panes=[], duration_ms=0, error="already running")
+        self.assertEqual(main.format_route(noop, "s")[0], "zellij zrtest-x: nothing to reconstitute")
+
+
 class PolicyTest(unittest.TestCase):
     def test_defaults_mute_hook_pulses_and_digest_tool_calls(self):
         policy = main.Policy.from_env({})
@@ -202,6 +233,9 @@ class PolicyTest(unittest.TestCase):
         self.assertTrue(policy.is_loud("bloodbank.billing.transaction.failed"))
         self.assertFalse(policy.is_loud("bloodbank.billing.transaction.recorded"))
         self.assertFalse(policy.is_loud("bloodbank.billing.transaction.denied"))
+        # A zellij crash fires next to a burst of agent session.ended facts: never digested.
+        self.assertTrue(policy.is_loud(main.MULTIPLEXER_FAILED))
+        self.assertTrue(policy.is_loud(main.MULTIPLEXER_RESUMED))
         self.assertEqual(policy.classify("bloodbank.project.deployment.completed"), "route")
         self.assertFalse(main.Policy.from_env({"NTFY_ROUTER_LOUD_TYPES": ""}).is_loud(main.DEPLOYMENT_COMPLETED))
 

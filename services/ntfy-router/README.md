@@ -15,10 +15,15 @@ person wants to hear about into desktop/phone notifications on
    | **digest**  | `bloodbank.agent.tool.*` | Counted and rolled into one low-priority summary route every `DIGEST_SECONDS`. |
    | **route**   | everything else | One route each at `NTFY_PRIORITY`, through a token bucket (`ROUTE_RATE_PER_MIN`, `ROUTE_BURST`), behind a smaller per-type bucket (`ROUTE_PER_TYPE_PER_MIN`, `ROUTE_PER_TYPE_BURST`) so one chatty type cannot spend the shared budget. Overflow joins the digest. |
 
-   **Loud** types (`NTFY_ROUTER_LOUD_TYPES`, default `bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed`)
+   **Loud** types (`NTFY_ROUTER_LOUD_TYPES`, default `bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed,bloodbank.system.multiplexer.failed,bloodbank.system.multiplexer.resumed`)
    are routes that skip both buckets, so a deploy and its catch-up installs or a slop detection never
    queue behind a burst of `llm.usage` events or fall into the digest. A `bloodbank.billing.transaction.failed` (Milkshake could not read a Mercury
    webhook's transactions into its ledger through the last retry) is loud; `recorded` and `denied` are not.
+   `bloodbank.system.multiplexer.failed` (a zellij session's server died) and `.resumed` (what
+   re-driving its agent panes came to) are loud too: a crash fires next to a burst of agent
+   `session.ended` facts and must not queue behind it. Both get a plain title that names the session
+   (`zellij Workspace panicked on big-chungus`, `zellij Workspace reconstituted: 14/15 agents relaunched`)
+   and land on topic `system-multiplexer` (mirrored to `system`).
 
 3. Respects ntfy pushback: a 429 or 5xx pauses posting for `Retry-After` (or an
    exponential backoff from 10s to 5m when there is none), and anything arriving
@@ -145,7 +150,7 @@ Compose maps `BLOODBANK_NTFY_ROUTER_*` from your shell onto these.
 | `NTFY_TOKEN`           | _(required)_           | Bearer token for the `bloodbank-ntfy-router` ntfy user (`op://DeLoSecrets/ntfy Access Token/credential`). The router refuses to start without it. |
 | `NTFY_ROUTER_MUTE_TYPES`   | `bloodbank.agent.hook.updated,bloodbank.system.hook.updated` | Comma list of `fnmatch` globs never posted. Empty turns muting off. |
 | `NTFY_ROUTER_DIGEST_TYPES` | `bloodbank.agent.tool.*` | Comma list of globs rolled into the digest. Empty turns it off. |
-| `NTFY_ROUTER_LOUD_TYPES`   | `bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed` | Comma list of globs that skip both rate-limit buckets (not ntfy's pushback). Empty turns it off. |
+| `NTFY_ROUTER_LOUD_TYPES`   | `bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed,bloodbank.system.multiplexer.failed,bloodbank.system.multiplexer.resumed` | Comma list of globs that skip both rate-limit buckets (not ntfy's pushback). Empty turns it off. |
 | `ROUTE_RATE_PER_MIN`   | `20`                   | Sustained individual routes per minute |
 | `ROUTE_BURST`          | `10`                   | Individual routes allowed back to back |
 | `ROUTE_PER_TYPE_PER_MIN` | `6`                  | Sustained routes per minute for any one event type; `0` turns the per-type cap off |

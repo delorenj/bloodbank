@@ -306,8 +306,7 @@ Segment 3 of `type` MUST be one of:
 | `agent`        | Agent runtime lifecycle and orchestration of LLM invocations.      | active   |
 | `llm`          | Protocol-boundary events with a model provider.                    | active   |
 | `cli`          | Terminal/process-backed agent runtimes (stdin/stdout/stderr/exit). | active   |
-
-| `system`       | Bloodbank platform health (heartbeats, dapr, nats, replay).        | active   |
+| `system`       | Bloodbank platform health (heartbeats, dapr, nats, replay) and host-observed process facts: a process or container exited (`process.exited`); a terminal multiplexer's server failed (`multiplexer.failed`), a resume of its agent panes was commanded (`multiplexer.resume`) and carried out (`multiplexer.resumed`). | active   |
 | `audio`        | Audio capture lifecycle — inbox ingestion, transcription jobs, intake extracted from transcripts. | active   |
 | `repo`         | Repo-scoped PM facts such as decisions, intake triage, and tasks.  | active   |
 | `lifecycle`    | Finite development mission: status, roadmap, checkpoints, gates, blockers. | active   |
@@ -363,7 +362,7 @@ Segment 4 of `type` MUST be one of:
 | `imessage`         | `messaging`              | iMessage through BlueBubbles: `messaging.imessage.{received,sent}`. |
 | `invocation`       | `agent`                  | One round of agent runtime calling an LLM. For a Hermes gateway command: `queued` (exactly one per command the gateway accepted, at durable claim, before it waits for a slot; every `queued` closes with exactly one terminal fact) -> `started` (0..1 per attempt, the real start) -> `progressed` (0..n: an interim assistant message of the running turn, `data.seq` 1..n per command, `data.text` <= 500 chars; the Hermes gateway publishes every non-blank one, consumers throttle) -> `detached` (0..1 per attempt: the turn outlived its interactive lane's wall clock and gave its slot back; it runs on, and its terminal fact carries `detached: true`) -> `completed` or `failed`. |
 | `session`          | `cli`                    | One CLI session (e.g. `claude` or `copilot` process tree). Also used under `agent` for the agent-session lifecycle: `agent.session.started`, `agent.session.ended`, and `agent.session.annotated` (the enricher's roll-up of a finished session: `data.session_id`, `cwd`, `summary`, `event_count`, `tool_call_count`, `summary_source`, `target_event_id`; `causationid` = the `session.ended` event id, `correlationid` = the session's; it replaces the retired bare `report.session.completed` topic). |
-| `process`          | `cli`                    | An OS process spawned within a CLI session.                 |
+| `process`          | `cli`, `system`          | `cli`: an OS process spawned within a CLI session. `system`: a host-observed process or container that exited (`system.process.exited`). |
 | `stdout`           | `cli`                    | A stdout chunk emitted by a CLI process.                    |
 | `stderr`           | `cli`                    | A stderr chunk emitted by a CLI process.                    |
 | `request`          | `llm`                    | A request sent to an LLM provider.                          |
@@ -373,6 +372,7 @@ Segment 4 of `type` MUST be one of:
 | `tool`             | `agent`                  | A tool-use action performed by an agent or subagent.        |
 | `hook`             | `agent`, `system`        | Payload-free hook invocation revisions and hook-hub inventory/health observations. |
 | `heartbeat`        | `system`                 | Liveness/health beat.                                       |
+| `multiplexer`      | `system`                 | A terminal multiplexer session (zellij) hosting operator agent panes: its server failed (`failed`), a resume was commanded (`resume`) and the agent panes were re-driven (`resumed`). The multiplexer and session name live in data, never in the type. Chain: `multiplexer.failed` (root, `causationid` null; `data.reason` `panic`, `oom_killed`, `server_absent_at_start` or `unknown`) -> command `multiplexer.resume` (`causationid` = the failed event `id` and `correlationid` = the failed event's when `data.trigger` is `failure`; `boot` and `manual` resumes may be roots) -> `multiplexer.resumed` (`causationid` = the command envelope `id`, `correlationid` = the command's; `data.outcome` `ok`, `partial`, `failed` or `noop`; one `data.panes[]` row per held pane). One incident is one `correlationid`; producers pass it explicitly (`bb-emit --correlation`), since bb-emit's default is derived from the type alone. All three share `ordering_key = multiplexer:<multiplexer>:<session>`, which bb-emit derives from `data.multiplexer` and `data.session`. |
 | `decision`         | `repo`                   | PM decision recorded for a repo; repo slug lives in data.    |
 | `intake`           | `repo`, `portfolio`, `audio` | Incoming request awaiting PM triage. `repo`: triaged by a PM (repo slug in data). `portfolio`: Director intake. `audio`: one ticketable task extracted from a transcript (pjangler project in `data.project_id`); `repo.intake.triaged` closes the loop through the same `data.intake_id`. |
 | `task`             | `repo`, `workflow`       | `repo`: repo work item created; repo slug lives in data. `workflow`: one workflow run's task finished (`task.completed`) or stopped without finishing (`task.failed`); the workflow name and run id live in data. |
@@ -618,6 +618,7 @@ turn:<turn_id>
 invocation:<invocation_id>
 session:<session_id>             # agent CLI session (was cli_session)
 process:<process_id>
+multiplexer:<multiplexer>:<session> # system: every fact of one multiplexer session (multiplexer.failed, the multiplexer.resume command, multiplexer.resumed); e.g. multiplexer:zellij:Workspace
 transcription:<transcription_id>
 usage:<usage_id>
 allowance:<provider>:<account_id>:<window>
@@ -687,6 +688,9 @@ billing.transaction.receive : mercury_event:<event_id>:command:<command_id>
 cron.candybar.invoke   : candybar:<candybar_id>:tick:<tick_id>    # scheduled fire
                        : candybar:<candybar_id>:manual:<uuid>     # manual invoke
 cron.candybar.steward  : <task_id>                                # one steward task (its row id)
+system.multiplexer.resume : uuid5(NAMESPACE_URL, "bloodbank.system.multiplexer.resume:" + correlationid)
+                       # derived by bin/bb-emit; the sentinel passes the failed event's
+                       # correlationid, so every resume of one failure shares one key
 ```
 
 `watch.target.*` events carry no idempotency key. Each has a deterministic

@@ -128,10 +128,23 @@ DEFAULT_MUTE = ("bloodbank.agent.hook.updated,bloodbank.system.hook.updated,"
                 "bloodbank.genesis.*")
 DEFAULT_DIGEST = "bloodbank.agent.tool.*"
 # Deploys, slop alerts, telephony, carrier texts and audio: rare, and wanted the moment they happen.
-DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed"
+DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed,bloodbank.system.multiplexer.failed,bloodbank.system.multiplexer.resumed"
 
 DEPLOYMENT_COMPLETED = "bloodbank.project.deployment.completed"
 DEPLOYMENT_FAILED = "bloodbank.project.deployment.failed"
+
+# A multiplexer session (zellij) lost its server, and what re-driving its agent panes
+# came to (schemas/bloodbank/system/multiplexer.*.json). Loud by default: a crash
+# fires next to a burst of agent session.ended facts and must not join the digest.
+MULTIPLEXER_FAILED = "bloodbank.system.multiplexer.failed"
+MULTIPLEXER_RESUMED = "bloodbank.system.multiplexer.resumed"
+MULTIPLEXER_REASONS = {
+    "panic": "panicked",
+    "oom_killed": "was OOM-killed",
+    "server_absent_at_start": "was not running at watchdog start",
+    "unknown": "died",
+}
+MULTIPLEXER_PANE_LINES = 8
 
 # data.links, as schemas/bloodbank/project/deployment.*.json define it. Any
 # event type may carry links; the router treats them the same way for all.
@@ -253,6 +266,9 @@ def format_route(envelope: dict[str, Any], raw_subject: str) -> tuple[str, str]:
 
     # Body: surface the most useful 1-2 fields from `data`, fall back to a
     # truncated JSON dump.
+    if event_type in (MULTIPLEXER_FAILED, MULTIPLEXER_RESUMED) and isinstance(data, dict):
+        return format_multiplexer(event_type, data, source)
+
     line: str
     if isinstance(data, dict):
         for key in ("tool_name", "command", "prompt", "summary", "message", "reason"):
@@ -265,6 +281,59 @@ def format_route(envelope: dict[str, Any], raw_subject: str) -> tuple[str, str]:
         line = str(data)[:MAX_BODY_CHARS]
 
     return title, f"src: {source}\n{line}"
+
+
+def format_multiplexer(event_type: str, data: dict[str, Any], source: str) -> tuple[str, str]:
+    """(title, body) for system.multiplexer.failed / resumed: the session and the
+    outcome in the title, the cause or the per-pane result in the body."""
+    mux = str(data.get("multiplexer") or "multiplexer")
+    session = str(data.get("session") or "?")
+    lines: list[str] = []
+    if event_type == MULTIPLEXER_FAILED:
+        reason = str(data.get("reason") or "unknown")
+        verb = MULTIPLEXER_REASONS.get(reason, "died")
+        host = data.get("host")
+        title = f"{mux} {session} {verb}" + (f" on {host}" if host else "")
+        panic = data.get("panic") if isinstance(data.get("panic"), dict) else {}
+        if panic.get("message"):
+            where = f" ({panic['location']})" if panic.get("location") else ""
+            lines.append(f"panic: {str(panic['message'])[:200]}{where}")
+        if panic.get("thread"):
+            lines.append(f"thread: {panic['thread']}")
+        if data.get("server_pid"):
+            lines.append(f"server pid {data['server_pid']}"
+                         + (f", started {data['server_started_at']}" if data.get("server_started_at") else ""))
+        if data.get("log_path"):
+            lines.append(f"log: {data['log_path']}")
+        lines.append(f"reason: {reason}")
+    else:
+        panes = [p for p in data.get("panes") or [] if isinstance(p, dict)]
+        launched = sum(1 for p in panes if p.get("status") == "launched")
+        failed = sum(1 for p in panes if p.get("status") == "failed")
+        outcome = str(data.get("outcome") or "?")
+        if outcome == "noop":
+            title = f"{mux} {session}: nothing to reconstitute"
+        elif outcome == "failed":
+            title = f"{mux} {session} reconstitute failed"
+        else:
+            title = f"{mux} {session} reconstituted: {launched}/{launched + failed} agents relaunched"
+        for pane in panes[:MULTIPLEXER_PANE_LINES]:
+            what = pane.get("agent") or "-"
+            line = f"{pane.get('tab_name') or '?'}: {what} {pane.get('status') or '?'}"
+            if pane.get("error"):
+                line += f" ({str(pane['error'])[:80]})"
+            lines.append(line)
+        if len(panes) > MULTIPLEXER_PANE_LINES:
+            lines.append(f"... and {len(panes) - MULTIPLEXER_PANE_LINES} more")
+        if data.get("error"):
+            lines.append(f"error: {str(data['error'])[:200]}")
+        ms = data.get("duration_ms")
+        tail = f"trigger: {data.get('trigger') or '?'}"
+        if isinstance(ms, int):
+            tail += f", {ms / 1000:.1f}s"
+        lines.append(tail)
+    body = "\n".join(lines)[:MAX_BODY_CHARS]
+    return title, f"{body}\nsrc: {source}"
 
 
 def _short(event_type: str) -> str:
