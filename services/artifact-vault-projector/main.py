@@ -765,6 +765,12 @@ class Projector:
 
     # ── resolution (resolver.py decides; this applies) ─────────────────────
 
+    def current_hold_kind(self, slug: str) -> str | None:
+        """What the resolver must answer for this slug NOW (None: nothing, it maps live)."""
+        if slug not in self.writer.mapping:
+            return "unmapped"
+        return "missing-target" if self.writer.project_dir_missing(slug) else None
+
     def decide(self, slug: str, hold_kind: str, *, registry: dict | None, use_jev: bool = True,
                known_fingerprint: str | None = None) -> resolver.Decision:
         return resolver.decide(
@@ -780,27 +786,51 @@ class Projector:
             known_fingerprint=known_fingerprint,
         )
 
-    def _write_mapping(self, slug: str, target: str) -> None:
+    def known_hold_fingerprint(self, slug: str, *, force: bool = False) -> str | None:
+        """The fingerprint of the last REAL Jev hold; transient holds are always re-asked."""
+        if force:
+            return None
+        last = self.state.last_resolution(slug)
+        if last and last["action"] == "hold" and last["decider"] == "jev":
+            return last["fingerprint"]
+        return None
+
+    def write_mapping(self, slug: str, target: str, *, keep_live: bool = False) -> None:
+        """Read-modify-write the mapping file under an flock (every writer uses this).
+
+        keep_live: refuse to move a slug whose CURRENT mapping points at a
+        usable directory (the resolver never remaps a working slug).
+        """
         if self.mapping_path is None:
-            raise MappingError("no mapping file configured; cannot record a resolution")
-        raw: dict[str, Any] = {}
-        if self.mapping_path.exists():
-            raw = json.loads(self.mapping_path.read_text())
-        raw[slug] = target
-        candidate = {k: v for k, v in raw.items() if not str(k).startswith("$")}
-        tmp = self.mapping_path.with_name(f".{self.mapping_path.name}.{uuid.uuid4().hex[:8]}.tmp")
-        tmp.write_text(json.dumps(raw, indent=2) + "\n")
-        try:
-            validated = load_mapping(str(tmp))  # same rules as startup, before it goes live
-            if validated != candidate:
-                raise MappingError("mapping changed shape during validation")
-            os.replace(tmp, self.mapping_path)
-        finally:
-            tmp.unlink(missing_ok=True)
+            raise MappingError("no mapping file configured; cannot record a mapping")
+        import fcntl
+
+        real = Path(os.path.realpath(self.mapping_path))
+        real.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = real.with_name(f".{real.name}.lock")
+        with open(lock_path, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            raw: dict[str, Any] = json.loads(real.read_text()) if real.exists() else {}
+            existing = raw.get(slug)
+            if keep_live and isinstance(existing, str) and existing != target:
+                cur = self.writer.root / existing
+                if cur.is_dir() and not cur.is_symlink():
+                    raise MappingError(f"{slug!r} already maps to live {existing!r}; not remapping")
+            raw[slug] = target
+            candidate = {k: v for k, v in raw.items() if not str(k).startswith("$")}
+            tmp = real.with_name(f".{real.name}.{uuid.uuid4().hex[:8]}.tmp")
+            tmp.write_text(json.dumps(raw, indent=2) + "\n")
+            try:
+                validated = load_mapping(str(tmp))  # startup rules, before it goes live
+                if validated != candidate:
+                    raise MappingError("mapping changed shape during validation")
+                os.replace(tmp, real)
+            finally:
+                tmp.unlink(missing_ok=True)
         self.writer.mapping = validated
 
-    def apply_decision(self, decision: resolver.Decision) -> dict[str, Any]:
-        """Map (and for `create`, mkdir) the slug, then project its held envelopes."""
+    def prepare_decision(self, decision: resolver.Decision) -> dict[str, Any]:
+        """mkdir (create) + mapping write. Re-projection is separate (reproject*)."""
         if decision.action not in ("map", "create") or not decision.target:
             return {"applied": False, "detail": decision.reason}
         target = decision.target
@@ -808,43 +838,73 @@ class Projector:
         if target.startswith(("/", "\\")) or ".." in parts or any(x.startswith(".") for x in parts):
             return {"applied": False, "detail": f"unsafe target {target!r}"}
         path = self.writer.root / target
+        made = False
         if decision.action == "create":
             parent = path.parent
             if not parent.is_dir() or parent.is_symlink():
                 return {"applied": False, "detail": f"cannot create {target}: parent missing"}
             try:
                 os.mkdir(path, 0o755)
+                made = True
             except FileExistsError:
                 pass
         if path.is_symlink() or not path.is_dir():
             return {"applied": False, "detail": f"{target} is not a usable directory"}
-        self._write_mapping(decision.slug, target)
-        projected = held = errors = 0
-        for hold_id in self.state.held_for_slug(decision.slug):
+        try:
+            self.write_mapping(decision.slug, target, keep_live=True)
+        except (MappingError, OSError, ValueError) as exc:
+            if made:
+                try:
+                    os.rmdir(path)  # never leave an orphan folder behind a failed mapping
+                except OSError:
+                    pass
+            return {"applied": False, "detail": f"mapping write refused: {exc}"}
+        return {"applied": True, "target": target, "created": made}
+
+    def reproject_iter(self, slug: str, meta: dict[str, Any]):
+        """Re-handle every unresolved resolvable hold of slug; yields each result."""
+        for hold_id in self.state.held_for_slug(slug):
             envelope = self.state.hold_envelope(hold_id) or {}
             result = self.handle(envelope)
             if result["kind"] in ("projected", "duplicate"):
-                self.state.resolve_hold(hold_id, {
-                    "resolved_by": "resolver", "target": target,
-                    "decider": decision.decider, "confidence": decision.confidence,
-                })
-                projected += 1
-            elif result["kind"] == "held":
-                held += 1
-            else:
-                errors += 1
-        log.info("resolved %r -> %s (%s, %s): %d projected, %d still held, %d errors",
-                 decision.slug, target, decision.decider, decision.confidence, projected, held, errors)
-        return {"applied": True, "target": target, "projected": projected, "still_held": held, "errors": errors}
+                self.state.resolve_hold(hold_id, meta)
+            yield result
 
-    def resolve(self, slug: str, hold_kind: str, *, registry: dict | None, apply: bool,
+    @staticmethod
+    def _tally(results) -> dict[str, int]:
+        out = {"projected": 0, "still_held": 0, "errors": 0}
+        for r in results:
+            if r["kind"] in ("projected", "duplicate"):
+                out["projected"] += 1
+            elif r["kind"] == "held":
+                out["still_held"] += 1
+            else:
+                out["errors"] += 1
+        return out
+
+    def apply_decision(self, decision: resolver.Decision) -> dict[str, Any]:
+        """Synchronous apply (CLI, tests): prepare, then re-project held envelopes."""
+        prep = self.prepare_decision(decision)
+        if not prep.get("applied"):
+            return prep
+        meta = {"resolved_by": "resolver", "target": prep["target"],
+                "decider": decision.decider, "confidence": decision.confidence}
+        counts = self._tally(self.reproject_iter(decision.slug, meta))
+        log.info("resolved %r -> %s (%s, %s): %s", decision.slug, prep["target"],
+                 decision.decider, decision.confidence, counts)
+        return {**prep, **counts}
+
+    def resolve(self, slug: str, *, registry: dict | None, apply: bool,
                 use_jev: bool = True, force: bool = False) -> dict[str, Any]:
-        """Decide (skipping an unchanged, already-held question) and optionally apply."""
-        last = self.state.last_resolution(slug)
-        known = None
-        if not force and last and last["action"] == "hold":
-            known = last["fingerprint"]
-        decision = self.decide(slug, hold_kind, registry=registry, use_jev=use_jev, known_fingerprint=known)
+        """Decide (skipping an unchanged real Jev hold) and optionally apply."""
+        kind = self.current_hold_kind(slug)
+        if kind is None:
+            # Already mapped to a live folder: leftovers only need re-projection.
+            counts = self._tally(self.reproject_iter(
+                slug, {"resolved_by": "mapping", "target": self.writer.mapping[slug]})) if apply else None
+            return {"slug": slug, "action": "reproject", "target": self.writer.mapping[slug], "outcome": counts}
+        decision = self.decide(slug, kind, registry=registry, use_jev=use_jev,
+                               known_fingerprint=self.known_hold_fingerprint(slug, force=force))
         return self.finish_resolution(decision, apply=apply)
 
     def finish_resolution(self, decision: resolver.Decision, *, apply: bool) -> dict[str, Any]:
@@ -854,6 +914,27 @@ class Projector:
         self.state.record_resolution(decision.to_json(), applied=bool(outcome and outcome.get("applied")),
                                      outcome=outcome)
         return {**decision.to_json(), "outcome": outcome}
+
+
+def _related(a: str, b: str, registry: dict | None) -> bool:
+    """Registry relatives: nested repos either way, or a renamed_from link."""
+    reg = registry or {}
+    ea, eb = reg.get(a), reg.get(b)
+    if ea is None:
+        return True  # an unregistered slug may be any project's old name: re-ask it
+    if eb is None:
+        return False
+    ra, rb = ea.get("repo_path"), eb.get("repo_path")
+    if isinstance(ra, str) and isinstance(rb, str) and ra and rb:
+        pa, pb = Path(ra), Path(rb)
+        if pa in pb.parents or pb in pa.parents:
+            return True
+    for x, y in ((ea, b), (eb, a)):
+        rf = x.get("renamed_from")
+        for item in rf if isinstance(rf, list) else [rf]:
+            if isinstance(item, dict) and item.get("project_id") == y:
+                return True
+    return False
 
 
 class Runtime:
@@ -869,7 +950,7 @@ class Runtime:
         self._tasks: set[asyncio.Task] = set()
         self._last_hold_at: dict[str, float] = {}
 
-    def schedule_resolution(self, slug: str, hold_kind: str) -> None:
+    def schedule_resolution(self, slug: str) -> None:
         """Event-driven: a resolvable hold asks the resolver once per slug at a time."""
         if self.resolve_mode == "off" or slug in self._resolving:
             return
@@ -880,35 +961,67 @@ class Runtime:
         if last is not None and time.monotonic() - last < cooldown:
             return
         self._resolving.add(slug)
-        task = asyncio.get_running_loop().create_task(self._resolve(slug, hold_kind))
+        task = asyncio.get_running_loop().create_task(self._resolve(slug))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _resolve(self, slug: str, hold_kind: str) -> None:
+    async def _reproject(self, slug: str, meta: dict[str, Any]) -> dict[str, int]:
+        """Re-projection that yields to the loop (NATS acks, SIGTERM) every 20 holds."""
+        results = []
+        for i, result in enumerate(self.projector.reproject_iter(slug, meta)):
+            results.append(result)
+            if i % 20 == 19:
+                await asyncio.sleep(0)
+                if self._stop.is_set():
+                    break  # resumable: the slug maps live, so the next start re-projects
+        return Projector._tally(results)
+
+    async def _resolve(self, slug: str) -> None:
+        applied = False
         try:
             async with self._resolve_lock:  # FIFO: parents (scheduled first) land first
                 proj = self.projector
+                kind = proj.current_hold_kind(slug)
+                if kind is None:
+                    counts = await self._reproject(
+                        slug, {"resolved_by": "mapping", "target": proj.writer.mapping[slug]})
+                    log.info("re-projected leftover holds of mapped %r: %s", slug, counts)
+                    applied = True
+                    return
                 registry = await asyncio.to_thread(
                     resolver.fetch_registry, _env("ARTIFACT_VAULT_REGISTRY_URL", resolver.DEFAULT_REGISTRY_URL)
                 )
-                last = proj.state.last_resolution(slug)
-                known = last["fingerprint"] if last and last["action"] == "hold" else None
                 decision = await asyncio.to_thread(
-                    proj.decide, slug, hold_kind, registry=registry, known_fingerprint=known
+                    proj.decide, slug, kind, registry=registry,
+                    known_fingerprint=proj.known_hold_fingerprint(slug),
                 )
-                result = proj.finish_resolution(decision, apply=self.resolve_mode == "auto")
-                applied = bool((result.get("outcome") or {}).get("applied"))
+                if decision.action == "skip":
+                    return
+                outcome = None
+                if self.resolve_mode == "auto" and decision.action in ("map", "create"):
+                    outcome = proj.prepare_decision(decision)
+                    applied = bool(outcome.get("applied"))
+                proj.state.record_resolution(decision.to_json(), applied=applied, outcome=outcome)
+                log.info("resolution %r: %s %s (%s, %s) — %s%s", slug, decision.action, decision.target,
+                         decision.decider, decision.confidence, decision.reason,
+                         "" if applied or outcome is None else f" [not applied: {outcome.get('detail')}]")
                 if applied:
-                    self._last_hold_at.pop(slug, None)
-                else:
-                    self._last_hold_at[slug] = time.monotonic()
-                if result.get("action") != "skip":
-                    log.info("resolution %r: %s %s (%s, %s) — %s", slug, result.get("action"),
-                             result.get("target"), result.get("decider"), result.get("confidence"),
-                             result.get("reason"))
+                    meta = {"resolved_by": "resolver", "target": decision.target,
+                            "decider": decision.decider, "confidence": decision.confidence}
+                    counts = await self._reproject(slug, meta)
+                    log.info("resolution %r re-projected: %s", slug, counts)
+                    # Relatives held while this slug had no folder may now have one.
+                    for other in proj.state.held_slugs():
+                        if other != slug and _related(other, slug, registry):
+                            self._last_hold_at.pop(other, None)
+                            self.schedule_resolution(other)  # no-op if already queued
         except Exception:  # noqa: BLE001 - a resolver failure must not stop projection
             log.exception("resolution for %r failed; artifacts stay held", slug)
         finally:
+            if applied:
+                self._last_hold_at.pop(slug, None)
+            else:
+                self._last_hold_at[slug] = time.monotonic()
             self._resolving.discard(slug)
 
     def schedule_all_held(self) -> None:
@@ -917,7 +1030,7 @@ class Runtime:
             return
         registry = resolver.fetch_registry(_env("ARTIFACT_VAULT_REGISTRY_URL", resolver.DEFAULT_REGISTRY_URL))
         for slug in resolver.order_slugs(list(held), registry):
-            self.schedule_resolution(slug, held[slug])
+            self.schedule_resolution(slug)
 
     async def connect(self, nats_url: str, durable: str, *, backfill: bool = False) -> None:
         self._nc = await nats.connect(
@@ -972,7 +1085,7 @@ class Runtime:
             return
         log.info("projection kind=%s :: %s", result["kind"], result["detail"])
         if result["kind"] == "held" and result.get("hold_kind") in RESOLVABLE_HOLDS:
-            self.schedule_resolution(result["slug"], result["hold_kind"])
+            self.schedule_resolution(result["slug"])
         # held (unmapped) and deadletter (malformed) are durable terminal
         # states -> ack (their outcome is durably recorded in the holds
         # table with an explicit CLI). errors (missing blob, digest
@@ -1042,33 +1155,18 @@ async def amain(args: argparse.Namespace) -> int:
             return 0
         if args.hold_resolve_map:
             slug, vault_dir = args.hold_resolve_map
-            mapping_path = Path(args.mapping or _env("ARTIFACT_VAULT_MAPPING", ""))
-            if not str(mapping_path):
+            if not (args.mapping or _env("ARTIFACT_VAULT_MAPPING", "")):
                 print("mapping file path required to record a mapping", file=sys.stderr)
                 return 2
-            current: dict[str, str] = {}
-            if mapping_path.exists():
-                current = {
-                    k: v
-                    for k, v in json.loads(mapping_path.read_text()).items()
-                    if not str(k).startswith("$")
-                }
-            current[slug] = vault_dir
-            mapping_path.parent.mkdir(parents=True, exist_ok=True)
-            mapping_path.write_text(json.dumps(current, indent=2) + "\n")
-            writer.mapping = load_mapping(str(mapping_path))
-            # The slug lives at data.project.slug; resolving a hold also
-            # projects its preserved envelope (marking it alone left the
-            # artifact out of the vault forever — the durable already acked it).
-            resolved, projected = 0, []
-            for hold in state.holds():
-                envelope = state.hold_envelope(hold["hold_id"]) or {}
-                held_slug = ((envelope.get("data") or {}).get("project") or {}).get("slug")
-                if hold["kind"] in ("unmapped", "missing-target") and held_slug == slug:
-                    state.resolve_hold(hold["hold_id"], {"mapped_to": vault_dir})
-                    resolved += 1
-                    projected.append(projector.handle(envelope))
-            print(json.dumps({"mapping_file": str(mapping_path), "resolved_holds": resolved, "projections": projected}))
+            # Same locked, validated, $-key-preserving writer the resolver uses.
+            projector.write_mapping(slug, vault_dir)
+            # Resolving a hold also projects its preserved envelope (marking it
+            # alone left the artifact out of the vault forever — the durable
+            # already acked it).
+            projected = list(projector.reproject_iter(slug, {"mapped_to": vault_dir}))
+            resolved = sum(1 for r in projected if r["kind"] in ("projected", "duplicate"))
+            print(json.dumps({"mapping_file": str(projector.mapping_path), "resolved_holds": resolved,
+                              "projections": projected}))
             return 0
         if getattr(args, "resolutions", False):
             print(json.dumps(state.resolutions(), indent=2))
@@ -1080,17 +1178,15 @@ async def amain(args: argparse.Namespace) -> int:
             slugs = args.resolve or resolver.order_slugs(list(held), registry)
             out = []
             for slug in slugs:
-                if slug in held:
-                    kind = held[slug]
-                elif slug in writer.mapping and writer.project_dir_missing(slug):
-                    kind = "missing-target"
-                else:
-                    kind = "unmapped"
                 if getattr(args, "apply", False):
-                    out.append(projector.resolve(slug, kind, registry=registry, apply=True, force=getattr(args, "force", False)))
+                    out.append(projector.resolve(slug, registry=registry, apply=True,
+                                                 force=getattr(args, "force", False)))
+                    continue
+                kind = projector.current_hold_kind(slug)
+                if kind is None:
+                    out.append({"slug": slug, "action": "reproject", "target": writer.mapping[slug]})
                 else:
-                    d = projector.decide(slug, kind, registry=registry)
-                    out.append(d.to_json())
+                    out.append(projector.decide(slug, kind, registry=registry).to_json())
             print(json.dumps(out, indent=2, default=str))
             return 0
         if args.hold_retry:

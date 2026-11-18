@@ -1738,6 +1738,118 @@ class ProjectorTests(unittest.TestCase):
         with self.assertRaises(projector_main.MappingError):
             projector_main.load_mapping(str(f))
 
+    def test_mapped_slug_leftover_holds_reproject_without_redeciding(self):
+        h = self._world()
+        vault = h.tmp / "vault"
+        mapping_file = h.tmp / "mapping.json"
+        mapping_file.write_text(json.dumps({"other": "Projects/Other"}))
+        proj = self._projector(h, {"other": "Projects/Other"}, vault)
+        proj.mapping_path = mapping_file
+        self.assertEqual(proj.handle(self._artifact_event(h))["kind"], "held")
+        # The mapping lands but the re-projection never ran (crash, hand edit):
+        (vault / "Projects" / "Bloodbank").mkdir(parents=True)
+        proj.write_mapping("bb", "Projects/Bloodbank")
+        with unittest.mock.patch.object(proj, "decide", side_effect=AssertionError("must not re-decide")):
+            out = proj.resolve("bb", registry={}, apply=True)
+        self.assertEqual(out["action"], "reproject")
+        self.assertEqual(out["outcome"]["projected"], 1)
+        self.assertEqual(proj.state.holds(), [])
+        self.assertEqual(json.loads(mapping_file.read_text())["bb"], "Projects/Bloodbank")
+
+    def test_resolver_never_remaps_a_live_slug(self):
+        h = self._world()
+        vault = h.tmp / "vault"
+        (vault / "Projects" / "Elsewhere").mkdir(parents=True)
+        mapping_file = h.tmp / "mapping.json"
+        mapping_file.write_text(json.dumps({"bb": "Projects/Bloodbank"}))
+        proj = self._projector(h, {"bb": "Projects/Bloodbank"}, vault)
+        proj.mapping_path = mapping_file
+        out = proj.prepare_decision(self._decision("bb", "map", "Projects/Elsewhere"))
+        self.assertFalse(out["applied"])
+        self.assertIn("not remapping", out["detail"])
+        self.assertEqual(json.loads(mapping_file.read_text())["bb"], "Projects/Bloodbank")
+
+    def test_failed_mapping_write_rolls_back_created_folder(self):
+        h = self._world()
+        vault = h.tmp / "vault"
+        (vault / "Projects").mkdir(parents=True)
+        proj = self._projector(h, {"other": "Projects/Other"}, vault)
+        proj.mapping_path = None  # the write must fail
+        out = proj.prepare_decision(self._decision("bb", "create", "Projects/Bloodbank"))
+        self.assertFalse(out["applied"])
+        self.assertFalse((vault / "Projects" / "Bloodbank").exists())
+
+    def test_transient_hold_is_reasked_but_real_jev_hold_is_skipped(self):
+        h = self._world()
+        proj = self._projector(h, {"other": "Projects/Other"}, h.tmp / "vault")
+        d = self._decision("bb", "hold", None)
+        d.decider = "none"
+        proj.state.record_resolution(d.to_json(), applied=False, outcome=None)
+        self.assertIsNone(proj.known_hold_fingerprint("bb"))
+        d.decider = "jev"
+        proj.state.record_resolution(d.to_json(), applied=False, outcome=None)
+        self.assertEqual(proj.known_hold_fingerprint("bb"), "fp")
+        self.assertIsNone(proj.known_hold_fingerprint("bb", force=True))
+
+    def test_runtime_resolves_held_slug_and_requeues_relatives(self):
+        import resolver
+        h = self._world()
+        vault = h.tmp / "vault"
+        (vault / "Projects").mkdir(parents=True)
+        mapping_file = h.tmp / "mapping.json"
+        mapping_file.write_text(json.dumps({"other": "Projects/Other"}))
+        proj = self._projector(h, {"other": "Projects/Other"}, vault)
+        proj.mapping_path = mapping_file
+        self.assertEqual(proj.handle(self._artifact_event(h))["kind"], "held")
+        registry = {"bb": {"repo_path": "/r/bb"}, "bb-child": {"repo_path": "/r/bb/child"}}
+        # A related child slug is also held:
+        child_env = json.loads(json.dumps(self._artifact_event(h, content="child", path=str(h.tmp / "repos" / "bb" / "docs" / "c.md"))))
+        child_env["id"] = str(uuid.uuid4())
+        child_env["data"]["project"]["slug"] = "bb-child"
+        proj.state.add_hold(kind="unmapped", reason="t", event_id=child_env["id"], envelope=child_env)
+        decided = []
+
+        def fake_decide(slug, kind, **kw):
+            decided.append(slug)
+            if slug == "bb":
+                return self._decision("bb", "create", "Projects/Bloodbank")
+            return self._decision(slug, "hold", None)
+
+        rt = projector_main.Runtime(proj, resolve_mode="auto")
+
+        async def go():
+            with unittest.mock.patch.object(resolver, "fetch_registry", return_value=registry), \
+                    unittest.mock.patch.object(proj, "decide", side_effect=fake_decide):
+                rt.schedule_resolution("bb")
+                for _ in range(200):
+                    await asyncio.sleep(0.01)
+                    if not rt._tasks:
+                        break
+
+        asyncio.run(go())
+        self.assertEqual(decided, ["bb", "bb-child"])  # child re-asked after parent mapped
+        self.assertTrue((vault / "Projects" / "Bloodbank" / "2026-10-16" / "note.md").exists())
+        self.assertIn("bb-child", rt._last_hold_at)  # held -> cooldown
+        self.assertNotIn("bb", rt._last_hold_at)
+
+    def test_runtime_failure_sets_cooldown(self):
+        h = self._world()
+        proj = self._projector(h, {"other": "Projects/Other"}, h.tmp / "vault")
+        rt = projector_main.Runtime(proj, resolve_mode="auto")
+
+        async def go():
+            with unittest.mock.patch.object(proj, "decide", side_effect=RuntimeError("boom")):
+                rt.schedule_resolution("bb")
+                for _ in range(200):
+                    await asyncio.sleep(0.01)
+                    if not rt._tasks:
+                        break
+                rt.schedule_resolution("bb")  # inside the cooldown: not rescheduled
+                self.assertEqual(rt._tasks, set())
+
+        asyncio.run(go())
+        self.assertIn("bb", rt._last_hold_at)
+
     def test_hold_retry_cli_projects_once_dir_restored(self):
         h = self._world()
         vault = h.tmp / "vault"

@@ -168,6 +168,93 @@ class ResolverTests(unittest.TestCase):
         order = r.order_slugs(["lost-things-forge", "mystery", "tolt"], self.registry)
         self.assertEqual(order, ["tolt", "lost-things-forge", "mystery"])
 
+    # ── review regressions ────────────────────────────────────────────────
+
+    def test_shared_fragments_never_count_as_agreement(self):
+        # delodocs must not be filed into DeLoDocs-scout-integration at 0.4.
+        self.registry["delodocs"] = {"slug": "delodocs", "name": "DeloDocs",
+                                     "repo_path": str(self.code / "DeLoDocs")}
+        self.folder("DeLoDocs-scout-integration")
+        d = self.decide("delodocs", key_fn=lambda: "k",
+                        post=fake_jev("Projects/DeLoDocs-scout-integration", 0.5))
+        self.assertEqual(d.action, "hold")
+        top = d.candidates[0]
+        self.assertLess(top["score"], 0.6)
+
+    def test_prefix_folder_is_real_evidence(self):
+        self.registry["infra"] = {"slug": "infra", "name": "Infra", "repo_path": str(self.code / "infra")}
+        self.folder("Infrastructure")
+        subj = r.build_subject("infra", "unmapped", {}, self.registry, git_search=False)
+        cands = r.score_candidates(subj, self.vault, "Projects", {}, self.registry)
+        self.assertEqual((cands[0].target, cands[0].score), ("Projects/Infrastructure", 0.6))
+        # ...so "create Infra" no longer gets the agreement discount:
+        d = self.decide("infra", key_fn=lambda: "k", post=fake_jev("create:Projects/Infra", 0.5))
+        self.assertEqual(d.action, "hold")
+
+    def test_unhashable_jev_choice_does_not_crash(self):
+        self.folder("Milkshake")
+        d = self.decide("milkshake", key_fn=lambda: "k", post=fake_jev(["Projects/Milkshake"], "high"))
+        self.assertEqual((d.action, d.decider), ("map", "deterministic"))
+
+    def test_no_create_while_parent_has_no_folder(self):
+        post = fake_jev("create:Projects/Lost Things Forge", 0.99)
+        d = self.decide("lost-things-forge", key_fn=lambda: "k", post=post)  # tolt unmapped
+        self.assertEqual(d.action, "hold")
+        self.assertFalse(any(k.startswith("create:")
+                             for k in post.calls[0]["questions"]["target"]["criteria"]))
+
+    def test_tied_top_candidates_get_no_agreement_discount(self):
+        self.folder("Milkshake")
+        self.folder("milkshake-old")  # joined "milkshakeold" starts with "milkshake" (0.6)
+        self.folder("MILK-SHAKE")     # joined "milkshake" == exact (1.0)
+        subj = r.build_subject("milkshake", "unmapped", {}, self.registry, git_search=False)
+        cands = r.score_candidates(subj, self.vault, "Projects", {}, self.registry)
+        self.assertEqual([c.score for c in cands[:2]], [1.0, 1.0])
+        d = self.decide("milkshake", key_fn=lambda: "k", post=fake_jev(cands[0].target, 0.5))
+        self.assertEqual(d.action, "hold")
+
+    def test_short_acronyms_do_not_match(self):
+        self.registry["ab"] = {"slug": "ab", "name": "ab", "repo_path": str(self.code / "ab")}
+        self.folder("AlphaBeta")
+        subj = r.build_subject("ab", "unmapped", {}, self.registry, git_search=False)
+        self.assertEqual(r.score_candidates(subj, self.vault, "Projects", {}, self.registry), [])
+
+    def test_exact_name_beats_parent_folder_deterministically(self):
+        self.registry["33god"] = {"slug": "33god", "name": "33GOD", "repo_path": str(self.code / "33GOD")}
+        self.registry["candybar"] = {"slug": "candybar", "name": "candybar",
+                                     "repo_path": str(self.code / "33GOD" / "candybar")}
+        self.folder("33GOD")
+        self.folder("Candybar")
+        d = self.decide("candybar", mapping={"33god": "Projects/33GOD"})
+        self.assertEqual((d.action, d.target), ("map", "Projects/Candybar"))
+
+    def test_git_mention_is_whole_token_and_rare(self):
+        repo = self.code / "tolt"
+        repo.mkdir(parents=True)
+        git = ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t"]
+        subprocess.run(git + ["init", "-q"], check=True)
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "infrastructure tweaks"], check=True)
+        self.assertEqual(r.git_mentions("infra", self.registry), [])  # too short anyway
+        self.assertEqual(r.git_mentions("structure", self.registry), [])  # substring only
+
+    def test_failed_key_lookup_is_retried_not_cached(self):
+        import os
+        r._KEY_CACHE.clear()
+        r._KEY_FAILED_AT.clear()
+        old = os.environ.pop("JEV_API_KEY", None)
+        os.environ["ARTIFACT_VAULT_JEV_SECRETS"] = "/nonexistent/jev-secrets"
+        try:
+            self.assertIsNone(r.jev_key())
+            self.assertNotIn("k", r._KEY_CACHE)
+            r._KEY_FAILED_AT["t"] -= 301  # past the retry window
+            os.environ["JEV_API_KEY"] = "later"
+            self.assertEqual(r.jev_key(), "later")
+        finally:
+            os.environ.pop("ARTIFACT_VAULT_JEV_SECRETS", None)
+            os.environ.pop("JEV_API_KEY", None)
+            if old is not None:
+                os.environ["JEV_API_KEY"] = old
+
 
 if __name__ == "__main__":
     unittest.main()

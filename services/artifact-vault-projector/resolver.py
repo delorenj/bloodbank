@@ -183,6 +183,8 @@ def git_mentions(slug: str, registry: dict[str, dict[str, Any]] | None, timeout:
     """
     if len(slug) < 5:
         return []
+    # Whole-token match ("infra" must not hit "infrastructure"), ERE-escaped.
+    pattern = f"(^|[^a-z0-9-]){re.escape(slug)}([^a-z0-9-]|$)"
     hits: list[str] = []
     seen: set[Path] = set()
     for other_slug, entry in sorted((registry or {}).items()):
@@ -192,14 +194,15 @@ def git_mentions(slug: str, registry: dict[str, dict[str, Any]] | None, timeout:
         seen.add(repo)
         try:
             out = subprocess.run(
-                ["git", "-C", str(repo), "log", "--all", "-i", "-F", f"--grep={slug}", "-n", "1", "--format=%h"],
+                ["git", "-C", str(repo), "log", "--all", "-i", "-E", f"--grep={pattern}", "-n", "1", "--format=%h"],
                 capture_output=True, text=True, timeout=timeout, check=False,
             ).stdout.strip()
         except Exception:  # noqa: BLE001 - a slow or broken repo is no evidence
             continue
         if out:
             hits.append(other_slug)
-    return hits
+    # A slug named across many repos is a common word, not a rename trail.
+    return hits if len(hits) <= 2 else []
 
 
 # ── evidence ───────────────────────────────────────────────────────────────
@@ -328,8 +331,22 @@ def score_candidates(
         for a in own:
             if j == a:
                 bump(folder, 1.0, f"folder name matches {a!r}")
-            elif acr and acr == a:
+            elif len(acr) >= 3 and acr == a:
                 bump(folder, 0.9, f"folder acronym {acr!r} matches the slug")
+            elif len(a) >= 5 and j.startswith(a):
+                # "Infra" -> "Infrastructure" extends the word itself (0.6).
+                # "DeLoDocs" -> "DeLoDocs-scout-integration" ends on a word
+                # boundary and adds words: a sub-topic folder, a hint only.
+                tl, acc, boundary = tokens(name), "", False
+                for t in tl[:-1]:
+                    acc += t
+                    if acc == a:
+                        boundary = True
+                        break
+                if boundary:
+                    bump(folder, 0.5, f"folder is a sub-topic of {a!r}")
+                else:
+                    bump(folder, 0.6, f"folder name starts with {a!r}")
             elif len(a) >= 5 and (a in j or (len(j) >= 5 and j in a)):
                 bump(folder, 0.45, f"folder name overlaps {a!r}")
         for alias in subject.aliases:
@@ -337,12 +354,15 @@ def score_candidates(
             if len(at) >= 2 and toks:
                 jac = len(at & toks) / len(at | toks)
                 if jac >= 0.5:
-                    bump(folder, round(0.4 + 0.4 * jac, 2), f"shares words with {alias!r}")
+                    # Capped below the agreement bar: shared fragments
+                    # ("DeLoDocs" vs "DeLoDocs-scout-integration") are a hint,
+                    # never enough to file on their own.
+                    bump(folder, min(0.55, round(0.4 + 0.4 * jac, 2)), f"shares words with {alias!r}")
         for a in child_aliases:
             if j == a:
                 bump(folder, 0.8, f"folder name matches sub-project {a!r}")
         for a in mention_aliases:
-            if j == a or (acr and acr == a):
+            if j == a or (len(acr) >= 3 and acr == a):
                 bump(folder, 0.8, f"folder of {a!r}, whose git history names this slug")
         if folder in related_mapped:
             bump(folder, 0.85, related_mapped[folder])
@@ -404,14 +424,18 @@ def fingerprint(subject: Subject, candidates: list[Candidate], create: str | Non
 # ── Jev ────────────────────────────────────────────────────────────────────
 
 _KEY_CACHE: dict[str, str | None] = {}
+_KEY_FAILED_AT: dict[str, float] = {}
 
 
 def jev_key() -> str | None:
     """JEV_API_KEY from the env, else the fleet's jev-secrets chain (op:// refs)."""
     if os.environ.get("JEV_API_KEY"):
         return os.environ["JEV_API_KEY"]
-    if "k" in _KEY_CACHE:
+    if _KEY_CACHE.get("k"):
         return _KEY_CACHE["k"]
+    failed_at = _KEY_FAILED_AT.get("t")
+    if failed_at is not None and time.monotonic() - failed_at < 300:
+        return None  # a failed lookup is retried after 5 minutes, not cached forever
     tool = os.environ.get("ARTIFACT_VAULT_JEV_SECRETS") or next(
         (str(p) for p in (Path.home() / ".local/bin/jev-secrets",
                           Path.home() / ".agents/tools/jev-clairic/bin/jev-secrets") if p.exists()),
@@ -428,7 +452,11 @@ def jev_key() -> str | None:
                 key = parts[1].split("=", 1)[1] or None
     except Exception:  # noqa: BLE001 - no key => deterministic fallback
         key = None
-    _KEY_CACHE["k"] = key
+    if key:
+        _KEY_CACHE["k"] = key
+        _KEY_FAILED_AT.pop("t", None)
+    else:
+        _KEY_FAILED_AT["t"] = time.monotonic()
     return key
 
 
@@ -552,6 +580,13 @@ def decide(
     if create and any(c.score >= STRONG for c in candidates):
         # A strong existing home exists: never offer a sibling duplicate.
         create = None
+    waiting_on = [s for s in subject.parents[:1] + subject.renamed_from + subject.renamed_to
+                  if s not in mapping and s != slug]
+    if create and waiting_on:
+        # The parent / renamed relative has no folder yet; once it does, this
+        # slug is re-asked (Runtime re-schedules relatives), so wait instead
+        # of creating a sibling it would duplicate.
+        create = None
     fp = fingerprint(subject, candidates, create, mapping)
     if known_fingerprint and known_fingerprint == fp:
         # Same evidence as the last "hold": asking again would only repeat it.
@@ -579,19 +614,22 @@ def decide(
         except Exception as exc:  # noqa: BLE001 - fall back to the deterministic rule
             jev = {"error": f"{type(exc).__name__}: {exc}"}
         choice, conf = jev.get("choice"), jev.get("confidence")
+        if not (isinstance(conf, (int, float)) and 0.0 <= float(conf) <= 1.0):
+            conf = None
         valid = {c.target for c in candidates} | ({create} if create else set()) | {HOLD}
-        if choice in valid:
+        if isinstance(choice, str) and choice in valid:
             if choice == HOLD:
                 return hold("Jev chose to hold", "jev", conf, jev)
             # Jev alone must clear min_confidence; Jev agreeing with the
             # independent evidence (the top-scored folder, or "create" when no
             # folder scored) only has to clear agree_confidence.
-            strong = [c for c in candidates if c.score >= 0.6]
-            agrees = (bool(candidates) and choice == candidates[0].target and candidates[0].score >= 0.6) or (
-                choice.startswith(CREATE_PREFIX) and not strong
+            top = candidates[0] if candidates else None
+            tied = len(candidates) > 1 and candidates[1].score == candidates[0].score
+            agrees = (top is not None and choice == top.target and top.score >= 0.6 and not tied) or (
+                choice.startswith(CREATE_PREFIX) and not any(c.score >= 0.4 for c in candidates)
             )
             bar = agree_confidence if agrees else min_confidence
-            if not isinstance(conf, (int, float)) or conf < bar:
+            if conf is None or conf < bar:
                 return hold(f"Jev chose {choice} at {conf}, below {bar} "
                             f"({'agrees' if agrees else 'disagrees'} with the evidence)", "jev", conf, jev)
             if choice.startswith(CREATE_PREFIX) and registry is None:
@@ -617,7 +655,7 @@ def _deterministic(
     if candidates:
         top = candidates[0]
         runner = candidates[1].score if len(candidates) > 1 else 0.0
-        if top.score >= 0.9 and runner < 0.6:
+        if top.score >= 0.9 and (runner < 0.6 or (top.score >= 1.0 and runner < 0.9)):
             return top.target, top.score, f"unambiguous match: {'; '.join(top.reasons)}"
     return None
 

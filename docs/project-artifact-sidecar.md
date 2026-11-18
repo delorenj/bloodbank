@@ -198,6 +198,26 @@ no-absolute-path hygiene across all of `data`.
   Why: on 2026-11-14 the vault's `Projects/` was moved to `Ideas/Projects/`
   and the old mkdir-everything walk regrew a shadow `Projects/` at the vault
   root for four days (516 files) before anyone noticed.
+- Held slugs resolve themselves (`services/artifact-vault-projector/resolver.py`).
+  The first `unmapped` or `missing-target` hold of a slug, and the startup
+  sweep over every slug already waiting (parents before children), asks the
+  resolver where the slug belongs. Evidence is deterministic: registry name
+  and repo, `renamed_from` both ways, parent/child repos, folders other slugs
+  map to, acronyms (`tolt` == `TowerOfLostThings`), notes titled like the
+  project, the git history of registered repos naming an unregistered slug
+  (the rename trail the registry missed: `tower-of-dumb-things`), and a moved
+  folder for a missing target. Jev (`typesafe/jev`, key via `jev-secrets`)
+  then picks a scored folder, `create:` a new leaf (registered projects only,
+  never beside a candidate scoring >= 0.8), or `hold`. Jev alone must reach
+  0.65; Jev agreeing with the top evidence 0.4; without Jev only an
+  unambiguous match (>= 0.9, runner-up < 0.6) is taken. Applying writes the
+  mapping file atomically (validated, `$` keys kept) and re-projects the held
+  envelopes. Every decision is a row in `resolutions` (`--resolutions`). A
+  held decision is not re-asked until its evidence changes (fingerprint) and
+  not re-examined within `ARTIFACT_VAULT_RESOLVE_COOLDOWN_S` (900). Dry run:
+  `main.py --resolve [SLUG..]` (each slug against the current vault);
+  `--apply [--force]` applies. `ARTIFACT_VAULT_RESOLVE=auto|advise|off`
+  (default `auto`). Several slugs may share one folder.
 - VaultWriter walks project/date components via directory fds with
   O_NOFOLLOW (planted symlinks refused, not followed); files land via
   O_EXCL tmp + fsync + atomic no-clobber hard link; directories fsynced. A
@@ -263,9 +283,10 @@ services/artifact-sidecar/discovery.py              adapters (structural, determ
                                                     delivery gate; delivered-file capture)
 services/artifact-sidecar/sidecar.py                state, pipeline, atomic outbox, holds
 services/artifact-sidecar/main.py                   runtime + CLI (status/hold-*/retry-outbox)
-services/artifact-sidecar/test_sidecar.py           149 adversarial + contract + e2e tests
+services/artifact-sidecar/test_sidecar.py           163 adversarial + contract + e2e tests
 services/artifact-sidecar/test_broker.py            isolated-broker runtime tests (docker nats)
-services/artifact-vault-projector/main.py           projector runtime (explicit mapping, holds)
+services/artifact-vault-projector/main.py           projector runtime (explicit mapping, holds, resolver runtime)
+services/artifact-vault-projector/resolver.py       held-slug resolver (evidence + Jev policy)
 ops/smoketest/smoketest-project-artifact-contracts.py  mise task (chained)
 ops/fixtures/project-contracts.v1.json              artifact fixture
 ops/systemd/artifact-sidecar/*.service              template (not installed)
@@ -280,7 +301,8 @@ ops/live/artifact-live-probe.py                     SYNTHETIC live integration p
 ## Test commands
 
 ```
-python3 services/artifact-sidecar/test_sidecar.py    # 149 tests, offline
+python3 services/artifact-sidecar/test_sidecar.py    # 163 tests, offline
+python3 services/artifact-vault-projector/test_resolver.py  # 24 resolver tests, offline
 python3 services/artifact-sidecar/test_broker.py    # 6 tests, isolated docker nats
 mise run smoketest:project-artifact-contracts       # same suite as mise task
 python3 ops/systemd/render-install.py --dry-run     # render + verify units, print only
