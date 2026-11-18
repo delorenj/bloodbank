@@ -25,13 +25,13 @@ wrapped, and a total no-op when Redis is absent.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import socket
 from pathlib import Path
 
 from .resp import Connection
+from .statekit import Script
 
 # --- tunables --------------------------------------------------------------
 
@@ -48,6 +48,9 @@ STREAM_MAXLEN = 500
 TIMEOUT       = float(os.environ.get("BLOODBANK_ASM_TIMEOUT", "0.25"))
 
 _LUA = Path(__file__).with_name("asm.lua")
+# The arbiter, shipped by statekit (consumer 1 of the kit): the prelude is
+# prepended and the sha is derived from prelude+body on every call.
+_SCRIPT = Script(_LUA)
 
 # Which (cli, event type) pairs have actually fired. A KEY rather than a literal
 # inside the Lua so tests can redirect it; see core/asm.lua.
@@ -341,31 +344,21 @@ def dispatch(transition: dict, cli: str, cwd: str) -> None:
 # --- entry point -----------------------------------------------------------
 
 def _eval(conn: Connection, keys: list[str], args: list[object]) -> object:
-    """EVALSHA with a NOSCRIPT fallback.
+    """Run asm.lua (statekit.Script: EVALSHA, SCRIPT LOAD on NOSCRIPT).
 
-    The sha is DERIVED from the script body rather than cached in a file, and
-    that is not a micro-optimization -- it is the only version of this that is
-    correct. Redis keys its script cache by the SHA1 of the body, so computing
-    it here means an edited asm.lua is a different sha by construction.
+    The sha is DERIVED from the script body on every call rather than cached,
+    and that is not a micro-optimization -- it is the only version of this
+    that is correct. Redis keys its script cache by the SHA1 of the body, so an
+    edited asm.lua is a different sha by construction. A sha cached in a file
+    silently kept running the PREVIOUS script after every edit: EVALSHA
+    succeeded against Redis's still-warm cache, so there was no error to
+    notice, and new signals were simply ignored. Caught only because a
+    freshly-added `gone` signal did nothing at all.
 
-    The cached-in-a-file version silently kept running the PREVIOUS script
-    after every edit: EVALSHA succeeded against Redis's still-warm cache, so
-    there was no error to notice, and new signals were simply ignored. Caught
-    only because a freshly-added `gone` signal did nothing at all.
-
-    Costs one ~8KB read and a sha1 per hook -- tens of microseconds against a
+    Costs one ~12KB read and a sha1 per hook -- tens of microseconds against a
     250ms deadline.
     """
-    body = _LUA.read_bytes()
-    sha = hashlib.sha1(body).hexdigest()          # noqa: S324 -- Redis's own key
-    try:
-        return conn.command("EVALSHA", sha, len(keys), *keys, *args)
-    except Exception as exc:
-        if "NOSCRIPT" not in str(exc):
-            raise
-    # First use on this Redis, or the cache was flushed / the server restarted.
-    conn.command("SCRIPT", "LOAD", body)
-    return conn.command("EVALSHA", sha, len(keys), *keys, *args)
+    return _SCRIPT(conn, keys, args)
 
 
 def fire(conn: Connection, scope: str, signal: str, h: dict,

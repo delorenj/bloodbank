@@ -26,7 +26,8 @@ from isolated_redis import DisposableRedis  # noqa: E402
 # Import/discovery performs no I/O. These are assigned only after owned startup.
 URL: str | None = None
 PREFIX: str | None = None
-LUA = (SERVICE_DIR / "core" / "asm.lua").read_text()
+# Exactly what reaches Redis: the statekit prelude + asm.lua (asm._SCRIPT composes it).
+LUA = asm._SCRIPT.body().decode("utf-8")
 FORBIDDEN_CONNECTIONS: list[tuple] = []
 FORBIDDEN_DISPATCHES: list[dict] = []
 
@@ -1005,8 +1006,12 @@ class ScriptShaTest(unittest.TestCase):
         """
         import hashlib
 
-        body = (SERVICE_DIR / "core" / "asm.lua").read_bytes()
+        # What actually reaches Redis is the statekit prelude + asm.lua.
+        body = asm._SCRIPT.body()
+        self.assertTrue(body.startswith((SERVICE_DIR / "core" / "statekit_prelude.lua").read_bytes()))
+        self.assertTrue(body.endswith((SERVICE_DIR / "core" / "asm.lua").read_bytes()))
         expected = hashlib.sha1(body).hexdigest()      # noqa: S324
+        self.assertEqual(asm._SCRIPT.sha(), expected)
 
         with Connection(URL) as conn:
             loaded = conn.command("SCRIPT", "LOAD", body)

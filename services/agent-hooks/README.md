@@ -24,6 +24,8 @@ agent-hooks/
 │   ├── session.py        # file-backed SessionState (correlation/causation chain)
 │   ├── asm.py            # Agent State Machine — the hook-side proposer
 │   ├── asm.lua           # …and its arbiter. The ONLY writer of asm:*
+│   ├── statekit.py       # the shared kit for Redis state machines (ASM = consumer 1)
+│   ├── statekit_prelude.lua  # `sk`: the Lua half, prepended to every arbiter
 │   ├── sweep.py          # `stale` / `gone` — the two states no event can produce
 │   └── resp.py           # length-aware RESP2 client
 ├── bin/
@@ -464,6 +466,68 @@ question that raised `awaiting_human`, so the bell stops on sight rather than at
 the 30-minute cap. It clears *only* the attention window — `failed` survives a
 glance, because a red that vanishes when you look at it is a red nobody can
 read.
+
+## statekit
+
+The shared kit for Redis state machines (`core/statekit.py`,
+`core/statekit_prelude.lua`, stdlib only). The ASM above was the first;
+the kit is what it taught us, extracted so the next machine does not
+rediscover the plumbing. The pattern:
+
+- **One Lua arbiter, the only writer.** Proposers (hooks, CLIs, UIs, sweepers)
+  send signals; Redis runs the arbiter atomically, so racing proposers need no
+  owning process and cannot lose an update.
+- **A resolved HASH per subject** holds the current state.
+- **A capped transition STREAM per subject** (`XADD MAXLEN ~`) is its log, and
+  **one PUBSUB channel per machine** announces every edge as JSON. Only edges
+  escape: a signal that changes nothing writes and publishes nothing.
+- **A TTL on the hash** garbage-collects a subject nobody re-asserts.
+- **A HEARTBEAT hash** (`ts` + fields, optional TTL) says the observer that
+  re-asserts state is alive. Absent means dead, never "age 0".
+
+### Script vs Library
+
+| | `Script(path)` | `Library(name, path)` |
+|---|---|---|
+| ships as | `EVAL` / `EVALSHA` | Redis Functions: `FUNCTION LOAD` / `FCALL` |
+| code lives | on the caller's disk; sha derived from the body every call, `SCRIPT LOAD` on `NOSCRIPT` | in Redis, persisted with the dataset |
+| call | `script(conn, keys, args)` | `lib.call(conn, fn, keys, args, ro=False)`; loads and retries once on "Function not found" |
+| versioning | the sha is the version, an edit is a new sha by construction | `<name>_version` returns the body sha; `ensure()` reloads when it differs |
+| fits | a hot path whose caller always has the body on disk (the ASM hooks) | callers in any language that must not ship a copy (pjangler calls crank with `redis-cli FCALL`) |
+
+Both prepend the prelude by default (`prelude=False` ships the bare body).
+`python3 -m core.statekit load <name> <file.lua>`, run from this directory,
+loads a library by hand. Python helpers: `connect`, `redis_url`,
+`heartbeat`, `heartbeat_age_ms`, `stream_tail`.
+
+### Consumers
+
+1. **ASM**: `core/asm.lua`, run as `asm._SCRIPT = Script(...)`.
+2. **crank**: `~/.agents/tools/jev-clairic/bin/crank.lua`, Library `crank`
+   (`crank_apply`, `crank_resolve`, `crank_scan`).
+
+An outside consumer imports it by path:
+
+```python
+import sys; sys.path.insert(0, "<bloodbank>/services/agent-hooks")
+from core.statekit import Library, connect
+lib = Library("crank", "/path/to/crank.lua")
+with connect() as conn:
+    lib.call(conn, "crank_resolve", [], [payload_json], ro=True)
+```
+
+### The prelude (`sk`)
+
+`sk.now_ms()` server clock; `sk.str(v)` null-safe coercion (a JSON `null`
+decodes to the truthy `cjson.null` and would abort the script); `sk.present(v)`;
+`sk.hgetall(key)`, `sk.hset(key, tbl)`; `sk.emit(stream, maxlen, flat_fields,
+channel, payload_json)` XADD plus PUBLISH, either half skipped when nil;
+`sk.heartbeat(key, ttl_ms, fields)`; `sk.iso(ms)` UTC ISO-8601 (Redis Lua has
+no `os.date`); `sk.json_list(list)` (cjson encodes an empty list as `{}`).
+`asm.lua` keeps its own `s()` because it floors floats and blanks booleans, and
+the transition payload has always carried exactly that.
+
+Tests: `tests/test_statekit.py` (disposable Redis, never 6379).
 
 ## Verify
 

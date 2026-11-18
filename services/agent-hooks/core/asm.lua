@@ -14,6 +14,10 @@
 -- Returns the transition JSON when the derived level CHANGED, else nil. A
 -- no-op edge never escapes, so a side-effect handler cannot fire on a
 -- self-transition.
+--
+-- Loaded by statekit.Script WITH core/statekit_prelude.lua prepended, so the
+-- `sk` table (server clock, HGETALL, stream+publish) is in scope. ASM is
+-- consumer 1 of that kit; see the README's statekit section.
 
 local hkey  = KEYS[1]   -- asm:a:{scope}        HASH   current state
 local tkey  = KEYS[2]   -- asm:t:{scope}        STREAM transition log
@@ -36,7 +40,6 @@ local scope      = ARGV[9]
 local channel = KEYS[7] or
   (string.sub(hkey, 1, #hkey - #'asm:a:' - #scope) .. 'asm:transitions')
 
--- Server clock, so racing hooks from different processes share one timebase.
 -- Signals a SURFACE may send. A surface observes a human; it does not run the
 -- agent, so it may only ever RELAX state. Enforced structurally below rather
 -- than trusted per-branch, so the next surface (deckard, the LED wall, Holocene)
@@ -50,12 +53,10 @@ local SURFACE = { ack = true }
 -- older signature is how the telemetry write once half-applied this script).
 -- The real bound on a gate is /proc liveness, which the sweeper owns.
 local nothing
-local t   = redis.call('TIME')
-local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+-- Server clock, so racing hooks from different processes share one timebase.
+local now = sk.now_ms()
 
-local cur = {}
-local raw = redis.call('HGETALL', hkey)
-for i = 1, #raw, 2 do cur[raw[i]] = raw[i + 1] end
+local cur = sk.hgetall(hkey)
 local function num(k) return tonumber(cur[k]) or 0 end
 
 -- Coerce anything into a value redis.call will accept.
@@ -66,6 +67,11 @@ local function num(k) return tonumber(cur[k]) or 0 end
 -- script with "arguments must be strings or integers", killing the state
 -- write silently and fail-open. One null anywhere in meta would have taken
 -- the entire machine down with no error anyone would ever see.
+--
+-- sk.str (the kit's coercion) is the same idea but NOT the same bytes: it keeps
+-- a float's fraction and maps booleans to '1'/'0', where this floors with %d
+-- and maps booleans to ''. The state hash and the transition payload have
+-- always carried this form, so asm keeps its own copy.
 local function s(v)
   local t = type(v)
   if t == 'string' then return v end
@@ -390,9 +396,8 @@ local js = cjson.encode(tr)
 
 -- MAXLEN *and* EXPIRE. MAXLEN alone leaves an unbounded number of dead-scope
 -- streams; EXPIRE alone leaves one hot scope unbounded.
-redis.call('XADD', tkey, 'MAXLEN', '~', maxlen, '*', 'j', js)
+sk.emit(tkey, maxlen, { 'j', js }, channel, js)
 redis.call('EXPIRE', tkey, ttl)
-redis.call('PUBLISH', channel, js)
 
 -- Reap AFTER the edge has been recorded and published, so `->gone` still
 -- reaches its handlers on the way out.
