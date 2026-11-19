@@ -7,7 +7,7 @@
 _.file = [".env"]
 COMPOSE_PROJECT = "bloodbank"
 COMPOSE_FILE = "compose/docker-compose.yml"
-_.path = [".mise/scripts", "agents/hermes/pm", "agents/hermes/pm/hermes"]
+_.path = [".mise/scripts"]  # PM launcher NOT on PATH (it shadowed the global hermes): use `hermes-pm`
 
 # This block will handle the linking of
 # agent files to the main AGENTS.md file.
