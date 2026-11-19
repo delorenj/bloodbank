@@ -101,6 +101,7 @@ from artifact_lib import (
 )
 from sidecar import SidecarState  # state-db conventions shared for perms
 import resolver
+import vault_moves
 
 sys.path.insert(0, str(_HERE.parents[1] / "agent-hooks"))
 from core.validate import ContractViolation, validate_envelope  # type: ignore[import-not-found] # noqa: E402
@@ -567,6 +568,24 @@ class ProjectorState:
                 ),
             )
 
+    def rewrite_projection_paths(self, moves: dict[str, str]) -> int:
+        """Point projection rows at files an operator moved (vault_path is informational)."""
+        n = 0
+        with self._db:
+            for old, new in moves.items():
+                n += self._db.execute(
+                    "UPDATE projections SET vault_path = ? WHERE vault_path = ?", (new, old)
+                ).rowcount
+        return n
+
+    def record_operator_mapping(self, slug: str, target: str, *, hold_kind: str, outcome: dict[str, Any]) -> None:
+        """An operator's own mapping, recorded like a resolver decision (decider=operator)."""
+        self.record_resolution(
+            {"slug": slug, "hold_kind": hold_kind, "action": "map", "target": target, "confidence": 1.0,
+             "decider": "operator", "fingerprint": "operator", "reason": "operator mapping"},
+            applied=True, outcome=outcome,
+        )
+
     def last_resolution(self, slug: str) -> dict[str, Any] | None:
         cur = self._db.execute(
             "SELECT * FROM resolutions WHERE slug = ? ORDER BY rowid DESC LIMIT 1", (slug,)
@@ -613,6 +632,60 @@ class Projector:
         self.store_root = store_root
         self.tz = tz
         self.mapping_path = mapping_path
+        self._mapping_stamp = self._stamp()
+
+    def _stamp(self) -> tuple[int, int] | None:
+        if self.mapping_path is None:
+            return None
+        try:
+            st = os.stat(self.mapping_path)
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def refresh_mapping(self) -> bool:
+        """Pick up edits to the mapping file (another CLI, a hand edit) without a restart.
+
+        A file that no longer validates is logged and ignored: the last good
+        mapping stays live.
+        """
+        stamp = self._stamp()
+        if stamp is None or stamp == self._mapping_stamp:
+            return False
+        self._mapping_stamp = stamp
+        try:
+            mapping = load_mapping(str(self.mapping_path))
+        except (MappingError, OSError, ValueError) as exc:
+            log.error("mapping file changed but is invalid (%s); keeping the previous mapping", exc)
+            return False
+        if mapping != self.writer.mapping:
+            log.info("mapping file changed: %d -> %d slugs", len(self.writer.mapping), len(mapping))
+            self.writer.mapping = mapping
+        return True
+
+    def move_folder(self, src: str, dst: str, *, rewrite_links: bool = True) -> dict[str, Any]:
+        """Merge vault folder src into dst and carry everything that pointed at src.
+
+        Files move (identical duplicates dropped, conflicts suffixed), every slug
+        mapped to src is remapped to dst, projection rows follow their files,
+        and vault links into the moved files are rewritten.
+        """
+        if self.mapping_path is None:
+            raise MappingError("no mapping file configured; cannot remap")
+        self.refresh_mapping()
+        report = vault_moves.merge_folder(self.writer.root, src, dst)
+        moves = report.pop("moves")
+        remapped = sorted(s for s, t in self.writer.mapping.items() if t == src)
+        for slug in remapped:
+            self.write_mapping(slug, dst)
+            self.state.record_operator_mapping(slug, dst, hold_kind="moved",
+                                               outcome={"moved_from": src})
+        report["remapped"] = remapped
+        report["projection_rows"] = self.state.rewrite_projection_paths(moves)
+        report["relinked_notes"] = vault_moves.rewrite_links(self.writer.root, moves) if rewrite_links else []
+        self._mapping_stamp = self._stamp()
+        log.info("moved %s -> %s: %s", src, dst, {k: v for k, v in report.items() if k != "relinked_notes"})
+        return report
 
     def handle(self, envelope: dict[str, Any]) -> dict[str, Any]:
         """Project one artifact.created event. Returns a status dict.
@@ -621,6 +694,7 @@ class Projector:
         operator mapping) | deadletter (malformed envelope, durable) |
         error (transient: missing blob, store failure — nak/retry).
         """
+        self.refresh_mapping()
         if envelope.get("type") != ARTIFACT_TYPE:
             return {"kind": "ignored", "detail": f"foreign type {envelope.get('type')!r}"}
         event_id = str(envelope.get("id"))
@@ -828,6 +902,7 @@ class Projector:
             finally:
                 tmp.unlink(missing_ok=True)
         self.writer.mapping = validated
+        self._mapping_stamp = self._stamp()
 
     def prepare_decision(self, decision: resolver.Decision) -> dict[str, Any]:
         """mkdir (create) + mapping write. Re-projection is separate (reproject*)."""
@@ -981,6 +1056,7 @@ class Runtime:
         try:
             async with self._resolve_lock:  # FIFO: parents (scheduled first) land first
                 proj = self.projector
+                proj.refresh_mapping()
                 kind = proj.current_hold_kind(slug)
                 if kind is None:
                     counts = await self._reproject(
@@ -1167,10 +1243,22 @@ async def amain(args: argparse.Namespace) -> int:
             # Resolving a hold also projects its preserved envelope (marking it
             # alone left the artifact out of the vault forever — the durable
             # already acked it).
+            hold_kind = projector.state.held_slugs().get(slug, "none")
             projected = list(projector.reproject_iter(slug, {"mapped_to": vault_dir}))
             resolved = sum(1 for r in projected if r["kind"] in ("projected", "duplicate"))
+            state.record_operator_mapping(slug, vault_dir, hold_kind=hold_kind,
+                                          outcome=projector._tally(projected))
             print(json.dumps({"mapping_file": str(projector.mapping_path), "resolved_holds": resolved,
                               "projections": projected}))
+            return 0
+        if getattr(args, "move_folder", None):
+            src, dst = args.move_folder
+            try:
+                report = projector.move_folder(src, dst, rewrite_links=not getattr(args, "no_relink", False))
+            except (vault_moves.MoveError, MappingError) as exc:
+                print(f"move refused: {exc}", file=sys.stderr)
+                return 2
+            print(json.dumps(report, indent=2))
             return 0
         if getattr(args, "resolutions", False):
             print(json.dumps(state.resolutions(), indent=2))
@@ -1267,6 +1355,11 @@ def main() -> int:
     parser.add_argument("--holds", action="store_true", help="list unresolved holds/deadletters")
     parser.add_argument("--all", action="store_true", help="include resolved holds")
     parser.add_argument("--hold-resolve-map", nargs=2, metavar=("SLUG", "VAULT_DIR"))
+    parser.add_argument(
+        "--move-folder", nargs=2, metavar=("SRC", "DST"),
+        help="merge vault folder SRC into DST (vault-relative), remap its slugs, fix links into it",
+    )
+    parser.add_argument("--no-relink", action="store_true", help="with --move-folder: leave note links alone")
     parser.add_argument(
         "--resolve", nargs="*", metavar="SLUG",
         help="ask the resolver (evidence + Jev) where held slugs belong; dry run unless --apply",
