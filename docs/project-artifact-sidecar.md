@@ -219,6 +219,18 @@ no-absolute-path hygiene across all of `data`.
   `main.py --resolve [SLUG..]` (each slug against the current vault);
   `--apply [--force]` applies. `ARTIFACT_VAULT_RESOLVE=auto|advise|off`
   (default `auto`). Several slugs may share one folder.
+- Reorganizing the vault: `main.py --move-folder SRC DST` (vault-relative)
+  merges SRC into DST (creating the DST leaf if needed). Identical files are
+  dropped, different ones get `-<sha8>`, nothing is overwritten. Every slug
+  mapped to SRC is remapped to DST (recorded in `resolutions` as
+  `decider=operator`), projection rows follow their files, and markdown
+  links / path wikilinks into the moved files are rewritten vault-wide
+  (`--no-relink` to skip; links to targets that do not exist are never
+  touched). `--hold-resolve-map` also records an operator row. The running
+  projector reloads the mapping file when it changes (an invalid file is
+  logged and the last good mapping stays live), so neither needs a restart.
+  First use, 2026-11-18: `DeloDocs`->`ObsOps`, `DeLoNET Company` +
+  `delo.sh`->`DeLoNET`, `HeyMa Satellite` + `TalkyTonny`->`tonnybox`.
 - VaultWriter walks project/date components via directory fds with
   O_NOFOLLOW (planted symlinks refused, not followed); files land via
   O_EXCL tmp + fsync + atomic no-clobber hard link; directories fsynced. A
@@ -288,6 +300,7 @@ services/artifact-sidecar/test_sidecar.py           163 adversarial + contract +
 services/artifact-sidecar/test_broker.py            isolated-broker runtime tests (docker nats)
 services/artifact-vault-projector/main.py           projector runtime (explicit mapping, holds, resolver runtime)
 services/artifact-vault-projector/resolver.py       held-slug resolver (evidence + Jev policy)
+services/artifact-vault-projector/vault_moves.py    --move-folder: merge folders, rewrite links
 ops/smoketest/smoketest-project-artifact-contracts.py  mise task (chained)
 ops/fixtures/project-contracts.v1.json              artifact fixture
 ops/systemd/artifact-sidecar/*.service              template (not installed)
