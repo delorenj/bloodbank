@@ -40,6 +40,16 @@ services/hermes-gateway/hermes-plugin/install.sh   # initial install or changed 
 hermes-gateway-restart --strict-idle --max-wait 15 --reason "Bloodbank adapter update"
 ```
 
+The installer links the plugin into the launch home **and into every profile
+whose `config.yaml` enables `bloodbank-platform`**. A multiplexed gateway gives
+each profile its own plugin manager and fires a turn's hooks on the routed
+profile's manager, so the final-answer observer has to load there too. Without
+the profile link every command for that profile is rejected with "resolved
+profile lacks the final-answer observer" (BB-43: on 2026-11-19 the first boot
+that ran this check rejected all 23 queued commands). After creating a new
+profile, run `install.sh --links-only` and restart; `install.sh --check` lists
+missing links without changing anything.
+
 Verify: `~/.hermes/gateway_state.json` `.platforms.bloodbank.state == "connected"`
 and `curl -s 'http://127.0.0.1:8222/jsz?consumers=true'` shows the
 `bloodbank-hermes-gateway` consumer with activity (`num_waiting >= 1` when idle).

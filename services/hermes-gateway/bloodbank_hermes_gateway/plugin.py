@@ -211,7 +211,14 @@ def prepare_capture(handler: Any, event: Any) -> None:
             ("on_session_end", on_session_end),
         ):
             if callback not in manager.iter_hook_callbacks(name):
-                raise CaptureUnavailable("resolved profile lacks the final-answer observer")
+                # Each multiplexed profile has its own plugin manager and a turn
+                # fires hooks on it, so the plugin must be linked into the
+                # profile's own plugins dir, not only the launch home (BB-43).
+                raise CaptureUnavailable(
+                    "resolved profile lacks the final-answer observer: "
+                    f"{home / 'plugins' / 'bloodbank-platform'} is not loaded; "
+                    "run hermes-plugin/install.sh --links-only, then restart the gateway"
+                )
 
 
 def register_hooks(ctx: Any) -> None:
