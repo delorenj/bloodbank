@@ -56,6 +56,9 @@ from .plugin import CommandBinding, command_binding, prepare_capture, register_h
 from .refusals import NOT_RUN, HermesNotice, NoticeClassifier, is_interrupt_text
 
 logger = logging.getLogger(__name__)
+
+# A turn that waited this long for a slot is logged (see _execution_slot).
+SLOT_WAIT_LOG_SECONDS = 60.0
 ROUTE_REJECTION_REASON = "route_policy_invalid_before_dispatch"
 ROUTE_REJECTION_MESSAGE = "Hermes route became ineligible before dispatch"
 # Failed-fact reasons when Hermes did not run a command as asked (see refusals.py):
@@ -264,6 +267,11 @@ class LaneRuntime:
     inflight: set[asyncio.Task[None]] = field(default_factory=set)
     queued: set[asyncio.Task[None]] = field(default_factory=set)
     execution_slots: asyncio.Semaphore | None = None
+    # Per-target-profile turn cap inside the lane (0 = off). One profile's long
+    # turns may hold at most this many of the lane's slots, so an unrelated
+    # project's backlog can never queue another profile's command behind it.
+    max_inflight_per_profile: int = 0
+    profile_slots: dict[str, asyncio.Semaphore] = field(default_factory=dict)
     # Handler tasks of detached turns: they hold no slot, but their messages
     # are still un-acked (the consumer's max_ack_pending counts both sets).
     detached: set[asyncio.Task[None]] = field(default_factory=set)
@@ -393,6 +401,9 @@ class BloodbankAdapter(BasePlatformAdapter):
             max_inflight=_bounded_int(extra, "max_inflight", 4, 1, 64),
             max_deliver=_bounded_int(extra, "max_deliver", 5, 1, 100),
             queued_capacity=_bounded_int(extra, "queued_capacity", 0, 0, 256),
+            max_inflight_per_profile=_bounded_int(
+                extra, "max_inflight_per_profile", 0, 0, 64
+            ),
             ack_wait=ack_wait,
             ack_progress=ack_progress,
             nak_delay=_bounded_float(extra, "nak_delay_seconds", 5.0, 0.0, 300.0),
@@ -673,10 +684,11 @@ class BloodbankAdapter(BasePlatformAdapter):
             )
             logger.info(
                 "Bloodbank gateway connected lane=%s durable=%s max_inflight=%d "
-                "max_detached=%d",
+                "max_inflight_per_profile=%d max_detached=%d",
                 lane.name,
                 lane.durable,
                 lane.max_inflight,
+                lane.max_inflight_per_profile,
                 lane.max_detached,
             )
         return True
@@ -1017,12 +1029,40 @@ class BloodbankAdapter(BasePlatformAdapter):
             )
 
     @asynccontextmanager
-    async def _execution_slot(self, lane: LaneRuntime):
-        """A hot thread keeps its delivery, but no turn slot while it waits."""
+    async def _execution_slot(self, lane: LaneRuntime, profile: str | None = None):
+        """A hot thread keeps its delivery, but no turn slot while it waits.
+
+        With max_inflight_per_profile, the profile's own slot is taken first: a
+        profile at its cap waits without holding a lane slot, so the lane's
+        remaining slots stay free for every other profile."""
         if lane.execution_slots is None:
             yield
             return
-        await lane.execution_slots.acquire()
+        own = None
+        waited_from = time.monotonic()
+        if lane.max_inflight_per_profile and profile:
+            own = lane.profile_slots.setdefault(
+                profile, asyncio.Semaphore(lane.max_inflight_per_profile)
+            )
+            await own.acquire()
+        try:
+            await lane.execution_slots.acquire()
+        except BaseException:
+            if own is not None:
+                own.release()
+            raise
+        waited = time.monotonic() - waited_from
+        if waited >= SLOT_WAIT_LOG_SECONDS:
+            # A command that sat fetched-but-unstarted is invisible to the
+            # broker (num_pending stays 0); this line is the only record of it.
+            logger.warning(
+                "Bloodbank slot wait lane=%s profile=%s waited=%.0fs inflight=%d queued=%d",
+                lane.name,
+                profile,
+                waited,
+                len(lane.inflight),
+                len(lane.queued),
+            )
         task = asyncio.current_task()
         lane.queued.discard(task)
         lane.inflight.add(task)
@@ -1031,6 +1071,8 @@ class BloodbankAdapter(BasePlatformAdapter):
         finally:
             lane.inflight.discard(task)
             lane.execution_slots.release()
+            if own is not None:
+                own.release()
             lane.slot_freed.set()
 
     async def _handle_broker_message(
@@ -1190,7 +1232,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                 self._conversation_lock_refs.get(lock_key, 0) + 1
             )
             try:
-                async with lock, self._execution_slot(lane):
+                async with lock, self._execution_slot(lane, invocation.profile):
                     # A drain that began after this command was fetched (or while
                     # it waited for a same-thread predecessor): publish nothing and
                     # keep the journal row dispatchable, so the next process runs it.

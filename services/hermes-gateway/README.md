@@ -70,9 +70,12 @@ gateway:
         execution_state_file: ~/.hermes/bloodbank-hermes-gateway-state.sqlite3
         allow_direct_profile_targets: false
         durable_name: bloodbank-hermes-gateway
-        max_inflight: 4
-        # Optional batch lookahead: leave 4 turn slots bounded while retaining
-        # up to 64 extra deliveries behind busy conversation threads.
+        max_inflight: 20
+        # One profile's turns may hold at most 3 of the 20 slots (0 = off), so
+        # one project's long delegate turns never queue another project's work.
+        max_inflight_per_profile: 3
+        # Optional batch lookahead: retain up to 64 extra deliveries behind busy
+        # conversation threads and busy profiles.
         queued_capacity: 64
         ack_wait_seconds: 90
         ack_progress_seconds: 20
@@ -172,11 +175,20 @@ long as they fall within the bounded lookahead. A larger uninterrupted hot-threa
 burst than the lookahead can still block an independent command beyond it; this
 is not an unbounded fairness guarantee. On a crash, unacked deliveries replay
 through the journal; completion still owns publication followed by the ack.
+`max_inflight_per_profile` (0 = off, 1–64; needs `queued_capacity`) caps how
+many of the lane's slots one target profile may hold. A command whose profile is
+at its cap waits for that profile's own slot without taking a lane slot, so the
+remaining slots stay free for every other profile. Without it, four long
+delegate turns from unrelated projects held all four slots on 2026-11-19 and
+every other PM's command sat fetched-but-unstarted for over an hour (BB-43).
+Such a wait is invisible to the broker (`num_pending` stays 0 because the gateway
+already holds the delivery), so any command that waited 60 s or more for a slot
+logs `Bloodbank slot wait lane=... profile=... waited=...s` when it starts.
 The adapter updates an existing durable's `max_ack_pending` in place on connect;
 never delete the durable to apply lookahead, because doing so discards its
 acknowledgement floor. The host gateway reads the canonical
 `~/.hermes/config.yaml` at `gateway.platforms.bloodbank.extra`; set
-`max_inflight: 4` and `queued_capacity: 64` there. Named profiles' generated
+`max_inflight: 20`, `max_inflight_per_profile: 3` and `queued_capacity: 64` there. Named profiles' generated
 configs are not the host transport source. The installed plugin is symlinked
 to this Bloodbank source, so with unchanged plugin dependencies there is no
 need to rerun `hermes pm install`. Source and config edits alone do not change

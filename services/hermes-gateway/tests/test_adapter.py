@@ -4438,3 +4438,60 @@ async def test_not_run_then_last_delivery_closes_the_queued_fact(tmp_path, valid
     await adapter._handle_broker_message(last)
     assert terminal_types(adapter, valid_command) == ["bloodbank.agent.invocation.failed"]
     assert len({e["id"] for e in _events_of(adapter, valid_command, QUEUED)}) == 1
+
+
+@pytest.mark.asyncio
+async def test_per_profile_cap_keeps_busy_profile_from_holding_every_slot(tmp_path, valid_command):
+    """Three long turns for one profile must not queue another profile's command."""
+    base = make_adapter(tmp_path, target_profiles={
+        "bloodbank-pm": "bloodbank-pm", "other-pm": "other-pm",
+    })
+    base.config.extra.update(max_inflight=3, queued_capacity=6, max_inflight_per_profile=2)
+    adapter = BloodbankAdapter(base.config)
+    adapter.profile_resolver.profile_exists = lambda _profile: True
+    adapter._js = FakeJetStream()
+    adapter.ack_progress_seconds = 0.01
+    assert adapter._batch.max_inflight_per_profile == 2
+
+    def command_for(profile, thread):
+        command = json.loads(json.dumps(valid_command))
+        command["command_id"] = command["id"] = command["idempotency_key"] = str(uuid.uuid4())
+        command["data"].update(target_agent_id=profile, thread_id=thread)
+        return command
+
+    busy = [command_for("bloodbank-pm", f"long-{n}") for n in range(3)]
+    other = command_for("other-pm", "independent")
+    messages = [FakeMessage(command) for command in (*busy, other)]
+    release = asyncio.Event()
+    started = []
+    other_ran = asyncio.Event()
+
+    async def handler(event):
+        started.append(event.raw_message["command_id"])
+        if event.raw_message["command_id"] == other["command_id"]:
+            other_ran.set()
+            return "done"
+        await release.wait()
+        return "done"
+
+    class Subscription:
+        async def fetch(self, capacity, **_kwargs):
+            result, messages[:] = messages[:capacity], messages[capacity:]
+            return result
+
+    adapter._batch.subscription = Subscription()
+    adapter.set_message_handler(handler)
+    await adapter._consume_once(adapter._batch)
+    try:
+        # Lane has 3 slots; the busy profile may hold only 2, so the third
+        # slot is free for other-pm even though its command arrived last.
+        await asyncio.wait_for(other_ran.wait(), 1)
+        busy_started = [c for c in started if c != other["command_id"]]
+        assert len(busy_started) == 2
+    finally:
+        release.set()
+        await asyncio.wait_for(
+            asyncio.gather(*adapter._batch.queued, *adapter._batch.inflight), 2
+        )
+    assert len(started) == 4
+    assert adapter._batch.profile_slots["bloodbank-pm"]._value == 2
