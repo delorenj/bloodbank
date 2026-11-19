@@ -153,6 +153,9 @@ def rewrite_links(root: Path, moves: dict[str, str]) -> list[str]:
             new_t = moves.get(old_t, old_t)
             if new_t == old_t and not (note_moved and relative):
                 return m.group(0)
+            base_old, base_new = (old_dir, new_dir) if relative else (str(root), str(root))
+            if os.path.relpath(old_t, base_old) == os.path.relpath(new_t, base_new):
+                return m.group(0)  # same relative relationship: keep the author's spelling ("./x.md")
             new_path = os.path.relpath(new_t, new_dir) if relative else os.path.relpath(new_t, root)
             if not bracketed and ("%" in path or " " in new_path):
                 new_path = quote(new_path, safe="/._-~()!,;=+&'")

@@ -70,7 +70,7 @@ class MergeTests(unittest.TestCase):
     def test_links_follow_moved_files(self):
         self.write("Projects/TalkyTonny/docs/arch.md", "# arch")
         self.write("Projects/TalkyTonny/docs/index.md",
-                   "[arch](arch.md) [up](../../Index.md) [repo](../../../TalkyTonny/trunk-main/x.md)")
+                   "[arch](./arch.md) [up](../../Index.md) [repo](../../../TalkyTonny/trunk-main/x.md)")
         self.write("Index.md", "[[Projects/TalkyTonny/docs/arch]] [[arch]] "
                                "[a](Projects/TalkyTonny/docs/arch.md#top) [web](https://delo.sh/x)")
         self.write("Projects/Other/n.md", "[a](../TalkyTonny/docs/arch.md) ![img](<../TalkyTonny/docs/arch.md>)")
@@ -83,10 +83,10 @@ class MergeTests(unittest.TestCase):
                          "[a](Projects/tonnybox/docs/arch.md#top) [web](https://delo.sh/x)")
         self.assertEqual((self.root / "Projects/Other/n.md").read_text(),
                          "[a](../tonnybox/docs/arch.md) ![img](<../tonnybox/docs/arch.md>)")
-        # Same depth, same siblings: the moved note's own links are unchanged, and
-        # the link to a path outside the vault is never touched.
-        self.assertIn("[repo](../../../TalkyTonny/trunk-main/x.md)",
-                      (self.root / "Projects/tonnybox/docs/index.md").read_text())
+        # Same depth, same siblings: the moved note is not rewritten at all (its
+        # "./arch.md" spelling survives), and the out-of-vault link is untouched.
+        self.assertEqual((self.root / "Projects/tonnybox/docs/index.md").read_text(),
+                         "[arch](./arch.md) [up](../../Index.md) [repo](../../../TalkyTonny/trunk-main/x.md)")
 
     def test_moved_note_relative_links_are_rebased(self):
         self.write("Projects/HeyMa Satellite/2026-10-18/r.md", "[top](../../HeyMa/Plan.md)")
