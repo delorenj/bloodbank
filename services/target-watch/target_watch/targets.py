@@ -12,6 +12,8 @@
 
     [target.topic]               # optional: watch a KIND of email from any sender, not a person
     subject_any = ["past due", "payment failed"]   # case-insensitive phrases; any one in the subject matches
+    except_domains = ["example.org"]  # optional: senders at these domains (or their subdomains) never match
+    from_domains = ["example.com"]    # optional: ONLY senders at these domains (or their subdomains) match
 
     [sink]
     kind = "plane"               # or "notify_only"
@@ -60,7 +62,8 @@ SINK_KINDS = {"plane", "notify_only"}
 # "Create Ticket" button the ntfy push carries.
 TICKET_MODES = ("auto", "button")
 HANDLE_KEYS = ("email", "e164", "label", "platform")
-TOPIC_KEYS = ("subject_any",)
+TOPIC_KEYS = ("subject_any", "from_domains", "except_domains")
+DOMAIN = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _NON_WORD = re.compile(r"[^\w]+")
 
 
@@ -79,6 +82,21 @@ def fold_words(text: str) -> str:
 # A reply or forward quotes the alert's own subject; it is a conversation about the news, not news. Our own
 # email alerts lead with a siren, so a copy of one bounced back is never a fresh alert either.
 _NOT_NEWS = re.compile(r"^\s*(?:(?:re|fw|fwd|aw|sv)\s*(?:\[\d+\])?\s*:|\U0001f6a8)", re.IGNORECASE)
+
+
+def domain_in(domain: str | None, fence) -> bool:
+    """True when the domain is one of the fence's domains or a subdomain of one."""
+    return bool(domain) and any(domain == d or domain.endswith("." + d) for d in fence)
+
+
+def topic_admits(target: "Target", sender_domains) -> bool:
+    """Whether the topic target's sender-domain fences let this sender through."""
+    sender_domains = [d for d in sender_domains if d]
+    if target.except_domains and any(domain_in(d, target.except_domains) for d in sender_domains):
+        return False
+    if target.from_domains:
+        return any(domain_in(d, target.from_domains) for d in sender_domains)
+    return True
 
 
 def subject_phrase(subject: str | None, phrases) -> str | None:
@@ -121,6 +139,9 @@ class Target:
     # A topic target matches an email from ANY sender whose subject carries one of these phrases
     # (fold_words form, in file order). Empty for a person target.
     subject_any: tuple[str, ...] = ()
+    # Sender-domain fences on a topic target: a domain also covers its subdomains. Empty = no fence.
+    from_domains: tuple[str, ...] = ()
+    except_domains: tuple[str, ...] = ()
 
     def handles(self, kind: str) -> frozenset[str]:
         return {
@@ -232,6 +253,17 @@ def parse_target(document: dict, path: Path) -> Target:
             raise TargetError("target.topic.subject_any entries must be non-empty phrases without double quotes")
         if phrase not in subject_any:
             subject_any.append(phrase)
+    domains: dict[str, list[str]] = {}
+    for key in ("from_domains", "except_domains"):
+        domains[key] = []
+        for raw in _strings(raw_topic.get(key), f"target.topic.{key}"):
+            domain = raw.strip().lower().lstrip("@").rstrip(".")
+            if not DOMAIN.match(domain):
+                raise TargetError(f"target.topic.{key} entries must be plain domains like example.com")
+            if domain not in domains[key]:
+                domains[key].append(domain)
+        if domains[key] and not subject_any:
+            raise TargetError(f"target.topic.{key} needs subject_any: it fences a topic, it is not a target on its own")
     if not any(handles.values()) and not subject_any:
         raise TargetError("a target needs at least one handle or a [target.topic] subject_any phrase")
 
@@ -284,6 +316,8 @@ def parse_target(document: dict, path: Path) -> Target:
         label=frozenset(handles["label"]),
         platform=frozenset(handles["platform"]),
         subject_any=tuple(subject_any),
+        from_domains=tuple(domains["from_domains"]),
+        except_domains=tuple(domains["except_domains"]),
         sink=Sink(
             kind=kind,
             repo=repo,

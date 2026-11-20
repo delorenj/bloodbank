@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from . import envelope as env
 from .handles import KIND_PRIORITY, label_candidates, norm_e164, norm_email, norm_platform
 from .paths import get_path
-from .targets import Target, subject_phrase
+from .targets import Target, subject_phrase, topic_admits
 from .xsender import XSender
 
 TEXT_LIMIT = 4000
@@ -200,7 +200,8 @@ def match_extracted(ex: Extracted, targets: list[Target]) -> list[Detection]:
             # A topic target: an email from anyone whose subject carries one of its phrases.
             subject = email_subject(ex) if target.subject_any and ex.provider == "email" else None
             phrase = subject_phrase(subject, target.subject_any)
-            if phrase:
+            senders = [value.rsplit("@", 1)[-1] for kind, value, _ in found if kind == "email"]
+            if phrase and topic_admits(target, senders):
                 topical = ex if ex.subject else replace(ex, subject=subject)
                 detections.append(Detection(target=target, extracted=topical, matched_kind="subject",
                                             matched_value=phrase, group_label=None))

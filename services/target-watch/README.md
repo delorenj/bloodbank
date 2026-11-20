@@ -468,6 +468,11 @@ notify = ["telegram:<operator chat id>"]
   gets its own detection with `matched_on = {"kind": "subject", "value": "<phrase>"}`.
 - The notification line leads with the sender, since the target names a kind of mail:
   `Vendor billing via email: Cloudflare: [Action required] Payment failed ... -> notified`.
+- Sender-domain fences split one topic between audiences. `except_domains = ["personal.example"]`
+  keeps those senders out, and `from_domains = [...]` admits only them. A domain also covers its
+  subdomains (`mail.personal.example`), but a suffix is not a subdomain (`notpersonal.example`).
+  The usual pair: a business target that alerts the team, with personal vendors in `except_domains`,
+  and a personal target that lists the same domains in `from_domains` and notifies only you.
 
 The self-test target at `targets/selftest.toml` (`watch-selftest@delo.sh` /
 "Watch Selftest", `notify_only`) exists for live proofs. It notifies the

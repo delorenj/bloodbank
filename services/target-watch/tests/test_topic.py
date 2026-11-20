@@ -161,3 +161,46 @@ def test_email_channel_mails_the_whole_message(tmp_path, index, state, fake_js):
     assert mail[mail.index("--to") + 1] == "partner@example.com"
     assert "Your card was declined. Amount due: $12.00" in mail[mail.index("--body") + 1]
     assert "From: Cloudflare <noreply@notify.vendor.example>" in mail[mail.index("--body") + 1]
+
+
+PERSONAL = """
+[target]
+id = "personal-billing"
+display_name = "Personal money alert"
+
+[target.topic]
+subject_any = ["past due"]
+from_domains = ["Personal.example"]
+
+[sink]
+kind = "notify_only"
+notify = ["telegram:1000"]
+"""
+
+
+def test_sender_domain_fences_split_one_topic_between_two_audiences(tmp_path, index):
+    business = TOPIC.replace('[sink]', 'except_domains = ["@personal.example."]\n\n[sink]')
+    write_target(tmp_path, "vendor-billing", business)
+    write_target(tmp_path, "personal-billing", PERSONAL)
+    registry = TargetRegistry([str(tmp_path / "*.toml")])
+
+    def who(sender):
+        envelope = email_envelope(gog_message(sender=sender, subject="Your account is past due"), "operator@example.net")
+        return sorted(d.target.id for d in match(envelope, index.get(envelope["type"]), registry.current()))
+
+    assert who("billing@personal.example") == ["personal-billing"]
+    assert who("Billing <noreply@mail.personal.example>") == ["personal-billing"]  # subdomains are inside the fence
+    assert who("billing@vendor.example") == ["vendor-billing"]
+    assert who("billing@notpersonal.example") == ["vendor-billing"]  # a suffix is not a subdomain
+
+
+@pytest.mark.parametrize("topic, error", [
+    ('subject_any = ["x"]\nfrom_domains = ["not a domain"]', "plain domains"),
+    ('except_domains = ["vendor.example"]', "needs subject_any"),
+])
+def test_bad_domain_fences_are_refused(tmp_path, topic, error):
+    import tomllib
+
+    body = f'[target]\nid = "x"\ndisplay_name = "X"\n[target.handles]\nemail = ["a@b.example"]\n[target.topic]\n{topic}\n[sink]\nkind = "notify_only"\n'
+    with pytest.raises(TargetError, match=error):
+        parse_target(tomllib.loads(body), tmp_path / "t.toml")
