@@ -795,6 +795,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
+    if "--usage-spec" in argv and "--" not in argv[:argv.index("--usage-spec")]:
+        sys.stdout.write(Path(__file__).with_name("bb.usage.kdl").read_text())
+        return 0
+
     # Passthrough, before argparse can claim any of it. See build_parser().
     if argv and argv[0] == "emit":
         return cmd_emit(argparse.Namespace(emit_args=argv[1:]))

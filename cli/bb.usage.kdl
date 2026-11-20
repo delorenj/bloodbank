@@ -1,0 +1,30 @@
+name bb
+bin bb
+about "Bloodbank operator CLI"
+cmd call help="Wait for a correlated controller receipt; envelope from stdin" {
+    flag --timeout help="Timeout in seconds" {
+        arg <SECONDS>
+    }
+}
+cmd doctor help="Static local scaffold check"
+cmd trace help="Walk an event chain by correlation/causation IDs"
+cmd replay help="Replay a historical event"
+cmd contract help="Print the legal naming vocabulary" {
+    flag --json help="Output vocabulary as JSON"
+}
+cmd emit help="Publish an event or command via bb-emit; --check dry-runs"
+cmd repo-health help="Git, issue, PR and check snapshot" {
+    flag --limit help="Max open issues and PRs" {
+        arg <COUNT>
+    }
+    flag --json help="Output structured JSON"
+    flag --out help="Snapshot output path" {
+        arg <PATH>
+    }
+    flag --require-clean-worktree help="Require clean worktree"
+}
+cmd verify-envelope help="Check CloudEvents envelope against naming contract" {
+    flag --file help="Envelope JSON path; default stdin" {
+        arg <PATH>
+    }
+}
