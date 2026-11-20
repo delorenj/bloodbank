@@ -65,3 +65,21 @@ runtime:
 # Provenance — managed by the template, do not hand-edit.
 provisioned_at: "2026-05-16T04:24:39Z"
 provisioned_by: hermes-agent-template
+company_identity:
+  version: 1
+  subject: "235d09de-66a7-4322-9233-8197e1034fa2"
+  handle: "bloodbank-pm"
+  email: "bloodbank-pm@agents.delo.sh"
+  status: "active"
+  enrolled_at: "2026-11-20T02:24:10.502Z"
+  bindings:
+    cloudflare_access:
+      principal: "230615386a42c0fc444ee6c1e01cfa3d.access"
+      instance: "https://delonet.cloudflareaccess.com"
+      credential_ref: "op://DeLoSecrets/77jx423xrdbln3qu2atm4ozmqa/4em3dgg3zs45siqlvkorbdvfxi"
+    plane:
+      principal: "57930c3d-6c80-417b-b17a-63946ed31333"
+      instance: "https://plane.delo.sh/33god"
+      credential_ref: "op://DeLoSecrets/fl7fygeam24gsevfigeczfnejy/credential"
+      attribution_mode: "native"
+      native_actor_id: "57930c3d-6c80-417b-b17a-63946ed31333"
