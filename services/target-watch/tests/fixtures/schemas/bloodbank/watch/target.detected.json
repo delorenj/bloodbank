@@ -73,7 +73,7 @@
         "matched_on": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Which of the target's handles matched the sender.",
+          "description": "Which of the target's handles matched the sender, or which topic phrase matched the subject.",
           "properties": {
             "kind": {
               "type": "string",
@@ -81,14 +81,15 @@
                 "email",
                 "e164",
                 "label",
-                "platform_user"
+                "platform_user",
+                "subject"
               ],
-              "description": "Handle kind, the same vocabulary as x-sender.handle_kinds."
+              "description": "Handle kind, the same vocabulary as x-sender.handle_kinds; or 'subject' when a topic target matched a phrase in an email's subject line (value is that phrase), not the sender."
             },
             "value": {
               "type": "string",
               "minLength": 1,
-              "description": "The normalised handle that matched (lowercased email, E.164, casefolded label, or platform:id)."
+              "description": "The normalised handle that matched (lowercased email, E.164, casefolded label, or platform:id), or the topic phrase (casefolded words)."
             }
           },
           "required": [

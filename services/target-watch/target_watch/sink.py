@@ -408,12 +408,20 @@ def conversation_key(data: dict) -> str:
 
 
 def headline(data: dict, limit: int = 60) -> str:
-    """Subject, else the start of the text, else what kind of event it was."""
+    """Subject, else the start of the text, else what kind of event it was.
+
+    A topic match names a kind of mail, not a person, so the sender leads ("Cloudflare: Payment failed ...").
+    """
     content = data["content"]
+    prefix = ""
+    if (data.get("matched_on") or {}).get("kind") == "subject":
+        sender = data.get("sender") or {}
+        who = sender.get("display_name") or sender.get("handle")
+        prefix = f"{who}: " if who else ""
     if content.get("subject"):
-        return snippet(content["subject"], limit)
+        return snippet(prefix + content["subject"], limit)
     if content.get("text"):
-        return snippet(content["text"], limit)
+        return snippet(prefix + content["text"], limit)
     return f"no text ({data['source_type'].split('.', 2)[2]})"
 
 

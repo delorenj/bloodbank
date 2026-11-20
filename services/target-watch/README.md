@@ -429,6 +429,36 @@ earshot_content = false                  # true speaks the message itself; the e
 
 Then run `target-watch check`. It must say `ok`.
 
+### Topic targets: a kind of email, from anyone
+
+Some alerts are about *what* arrived, not who sent it: a vendor's "payment failed" or "past due"
+notice comes from a different no-reply address at every vendor, and the next vendor is one you have
+not met yet. A `[target.topic]` table matches an email from **any** sender whose subject line carries
+one of its phrases. Handles become optional; a target may have both.
+
+```toml
+[target]
+id = "vendor-billing"
+display_name = "Vendor billing"
+
+[target.topic]
+subject_any = ["past due", "payment failed", "not received payment"]   # case-insensitive, whole words
+
+[sink]
+kind = "notify_only"
+notify = ["telegram:<operator chat id>"]
+```
+
+- Phrases are compared as words: casefolded, punctuation read as spaces, so `PAST-DUE` matches
+  `past due` and `pastdue` does not. No double quotes (each phrase is quoted into a Gmail search).
+- Gmail ingress adds one search, `subject:("<phrase>" OR ...) newer_than:2d -in:sent -in:drafts
+  -in:spam -in:trash -category:promotions`, and re-checks every hit's subject locally before publishing.
+  Promotions are left out on purpose: a stranger chose those words.
+- Topics match `email` only. A person match still wins for that person's own target; the topic target
+  gets its own detection with `matched_on = {"kind": "subject", "value": "<phrase>"}`.
+- The notification line leads with the sender, since the target names a kind of mail:
+  `Vendor billing via email: Cloudflare: [Action required] Payment failed ... -> notified`.
+
 The self-test target at `targets/selftest.toml` (`watch-selftest@delo.sh` /
 "Watch Selftest", `notify_only`) exists for live proofs. It notifies the
 operator and files no ticket.

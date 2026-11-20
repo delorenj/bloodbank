@@ -3,7 +3,8 @@
 One run (Candybar fires it every five minutes): search the operator's Gmail for
 mail from any watched target's email address, publish each message not seen
 before as bloodbank.messaging.email.received, exactly per that schema. Only
-target senders are read, on purpose ("I don't care about all email").
+target senders are read, on purpose ("I don't care about all email"), plus mail
+from anyone whose subject carries a topic target's phrase (`[target.topic]`).
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from html.parser import HTMLParser
 from . import envelope as env
 from .handles import norm_email
 from .log import log
-from .targets import Target
+from .targets import Target, subject_phrase
 
 DEFAULT_ACCOUNT = "jaradd@gmail.com"
 BODY_LIMIT = 8000
@@ -32,8 +33,22 @@ def build_query(emails) -> str | None:
     return f"from:({' OR '.join(addresses)}) newer_than:2d in:anywhere -in:sent -in:drafts"
 
 
+def build_topic_query(phrases) -> str | None:
+    """Mail from anyone whose subject carries a topic phrase. Promotions, spam and trash stay out:
+    a topic is matched on words a stranger chose, so a marketing blast must not page the operator."""
+    unique = sorted({p for p in phrases if p})
+    if not unique:
+        return None
+    quoted = " OR ".join(f'"{p}"' for p in unique)
+    return f"subject:({quoted}) newer_than:2d -in:sent -in:drafts -in:spam -in:trash -category:promotions"
+
+
 def target_emails(targets: list[Target]) -> set[str]:
     return {address for target in targets for address in target.email}
+
+
+def topic_phrases(targets: list[Target]) -> set[str]:
+    return {phrase for target in targets for phrase in target.subject_any}
 
 
 class _Text(HTMLParser):
@@ -144,11 +159,16 @@ async def poll(targets: list[Target], gog: Gog, state, publisher, *, validate=en
     """One pass. Returns counts; 'failed' > 0 makes the run exit non-zero."""
     summary = {"query_matches": 0, "new": 0, "published": 0, "skipped": 0, "failed": 0}
     emails = target_emails(targets)
-    query = build_query(emails)
-    if query is None:
-        summary["note"] = "no target has an email handle"
+    phrases = topic_phrases(targets)
+    queries = [q for q in (build_query(emails), build_topic_query(phrases)) if q]
+    if not queries:
+        summary["note"] = "no target has an email handle or a topic"
         return summary
-    for hit in gog.search(query):
+    hits: dict[str, dict] = {}
+    for query in queries:
+        for hit in gog.search(query):
+            hits.setdefault(hit["id"], hit)
+    for hit in hits.values():
         summary["query_matches"] += 1
         message_id = hit["id"]
         if state.gmail_seen(message_id):
@@ -161,8 +181,10 @@ async def poll(targets: list[Target], gog: Gog, state, publisher, *, validate=en
             summary["failed"] += 1
             log("gmail_fetch_failed", message_id=message_id, error=str(exc)[:200])
             continue
-        if envelope["data"]["sender"]["handle"] not in emails:
-            # Gmail's from: is looser than an address match; never publish a non-target's mail.
+        subject = (message.get("headers") or {}).get("subject") or (message.get("headers") or {}).get("Subject")
+        on_topic = subject_phrase(subject if isinstance(subject, str) else None, phrases) is not None
+        if envelope["data"]["sender"]["handle"] not in emails and not on_topic:
+            # Gmail's from: and subject: are looser than an exact match; never publish mail no target asked for.
             summary["skipped"] += 1
             if not dry_run:
                 state.mark_gmail(message_id, None, "not_a_target")

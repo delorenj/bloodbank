@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from . import envelope as env
 from .handles import KIND_PRIORITY, label_candidates, norm_e164, norm_email, norm_platform
 from .paths import get_path
-from .targets import Target
+from .targets import Target, subject_phrase
 from .xsender import XSender
 
 TEXT_LIMIT = 4000
@@ -181,12 +181,29 @@ def candidates(ex: Extracted) -> list[tuple[str, str, str | None]]:
     return out
 
 
+def email_subject(ex: Extracted) -> str | None:
+    """The subject line: the schema's subject, else (email only) the first line gmail-poll put there."""
+    if ex.subject:
+        return ex.subject
+    if ex.provider == "email" and ex.text:
+        first = ex.text.split("\n", 1)[0].strip()
+        return first or None
+    return None
+
+
 def match_extracted(ex: Extracted, targets: list[Target]) -> list[Detection]:
     found = candidates(ex)
     detections = []
     for target in targets:
         hits = [(kind, value, group) for kind, value, group in found if value in target.handles(kind)]
         if not hits:
+            # A topic target: an email from anyone whose subject carries one of its phrases.
+            subject = email_subject(ex) if target.subject_any and ex.provider == "email" else None
+            phrase = subject_phrase(subject, target.subject_any)
+            if phrase:
+                topical = ex if ex.subject else replace(ex, subject=subject)
+                detections.append(Detection(target=target, extracted=topical, matched_kind="subject",
+                                            matched_value=phrase, group_label=None))
             continue
         hits.sort(key=lambda h: KIND_PRIORITY[h[0]])
         kind, value, _ = hits[0]

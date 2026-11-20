@@ -10,6 +10,9 @@
     label = ["Jane Doe"]
     platform = ["slack:U0123ABCD", "telegram:123456789"]
 
+    [target.topic]               # optional: watch a KIND of email from any sender, not a person
+    subject_any = ["past due", "payment failed"]   # case-insensitive phrases; any one in the subject matches
+
     [sink]
     kind = "plane"               # or "notify_only"
     repo = "~/code/some-project" # px binds the board from this repo's .project.json
@@ -56,10 +59,28 @@ SINK_KINDS = {"plane", "notify_only"}
 # "Create Ticket" button the ntfy push carries.
 TICKET_MODES = ("auto", "button")
 HANDLE_KEYS = ("email", "e164", "label", "platform")
+TOPIC_KEYS = ("subject_any",)
+_NON_WORD = re.compile(r"[^\w]+")
 
 
 class TargetError(ValueError):
     pass
+
+
+def fold_words(text: str) -> str:
+    """Casefold, punctuation to spaces, whitespace collapsed: 'Past-Due!' and 'past due' compare equal.
+
+    Gmail's subject: search is word-tokenised, so the local check that confirms its hits must be too.
+    """
+    return " ".join(_NON_WORD.sub(" ", text.casefold()).split())
+
+
+def subject_phrase(subject: str | None, phrases) -> str | None:
+    """The first topic phrase found in the subject, word-aligned; None when there is none."""
+    if not subject or not phrases:
+        return None
+    folded = f" {fold_words(subject)} "
+    return next((p for p in phrases if f" {p} " in folded), None)
 
 
 @dataclass(frozen=True)
@@ -90,6 +111,9 @@ class Target:
     e164: frozenset[str] = field(default_factory=frozenset)
     label: frozenset[str] = field(default_factory=frozenset)
     platform: frozenset[str] = field(default_factory=frozenset)
+    # A topic target matches an email from ANY sender whose subject carries one of these phrases
+    # (fold_words form, in file order). Empty for a person target.
+    subject_any: tuple[str, ...] = ()
 
     def handles(self, kind: str) -> frozenset[str]:
         return {
@@ -182,8 +206,22 @@ def parse_target(document: dict, path: Path) -> Target:
                 # Never echo the handle itself: target files hold personal data.
                 raise TargetError(f"target.handles.{kind} has an entry that is not a valid {kind} handle")
             handles[kind].add(normalised)
-    if not any(handles.values()):
-        raise TargetError("a target needs at least one handle")
+    raw_topic = target.get("topic") or {}
+    if not isinstance(raw_topic, dict):
+        raise TargetError("[target.topic] must be a table")
+    unknown = set(raw_topic) - set(TOPIC_KEYS)
+    if unknown:
+        raise TargetError(f"unknown topic keys {sorted(unknown)}; use {list(TOPIC_KEYS)}")
+    subject_any: list[str] = []
+    for raw in _strings(raw_topic.get("subject_any"), "target.topic.subject_any"):
+        phrase = fold_words(raw)
+        # Each phrase is also quoted into a Gmail search, so it must survive that intact.
+        if not phrase or '"' in raw:
+            raise TargetError("target.topic.subject_any entries must be non-empty phrases without double quotes")
+        if phrase not in subject_any:
+            subject_any.append(phrase)
+    if not any(handles.values()) and not subject_any:
+        raise TargetError("a target needs at least one handle or a [target.topic] subject_any phrase")
 
     sink_doc = document.get("sink")
     if not isinstance(sink_doc, dict):
@@ -233,6 +271,7 @@ def parse_target(document: dict, path: Path) -> Target:
         e164=frozenset(handles["e164"]),
         label=frozenset(handles["label"]),
         platform=frozenset(handles["platform"]),
+        subject_any=tuple(subject_any),
         sink=Sink(
             kind=kind,
             repo=repo,
