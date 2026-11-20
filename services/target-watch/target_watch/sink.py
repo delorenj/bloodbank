@@ -68,6 +68,11 @@ RING_PREFIX = "ring:"
 SIP_RING_PREFIX = "ring:sip:"
 NTFY_PREFIX = "ntfy:"
 EARSHOT_PREFIX = "earshot:"
+# email:<address>: a full copy of the message mailed through gog from the operator's Gmail. For people who are
+# not on the operator's Telegram or ntfy (a partner who must hear about every money problem).
+EMAIL_PREFIX = "email:"
+EMAIL_TIMEOUT_S = 60
+EMAIL_ACCOUNT_DEFAULT = "jaradd@gmail.com"
 TELNYX_CALLS_URL = "https://api.telnyx.com/v2/calls"
 # An E.164 ring stops after 20 s: it must stay under the cell carrier's no-answer forward (about
 # 25-30 s on Verizon), which sends an unanswered call back to the same Telnyx number: keep it <= 22.
@@ -155,6 +160,41 @@ def is_earshot(channel: str) -> bool:
     return channel.startswith(EARSHOT_PREFIX)
 
 
+def is_email(channel: str) -> bool:
+    return channel.startswith(EMAIL_PREFIX)
+
+
+def email_subject(data: dict, display_name: str) -> str:
+    """Loud on purpose: the alert must stand out in a full inbox. Never starts with Re:/Fwd: (a reply to it must
+    not read as a fresh alert, see the matcher's reply rule)."""
+    return f"\U0001f6a8 {display_name}: {headline(data, 150)}"
+
+
+def email_body(data: dict, line: str, detection_id: str | None) -> str:
+    sender = data.get("sender") or {}
+    who = f"{sender['display_name']} <{sender['handle']}>" if sender.get("display_name") else sender.get("handle", "?")
+    content = data.get("content") or {}
+    lines = [
+        line,
+        "",
+        f"From: {who}",
+        f"Via: {data['provider']}",
+        f"Received: {data['received_at']}",
+    ]
+    if content.get("subject"):
+        lines.append(f"Subject: {content['subject']}")
+    lines += [
+        "",
+        "----- the message -----",
+        content.get("text") or "(no text: the event carried no message body)",
+        "-----------------------",
+        "",
+        f"Sent automatically by target-watch (watch {data['watch_id']}, detection {detection_id or '-'}).",
+        "Reply to this email to reach Jarad.",
+    ]
+    return "\n".join(lines)
+
+
 def channel_rank(channel: str) -> int:
     """Send order: ntfy (the loud one) first, then earshot (spoken), then the quiet text channels, then the
     ring. The line the operator reads after the phone rings must already be there."""
@@ -220,6 +260,9 @@ def ring_display_name(name: str) -> str | None:
 def mask_channel(channel: str) -> str:
     """Log form of a channel: a ring target's number or SIP user is personal data. A number keeps its last
     4 digits; a SIP URI keeps the host and the last 2 characters of a user name of 8 or more characters."""
+    if is_email(channel):
+        local, _, domain = channel[len(EMAIL_PREFIX):].partition("@")
+        return f"{EMAIL_PREFIX}{local[:1]}...@{domain}"
     if not is_ring(channel):
         return channel
     if channel.startswith(SIP_RING_PREFIX):
@@ -498,6 +541,8 @@ class SinkService:
         self._bg: set[asyncio.Task] = set()  # outcome followers; held so they are not garbage collected
         self._followups: set[asyncio.Task] = set()  # button follow-up pushes: short, and waited for at shutdown
         self.op = op or os.environ.get("TARGET_WATCH_OP") or os.path.expanduser("~/.local/bin/op")
+        self.gog = os.environ.get("TARGET_WATCH_GOG") or "gog"
+        self.email_account = os.environ.get("TARGET_WATCH_GMAIL_ACCOUNT") or EMAIL_ACCOUNT_DEFAULT
         self._ring_key: str | None = None  # resolved at first use, held in memory only
         self._ntfy_key: str | None = None  # likewise
         self._button_key: bytes | None = None  # the button HMAC secret, likewise
@@ -576,7 +621,7 @@ class SinkService:
     async def _notify(self, channels: list[str], line: str, target: Target | None = None,
                       received_at: float | None = None, *, detection_id: str | None = None,
                       title: str | None = None, click: str | None = None, actions: str | None = None,
-                      spoken: str | None = None) -> tuple[list[str], list[str]]:
+                      spoken: str | None = None, data: dict | None = None) -> tuple[list[str], list[str]]:
         """(sent, failed). ntfy first (the loud one), then earshot, then Telegram, then the ring: the line the
         operator reads after the phone rings must already be there. A throttled, quiet or stale ring or
         earshot line is neither sent nor failed. `actions` is ntfy's Actions header (the Create Ticket
@@ -608,11 +653,33 @@ class SinkService:
                 ok, detail = await self._ntfy(channel, title or "target-watch", line, click, actions=actions)
                 if ok and actions:
                     detail += "; with the Create Ticket button"
+            elif is_email(channel):
+                ok, detail = await asyncio.to_thread(self._email, channel, line, target, data, detection_id)
             else:
                 ok, detail = self._send(channel, line)
             self._note(detection_id, watch_id, mask_channel(channel), "sent" if ok else "failed", detail)
             (sent if ok else failed).append(channel)
         return sent, failed
+
+    def _email_argv(self, channel: str, line: str, target: Target | None, data: dict | None,
+                    detection_id: str | None) -> list[str]:
+        name = target.display_name if target else "target-watch"
+        subject = email_subject(data, name) if data else f"\U0001f6a8 {name}"
+        body = email_body(data, line, detection_id) if data else line
+        return [self.gog, "gmail", "send", "-a", self.email_account, "--no-input",
+                "--to", channel[len(EMAIL_PREFIX):], "--subject", subject, "--body", body]
+
+    def _email(self, channel: str, line: str, target: Target | None, data: dict | None,
+               detection_id: str | None) -> tuple[bool, str]:
+        """One `gog gmail send`. Blocking (run in a thread); never raises. (sent, detail for the log)."""
+        argv = self._email_argv(channel, line, target, data, detection_id)
+        code, stdout, stderr = self.runner(argv, cwd=NOTIFY_CWD, timeout=EMAIL_TIMEOUT_S)
+        if code == 0:
+            found = re.search(r"^id\s+(\S+)", stdout or "", re.M)
+            return True, f"gmail id {found.group(1)}" if found else ""
+        error = (stderr or stdout or "").strip()[-300:]
+        log("notify_failed", channel=mask_channel(channel), exit=code, error=error)
+        return False, f"gog exit {code}: {error}"[:300] if error else f"gog exit {code}"
 
     def _send(self, channel: str, line: str) -> tuple[bool, str]:
         """One `hermes send`. Blocking; never raises on a bad verdict. (confirmed, detail for the log)."""
@@ -1341,7 +1408,8 @@ class SinkService:
             sent, failed = await self._notify(channels, notify_line(data, action, ticket_ref, button=actions is not None), target,
                                               epoch(data["received_at"]), detection_id=detection_id, title=ntfy_title(data),
                                               click=ticket_url, actions=actions,
-                                              spoken=spoken_line(data, content=bool(target and target.sink.earshot_content)))
+                                              spoken=spoken_line(data, content=bool(target and target.sink.earshot_content)),
+                                              data=data)
             if failed:
                 reason = (reason + "; " if reason else "") + "notify failed: " + ",".join(mask_channel(c) for c in failed)
             self.state.update_route(detection_id, notified=1, notify_channels=sent, reason=reason)
@@ -1363,6 +1431,8 @@ class SinkService:
             spoken = spoken_line(data, content=bool(target and target.sink.earshot_content))
             return {"to": channel, "spoken": spoken, "argv": self._earshot_argv(channel[len(EARSHOT_PREFIX):], spoken),
                     "skipped": self.ring_skip(target, channel, epoch(data["received_at"]))}
+        if is_email(channel):
+            return {"to": mask_channel(channel), "argv": self._email_argv(channel, text, target, data, None)[:-2] + ["--body", "<message>"]}
         if is_ntfy(channel):
             out = {"to": channel, "text": text, "title": ntfy_title(data), "priority": "urgent",
                    "url": f"{ntfy_base_url()}/{channel[len(NTFY_PREFIX):]}"}

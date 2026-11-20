@@ -21,7 +21,8 @@
     priority = "medium"
     coalesce_hours = 24
     ticket = "auto"              # or "button": file only when the operator taps Create Ticket on the ntfy push
-    notify = ["ntfy:<topic>", "earshot:alarm", "telegram:<chat id>", "ring:+12155550100"]  # ring = ring that phone like an incoming call
+    notify = ["ntfy:<topic>", "earshot:alarm", "telegram:<chat id>", "email:jane@example.com", "ring:+12155550100"]  # ring = ring that phone like an incoming call
+    # email = a full copy of the message mailed from the operator's Gmail (gog), subject led by a siren
     # ntfy = an urgent push to the ntfy topic (the loud one: it is sent first)
     # earshot = a spoken line dropped into that earshot channel (an audible alarm: the ring's cooldown and quiet hours)
     earshot_content = false           # true speaks the message too; the earshot bucket is world-readable (README)
@@ -39,7 +40,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .handles import norm_e164, normalise_target_handle
+from .handles import norm_e164, norm_email, normalise_target_handle
 from .paths import target_globs
 
 TARGET_ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -75,9 +76,15 @@ def fold_words(text: str) -> str:
     return " ".join(_NON_WORD.sub(" ", text.casefold()).split())
 
 
+# A reply or forward quotes the alert's own subject; it is a conversation about the news, not news. Our own
+# email alerts lead with a siren, so a copy of one bounced back is never a fresh alert either.
+_NOT_NEWS = re.compile(r"^\s*(?:(?:re|fw|fwd|aw|sv)\s*(?:\[\d+\])?\s*:|\U0001f6a8)", re.IGNORECASE)
+
+
 def subject_phrase(subject: str | None, phrases) -> str | None:
-    """The first topic phrase found in the subject, word-aligned; None when there is none."""
-    if not subject or not phrases:
+    """The first topic phrase found in the subject, word-aligned; None when there is none, and None for a
+    reply/forward (Re:, Fwd:, ...) or one of our own siren-led email alerts."""
+    if not subject or not phrases or _NOT_NEWS.match(subject):
         return None
     folded = f" {fold_words(subject)} "
     return next((p for p in phrases if f" {p} " in folded), None)
@@ -140,8 +147,13 @@ def _strings(value: object, where: str) -> list[str]:
 
 def _notify_channel(channel: object) -> str:
     if not isinstance(channel, str) or not (channel.startswith("ring:") or CHANNEL.match(channel)):
-        raise TargetError("sink.notify entries look like 'ntfy:<topic>', 'earshot:<channel>', 'telegram:<chat id>', "
+        raise TargetError("sink.notify entries look like 'ntfy:<topic>', 'earshot:<channel>', 'telegram:<chat id>', 'email:<address>', "
                           "'ring:<E.164 number>' or 'ring:sip:<user>@<host>'")
+    if channel.startswith("email:"):
+        address = norm_email(channel[len("email:"):])
+        if address is None:
+            raise TargetError("sink.notify has an email: entry that is not email:<address>")
+        return f"email:{address}"
     if channel.startswith("ntfy:") and not NTFY_TOPIC.fullmatch(channel[len("ntfy:"):]):
         raise TargetError("sink.notify has an ntfy: entry that is not ntfy:<topic> (letters, digits, _ and -; 1-64 characters)")
     if channel.startswith("earshot:") and not EARSHOT_CHANNEL.fullmatch(channel[len("earshot:"):]):

@@ -222,6 +222,16 @@ notify = ["ntfy:<topic>", "earshot:alarm", "telegram:<operator chat id>", "ring:
 - **Cleanup.** A stored detection stays in `buttons` after its link has expired; nothing deletes it yet.
   They are small and rare.
 
+### email: a full copy by mail
+
+`email:<address>` in `sink.notify` mails the whole message to that address through `gog gmail send` from the
+operator's Gmail (`TARGET_WATCH_GMAIL_ACCOUNT`, default `jaradd@gmail.com`). It is for people who are not on the
+operator's Telegram or ntfy: a partner who must hear about every money problem. The subject leads with a siren and
+the target's display name (`🚨 Payment problem: Cloudflare: Payment failed ...`); the body is the notify line, the
+sender, the time, the subject and the message text. Replying reaches the operator. A reply or forward (`Re:`,
+`Fwd:`) and any siren-led subject never match a topic, so an answer to an alert never pages anyone again. The log
+masks the address (`email:d...@gmail.com`).
+
 ### earshot: a spoken alarm
 
 `earshot:<channel>` in `sink.notify` speaks the alert instead of showing it: the earshot CLI synthesises a line

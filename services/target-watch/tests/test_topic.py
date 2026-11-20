@@ -115,3 +115,49 @@ async def test_topic_only_targets_still_poll(tmp_path, state, fake_js):
     summary = await poll(registry.current(), Gog(fake), state, Publisher(fake_js))
     assert summary["published"] == 1
     assert [c[4] for c in fake.calls if c[1:3] == ["gmail", "messages"]][0].startswith("subject:(")
+
+
+def test_replies_forwards_and_our_own_alerts_are_not_news():
+    phrases = ("past due",)
+    assert subject_phrase("Re: Your account is past due", phrases) is None
+    assert subject_phrase("FWD: Your account is past due", phrases) is None
+    assert subject_phrase("RE[2]: Your account is past due", phrases) is None
+    assert subject_phrase("\U0001f6a8 Payment problem: AWS: Your account is past due", phrases) is None
+    assert subject_phrase("Refund: your account is past due", phrases) == "past due"  # 'Re' must be a prefix word
+
+
+def test_email_channel_mails_the_whole_message(tmp_path, index, state, fake_js):
+    import tomllib
+
+    from target_watch.sink import SinkService, email_subject, mask_channel
+
+    body = TOPIC.replace('notify = ["telegram:1000"]', 'notify = ["telegram:1000", "email:Partner@Example.com"]')
+    path = write_target(tmp_path / "w", "vendor-billing", body)
+    target = parse_target(tomllib.loads(body), path)
+    assert target.sink.notify == ("telegram:1000", "email:partner@example.com")
+    assert mask_channel("email:partner@example.com") == "email:p...@example.com"
+
+    calls = []
+
+    def runner(argv, cwd=None, timeout=None):
+        calls.append(argv)
+        if argv[1:3] == ["gmail", "send"]:
+            return 0, "id\t19abc\nthread_id\t19abc\n", ""
+        return 0, '{"success": true}', ""
+
+    envelope = email_envelope(gog_message(sender="Cloudflare <noreply@notify.vendor.example>",
+                                          subject="[Action required] Payment failed for invoice #IN-1",
+                                          body="Your card was declined. Amount due: $12.00"), "operator@example.net")
+    [det] = match(envelope, index.get(envelope["type"]), [target])
+    data = detection_data(det)
+    assert email_subject(data, "Payment problem").startswith("\U0001f6a8 Payment problem: Cloudflare: [Action required]")
+
+    import asyncio
+    sink = SinkService(TargetRegistry([str(path)]), state, Publisher(fake_js), runner=runner)
+    sent, failed = asyncio.run(sink._notify(list(target.sink.notify), "line", target, None,
+                                            detection_id=det.event_id, data=data))
+    assert failed == [] and set(sent) == {"telegram:1000", "email:partner@example.com"}
+    [mail] = [c for c in calls if c[1:3] == ["gmail", "send"]]
+    assert mail[mail.index("--to") + 1] == "partner@example.com"
+    assert "Your card was declined. Amount due: $12.00" in mail[mail.index("--body") + 1]
+    assert "From: Cloudflare <noreply@notify.vendor.example>" in mail[mail.index("--body") + 1]
