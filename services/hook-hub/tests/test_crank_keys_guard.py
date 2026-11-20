@@ -61,6 +61,18 @@ class CrankKeysGuard(unittest.TestCase):
     def test_other_clis_are_not_guarded(self):
         self.assertFalse(self.denied(terminal(B + "write-chars -p terminal_4 hi"), cli="claude"))
 
+    def test_alias_unwrapping(self):
+        # 33god hermes ... should be treated as hermes ...
+        self.assertTrue(self.denied(terminal("33god hermes cron create '0 9 * * *' x")))
+        # 33god crank ... should be treated as hermes ...
+        self.assertTrue(self.denied(terminal("33god crank cron create '0 9 * * *' x")))
+        # 33god pjangler ... should be treated as pjangler ...
+        self.assertTrue(self.denied(terminal("33god pjangler cron create '0 9 * * *' x")))
+        # 33god holocene ... should be treated as holocene ...
+        self.assertTrue(self.denied(terminal("33god holocene cron create '0 9 * * *' x")))
+        # 33god flume ... should be treated as flume ...
+        self.assertTrue(self.denied(terminal("33god flume cron create '0 9 * * *' x")))
+
     def test_the_process_exits_2_with_the_reason_and_fails_open(self):
         env = {**os.environ, "BB_HOOK_CLI": "hermes"}
         run = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(terminal(B + "write-chars -p terminal_4 hi")),

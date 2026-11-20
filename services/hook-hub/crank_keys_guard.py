@@ -56,7 +56,26 @@ def strings(value) -> list[str]:
 def tool_text(payload: dict) -> str:
     for key in ("tool_input", "toolInput", "toolArgs", "args", "arguments"):
         if key in payload:
-            return "\n".join(strings(payload[key]))
+            text = "\n".join(strings(payload[key]))
+            # Unwrap 33god and registry aliases in the text
+            lines = []
+            for line in text.split("\n"):
+                parts = line.split()
+                if not parts:
+                    lines.append(line)
+                    continue
+                if parts[0] == "33god":
+                    parts = parts[1:]
+                # Map registry aliases to canonical names
+                if parts and parts[0] in {"crank", "hermes", "pjangler", "holocene", "flume"}:
+                    parts[0] = {
+                        "crank": "hermes",
+                        "pjangler": "pjangler",
+                        "holocene": "holocene",
+                        "flume": "flume",
+                    }.get(parts[0], parts[0])
+                lines.append(" ".join(parts))
+            return "\n".join(lines)
     return ""
 
 

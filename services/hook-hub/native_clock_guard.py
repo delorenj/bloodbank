@@ -328,6 +328,22 @@ def strip_prefix(argv: list[str]) -> list[str]:
     while a:
         w = a[0]
         name = os.path.basename(w)
+        # Unwrap 33god and registry aliases
+        if name == "33god":
+            a.pop(0)
+            if a:
+                name = os.path.basename(a[0])
+        # Registry aliases: map to canonical names
+        canonical = {
+            "hermes": "hermes",
+            "crank": "hermes",
+            "pjangler": "pjangler",
+            "holocene": "holocene",
+            "flume": "flume",
+        }.get(name)
+        if canonical:
+            a[0] = canonical
+            name = canonical
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w) or name in {
                 "{", "!", "then", "do", "else", "elif", "if", "while", "until", "time",
                 "command", "exec", "nohup", "setsid", "builtin", "stdbuf"}:
