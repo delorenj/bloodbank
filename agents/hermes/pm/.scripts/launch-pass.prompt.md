@@ -12,7 +12,8 @@ prompt, the `## Launch mode` section) outranks this file. This file only says wh
   `px --help`, load skills, read the SOUL or contract files, or run hooks or tests.
 - The snapshot outranks your roadmap. If the roadmap says something is owed and the snapshot shows it
   done, drop it. The roadmap lists only what is still open, never what a pass did.
-- If the brief says `launch-mode: steady`, answer `quiet: steady` with no tool calls.
+- If the brief says `launch-mode: steady`, answer `quiet: steady` with no tool calls. If it says
+  `launch-mode: live` (in production, no finish line to drive), answer `quiet: live` with no tool calls.
 - Your own writes change the board, so the next pass may wake once on your own echo. If nothing in
   the snapshot needs you, answer `quiet: own echo` with no tool calls.
 - Never edit code. Never edit `.launch.yaml`; it is the owner's declaration. To change the mode, file

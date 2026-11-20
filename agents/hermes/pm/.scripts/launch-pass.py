@@ -3,8 +3,10 @@
 
 An interval driver (the interval-driver skill). A script, not the model, holds the context. Launch
 mode is DECLARED by a committed file at the repo root, `.launch.yaml`; this script never guesses it
-and never edits it. No file, or any mode other than `launch`, means steady state: the snapshot is
-the single line `launch-mode: steady`, so the unchanged snapshot costs 0 tokens.
+and never edits it. Only `launch` is active. No file, `steady` (pre-launch or internal) or `live`
+(in production: people can buy it and are using it) is quiet: the snapshot is the single line
+`launch-mode: steady` or `launch-mode: live`, so the unchanged snapshot costs 0 tokens. The lifecycle
+is `launch` -> `live`; `steady` is for projects that are neither.
 
   launch-pass.py --monitor         stable snapshot (Hermes hashes it; unchanged = the agent never starts)
   launch-pass.py --brief           the pass contract, the declaration, the rules pointer, the snapshot,
@@ -14,12 +16,16 @@ the single line `launch-mode: steady`, so the unchanged snapshot costs 0 tokens.
   launch-pass.py --check           parse and print the declaration as JSON (debugging; exit 1 if broken)
 
 Declaration (`.launch.yaml`, no status inside):
-  mode: launch | steady          declared: YYYY-MM-DD       source: "<doc + owner decision>"
+  mode: launch | live | steady   declared: YYYY-MM-DD       source: "<doc + owner decision>"
   finish_line: "<what launched means>"    target_date: YYYY-MM-DD or empty
   contract: [<repo-relative paths>]       epic: <BOARD-n>
+  scopes: [<child dirs>]         # optional, monorepo parent only: child directories whose px scope this PM also drives
   cut_line:                      # optional ranking hint; the board stays the truth
     launch_critical: [..]
     after_launch: [..]
+  live_since: YYYY-MM-DD         # `mode: live` only: the day it went live (launch history fields stay)
+  live: {name, tagline, store_url, offer, platform, package, release, board, support, checkout,
+         fulfilment}            # `mode: live` only: read by the Holocene Live hub, never by this pass
 
 Allowed apply ops: comment, create, move, close, cancel, rank, link. Everything else is refused.
 `rank` has no px verb (px cannot reorder a lane), so it degrades to a `launch rank N` comment and the
@@ -65,13 +71,15 @@ PRIORITIES = ("urgent", "high", "medium", "low", "none")
 REF = re.compile(r"^([A-Z][A-Z0-9]*)-(\d+)$")
 MAX_CREATES = 3
 ROADMAP_LINES = 40
+MODES = ("launch", "live", "steady")  # lifecycle: launch (racing to a finish line) -> live (in production); steady is neither
+WAITING_SHOWN = 40
 STALE_HOURS = 48
 AGENT_COMMENT = re.compile(r"^(\[[A-Za-z0-9 _:.-]+\]|krebs\b|hermes\b|momo\b)", re.I)
 OWNER_BLOCKING = ("urgent", "high")
 # board-taxonomy: a colon label is a closed, declared axis. A create may carry bare words and the fleet's
 # open facet axes only; lifecycle:/agent: are automation's, repo: is px's, epic: would mint an epic.
 OPEN_AXES = ("risk:", "needs:", "xp:")
-STRING_FIELDS = ("ref", "other", "parent", "text", "title", "description", "key", "lane", "state", "priority")
+STRING_FIELDS = ("ref", "other", "parent", "text", "title", "description", "key", "lane", "state", "priority", "scope")
 NEEDS_TEXT = ("comment", "close", "cancel")
 
 
@@ -171,49 +179,45 @@ def _scalar(value: str):
 
 
 def parse_yaml(text: str) -> dict:
-    """The tiny YAML subset `.launch.yaml` uses: scalars, inline and block lists, one nested map."""
-    out: dict = {}
-    top: str | None = None   # open top-level key
-    sub: str | None = None   # open key inside a nested map
+    """The tiny YAML subset `.launch.yaml` uses: scalars, inline and block lists, maps nested by indent
+    (the `live:` block of a `mode: live` declaration goes three deep)."""
+    rows = []
     for raw in text.splitlines():
         line = _strip_comment(raw).rstrip()
-        if not line.strip():
-            continue
-        indent = len(line) - len(line.lstrip())
-        body = line.strip()
-        if indent == 0:
-            if ":" not in body:
+        if line.strip():
+            rows.append((len(line) - len(line.lstrip()), line.strip()))
+    if rows and rows[0][0] != 0:
+        raise ValueError(f"indented line with no parent: {rows[0][1]!r}")
+
+    def block(i: int, indent: int):
+        if rows[i][1].startswith("- "):
+            items = []
+            while i < len(rows) and rows[i][0] == indent and rows[i][1].startswith("- "):
+                items.append(_scalar(rows[i][1][2:]))
+                i += 1
+            return items, i
+        out: dict = {}
+        while i < len(rows) and rows[i][0] == indent:
+            body = rows[i][1]
+            if ":" not in body or body.startswith("- "):
                 raise ValueError(f"not a key: {body!r}")
             key, _, val = body.partition(":")
             key = key.strip()
-            top, sub = key, None
-            out[key] = _scalar(val) if val.strip() else None
-            continue
-        if top is None:
-            raise ValueError(f"indented line with no parent: {body!r}")
-        if body.startswith("- "):
-            item = _scalar(body[2:])
-            if sub is not None:
-                container = out[top]
-                if not isinstance(container, dict):
-                    raise ValueError(f"list item under non-map {top}")
-                if not isinstance(container.get(sub), list):
-                    container[sub] = []
-                container[sub].append(item)
+            i += 1
+            if val.strip():
+                out[key] = _scalar(val)
+            elif i < len(rows) and (rows[i][0] > indent or (rows[i][0] == indent and rows[i][1].startswith("- "))):
+                out[key], i = block(i, rows[i][0])
             else:
-                if not isinstance(out[top], list):
-                    out[top] = []
-                out[top].append(item)
-            continue
-        if ":" not in body:
-            raise ValueError(f"not a key: {body!r}")
-        key, _, val = body.partition(":")
-        if not isinstance(out[top], dict):
-            out[top] = {}
-        key = key.strip()
-        out[top][key] = _scalar(val) if val.strip() else None
-        sub = key
-    return out
+                out[key] = None
+        if i < len(rows) and rows[i][0] > indent:
+            raise ValueError(f"indented line with no parent: {rows[i][1]!r}")
+        return out, i
+
+    if not rows:
+        return {}
+    parsed, _ = block(0, 0)
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _list(value) -> list[str]:
@@ -225,7 +229,8 @@ def _list(value) -> list[str]:
 
 
 def load_declaration(repo: Path) -> dict:
-    """Always returns a dict with `active` (bool), never raises: no file or a broken file is steady."""
+    """Always returns a dict with `active` (bool), never raises: no file or a broken file is steady.
+    `mode` is one of launch | live | steady; `active` is true only for launch."""
     path = repo / ".launch.yaml"
     decl = {"active": False, "path": str(path), "error": "", "raw": "", "mode": "steady"}
     try:
@@ -239,16 +244,20 @@ def load_declaration(repo: Path) -> dict:
         decl["error"] = str(e)
         return decl
     mode = str(data.get("mode") or "").strip().lower()
+    if mode not in MODES:
+        mode = "steady"
     cut = data.get("cut_line") if isinstance(data.get("cut_line"), dict) else {}
     decl.update(
-        mode=mode or "steady",
+        mode=mode,
         active=mode == "launch",
         declared=str(data.get("declared") or ""),
+        live_since=str(data.get("live_since") or ""),
         source=str(data.get("source") or ""),
         finish_line=str(data.get("finish_line") or ""),
         target_date=str(data.get("target_date") or ""),
         contract=_list(data.get("contract")),
         epic=str(data.get("epic") or "").strip(),
+        scopes=_list(data.get("scopes")),
         launch_critical=_list(cut.get("launch_critical")),
         after_launch=_list(cut.get("after_launch")),
         sha=hashlib.sha256(raw.encode()).hexdigest()[:12],
@@ -309,7 +318,15 @@ def is_mine(c: dict) -> bool:
 
 
 def fetch_ticket(repo: Path, ref: str) -> dict:
-    t = px_json(repo, "task", "get", ref)["ticket"]
+    t = None
+    for attempt in range(4):  # Plane throttles a big board read: a refusal is retried, never a verdict
+        try:
+            t = px_json(repo, "task", "get", ref)["ticket"]
+            break
+        except Exception:
+            if attempt == 3:
+                raise
+            time.sleep(1 + 2 * attempt)
     cs = sorted(t.get("comments") or [], key=lambda c: c.get("created_at", ""))
     mine = [c["created_at"] for c in cs if is_mine(c)]
     labels = t.get("label_names") or []
@@ -319,7 +336,10 @@ def fetch_ticket(repo: Path, ref: str) -> dict:
     if cs and is_mine(cs[-1]) and updated - parse_ts(cs[-1]["created_at"]) <= timedelta(minutes=10):
         others = [c["created_at"] for c in cs if not is_mine(c)] or [t.get("created_at") or t["updated_at"]]
         activity = parse_ts(max(others))
-    waiting = [c for c in cs if not AGENT_COMMENT.match(comment_text(c)) and c["created_at"] > (max(mine) if mine else "")]
+    # The inbox starts at the PM's own last comment on the ticket, or, when it never spoke there, at the day
+    # launch mode was declared: a board with months of worker comments is not a backlog of owner messages.
+    floor = max(mine) if mine else (load_declaration(repo).get("declared") or "")[:10]
+    waiting = [c for c in cs if not AGENT_COMMENT.match(comment_text(c)) and c["created_at"] > floor]
     pri = (t.get("priority") or "none").lower()
     kind_bug = any(l in ("bug", "kind:bug") for l in labels)
     return {
@@ -336,20 +356,58 @@ def fetch_ticket(repo: Path, ref: str) -> dict:
         "origin": "agent" if (t.get("external_id") or t.get("external_source")) else "owner",
         "working": "agent:working" in labels,
         "review": "lifecycle:review" in labels,
-        "held": any(l in labels for l in ("lifecycle:needs-input", "lifecycle:blocked", "agent:failed", "lifecycle:human")),
+        # lifecycle:human: the owner took the ticket by hand. A hold like the rest, but the launch pass also
+        # never plans or applies a write on it (comments included): only the owner removes the label.
+        "human": HUMAN_LABEL in labels,
+        "held": any(l in labels for l in ("lifecycle:needs-input", "lifecycle:blocked", "lifecycle:human", "agent:failed")),
         "activity": activity,
         "waiting": waiting,
         "comments": cs,
     }
 
 
-def board(repo: Path) -> tuple[str, list[dict]]:
-    listing = px_json(repo, "task", "list")
-    ident = str(listing.get("board") or "")
-    refs = [f"{ident}-{i['sequence_id']}" for i in listing.get("issues", []) if i.get("state_group") in OPEN]
+def scope_dirs(repo: Path, decl: dict) -> dict[str, Path]:
+    """Child directories (declaration `scopes:`) whose px scope this PM also drives, by declared name.
+
+    A monorepo parent sees only its own `repo:*` scope from its own directory: px lists, writes and
+    stamps by the nearest `.project.json`. Each declared child must sit inside the repo and carry one."""
+    out: dict[str, Path] = {}
+    root = repo.resolve()
+    for name in decl.get("scopes") or []:
+        p = (repo / name).resolve()
+        if p != root and root in p.parents and (p / ".project.json").is_file():
+            out[name] = p
+    return out
+
+
+def board_dirs(repo: Path, decl: dict | None) -> list[Path]:
+    return [repo, *scope_dirs(repo, decl or {}).values()]
+
+
+def ref_dirs(repo: Path, decl: dict | None) -> tuple[str, dict[str, Path], dict[str, str]]:
+    """(board identifier, ref -> the directory whose scope owns it, ref -> state group) across every driven scope."""
+    ident = ""
+    where: dict[str, Path] = {}
+    groups: dict[str, str] = {}
+    for d in board_dirs(repo, decl):
+        listing = px_json(d, "task", "list")
+        ident = ident or str(listing.get("board") or "")
+        for i in listing.get("issues", []):
+            ref = f"{listing.get('board') or ident}-{i['sequence_id']}"
+            where.setdefault(ref, d)
+            groups.setdefault(ref, i.get("state_group") or "")
+    return ident, where, groups
+
+
+def board(repo: Path, decl: dict | None = None) -> tuple[str, list[dict]]:
+    ident, _, groups = ref_dirs(repo, decl)
+    refs = [r for r, g in groups.items() if g in OPEN]
     with ThreadPoolExecutor(8) as pool:
         rows = sorted(pool.map(lambda r: fetch_ticket(repo, r), refs), key=lambda r: r["seq"])
     return ident, rows
+
+
+HUMAN_LABEL = "lifecycle:human"
 
 
 def occupies_slot(r: dict) -> bool:
@@ -389,7 +447,7 @@ def snapshot_lines(decl: dict, rows: list[dict] | None) -> list[str]:
         return lines + ["board UNAVAILABLE"]
     lc, al = set(decl["launch_critical"]), set(decl["after_launch"])
     for r in rows:
-        flags = ",".join(f for f, on in (("review", r["review"]), ("held", r["held"]), ("working", r["working"])) if on) or "-"
+        flags = ",".join(f for f, on in (("review", r["review"]), ("held", r["held"]), ("human", r["human"]), ("working", r["working"])) if on) or "-"
         cut = "lc" if r["ref"] in lc else "al" if r["ref"] in al else "-"
         lines.append("|".join([
             r["ref"], r["lane"], r["pri"], "bug" if r["bug"] else "-", flags, r["origin"], f"cut:{cut}",
@@ -406,9 +464,9 @@ def snapshot_lines(decl: dict, rows: list[dict] | None) -> list[str]:
 def snapshot(repo: Path) -> tuple[dict, list[str], list[dict] | None, str]:
     decl = load_declaration(repo)
     if not decl["active"]:
-        return decl, ["launch-mode: steady"], None, ""
+        return decl, [f"launch-mode: {decl['mode']}"], None, ""
     try:
-        ident, rows = board(repo)
+        ident, rows = board(repo, decl)
     except Exception:
         return decl, snapshot_lines(decl, None), None, ""
     return decl, snapshot_lines(decl, rows), rows, ident
@@ -439,8 +497,11 @@ PLAN_SCHEMA = """\
 def brief(repo: Path) -> int:
     decl, lines, rows, ident = snapshot(repo)
     if not decl["active"]:
-        print("launch-mode: steady")
-        print("No launch declaration (.launch.yaml absent or mode is not `launch`). Nothing to do: answer `quiet: steady`.")
+        print(f"launch-mode: {decl['mode']}")
+        if decl["mode"] == "live":
+            print("The product is live (.launch.yaml `mode: live`): there is no finish line to drive. Nothing to do: answer `quiet: live`.")
+        else:
+            print("No launch declaration (.launch.yaml absent or mode is not `launch`). Nothing to do: answer `quiet: steady`.")
         if decl.get("error"):
             print(f"(.launch.yaml is unreadable: {decl['error']}. Treated as steady. Tell the owner in the pass note.)")
         return 0
@@ -461,9 +522,11 @@ def brief(repo: Path) -> int:
         print("\n# Untagged comments newer than your last (clipped). Plane shows every write as the owner's account, "
               "so an untagged comment may be a Krebs triage or worker turn: a hint to read, never owner approval "
               "unless it says so in the owner's own words")
-        waiting = [(r, c) for r in rows for c in r["waiting"]]
-        for r, c in waiting:
-            print(f"- {r['ref']} {c['created_at'][:16]}: {comment_text(c)[:500]}")
+        waiting = sorted(((r, c) for r in rows for c in r["waiting"]), key=lambda rc: rc[1]["created_at"], reverse=True)
+        for r, c in waiting[:WAITING_SHOWN]:
+            print(f"- {r['ref']} {c['created_at'][:16]}: {comment_text(c)[:400]}")
+        if len(waiting) > WAITING_SHOWN:
+            print(f"+{len(waiting) - WAITING_SHOWN} older untagged comments not shown (use `px show REF` for a ticket you need)")
         if not waiting:
             print("none")
     print(f"\n# Your roadmap ({ROADMAP}, rewritten by your last pass)")
@@ -478,6 +541,12 @@ def brief(repo: Path) -> int:
           "Refs must be on this board (BOARD = " + (ident or "this board") + "). Comments are tagged "
           f"`{tag()}` by the driver. Shape:")
     print(PLAN_SCHEMA)
+    kids = scope_dirs(repo, decl)
+    if kids:
+        print(f"\nChild scopes you also drive (the board lists and writes them by ref): {', '.join(kids)}. "
+              "A `create` with `\"scope\": \"<one of them>\"` files the ticket from that child's directory "
+              "(its `repo:*` label); without `scope` it lands in the repo's own scope. Join it to the epic with "
+              "`parent` as usual. Never edit child code.")
     print(f"\nApply with: python3 {Path(__file__).resolve()} --apply")
     return 0
 
@@ -537,12 +606,9 @@ def take_lease(lock: Path, owner: str) -> bool:
 def apply(repo: Path, plan_arg: str | None) -> int:
     decl = load_declaration(repo)
     if not decl["active"]:
-        print("launch-mode: steady: apply refused, nothing written.")
+        print(f"launch-mode: {decl['mode']}: apply refused, nothing written.")
         return 0
     proj = project(repo)
-    if (proj.get("execution") or {}).get("mode") in ("managed", "shadow"):
-        print("REFUSED: this board is Krebs-managed (px writes need --actor and -f payloads); launch-pass drives legacy boards only. Nothing written.")
-        return 4
     if not LEASE_SCRIPT.is_file():
         print(f"ERROR: lease script missing: {LEASE_SCRIPT}. Nothing written.", file=sys.stderr)
         return 2
@@ -571,6 +637,15 @@ def apply(repo: Path, plan_arg: str | None) -> int:
         writes = writes[:cap]
 
     tickets: dict[str, dict | None] = {}
+    children = scope_dirs(repo, decl)
+    try:
+        where = ref_dirs(repo, decl)[1] if children else {}
+    except Exception:
+        where = {}  # board unreadable: every write falls back to the repo's own scope, px enforces the rest
+
+    def at(ref: str) -> Path:
+        """The directory px must run in for this ref: the child scope that owns it, else the repo."""
+        return where.get(ref, repo)
 
     def get(ref: str) -> dict | None:
         if ref not in tickets:
@@ -611,6 +686,14 @@ def apply(repo: Path, plan_arg: str | None) -> int:
             if not on_board(ref):
                 return record(i, w, "skip", f"ref is not on this board ({ident})")
         text = tagged(w.get("text") or "")
+        # The owner holds a lifecycle:human ticket by hand: no write of any op lands on it (as ref or `other`).
+        if op != "create":
+            for touched in (ref, w.get("other") or "") if op == "link" else (ref,):
+                if not REF.match(touched):
+                    continue
+                th = get(touched)
+                if th is not None and th["human"]:
+                    return record(i, w, "skip", f"{touched} is held by the owner (lifecycle:human)")
 
         if op in ("comment", "rank"):
             if op == "rank":
@@ -634,7 +717,7 @@ def apply(repo: Path, plan_arg: str | None) -> int:
                 for c in t["comments"]
             ):
                 return record(i, w, "skip", "one readout per day on the epic")
-            ok, msg = px_write(repo, "comment", ref, "-m", body)
+            ok, msg = px_write(at(ref), "comment", ref, "-m", body)
             return record(i, w, ("degraded" if op == "rank" and ok else "ok" if ok else "error"),
                           (f"px has no rank verb; posted as a comment: {msg}" if op == "rank" and ok else msg))
         if op in ("move", "close", "cancel"):
@@ -653,7 +736,7 @@ def apply(repo: Path, plan_arg: str | None) -> int:
             if t["working"]:
                 return record(i, w, "skip", "a live worker holds it (agent:working)")
             verb = ("move", ref, w["lane"], "-m", text) if op == "move" else (op, ref, "-m", text)
-            ok, msg = px_write(repo, *verb)
+            ok, msg = px_write(at(ref), *verb)
             tickets.pop(ref, None)
             return record(i, w, "ok" if ok else "error", msg)
         if op == "link":
@@ -668,7 +751,7 @@ def apply(repo: Path, plan_arg: str | None) -> int:
                 member = other if ref == epic else ref
                 ok, msg = px_write(repo, "epic", "add", epic, member)
                 return record(i, w, "ok" if ok else "error", msg)
-            ok, msg = px_write(repo, "link", "add", ref, other, *(["--blocks"] if w.get("blocks") is True else []))
+            ok, msg = px_write(at(ref), "link", "add", ref, other, *(["--blocks"] if w.get("blocks") is True else []))
             return record(i, w, "ok" if ok else "error", msg)
         # create. px parses its argv with node's strict parseArgs: a positional or a `-d` value that starts
         # with `-` (a markdown bullet) is a parse error, so the title loses leading dashes and every free-text
@@ -698,8 +781,11 @@ def apply(repo: Path, plan_arg: str | None) -> int:
             args += ["--priority", pri]
         if parent and not join_epic:
             args += ["--parent", parent]
+        scope = (w.get("scope") or "").strip()
+        if scope and scope not in children:
+            return record(i, {**w, "ref": title[:60]}, "skip", f"scope {scope!r} is not one of the declared child scopes {sorted(children)}")
         creates += 1
-        ok, msg = px_write(repo, *args)
+        ok, msg = px_write(children.get(scope, repo), *args)
         dropped = [l for l in wanted if l and l not in labels]
         record(i, {**w, "ref": title[:60]}, "ok" if ok else "error",
                msg + (f" (labels dropped, not bare words or an open axis: {', '.join(dropped)})" if dropped else ""))

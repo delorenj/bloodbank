@@ -122,7 +122,7 @@ before the general reconcile below.
 4. **Todo order, not dispatch.** First: when `.launch.yaml` at the repo root says `mode: launch`,
    follow the SOUL's `## Launch mode` section for Todo contents, order and verdicts instead of the
    Backlog rule below (launch passes run through `.scripts/launch-pass.py`, fired by Candybar);
-   with no such file, or `mode: steady`, the rule below stands. Scope and blockers come from the adapter: an issue is yours only
+   with no such file, or `mode: steady` or `mode: live` (in production: steady-state grooming), the rule below stands. Scope and blockers come from the adapter: an issue is yours only
    if `labels` carries your `board_scope` label, and it is unblocked only if `tp get_issue`
    shows no `relations.blocked_by` entry whose `state_type` is still open (not
    `completed`/`cancelled`). A `relations_error` means unknown, not unblocked: say so in the
