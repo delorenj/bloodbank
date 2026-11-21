@@ -532,6 +532,9 @@ _PROJECT_SHA = re.compile(
 # A workstation path, not a URL path: the slash must not follow a word char
 # or a dot, so 'https://x/home/' and 'a.b/tmp/' do not match.
 _PROJECT_ABS_PATH = re.compile(r"(?<![\w.])/(?:home|Users|root|tmp|var|etc|opt|srv|mnt)/")
+# External report text must not leak a home-relative workstation path either.
+# Exclude URL path segments and words ending in '~' from this marker.
+_PROJECT_HOME_PATH = re.compile(r"(?<![\w./])~/(?=[^\s/])")
 
 
 def _project_window_seconds(start: object, end: object) -> int:
@@ -805,6 +808,7 @@ def assert_project_invariants(envelope: dict) -> None:
         text_markers = ticket_markers + [
             (_PROJECT_SHA, "a commit sha"),
             (_PROJECT_ABS_PATH, "an absolute filesystem path"),
+            (_PROJECT_HOME_PATH, "a home-relative filesystem path"),
         ]
         for field in ("title", "raw", "markdown"):
             value = report.get(field)

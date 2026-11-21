@@ -172,6 +172,8 @@ class ProjectActivityContractTests(unittest.TestCase):
             "raw ticket": ("raw", " closed SMK-12 today"),
             "raw sha": ("raw", " landed as 43bfa40d"),
             "raw path": ("raw", " see ~/code/x"),
+            "markdown home path": ("markdown", "\n- see ~/code/x"),
+            "title home path": ("title", " ~/code/x"),
             "markdown ticket": ("markdown", "\n- SMK-9 done\n"),
             "title sha": ("title", " 43bfa40d"),
             "html ticket": ("html", "<p>SMK-12</p></html>"),

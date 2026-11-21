@@ -573,7 +573,13 @@ lives: `handle_paths` (dotted paths into the envelope, for example
 the event has no text), `time_path`, `inbound_when` (`{"path": ..., "equals": [...]}`
 for types that carry a direction, `null` for types inbound by definition) and
 `handle_kinds` (`email`, `e164`, `label` or `platform_user`: what the handle may
-look like). Every `messaging.*.received` schema and the inbound `telephony` types
+look like). `matched_on.kind` on `watch.target.detected` records either one of these
+four sender-handle kinds or `subject` for a topic target: the latter is a
+casefolded phrase matched in an email subject, not an `x-sender` handle kind.
+The topic matcher checks the email channel and optional sender-domain fences
+before publishing; handle matches still take precedence for the same target.
+
+Every `messaging.*.received` schema and the inbound `telephony` types
 (`call.ended`, `call.recorded`, `transcription.completed`) MUST carry one; every
 path must resolve to a property of the schema's `data`, and a type whose `data`
 has a `direction` MUST set `inbound_when`.

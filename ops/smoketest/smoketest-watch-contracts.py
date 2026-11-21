@@ -345,10 +345,20 @@ class WatchEvents(unittest.TestCase):
         t = "bloodbank.messaging.line2.received"
         validate_envelope(detected_envelope(provider="line2", source_type=t))
 
-    def test_matched_on_kinds_are_the_x_sender_handle_kinds(self) -> None:
+    def test_matched_on_kinds_are_the_x_sender_handle_kinds_or_email_topic(self) -> None:
         schema = json.loads((SCHEMAS / "watch" / "target.detected.json").read_text())
         enum = schema["properties"]["data"]["properties"]["matched_on"]["properties"]["kind"]["enum"]
-        self.assertEqual(frozenset(enum), HANDLE_KINDS)
+        # x-sender describes sender handles; a topic match uses a subject phrase instead.
+        self.assertEqual(frozenset(enum) - {"subject"}, HANDLE_KINDS)
+        self.assertEqual(enum.count("subject"), 1)
+        validate_envelope(detected_envelope(
+            provider="email", source_type="bloodbank.messaging.email.received",
+            matched_on={"kind": "subject", "value": "past due"},
+            content={"text": "Your bill is past due", "subject": "Your bill is past due"},
+            dedupe_key="bloodbank.messaging.email.received:topic-1"))
+        for invalid in ("sender_name", "topic", "carrier_pigeon"):
+            with self.assertRaises(FAILS, msg=invalid):
+                validate_envelope(detected_envelope(matched_on={"kind": invalid, "value": "past due"}))
 
     def test_detection_id_is_deterministic(self) -> None:
         a = detected_envelope()
