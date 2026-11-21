@@ -370,6 +370,43 @@ export function delegationPrompt(
     ? `The ticket should carry \`${requiredLabel}\` (triage finished). If it ` +
       'does not, say so in a comment and stop; do not triage it yourself.\n\n'
     : '';
+  const landing =
+    '  3. Resolve publication authority from the LIVE ticket before committing ' +
+    'or publishing anything. Read its current description and latest comments ' +
+    'alongside the state and labels above. Do not infer authority from its ' +
+    'title, labels, the dispatch event, or a remembered instruction. If the ' +
+    'live read fails, or explicit publication instructions conflict or are ' +
+    'incomplete, do not push, merge or land: ' +
+    'hold with `lifecycle:needs-input` and ask one concrete question in a ' +
+    'comment (unless `lifecycle:human` is present, in which case write ' +
+    'nothing). Never use standing merge approval to override a restriction.\n' +
+    '     - If the live ticket explicitly requires local-only / no push / no ' +
+    'merge / no landing, make a checkpoint in an isolated worktree. Commit ' +
+    'only this ticket\'s paths with `git add -- <paths>` and `git commit ' +
+    '--only -- <paths>`. Record the worktree path, branch and commit in the ' +
+    'evidence comment; do not push any branch, merge or land on main, delete ' +
+    'the checkpoint, or run `git unpushed` as a publication gate. Do not ' +
+    'turn review or handback into permission to publish.\n' +
+    '     - Otherwise, when the live ticket is readable and does not override ' +
+    'ordinary landing, land before handback. Work that exists only on this ' +
+    'disk is lost work in this ordinary route. Jarad gave standing approval ' +
+    'for ordinary merges (zero users), including review scopes. Commit only ' +
+    'this ticket\'s paths with `git add -- <paths>` and `git commit --only ' +
+    '-- <paths>`, never `git add -A` or a bare `git commit`. Integrate with ' +
+    '`git pull --no-rebase origin main`, then push to main. If a merge ' +
+    'conflicts in a file you did not write, abort it and hold with ' +
+    '`lifecycle:blocked` naming the file. The checkout is shared: never ' +
+    'stash, autostash, reset, rebase over, or check out files you did not ' +
+    'write, and never switch its branch. Work that could break main belongs ' +
+    'in your own git worktree: when ready, merge into main, push, then remove ' +
+    'the worktree and delete the branch. Unfinished ordinary work is a hold: ' +
+    'push its worktree branch to origin and name it in the hold comment. ' +
+    'Every other repo a command of yours wrote to is yours to land too. ' +
+    'Finally run `git unpushed` and fix whatever it lists for your paths.\n' +
+    '  4. Hand back with evidence. Prove each criterion in plain words: for ' +
+    'ordinary landing link the landed commit; for an authorized local-only ' +
+    'checkpoint give the local worktree path, branch and commit instead and ' +
+    'state that nothing was pushed or merged. Then:\n';
   return (
     `${ticketRef(facts)} is on the ${facts.repo || 'project'} board and Krebs has ` +
     'just dispatched it to you: it is ALREADY In Progress. Do not move it, and do ' +
@@ -382,28 +419,7 @@ export function delegationPrompt(
     'If one is ambiguous, ask in a comment (see waiting, below) rather than guess.\n' +
     '  2. Do the work, to the criteria, in the repo checkout above. Leave the ' +
     'assignee empty; work is claimed by state, not by assignment.\n' +
-    '  3. Land it before you hand back. Work that exists only on this disk is ' +
-    'lost work. Always land on main, review scope or not: the verdict giver ' +
-    'judges the landed commit (Jarad gave standing approval for merges: zero ' +
-    'users, so never park a merge for him). Commit only the paths this ticket ' +
-    'produced (code, tests, docs and evidence): `git add -- <paths>` then ' +
-    '`git commit --only -- <paths>`, never `git add -A` or a bare `git commit`, ' +
-    'which would sweep in what other agents staged. Integrate with `git pull ' +
-    '--no-rebase origin main`, then push to main; if that merge conflicts in a ' +
-    'file you did not write, do not resolve it for them: abort the merge you ' +
-    'started and hold the ticket `lifecycle:blocked` naming the file. The ' +
-    'checkout is shared: never stash, autostash, reset, rebase over, or check ' +
-    'out files you did not write, and never switch its branch. Work that could ' +
-    'break main belongs in your own git worktree: when it is ready, merge it ' +
-    'into main, push, then remove the worktree and delete the branch. ' +
-    'Unfinished work is a hold (see waiting, below); push its worktree branch ' +
-    'to origin and name it in the hold comment. Never leave a ' +
-    'commit, a dirty file or a worktree only on this machine. Every other repo ' +
-    'a command of yours wrote to is yours to land too. Finally run `git ' +
-    'unpushed` and fix whatever it lists for the paths you touched.\n' +
-    '  4. Hand back with evidence. Post a comment that proves each acceptance ' +
-    'criterion in plain words (what you ran and what it showed, with a link to ' +
-    'the landed commit), then:\n' +
+    landing +
     '     - if this scope requires review (the ticket needs a verdict from a ' +
     'Launch Director or the PM), add the label `lifecycle:review`. The ticket ' +
     'stays In Progress; the verdict giver moves it from there.\n' +

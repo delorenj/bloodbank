@@ -446,17 +446,19 @@ test('delegate fires on a transition into Todo', async (t) => {
 
 test('the delegation prompt re-reads the ticket before it acts', () => {
   const prompt = delegationPrompt(ticketFactsFromEnvelope(MOVED_TO_TODO), '');
-  // No dangling work (2026-11-15): the implementer lands its own work before handback.
-  assert.match(prompt, /Land it before you hand back/);
-  assert.match(prompt, /push to main/);
-  assert.match(prompt, /Always land on main, review scope or not/);
+  assert.match(prompt, /Resolve publication authority from the LIVE ticket/);
+  assert.match(prompt, /land before handback/);
+  assert.match(prompt, /then push to main/);
+  assert.match(prompt, /standing approval for ordinary merges/);
+  assert.match(prompt, /local-only \/ no push \/ no merge \/ no landing/);
+  assert.match(prompt, /do not push any branch, merge or land on main/);
   assert.match(prompt, /git commit --only --/);
   assert.match(prompt, /git pull --no-rebase origin/);
   assert.match(prompt, /never stash, autostash/);
   assert.match(prompt, /never\s+switch its branch/);
   assert.match(prompt, /remove the worktree and delete the branch/);
   assert.match(prompt, /`git unpushed`/);
-  assert.ok(prompt.indexOf('Land it before you hand back') < prompt.indexOf('Hand back with evidence'));
+  assert.ok(prompt.indexOf('Resolve publication authority from the LIVE ticket') < prompt.indexOf('Hand back with evidence'));
   assert.match(prompt, /re-read the ticket live from Plane/);
   assert.match(prompt, /no longer In Progress/);
   assert.match(prompt, /hold label/);
