@@ -370,43 +370,62 @@ export function delegationPrompt(
     ? `The ticket should carry \`${requiredLabel}\` (triage finished). If it ` +
       'does not, say so in a comment and stop; do not triage it yourself.\n\n'
     : '';
-  const landing =
-    '  3. Resolve publication authority from the LIVE ticket before committing ' +
-    'or publishing anything. Read its current description and latest comments ' +
-    'alongside the state and labels above. Do not infer authority from its ' +
-    'title, labels, the dispatch event, or a remembered instruction. If the ' +
-    'live read fails, or explicit publication instructions conflict or are ' +
-    'incomplete, do not push, merge or land: ' +
-    'hold with `lifecycle:needs-input` and ask one concrete question in a ' +
-    'comment (unless `lifecycle:human` is present, in which case write ' +
-    'nothing). Never use standing merge approval to override a restriction.\n' +
-    '     - If the live ticket explicitly requires local-only / no push / no ' +
-    'merge / no landing, make a checkpoint in an isolated worktree. Commit ' +
-    'only this ticket\'s paths with `git add -- <paths>` and `git commit ' +
-    '--only -- <paths>`. Record the worktree path, branch and commit in the ' +
-    'evidence comment; do not push any branch, merge or land on main, delete ' +
-    'the checkpoint, or run `git unpushed` as a publication gate. Do not ' +
-    'turn review or handback into permission to publish.\n' +
-    '     - Otherwise, when the live ticket is readable and does not override ' +
-    'ordinary landing, land before handback. Work that exists only on this ' +
-    'disk is lost work in this ordinary route. Jarad gave standing approval ' +
-    'for ordinary merges (zero users), including review scopes. Commit only ' +
-    'this ticket\'s paths with `git add -- <paths>` and `git commit --only ' +
-    '-- <paths>`, never `git add -A` or a bare `git commit`. Integrate with ' +
-    '`git pull --no-rebase origin main`, then push to main. If a merge ' +
+  const execution =
+    '  2. Resolve publication authority from the LIVE ticket and select the ' +
+    'execution lane before any implementation, edits or commits. Read its ' +
+    'current description and latest comments alongside the state and labels ' +
+    'above, and read any owner policy explicitly linked by the live ticket. ' +
+    'Do not infer authority from its title, labels, the dispatch event, or a ' +
+    'remembered instruction. Standing merge approval is not itself a ' +
+    'publication grant. If the live read fails, or authority is missing, ' +
+    'ambiguous, incomplete or conflicting, stop before edits or commits; do ' +
+    'not push, merge or land. Hold with `lifecycle:needs-input` and ask one ' +
+    'concrete question in a comment (unless `lifecycle:human` is present, in ' +
+    'which case write nothing). Do not ask to lift an explicit restriction.\n' +
+    '     Shared-checkout safeguards apply to EVERY route: never stash, ' +
+    'autostash, reset, rebase over, or check out files you did not write, and ' +
+    'never switch its branch. Never move or discard another agent\'s changes. ' +
+    'Select the authorized lane before touching source files:\n' +
+    '     - Local-only: if the live ticket explicitly requires local-only / ' +
+    'no push / no merge / no landing, select an isolated worktree before ' +
+    'edits. Reuse an existing recovery worktree and branch when the live ' +
+    'ticket explicitly authorizes that lane; otherwise create an isolated ' +
+    'worktree. If that authorized recovery lane cannot be used safely, hold ' +
+    'rather than replace or alter it.\n' +
+    '     - Ordinary publication: only when the current live ticket or an ' +
+    'owner policy explicitly linked by it affirmatively authorizes ordinary ' +
+    'publication, with no conflicting restriction, select the owning repo\'s ' +
+    'ordinary landing lane. Absence of a restriction is not permission. Work ' +
+    'that could break main belongs in your own isolated worktree before edits.\n' +
+    '  3. Do the work, to the criteria, only in the selected authorized lane. ' +
+    'Leave the assignee empty; work is claimed by state, not by assignment. ' +
+    'Commit only this ticket\'s paths with `git add -- <paths>` and ' +
+    '`git commit --only -- <paths>`, never `git add -A` or a bare `git commit`. ' +
+    'Run the required checks and obtain the required independent reviews for ' +
+    'that exact candidate. Follow only the selected publication route:\n' +
+    '     - Local-only checkpoint: record the worktree path, branch and commit ' +
+    'with check and independent-review evidence. Do not push any branch, ' +
+    'merge or land on main, delete the checkpoint, or run `git unpushed` as a ' +
+    'publication gate. Keep the checkpoint even on hold. Review and handback ' +
+    'do not grant publication permission.\n' +
+    '     - Authorized ordinary publication: land before handback. Work that ' +
+    'exists only on this disk is lost work in this ordinary route. Jarad gave ' +
+    'standing approval for ordinary merges (zero users), including review ' +
+    'scopes, but only after the affirmative publication grant above. Integrate ' +
+    'with `git pull --no-rebase origin main`, then push to main. If a merge ' +
     'conflicts in a file you did not write, abort it and hold with ' +
-    '`lifecycle:blocked` naming the file. The checkout is shared: never ' +
-    'stash, autostash, reset, rebase over, or check out files you did not ' +
-    'write, and never switch its branch. Work that could break main belongs ' +
-    'in your own git worktree: when ready, merge into main, push, then remove ' +
-    'the worktree and delete the branch. Unfinished ordinary work is a hold: ' +
-    'push its worktree branch to origin and name it in the hold comment. ' +
-    'Every other repo a command of yours wrote to is yours to land too. ' +
-    'Finally run `git unpushed` and fix whatever it lists for your paths.\n' +
+    '`lifecycle:blocked` naming the file. When landing from a worktree, merge ' +
+    'into main, push, then remove the worktree and delete the branch. ' +
+    'Unfinished ordinary work is a hold: push its worktree branch to origin ' +
+    'only within the live publication grant and name it in the hold comment. ' +
+    'Every other repo a command of yours wrote to needs its own publication ' +
+    'authority; never extend this ticket\'s grant to it. Finally run ' +
+    '`git unpushed` and fix whatever it lists for your authorized paths only.\n' +
     '  4. Hand back with evidence. Prove each criterion in plain words: for ' +
     'ordinary landing link the landed commit; for an authorized local-only ' +
-    'checkpoint give the local worktree path, branch and commit instead and ' +
-    'state that nothing was pushed or merged. Then:\n';
+    'checkpoint give the local worktree path, branch and commit instead, ' +
+    'include required-check and independent-review results, and state that ' +
+    'nothing was pushed or merged. Then:\n';
   return (
     `${ticketRef(facts)} is on the ${facts.repo || 'project'} board and Krebs has ` +
     'just dispatched it to you: it is ALREADY In Progress. Do not move it, and do ' +
@@ -417,9 +436,7 @@ export function delegationPrompt(
     'Then work it:\n' +
     '  1. Read the acceptance criteria. They have to be enumerated and testable. ' +
     'If one is ambiguous, ask in a comment (see waiting, below) rather than guess.\n' +
-    '  2. Do the work, to the criteria, in the repo checkout above. Leave the ' +
-    'assignee empty; work is claimed by state, not by assignment.\n' +
-    landing +
+    execution +
     '     - if this scope requires review (the ticket needs a verdict from a ' +
     'Launch Director or the PM), add the label `lifecycle:review`. The ticket ' +
     'stays In Progress; the verdict giver moves it from there.\n' +
