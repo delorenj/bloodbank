@@ -2,6 +2,12 @@
 
 Ticket: [BB-60](https://plane.delo.sh/33god/browse/BB-60/).
 Evidence and delivery guide: [docs/evidence/BB60/README.md](../docs/evidence/BB60/README.md).
+Public evidence: [complete sanitized package](https://s3.delo.sh/projects/bloodbank/2026-11-21/bb60-local-checkpoints/index.md)
+and [actual command exits/full logs](https://s3.delo.sh/projects/bloodbank/2026-11-21/bb60-local-checkpoints/checks.md).
+The MinIO publisher returned `ok: true` after anonymous SHA-256 verification of
+every uploaded object. Original review hashes and publication provenance are
+included; local checkpoint Git data, source repositories, credentials, dependencies
+and native full transcripts are not exported.
 
 ## Scope
 
@@ -29,9 +35,22 @@ a source review is not merge authorization.
 - Five disposable workers exercised two local checkpoint lanes, ordinary grant
   selection and absent/conflicting authority. Both local checkpoints are
   retained locally; their Git data must never be published or cleaned up.
-- Independent rehearsal SPEC passed checkpoint/no-publication behavior only.
-  Rehearsal QUALITY was pending at initial capture. Both local workers held
-  blocked after required checks; neither successful review nor Done is claimed.
+- Independent rehearsal SPEC reports
+  `PASS_BEHAVIORAL_CHECKPOINT_NO_PUBLICATION`; independent rehearsal QUALITY
+  reports `PASS_SCOPED_CHECKPOINT_QUALITY_NO_PUBLICATION` for both exact
+  checkpoints. QUALITY `review.json` SHA-256:
+  `052eb702d944b7c37cebe3da44aa23fc9c7372d8878195eeeeef962a25c711bc`.
+  Both local workers held blocked after required checks; neither successful
+  review-required handback nor no-review Done handback was exercised. Scoped
+  independent review does not fill that remaining acceptance gap.
+- QUALITY expands SPEC's containment exception beyond initial reads: local186
+  host-side `show`/`comments` (tool/result 9170/9172), `decision` (9217/9218),
+  and blocked-hold `label-add`/`comment` (9285/9286) ran outside the exec/bwrap
+  wrapper. SPEC's whole-command substring classification missed `&&`-chained
+  host calls. All five operations exited 0 through the frozen private
+  journal-only helper; no real network/provider operation or board write was
+  observed. Universal terminal containment is not proven. Preserve the original
+  SPEC and QUALITY reports; this evidence correction needs no new checkpoint task.
 - Required package/repo checks ran unchanged. Source `npm test`: exit 0,
   328 passed / 18 skipped / 0 failed. All 12 repo components ran separately;
   nine passed, project/watch/binding failed, and the aggregate exited 1.

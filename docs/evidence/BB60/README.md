@@ -1,6 +1,19 @@
 # BB-60: local-only checkpoints in the shared Krebs contract
 
 Ticket: [BB-60](https://plane.delo.sh/33god/browse/BB-60/).
+
+## Published evidence
+
+[Complete sanitized evidence package](https://s3.delo.sh/projects/bloodbank/2026-11-21/bb60-local-checkpoints/index.md)
+contains the overview, exact commands/exits and full check logs, both independent
+source and rehearsal reviews, harness/scripts, exact worker prompts, synthetic
+fixtures/journals, canonical default-loader proof and a read-only integrity
+verifier. [Command/log table](https://s3.delo.sh/projects/bloodbank/2026-11-21/bb60-local-checkpoints/checks.md).
+The MinIO publisher fetched every object anonymously and verified transport
+SHA-256s before returning `ok: true`. Local checkpoint Git data, whole source
+repositories, dependencies, credentials and native full transcripts are excluded;
+public copies preserve original report hashes and qualify historical claims.
+
 Reviewed correction: `f13982302a8e91851726bc1c6eaf3c02c120dac7`, based on
 `0faf07ff5b01bf5e7b2eb08db7176d06392b9172`.
 
@@ -39,6 +52,7 @@ Evidence is retained under the active profile's local scratch directory:
 | `bb60-spec-final/review.json` | `2bb1fea4283314cd7ddf4fe307f0b6ed5f83dbaa1a47a9c0a3d9ae05a887206c` |
 | `bb60-quality-final/review.json` | `c3ed23b1dac44edab22862fb3522cbff9704dcf75ce1b6fd44f126f922a817c4` |
 | `bb60-rehearsal-spec/review.json` | `f0a15cd17476910c1375345e81b48b69b1ddd110f2f753b18e363bedca81158e` |
+| `bb60-rehearsal-quality/review.json` | `052eb702d944b7c37cebe3da44aa23fc9c7372d8878195eeeeef962a25c711bc` |
 
 Delivery verification checked the three reviewed file hashes and Git blobs,
 the frozen patch, candidate dist, unchanged check definitions, all 15 correction
@@ -78,13 +92,28 @@ The ordinary-grant worker selected ordinary authority but stopped at the
 rehearsal's overriding no-publication limit: decision-only, not ordinary landing.
 Absent and conflicting authority workers held for input before edits or commits.
 
-Independent rehearsal SPEC reports `PASS_BEHAVIORAL_CHECKPOINT_NO_PUBLICATION`.
-Rehearsal QUALITY was not available at initial evidence capture and is not claimed
-here. Initial local186 fixture reads occurred outside the bwrap wrapper, through
-the exact private journal-only helper with no network/provider operations. This
-limits containment proof; universal terminal containment is not claimed.
+Independent rehearsal SPEC reports `PASS_BEHAVIORAL_CHECKPOINT_NO_PUBLICATION`;
+independent rehearsal QUALITY reports
+`PASS_SCOPED_CHECKPOINT_QUALITY_NO_PUBLICATION` for both exact checkpoints.
+Both are scoped verdicts, not publication approval or full acceptance.
+
+QUALITY corrected SPEC's containment audit: its whole-command launcher-substring
+classification missed later `&&`-chained host-side fixture calls. The local186
+exception comprises **five operations** outside `rehearse.py exec`/bwrap:
+`show` and `comments` (tool/result 9170/9172), `decision` (9217/9218), and
+`label-add` plus `comment` for the blocked hold (9285/9286). All exited 0 using
+the frozen private journal-only helper; it has no real network/provider path.
+Observed effects were fixture reads and private journal appends, not real board
+writes. This is broader than an initial-read exception; universal terminal
+containment is not claimed. The original SPEC report is preserved unchanged,
+with QUALITY's correction alongside it; no new checkpoint task is needed merely
+to correct this evidence claim.
+
 No successful review/Done handback, real Plane/bus E2E, ordinary publication,
-real-child restoration or malicious-agent containment is certified.
+real-child restoration or malicious-agent containment is certified. Successful
+review-required and no-review handback execution remains an acceptance gap;
+known-red required baseline/export gates need separate owner remediation and
+reverification. No follow-up ticket identifier is asserted here before filing.
 
 ## Delivery procedure and runtime boundary
 
