@@ -49,3 +49,26 @@ file preservation snapshots. No unrelated files may be staged or committed.
 No full-gate or all-criteria PASS, child eligibility restoration, production E2E,
 ordinary-publication rehearsal or universal sandbox-containment claim is made.
 Board disposition remains the parent's responsibility.
+
+## Observed source landing and canonical adoption
+
+Evidence commit `3ccd05fe952ef3d77b5cb08180aa25bc410a2944` reached remote main
+by safe fast-forward and push after the clean BB60 worktree's real
+`git pull --no-rebase origin main` (exit 0). Remote main, reviewed-correction
+ancestry and the exact three source/test blobs were verified. Node v24.6.0
+`npm run build` in the actual primary package exited 0.
+
+Default Krebs `loadBloodbank()` (no arguments or directory override) and actual
+review/no-review `dispatchCommand` construction exited 0 against the canonical
+artifact. Its `dist/fleet.js` SHA-256 is
+`d74de4394dc3b09178e90cc2759002acb54f922fc0f8bf5f98ac701e83e201c5`, equal
+to the candidate, a fresh compile and the independent QUALITY scratch build.
+Both dispatch variants carry the new authority contract, not the old
+unconditional landing instruction. Triage/review safeguards were also checked.
+
+The nine pre-existing dirty paths, their contents/modes and the empty index
+were unchanged after push and build; build introduced no Git-visible surprises.
+See the linked evidence guide and `bb60-delivery/canonical-runtime.json`.
+This proves offline default-loader adoption, not a running tick or published
+command. No restart, deploy, board/bus write or schedule action was performed.
+The remaining known failures and rehearsal limits above are not waived.

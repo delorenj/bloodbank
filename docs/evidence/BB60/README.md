@@ -105,3 +105,47 @@ At initial capture, canonical dist was still old; source approval alone did not
 prove adoption. Final observed landing/build/loader results belong in the
 runtime verification section added after execution. No restart or deployment is
 needed or authorized for this file-loader proof.
+
+## Observed landing and canonical runtime verification
+
+On 2026-11-21, evidence commit
+`3ccd05fe952ef3d77b5cb08180aa25bc410a2944` was integrated after a clean-worktree
+preflight and real `git pull --no-rebase origin main` (exit 0). Primary main was
+fast-forwarded without autostash or a merge commit; `git push origin main`
+exited 0. `git ls-remote` returned that same main HEAD. The exact reviewed
+correction is its ancestor and all three reviewed source/test blobs match.
+No local rehearsal checkpoint data was included.
+
+The actual primary package then ran `npm run build` using **Node v24.6.0**,
+exit 0. Its consumed `dist/fleet.js` changed from
+`a1736f7d1ae48be7a1e43b4a78f275229c3a39308df144e6add85167e0eb98bd` to
+`d74de4394dc3b09178e90cc2759002acb54f922fc0f8bf5f98ac701e83e201c5`.
+That equals both a fresh in-memory TypeScript compile of the reviewed source
+and the independent QUALITY scratch build. Source SHA-256 remains
+`3d61695105a98ca0e9e131ff1f8977a3626bcd9584af7e9a468cff5dfe968b8a`.
+Build/codegen produced no unexpected Git-visible changes.
+
+`node bb60-delivery/probe-default.mjs` exited 0. It imported the actual
+`/home/delorenj/code/33GOD/krebs/tick/deps.mjs`, called `loadBloodbank()`
+**without arguments or `KREBS_BLOODBANK_N8N_DIR`**, and verified consumption of
+`/home/delorenj/code/33GOD/bloodbank/integrations/n8n-nodes-bloodbank/dist/fleet.js`.
+Actual `dispatchCommand` calls for review=true and review=false both carried
+the new live-authority/local-checkpoint contract, preserved their handback
+variants and lacked `Always land on main`. Actual triage and review command
+construction retained their safeguards. This is an offline real-entrypoint
+loader/command proof, not a published command, live tick or worker rerun.
+No restart, deployment, bus/Plane write or schedule operation occurred.
+
+Command receipts: `bb60-delivery/{integration-pull-main,primary-ff-only,`
+`push-main-source-evidence,remote-main-after-source,canonical-build,`
+`canonical-default-krebs-probe}.json` and matching `.log` files.
+Runtime assertions and outputs: `bb60-delivery/probe-default.mjs`,
+`canonical-runtime.json`, `canonical-build-summary.json` and both
+`canonical-dispatch-review-*.json`. Pre/post fingerprints, file modes and
+binary/index diff receipts verify the nine unrelated dirty files and empty
+index were unchanged immediately after landing and build. Later concurrent
+changes, if any, must be reported rather than overwritten.
+
+This closes the stale default-artifact gap only. Known-red repo checks,
+unsuccessful review/Done rehearsal handbacks and the bounded containment
+limitation remain explicit; this is not a full-gate PASS.
