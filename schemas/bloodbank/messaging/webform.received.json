@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/messaging/webform.received.json",
+  "title": "Messaging Webform Received Event",
+  "description": "A person submitted a form on one of our web pages. Published by the form-intake service (33god-platform/form-intake), which serves POST /_forms/<form> on every *.delo.sh site and stores the submission in its own SQLite before it publishes, so the bus is the announcement and not the only copy. Site and form slug are data, never tokens. ordering_key is messaging:webform:<site>:<form> (the same value as 'messaging:webform:' + data.thread_id): submissions to one form order together. Consumers deduplicate on message_id (the intake's submission id). The sender shape matches the other messaging platforms, so watch targets match a form address like an email one. See bloodbank/docs/event-naming.md (messaging, webform).",
+  "x-sender": {
+    "handle_paths": ["data.sender.handle"],
+    "name_paths": ["data.sender.display_name"],
+    "thread_path": "data.thread_id",
+    "text_paths": ["data.content.text"],
+    "time_path": "data.received_at",
+    "inbound_when": {"path": "data.direction", "equals": ["inbound"]},
+    "handle_kinds": ["email"]
+  },
+  "type": "object",
+  "allOf": [{"$ref": "../../_common/cloudevent_base.v1.json"}],
+  "properties": {
+    "type": {"const": "bloodbank.messaging.webform.received"},
+    "kind": {"const": "event"},
+    "domain": {"const": "messaging"},
+    "ordering_key": {
+      "type": "string",
+      "pattern": "^messaging:webform:.+$",
+      "description": "Section 11.1 bucket 'messaging:webform:<site>:<form>', the same value as 'messaging:webform:' + data.thread_id."
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.messaging.webform.received.",
+      "properties": {
+        "schema_version": {"const": 1, "description": "Payload contract revision. Currently 1."},
+        "direction": {"type": "string", "enum": ["inbound"], "description": "Always inbound: a visitor wrote to us."},
+        "site": {"type": "string", "minLength": 1, "description": "Hostname the form was posted to, e.g. 33god.delo.sh."},
+        "form": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$", "description": "Form slug from the path /_forms/<form>, e.g. briefing."},
+        "sender": {
+          "type": "object",
+          "description": "Who submitted it. handle is the email field when the form has one, else 'anonymous'.",
+          "properties": {
+            "handle": {"type": "string", "minLength": 1},
+            "display_name": {"type": "string"}
+          },
+          "required": ["handle"],
+          "additionalProperties": false
+        },
+        "content": {
+          "type": "object",
+          "description": "The message field when the form has one, else a one-line summary of the submitted fields.",
+          "properties": {
+            "text": {"type": "string"},
+            "format": {"type": "string", "enum": ["plain"]}
+          },
+          "required": ["text", "format"],
+          "additionalProperties": false
+        },
+        "fields": {
+          "type": "object",
+          "description": "Every submitted field, as strings. Names starting with '_' (honeypots, page metadata) are dropped before this.",
+          "additionalProperties": {"type": "string"}
+        },
+        "page_url": {"type": "string", "description": "The page the form was on (Referer), when sent."},
+        "received_at": {"type": "string", "format": "date-time", "description": "When the intake received it, RFC 3339."},
+        "message_id": {"type": "string", "minLength": 1, "description": "The intake's submission id (uuid); consumers deduplicate on it."},
+        "thread_id": {"type": "string", "minLength": 1, "description": "'<site>:<form>'; the ordering bucket names it."}
+      },
+      "required": ["schema_version", "direction", "site", "form", "sender", "content", "fields", "received_at", "message_id", "thread_id"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["type", "kind", "domain", "ordering_key", "data"]
+}

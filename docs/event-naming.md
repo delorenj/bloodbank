@@ -352,6 +352,7 @@ Segment 4 of `type` MUST be one of:
 | `message`          | `conversation`           | A single user/assistant message appended to the transcript. (Retired in `telephony` and `messaging`: texts and chat messages are per-transport/per-platform `messaging` entities.) |
 | `email`            | `messaging`              | The email platform: `messaging.email.received` (one message), `messaging.email.notified` (one alert). |
 | `telegram`         | `messaging`              | The Telegram platform: `messaging.telegram.received` (one message), `messaging.telegram.notified` (one alert). |
+| `webform`          | `messaging`              | A form a person submitted on one of our web pages (the `form-intake` service, `/_forms/<form>` on any `*.delo.sh` site): `messaging.webform.received`. Site and form slug are data (`data.site`, `data.form`); the submission is stored before it is published. |
 | `slack`            | `messaging`              | The Slack platform: `messaging.slack.received` (one message), `messaging.slack.notified` (one alert). |
 | `teams`            | `messaging`              | The Microsoft Teams platform: `messaging.teams.received` (one message), `messaging.teams.notified` (one alert). |
 | `whatsapp`         | `messaging`              | The WhatsApp platform: `messaging.whatsapp.received` (one message), `messaging.whatsapp.notified` (one alert). |

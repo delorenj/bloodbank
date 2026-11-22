@@ -113,6 +113,8 @@ ALLOWED_ENTITIES = frozenset({
     "binding",
     # messaging: one entity per chat platform (messaging.<platform>.received|notified)
     "email", "telegram", "slack", "teams", "whatsapp", "google_chat",
+    # messaging: a person submitting a form on one of our web pages (messaging.webform.received)
+    "webform",
     # messaging: one entity per carrier-text transport (messaging.<transport>.*)
     "sms", "mms", "rcs", "imessage",
     # cron: the heartbeat minute and one registered candybar
