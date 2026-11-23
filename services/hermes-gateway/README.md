@@ -743,22 +743,26 @@ profile and route before claiming recovery. No gateway restart is needed for
 Hermes' supported conversation boundary; source changes in this directory
 remain uninstalled until the owner authorizes a separate deployment.
 
-A provider diagnostic sometimes arrives as a final string with no Python
-exception. A finalizer success flag cannot by itself distinguish that diagnostic
-from assistant prose, so only unambiguous whole error envelopes are classified
-as returned rejections; their length and line count do not change the verdict.
-Ordinary prose beginning `HTTP 404 means` or `API call failed yesterday` remains
-an answer. The supported owning native handler is preflighted for root finalizer
-hooks: an admitted turn whose agent returns before its root end callback (the
-pinned retry-exhaustion path returns `failed=True, completed=False` before the
-finalizer) fails closed even when Hermes sanitizes its display text or appends
-failed-turn copy. A recognized native failed-turn notice is also not an answer.
-No answer fact is emitted for a failed capture; the failed terminal uses
-`hermes_turn_error` rather than `invocation.completed`. Raised processing failure
-after a successful capture likewise closes failed without an answer, and
-redelivery replays immutable outbox bytes without running the model again.
-These are disposable offline fixtures, **not** a same-profile live native-tool
-turn, installed-source proof, provider route approval, or downstream delivery.
+The root native finalizer's explicit `completed`, `failed` and `interrupted`
+booleans are authoritative for model finalization. A successful answer may quote
+any provider error text, including a long `HTTP429:no eligible route` diagnostic;
+no provider-text classifier can demote that native success. The adapter's notice
+and interrupt-text fallbacks apply only when there is no native capture. A real
+runner shutdown interruption or later platform failure/cancellation can still
+exclude a captured answer.
+
+The supported owning native handler is preflighted for root finalizer hooks.
+An admitted agent turn that returns before its root end callback fails closed:
+the pinned retry-exhaustion path returns `failed=True, completed=False` before
+the finalizer. This guard does not depend on raw rejection text, sanitized display
+warnings, or appended failed-turn copy. An explicit failed root capture also
+closes failed with no answer; `hermes_turn_error` identifies these native failures,
+without guessing a provider-specific reason from prose. Existing pre-agent
+not-run notices retain their drain/busy retry behavior. Raised processing failure
+after successful capture closes failed without an answer, and redelivery replays
+immutable outbox bytes without running the model again. These are disposable
+offline fixtures, **not** a same-profile live native-tool turn, installed-source
+proof, provider route approval, or downstream delivery.
 
 ## Tests
 

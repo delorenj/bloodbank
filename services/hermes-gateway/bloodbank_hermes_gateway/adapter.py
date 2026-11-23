@@ -53,10 +53,7 @@ from .contract import (
 )
 from .execution_state import ExecutionRecord, ExecutionStateStore, envelope_digest
 from .plugin import CommandBinding, command_binding, prepare_capture, register_hooks
-from .refusals import (
-    NOT_RUN, PROVIDER_REJECTION_REFUSAL, HermesNotice, NoticeClassifier,
-    is_interrupt_text, returned_provider_rejection,
-)
+from .refusals import NOT_RUN, HermesNotice, NoticeClassifier, is_interrupt_text
 
 logger = logging.getLogger(__name__)
 
@@ -2223,15 +2220,14 @@ class BloodbankAdapter(BasePlatformAdapter):
                 record.invocation.invocation_id,
                 notice.key,
             )
-        elif returned_provider_rejection(record.final_reply) and (
-            terminal_outcome == "success"
-            or (captured is not None and captured.capture_outcome == "failure")
-        ):
-            terminal_outcome = "failure"
+        elif captured is not None and captured.capture_outcome == "failure":
             failure_code = HERMES_TURN_ERROR_CODE
-            failure_message = "Hermes returned a provider rejection instead of an answer"
-            failure_data = {"refusal": PROVIDER_REJECTION_REFUSAL}
-        elif terminal_outcome == "success" and is_interrupt_text(record.final_reply):
+            failure_message = "Hermes finalized the root native turn as failed"
+            failure_data = {"refusal": "native.failed"}
+        elif (
+            terminal_outcome == "success" and captured is None
+            and is_interrupt_text(record.final_reply)
+        ):
             # The agent loop abandoned the turn on an interrupt (Hermes' own
             # inactivity stop, say) and its "Operation interrupted ..." line is the
             # whole reply: the work did not finish.
@@ -2299,8 +2295,11 @@ class BloodbankAdapter(BasePlatformAdapter):
             return record.shutdown_interrupt
         if not self._runner_stopping():
             return None
+        binding = record.binding
         if outcome == "cancelled" or (
-            outcome == "success" and is_interrupt_text(record.final_reply)
+            outcome == "success"
+            and (binding is None or binding.result is None)
+            and is_interrupt_text(record.final_reply)
         ):
             return self._shutdown_kind()
         return None

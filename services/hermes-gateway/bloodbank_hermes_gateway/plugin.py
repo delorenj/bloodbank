@@ -18,7 +18,6 @@ from .contract import (
     validate_fact,
 )
 from .execution_state import ExecutionRecord, ExecutionStateStore
-from .refusals import returned_provider_rejection
 
 
 @dataclass
@@ -116,8 +115,6 @@ class CommandBinding:
             "text_response(finish_reason=end_turn)",
             "text_response(finish_reason=None)",
         }
-        if outcome == "success" and eligible and returned_provider_rejection(self.candidate):
-            outcome = "failure"
         if outcome == "success" and eligible and self.candidate is not None:
             assert self.candidate_native is not None
             answer = final_answer_event(

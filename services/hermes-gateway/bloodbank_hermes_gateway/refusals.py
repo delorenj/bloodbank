@@ -221,26 +221,6 @@ _ACTION_KEYS = (
 _INTERRUPT_TEXT = re.compile(r"\A\s*Operation interrupted\b[^\n]{0,280}\Z")
 
 
-# These are complete provider diagnostic envelopes, not generic HTTP prose.
-# A finalizer reports a returned SDK error as completed=True; absent an SDK
-# failure bit, only unambiguous whole-line error shapes can be classified here.
-_PROVIDER_FAILURE = re.compile(
-    r"\A\s*(?:"
-    r"api call failed(?: after \d+ retries)?\s*:\s*(?:provider rejected request|http\s*[45]\d{2}\b|no eligible route\b)"
-    r"|http\s*[45]\d{2}\s*:\s*(?:provider rejected request|no eligible (?:fast )?route\b)"
-    r"|provider authentication failed\s*:"
-    r"|non-retryable error\s*:"
-    r"|rate limited after \d+ retries\s*:"
-    r"|incorrect api key\s*:|invalid api key\s*:"
-    r").*\Z",
-    re.IGNORECASE | re.DOTALL,
-)
-PROVIDER_REJECTION_REFUSAL = "provider.rejected_response"
-
-def returned_provider_rejection(reply: Any) -> bool:
-    """Recognize an entire diagnostic envelope, independent of body length."""
-    return isinstance(reply, str) and bool(_PROVIDER_FAILURE.fullmatch(reply))
-
 @dataclass(frozen=True)
 class HermesNotice:
     """One recognised Hermes notice: its catalog key and what it means for a command."""
