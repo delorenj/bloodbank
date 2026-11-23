@@ -52,10 +52,12 @@ function assertAuthorityContract(prompt) {
 
   assert.match(selection, /execution lane before any implementation, edits or commits/);
   assert.match(selection, /current description and latest comments/);
-  assert.match(selection, /read any owner policy explicitly linked by the live ticket/);
+  assert.match(selection, /read applicable standing owner and owning-repo delivery policy as well as any policy explicitly linked by the live ticket/);
   assert.match(selection, /Do not infer authority from its title, labels, the dispatch event, or a remembered instruction/);
-  assert.match(selection, /Standing merge approval is not itself a publication grant/);
-  assert.match(selection, /live read fails, or authority is missing, ambiguous, incomplete or conflicting, stop before edits or commits; do not push, merge or land/);
+  assert.match(selection, /Standing approval for ordinary source delivery applies to accepted implementation without a repeated ticket grant/);
+  assert.match(selection, /standing merge approval alone is not evidence of that delivery authority/);
+  assert.match(selection, /explicit live local-only \/ no-push \/ no-merge \/ no-landing restriction overrides standing delivery authority/);
+  assert.match(selection, /live ticket or applicable policy read fails, or authority is genuinely missing, ambiguous, incomplete or conflicting, stop before edits or commits; do not push, merge or land/);
   assert.match(selection, /Hold with `lifecycle:needs-input` and ask one concrete question/);
   assert.match(selection, /unless `lifecycle:human` is present, in which case write nothing/);
   assert.match(selection, /Do not ask to lift an explicit restriction/);
@@ -64,8 +66,8 @@ function assertAuthorityContract(prompt) {
   assert.match(localSelection, /explicitly requires local-only \/ no push \/ no merge \/ no landing, select an isolated worktree before edits/);
   assert.match(localSelection, /Reuse an existing recovery worktree and branch when the live ticket explicitly authorizes that lane/);
   assert.match(localSelection, /cannot be used safely, hold rather than replace or alter it/);
-  assert.match(ordinarySelection, /only when the current live ticket or an owner policy explicitly linked by it affirmatively authorizes ordinary publication, with no conflicting restriction/);
-  assert.match(ordinarySelection, /Absence of a restriction is not permission/);
+  assert.match(ordinarySelection, /applicable standing owner\/owning-repo policy affirmatively authorizes ordinary source delivery for this accepted implementation, and no live restriction conflicts/);
+  assert.match(ordinarySelection, /ticket need not repeat that standing grant; absence of both a ticket grant and applicable standing delivery authority is not permission/);
   assert.match(ordinarySelection, /isolated worktree before edits/);
   assert.match(execution, /only in the selected authorized lane/);
   assert.match(execution, /Leave the assignee empty/);
@@ -77,12 +79,13 @@ function assertAuthorityContract(prompt) {
   assert.match(localExecution, /Keep the checkpoint even on hold/);
   assert.match(localExecution, /Review and handback do not grant publication permission/);
   assert.match(ordinaryExecution, /land before handback/);
-  assert.match(ordinaryExecution, /standing approval for ordinary merges.*only after the affirmative publication grant above/);
+  assert.match(ordinaryExecution, /standing approval for ordinary merges.*only after the applicable ordinary source-delivery authority above is verified/);
   assert.match(ordinaryExecution, /git pull --no-rebase origin main`, then push to main/);
   assert.match(ordinaryExecution, /conflicts in a file you did not write, abort it and hold with `lifecycle:blocked` naming the file/);
   assert.match(ordinaryExecution, /remove the worktree and delete the branch/);
   assert.match(ordinaryExecution, /only within the live publication grant/);
   assert.match(ordinaryExecution, /Every other repo.*needs its own publication authority/);
+  assert.match(ordinaryExecution, /Standing source delivery authority does not authorize spending, deletion, client sends, credential or permission changes; those remain reserved/);
   assert.match(ordinaryExecution, /`git unpushed`.*authorized paths only/);
   assert.match(prompt, /local worktree path, branch and commit instead, include required-check and independent-review results, and state that nothing was pushed or merged/);
   assert.doesNotMatch(prompt, /Otherwise, when the live ticket is readable|Always land on main|Never leave a commit, a dirty file or a worktree only on this machine/);

@@ -465,10 +465,11 @@ test('the delegation prompt re-reads the ticket before it acts', () => {
   const commit = prompt.indexOf('Commit only this ticket');
   assert.ok(authority >= 0 && authority < sharedSafeguards);
   assert.ok(sharedSafeguards < localLane && localLane < work && work < commit);
-  assert.match(prompt, /Standing merge approval is not itself a publication grant/);
-  assert.match(prompt, /authority is missing, ambiguous, incomplete or conflicting, stop before edits or commits/);
-  assert.match(prompt, /affirmatively authorizes ordinary publication/);
-  assert.match(prompt, /Absence of a restriction is not permission/);
+  assert.match(prompt, /standing merge approval alone is not evidence of that delivery authority/);
+  assert.match(prompt, /authority is genuinely missing, ambiguous, incomplete or conflicting, stop before edits or commits/);
+  assert.match(prompt, /applicable standing owner\/owning-repo policy affirmatively authorizes ordinary source delivery/);
+  assert.match(prompt, /ticket need not repeat that standing grant/);
+  assert.match(prompt, /absence of both a ticket grant and applicable standing delivery authority is not permission/);
   assert.match(prompt, /re-read the ticket live from Plane/);
   assert.match(prompt, /no longer In Progress/);
   assert.match(prompt, /hold label/);

@@ -374,11 +374,16 @@ export function delegationPrompt(
     '  2. Resolve publication authority from the LIVE ticket and select the ' +
     'execution lane before any implementation, edits or commits. Read its ' +
     'current description and latest comments alongside the state and labels ' +
-    'above, and read any owner policy explicitly linked by the live ticket. ' +
+    'above, then read applicable standing owner and owning-repo delivery ' +
+    'policy as well as any policy explicitly linked by the live ticket. ' +
     'Do not infer authority from its title, labels, the dispatch event, or a ' +
-    'remembered instruction. Standing merge approval is not itself a ' +
-    'publication grant. If the live read fails, or authority is missing, ' +
-    'ambiguous, incomplete or conflicting, stop before edits or commits; do ' +
+    'remembered instruction. Standing approval for ordinary source delivery ' +
+    'applies to accepted implementation without a repeated ticket grant, but ' +
+    'standing merge approval alone is not evidence of that delivery authority. ' +
+    'An explicit live local-only / no-push / no-merge / no-landing restriction ' +
+    'overrides standing delivery authority. If the live ticket or applicable ' +
+    'policy read fails, or authority is genuinely missing, ambiguous, ' +
+    'incomplete or conflicting, stop before edits or commits; do ' +
     'not push, merge or land. Hold with `lifecycle:needs-input` and ask one ' +
     'concrete question in a comment (unless `lifecycle:human` is present, in ' +
     'which case write nothing). Do not ask to lift an explicit restriction.\n' +
@@ -392,10 +397,12 @@ export function delegationPrompt(
     'ticket explicitly authorizes that lane; otherwise create an isolated ' +
     'worktree. If that authorized recovery lane cannot be used safely, hold ' +
     'rather than replace or alter it.\n' +
-    '     - Ordinary publication: only when the current live ticket or an ' +
-    'owner policy explicitly linked by it affirmatively authorizes ordinary ' +
-    'publication, with no conflicting restriction, select the owning repo\'s ' +
-    'ordinary landing lane. Absence of a restriction is not permission. Work ' +
+    '     - Ordinary publication: when the live ticket or applicable standing ' +
+    'owner/owning-repo policy affirmatively authorizes ordinary source ' +
+    'delivery for this accepted implementation, and no live restriction ' +
+    'conflicts, select the owning repo\'s ordinary landing lane. The ticket ' +
+    'need not repeat that standing grant; absence of both a ticket grant and ' +
+    'applicable standing delivery authority is not permission. Work ' +
     'that could break main belongs in your own isolated worktree before edits.\n' +
     '  3. Do the work, to the criteria, only in the selected authorized lane. ' +
     'Leave the assignee empty; work is claimed by state, not by assignment. ' +
@@ -411,7 +418,8 @@ export function delegationPrompt(
     '     - Authorized ordinary publication: land before handback. Work that ' +
     'exists only on this disk is lost work in this ordinary route. Jarad gave ' +
     'standing approval for ordinary merges (zero users), including review ' +
-    'scopes, but only after the affirmative publication grant above. Integrate ' +
+    'scopes, but only after the applicable ordinary source-delivery ' +
+    'authority above is verified. Integrate ' +
     'with `git pull --no-rebase origin main`, then push to main. If a merge ' +
     'conflicts in a file you did not write, abort it and hold with ' +
     '`lifecycle:blocked` naming the file. When landing from a worktree, merge ' +
@@ -419,7 +427,9 @@ export function delegationPrompt(
     'Unfinished ordinary work is a hold: push its worktree branch to origin ' +
     'only within the live publication grant and name it in the hold comment. ' +
     'Every other repo a command of yours wrote to needs its own publication ' +
-    'authority; never extend this ticket\'s grant to it. Finally run ' +
+    'authority; never extend this ticket\'s grant to it. Standing source ' +
+    'delivery authority does not authorize spending, deletion, client sends, ' +
+    'credential or permission changes; those remain reserved. Finally run ' +
     '`git unpushed` and fix whatever it lists for your authorized paths only.\n' +
     '  4. Hand back with evidence. Prove each criterion in plain words: for ' +
     'ordinary landing link the landed commit; for an authorized local-only ' +
