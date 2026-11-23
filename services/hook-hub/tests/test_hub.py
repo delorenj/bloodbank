@@ -295,6 +295,74 @@ timeout_ms = 700
             self.assertEqual(r["stdout"], "")
             self.assertLess(elapsed, 6, f"hub held the caller {elapsed:.1f}s")
 
+    def _leftover_registry(self, shell: str, mode: str) -> str:
+        return f"""
+[[handler]]
+id = "leaky"
+mode = "{mode}"
+on = ["prompt_submit"]
+command = ["/bin/sh", "-c", {json.dumps(shell)}]
+timeout_ms = 5000
+"""
+
+    @staticmethod
+    def _alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        try:  # a zombie is dead for our purposes
+            return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+        except OSError:
+            return False
+
+    def _wait_dead(self, pid: int, within: float = 3.0) -> bool:
+        end = time.monotonic() + within
+        while time.monotonic() < end:
+            if not self._alive(pid):
+                return True
+            time.sleep(0.05)
+        return not self._alive(pid)
+
+    def test_successful_handler_leftovers_are_reaped(self):
+        """A backgrounded child of a handler that exited 0 must not escape.
+
+        Regression: SoX `play`, spawned by claude-notify, outlived the handler
+        for 30-89h (adopted by systemd --user) because only timeout/error reaped.
+        """
+        for mode in ("sync", "async"):
+            with self.subTest(mode=mode):
+                pidfile = self.tmp / f"leaked-{mode}.pid"
+                shell = f"sleep 60 </dev/null >/dev/null 2>&1 & echo $! > {pidfile}"
+                with HubHarness(self.tmp, self._leftover_registry(shell, mode)) as h:
+                    h.request("claude", "UserPromptSubmit", timeout=15)
+                    deadline = time.monotonic() + 5
+                    while not pidfile.exists() and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    pid = int(pidfile.read_text())
+                    self.assertTrue(self._wait_dead(pid), "leftover survived its handler")
+
+    def test_deliberately_detached_worker_survives(self):
+        """setsid'd workers (hindsight-session-end, merge-forward) must outlive the hook."""
+        pidfile = self.tmp / "detached.pid"
+        shell = f"setsid sleep 60 </dev/null >/dev/null 2>&1 & echo $! > {pidfile}"
+        pid = None
+        try:
+            with HubHarness(self.tmp, self._leftover_registry(shell, "sync")) as h:
+                h.request("claude", "UserPromptSubmit", timeout=15)
+                deadline = time.monotonic() + 5
+                while not pidfile.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                pid = int(pidfile.read_text())
+                time.sleep(0.6)  # longer than the SIGTERM->SIGKILL grace
+                self.assertTrue(self._alive(pid), "hub killed a setsid'd worker")
+        finally:
+            if pid:
+                try:
+                    os.kill(pid, 9)
+                except ProcessLookupError:
+                    pass
+
     def test_missing_binary_is_survivable(self):
         reg = """
 [[handler]]

@@ -471,6 +471,11 @@ async def run_handler(h: Handler, req: dict[str, Any], role: str | None,
         await proc.wait()
         raise
 
+    # The handler is done, but anything it backgrounded without its own setsid
+    # is still in its process group. Reap it now: on the success path nothing
+    # else ever would (this is how SoX `play` leaked for days).
+    await _reap_group(proc, h.id)
+
     if proc.returncode not in (0, None):
         log(f"handler {h.id}: exit={proc.returncode}")
     result = decode_result(out or b"", err or b"", proc.returncode or 0,
@@ -479,6 +484,46 @@ async def run_handler(h: Handler, req: dict[str, Any], role: str | None,
         result.stdout = ""
     result.duration_ms = round((time.monotonic() - started) * 1000, 2)
     return result
+
+
+async def _reap_group(proc: Any, handler_id: str, settle_s: float = 0.15,
+                      grace_s: float = 0.2) -> int:
+    """Kill detached leftovers of a handler that already exited. Returns 1 if any.
+
+    run_handler starts every handler as a session/process-group leader, so
+    pgid == proc.pid. The pgid cannot be recycled while a member is alive, and
+    the leader was reaped only microseconds ago, so signalling it is safe. The
+    common case (no leftovers) costs one failed killpg(pgid, 0).
+
+    Deliberately-detached workers (setsid in hindsight-session-end,
+    merge-forward) are in a different session and are untouched. A handler that
+    runs `setsid worker &` and exits at once leaves that worker in OUR group for
+    the few ms before setsid(2) runs, so when something is still in the group we
+    wait `settle_s` and look again before signalling; only what is still here
+    after that is a true leftover.
+    """
+    pgid = proc.pid
+
+    def occupied() -> bool:
+        try:
+            os.killpg(pgid, 0)
+        except (ProcessLookupError, PermissionError, OSError):
+            return False
+        return True
+
+    if not occupied():
+        return 0
+    await asyncio.sleep(settle_s)
+    if not occupied():
+        return 0
+    log(f"handler {handler_id}: reaping leftover processes in group {pgid}")
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+        await asyncio.sleep(grace_s)
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    return 1
 
 
 def _kill(proc: Any) -> None:
