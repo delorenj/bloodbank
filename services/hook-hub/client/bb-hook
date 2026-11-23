@@ -158,6 +158,18 @@ ENV_ALLOWLIST = (
     "ORCA_AGENT_HOOK_ENV",
     "ORCA_AGENT_HOOK_VERSION",
     "ORCA_AGENT_LAUNCH_TOKEN",
+    "ORCA_AGENT_PANE",
+    "ORCA_AGENT_LAUNCH",
+    # Orca adapter recursion/foreign-harness guards must survive the socket.
+    "CLAUDE_JOB_DIR",
+    "GROK_HOOK_EVENT",
+    "CURSOR_VERSION",
+    "CURSOR_PROJECT_DIR",
+    "DEVIN_PROJECT_DIR",
+    "ORCA_AGENT_HOOK_ROOT",
+    # Orca's adapter records the originating tmux pane, never the hub's pane.
+    "TMUX",
+    "TMUX_PANE",
     # control -- bmad-loop session routing. Set by the orchestrator in the
     # session env; the hub's bmad-loop-relay handler fires only when these are
     # present. Routing identifiers (paths/task ids), never credentials.
@@ -174,7 +186,7 @@ SECRET_SHAPED = re.compile(
 )
 # Orca's per-terminal launch authority must survive dispatch; its separate HTTP
 # credential is resolved from the endpoint file by the handler. Neither is logged.
-_SECRET_EXEMPT = frozenset({"DBUS_SESSION_BUS_ADDRESS", "ORCA_AGENT_LAUNCH_TOKEN"})
+_SECRET_EXEMPT = frozenset({"DBUS_SESSION_BUS_ADDRESS", "ORCA_AGENT_LAUNCH_TOKEN", "ORCA_AGENT_PANE", "ORCA_PANE_KEY"})
 
 
 def captured_env() -> dict:
@@ -185,7 +197,7 @@ def captured_env() -> dict:
             continue
         if key not in _SECRET_EXEMPT and SECRET_SHAPED.search(key):
             continue
-        if key == "ORCA_AGENT_LAUNCH_TOKEN" and (len(value) > 128 or any(ord(c) < 32 for c in value)):
+        if key in {"ORCA_AGENT_LAUNCH_TOKEN", "ORCA_AGENT_LAUNCH"} and (len(value) > 128 or any(ord(c) < 32 for c in value)):
             continue
         out[key] = value
     return out

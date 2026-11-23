@@ -198,6 +198,34 @@ def file_edits(payload: dict) -> list[tuple[str, str]]:
 
 
 def orca(payload: dict, cli: str, native: str) -> dict:
+    if not (os.environ.get("ORCA_PANE_KEY") or os.environ.get("ORCA_AGENT_PANE")):
+        return result("skipped", "not_an_orca_pane")
+    # Keep Orca's wire protocol, endpoint refresh, identity and offline spool
+    # semantics in its own adapters. Only their native registrations retire.
+    if cli in {"claude", "codex", "copilot", "kimi", "gemini", "antigravity"}:
+        from orca_retirement import PROTECTED, COPILOT_NATIVE, direct_owner_present
+        if native in PROTECTED.get(cli, set()) or (
+            os.environ.get("BB_HOOK_ORCA_DIRECT_OWNER") == "1" if "BB_HOOK_ORCA_DIRECT_OWNER" in os.environ
+            else direct_owner_present(Path.home(), cli, native)
+        ):
+            return result("skipped", "orca_direct_owner_retained")
+        script = Path.home() / ".orca/agent-hooks" / f"{cli}-hook.sh"
+        if not script.is_file() or not os.access(script, os.X_OK):
+            return result("failed", "orca_adapter_missing", exit_code=1)
+        environment = os.environ.copy()
+        environment["ORCA_HOOK_AGENT_PID"] = environment.get("BB_HOOK_AGENT_PID", "")
+        environment["ORCA_AGENT_LAUNCH_TOKEN"] = environment.get("ORCA_AGENT_LAUNCH_TOKEN") or environment.get("ORCA_AGENT_LAUNCH", "")
+        environment["ORCA_PANE_KEY"] = environment.get("ORCA_PANE_KEY") or environment.get("ORCA_AGENT_PANE", "")
+        event = COPILOT_NATIVE.get(native, native) if cli == "copilot" else native
+        environment["ORCA_COPILOT_HOOK_EVENT"] = event
+        environment["ORCA_ANTIGRAVITY_EVENT"] = native
+        response = invoke(["/bin/sh", str(script)], dict(payload, hook_event_name=event),
+                          timeout=2, environment=environment)
+        if response["_hook_hub"]["status"] == "succeeded":
+            response["_hook_hub"]["reason"] = "orca_adapter_completed"
+        # A zero exit is fail-open, not proof of HTTP delivery: the adapter may
+        # have spooled the event. Never expose its passive stdout as context.
+        return response
     environment = os.environ.copy()
     endpoint = environment.get("ORCA_AGENT_HOOK_ENDPOINT")
     if endpoint:

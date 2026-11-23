@@ -32,7 +32,8 @@ LEGACY_MARKERS = (
     "/.agents/hooks/lint-skills.py",
     "/.agents/scripts/lint-skills.py",
     "/.agents/skills/project-notebook/hooks/session-",
-    "/.orca/agent-hooks/",
+    # Orca includes native permission owners and unmatched lifecycle surfaces.
+    # Only orca_retirement.py may retire its proven-redundant registrations.
 )
 
 
