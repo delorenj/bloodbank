@@ -292,7 +292,11 @@ for (const type of MESSAGING_TYPES) {
 
 test('webform uses the exact schema-valid thread id for its ordering bucket', () => {
   const type = 'bloodbank.messaging.webform.received';
-  for (const threadId of [' ', '  ', '  thread-42  ', '0', 'é', 'x']) {
+  for (const threadId of [
+    ' ', '  ', '  thread-42  ', '0', 'é', 'x',
+    '\n', '\r', '\u2028', '\u2029', 'a\nb', 'a\rb', 'a\u2028b', 'a\u2029b',
+    '\u0000', '\ud800', '\udc00',
+  ]) {
     const { envelope } = buildEnvelope({
       type,
       kind: 'event',
@@ -308,6 +312,25 @@ test('webform uses the exact schema-valid thread id for its ordering bucket', ()
     eventId: EVENT_ID, observedAt: '2026-10-14T12:00:00.000Z',
   });
   assert.throws(() => validateEnvelope(type, empty.envelope), /schema validation failed/);
+});
+
+test('webform ordering key requires its prefix and a nonempty suffix', () => {
+  const type = 'bloodbank.messaging.webform.received';
+  const { envelope } = buildEnvelope({
+    type, kind: 'event', data: WEBFORM_PAYLOAD,
+    eventId: EVENT_ID, observedAt: '2026-10-14T12:00:00.000Z',
+  });
+  for (const orderingKey of ['messaging:webform:', 'messaging:telegram:thread-42', 'thread-42', '']) {
+    assert.throws(
+      () => validateEnvelope(type, { ...envelope, ordering_key: orderingKey }),
+      /schema validation failed/,
+      JSON.stringify(orderingKey),
+    );
+  }
+  assert.throws(
+    () => validateEnvelope(type, { ...envelope, ordering_key: undefined }),
+    /schema validation failed/,
+  );
 });
 
 test('other messaging platforms keep trimmed ordering source behavior', () => {
