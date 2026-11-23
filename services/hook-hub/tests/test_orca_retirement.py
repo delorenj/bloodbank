@@ -196,7 +196,7 @@ def test_codex_native_disabled_direct_does_not_suppress_central(tmp_path, monkey
     assert retirement.direct_owner_present(tmp_path, "codex", "Stop", snapshot) is False
 
 
-def test_disabled_parent_and_nonmatching_direct_scope_do_not_suppress(tmp_path):
+def test_disabled_parent_and_scoped_direct_owner(tmp_path):
     path, *_ = setup_home(tmp_path)
     doc = json.loads(path.read_text())
     doc["hooks"]["Stop"][0]["enabled"] = False
@@ -205,7 +205,8 @@ def test_disabled_parent_and_nonmatching_direct_scope_do_not_suppress(tmp_path):
     doc["hooks"]["Stop"][0]["enabled"] = True
     doc["hooks"]["Stop"][0]["matcher"] = "Write|Edit"
     path.write_text(json.dumps(doc))
-    assert not retirement.direct_owner_present(tmp_path, "claude", "Stop")
+    assert retirement.direct_owner_present(tmp_path, "claude", "Stop")
+    assert not retirement.direct_owner_present(tmp_path, "claude", "SessionStart")
 
 
 def test_retirement_refuses_live_hub_and_pending_queued_work(tmp_path, monkeypatch):
@@ -256,7 +257,7 @@ def test_quiescence_requires_operator_attestation_even_when_no_process_detected(
             apply.assert_not_called()
 
 
-def test_queued_hub_uses_acceptance_owner_after_native_config_pruned(tmp_path):
+def test_queued_hub_uses_acceptance_owner_after_native_config_pruned(tmp_path, tmp_path_factory):
     import time
     from test_hub import HubHarness
     from receipts import ReceiptStore
@@ -273,8 +274,7 @@ def test_queued_hub_uses_acceptance_owner_after_native_config_pruned(tmp_path):
                 f'command=["{sys.executable}","{blocker}"]\ntimeout_ms=6000\n'
                 f'[[handler]]\nid="orca-status"\nmode="async"\non_native=["Stop"]\n'
                 f'clis=["claude"]\ncommand=["{sys.executable}","{SERVICE}/concerns.py","orca-status"]\ntimeout_ms=3000\n')
-    run = tmp_path / "hub"
-    run.mkdir()
+    run = tmp_path_factory.mktemp("h")
     with mock.patch("test_hub._free_socket_path", return_value=str(run / "s")):
         with HubHarness(run, registry, {"HOME": str(home), "HOOK_HUB_ASYNC_SLOTS": "1",
                                         "HOOK_HUB_OVERLAY_DIR": str(home / "no-overlay")}) as daemon:
@@ -408,6 +408,68 @@ def test_direct_owner_handoff_prevents_double_dispatch(tmp_path, config, monkeyp
         retirement.apply_changes(changes, tmp_path / "backups")
         assert concerns.orca({}, "claude", "Stop")["_hook_hub"]["reason"] == "orca_adapter_completed"
         assert run.call_count == 1
+
+
+def test_scoped_retained_direct_owner_posts_once_against_private_http(tmp_path, monkeypatch):
+    import http.server
+    import queue
+    import shutil
+    import subprocess
+    import threading
+    import urllib.parse
+
+    source = Path.home() / ".orca/agent-hooks/claude-hook.sh"
+    if not source.is_file():
+        pytest.skip("operator Orca adapter not installed")
+    adapter = tmp_path / ".orca/agent-hooks/claude-hook.sh"
+    adapter.parent.mkdir(parents=True)
+    shutil.copy2(source, adapter)
+    config = tmp_path / ".claude/settings.json"
+    config.parent.mkdir(parents=True)
+    direct = f"/bin/sh {adapter}"
+    central = f"{tmp_path}/.agents/hooks/bb-hook --cli claude --native PostToolUse"
+    config.write_text(json.dumps({"hooks": {"PostToolUse": [
+        {"matcher": "Write|Edit", "hooks": [{"type": "command", "command": direct}]},
+        {"hooks": [{"type": "command", "command": central}]},
+    ]}}))
+    incoming = queue.Queue()
+
+    class Endpoint(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            incoming.put(urllib.parse.parse_qs(body.decode()))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    endpoint = tmp_path / "endpoint.sh"
+    endpoint.write_text(f"export ORCA_AGENT_HOOK_PORT={server.server_port}\nexport ORCA_AGENT_HOOK_TOKEN=fixture\n")
+    environment = {"PATH": os.environ["PATH"], "HOME": str(tmp_path),
+                   "ORCA_PANE_KEY": "fixture", "ORCA_AGENT_HOOK_ENDPOINT": str(endpoint)}
+    payload = {"session_id": "fixture", "tool_name": "Write", "hook_event_name": "PostToolUse"}
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    try:
+        with mock.patch.dict(os.environ, environment, clear=True):
+            assert retirement.direct_owner_present(tmp_path, "claude", "PostToolUse")
+            response = concerns.orca(payload, "claude", "PostToolUse")
+            old = subprocess.run(["/bin/sh", str(adapter)], input=json.dumps(payload),
+                                 env=environment, text=True, capture_output=True, timeout=5)
+        assert response["_hook_hub"]["reason"] == "orca_direct_owner_retained"
+        assert old.returncode == 0
+        posted = incoming.get(timeout=3)
+        assert posted["paneKey"] == ["fixture"]
+        assert json.loads(posted["payload"][0]) == payload
+        assert incoming.empty(), "central adapter duplicated the direct HTTP post"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
 
 
 @pytest.mark.parametrize("cli,native,event", [("claude", "Stop", "Stop"), ("codex", "Interrupt", "Interrupt"),

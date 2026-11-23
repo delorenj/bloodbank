@@ -235,10 +235,12 @@ def direct_owner_present(home: Path, cli: str, native: str, codex_snapshot=None)
             if doc.get("disableAllHooks") is True:
                 continue
             rows = ((r.get("event"), r, (r.get("matcher", ""),), r.get("enabled", True) is not False) for r in doc.get("hooks", [])) if cli == "kimi" else effective_leaves(doc.get("hooks", doc))
-            for event, row, scopes, enabled in rows:
+            for event, row, _scopes, enabled in rows:
                 command = row.get("command", row.get("bash", ""))
+                # Native matchers can select a retained direct registration for
+                # this invocation. Without the native match decision, treat any
+                # enabled direct row as an owner rather than dispatch twice.
                 if (event in {native, legacy_native} and enabled
-                        and all(s in ("", "*", ".*") for s in scopes)
                         and isinstance(command, str) and ".orca/agent-hooks/" in command):
                     return True
     except (OSError, ValueError, TypeError, AttributeError, RuntimeError, TimeoutError):
