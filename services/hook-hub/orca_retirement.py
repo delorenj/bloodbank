@@ -13,6 +13,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import sqlite3
 import sys
 import tomllib
 
@@ -90,20 +92,29 @@ def prune(value, remove_ids):
 
 
 def strip_kimi(raw: str, indexes: set[int]) -> str:
-    # Preserve all unrelated TOML bytes, including comments and trailing tables.
-    starts = list(re.finditer(r"(?m)^\[\[hooks\]\][ \t]*(?:#[^\n]*)?$", raw))
+    # Only accept a layout whose parsed hook rows map one-to-one to text spans.
+    # Indented headers are legal TOML; never index a narrower regex by parsed row.
+    doc = tomllib.loads(raw)
+    headers = list(re.finditer(r"(?m)^[ \t]*\[\[hooks\]\][ \t]*(?:\#[^\n]*)?(?:\n|$)", raw))
+    if len(headers) != len(doc.get("hooks", [])) or any(i < 0 or i >= len(headers) for i in indexes):
+        raise ValueError("unsupported_kimi_hook_layout")
+    # Match only literal table headers: a TOML string can contain [[hooks]].
+    tables = list(re.finditer(r"(?m)^[ \t]*\[(?:\[)?[A-Za-z0-9_.-]+\](?:\])?[ \t]*(?:\#[^\n]*)?(?:\n|$)", raw))
     edits = []
     for index in indexes:
-        start = starts[index].start()
-        boundary = re.search(r"(?m)^\[", raw[starts[index].end():])
-        end = starts[index].end() + boundary.start() if boundary else len(raw)
-        # A nested hook table is not safely supported by this narrow migration.
-        if raw[end:].startswith("[hooks."):
+        start = headers[index].start()
+        following = next((table for table in tables if table.start() > start), None)
+        end = following.start() if following else len(raw)
+        if following and re.match(r"[ \t]*\[hooks\.", following.group()):
             raise ValueError("nested_kimi_hook_table")
         edits.append((start, end))
     for start, end in sorted(edits, reverse=True):
         raw = raw[:start] + raw[end:]
-    tomllib.loads(raw)
+    updated = tomllib.loads(raw)
+    expected = dict(doc)
+    expected["hooks"] = [row for i, row in enumerate(doc.get("hooks", [])) if i not in indexes]
+    if updated != expected:
+        raise ValueError("unsupported_kimi_hook_layout")
     return raw
 
 
@@ -185,21 +196,52 @@ def is_central(command, cli, native, home):
     return bool(re.fullmatch(r"(?:exec )?" + re.escape(expected) + r"(?: --deadline 15)?(?: --trailer (?:passive|stop))?", command))
 
 
-def direct_owner_present(home: Path, cli: str, native: str) -> bool:
-    """Avoid double delivery before apply, or if Orca re-registers on startup."""
+def effective_leaves(value, native="", scopes=(), enabled=True):
+    if isinstance(value, list):
+        for item in value:
+            yield from effective_leaves(item, native, scopes, enabled)
+    elif isinstance(value, dict):
+        enabled = enabled and value.get("enabled", True) is not False
+        scopes = scopes + ((value["matcher"],) if "matcher" in value else ())
+        if "command" in value or "bash" in value:
+            yield native, value, scopes, enabled
+        for key, item in value.items():
+            if isinstance(item, (list, dict)):
+                yield from effective_leaves(item, native if key == "hooks" else key, scopes, enabled)
+
+
+def direct_owner_present(home: Path, cli: str, native: str, codex_snapshot=None) -> bool:
+    """Check effective direct ownership at native intake, not at async execution."""
     legacy_native = COPILOT_NATIVE.get(native, native) if cli == "copilot" else native
+    # The native loader, not raw command text, decides whether Codex fires.
+    # Loader errors fail closed, retaining a possible direct owner.
     try:
+        if cli == "codex":
+            if codex_snapshot is None:
+                sys.path.insert(0, str(SERVICE.parent / "agent-hooks"))
+                from codex_native import capture_trust
+                codex_snapshot = capture_trust(home / ".codex/config.toml")
+            source = str(home / ".codex/hooks.json")
+            return any(h.get("sourcePath") == source and isinstance(h.get("eventName"), str)
+                       and h["eventName"].lower() == native.lower()
+                       and isinstance(h.get("command"), str) and ".orca/agent-hooks/" in h["command"]
+                       and h.get("enabled") is True and h.get("trustStatus") == "trusted"
+                       for h in codex_snapshot["hooks"])
         for rel in TARGETS.get(cli, ()):
             path = home / rel
             if not path.exists():
                 continue
             _, doc = load_config(path)
-            rows = ((r.get("event"), r, ()) for r in doc.get("hooks", [])) if cli == "kimi" else leaves(doc.get("hooks", doc))
-            for event, row, _ in rows:
+            if doc.get("disableAllHooks") is True:
+                continue
+            rows = ((r.get("event"), r, (r.get("matcher", ""),), r.get("enabled", True) is not False) for r in doc.get("hooks", [])) if cli == "kimi" else effective_leaves(doc.get("hooks", doc))
+            for event, row, scopes, enabled in rows:
                 command = row.get("command", row.get("bash", ""))
-                if event in {native, legacy_native} and isinstance(command, str) and ".orca/agent-hooks/" in command:
+                if (event in {native, legacy_native} and enabled
+                        and all(s in ("", "*", ".*") for s in scopes)
+                        and isinstance(command, str) and ".orca/agent-hooks/" in command):
                     return True
-    except (OSError, ValueError, TypeError, AttributeError):
+    except (OSError, ValueError, TypeError, AttributeError, RuntimeError, TimeoutError):
         return True  # Unknown native state is not permission to add a new owner.
     return False
 
@@ -209,11 +251,66 @@ def source_ready(home: Path):
         raise ValueError("noncanonical_registry")
     if (home / ".agents/hooks/bloodbank/hooks.master.json").read_bytes() != (SERVICE.parent / "agent-hooks/hooks.master.json").read_bytes():
         raise ValueError("installed_master_differs")
-    for rel in ("concerns.py", "handlers.toml", "orca_retirement.py"):
+    for rel in ("hub.py", "concerns.py", "handlers.toml", "orca_retirement.py"):
         if (home / ".agents/hooks/hub" / rel).read_bytes() != (SERVICE / rel).read_bytes():
             raise ValueError("installed_source_differs:" + rel)
-    if (home / ".agents/hooks/bb-hook").read_bytes() != (SERVICE / "client/bb-hook").read_bytes():
+    client = home / ".agents/hooks/bb-hook"
+    if client.read_bytes() != (SERVICE / "client/bb-hook").read_bytes():
         raise ValueError("installed_client_differs")
+    if not client.is_file() or not os.access(client, os.X_OK):
+        raise ValueError("installed_client_not_executable")
+    first_line = client.open("rb").readline().decode("utf-8", "replace").strip()
+    if not first_line.startswith("#!"):
+        raise ValueError("installed_client_interpreter_missing")
+    interpreter = first_line[2:].split()[0]
+    if interpreter == "/usr/bin/env":
+        args = first_line[2:].split()[1:]
+        interpreter = shutil.which(args[0]) if args else None
+    if not interpreter or not Path(interpreter).is_file() or not os.access(interpreter, os.X_OK):
+        raise ValueError("installed_client_interpreter_missing")
+
+
+def assert_quiescent(home: Path, changes: dict):
+    """Cutover cannot atomically remove hooks from already-running native CLIs.
+
+    Require the operator to drain every affected client and accepted hub work;
+    a fresh preview is needed after that boundary. A process check is a guard,
+    not a substitute for stopping launches across the apply window.
+    """
+    if not changes:
+        return
+    affected = {cli for cli, relatives in TARGETS.items() for rel in relatives
+                if home / rel in changes}
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+    state_root = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state"))
+    sockets = {runtime / "33god/hook-hub.sock", state_root / "33god/hook-hub.sock",
+               Path(f"/run/user/{os.getuid()}/33god/hook-hub.sock")}
+    state = state_root / "33god/hook-hub/receipts.sqlite3"
+    state = Path(os.environ.get("HOOK_HUB_RECEIPTS", state))
+    if any(path.exists() for path in sockets):
+        # Stopping just the service leaves the socket-activated listener alive.
+        raise ValueError("hub_socket_must_be_stopped_for_cutover")
+    if state.exists():
+        try:
+            with sqlite3.connect(state) as db:
+                pending = db.execute("SELECT COUNT(*) FROM executions WHERE status IN ('selected','started') AND handler_id='orca-status'").fetchone()[0]
+        except sqlite3.Error as exc:
+            raise ValueError("orca_receipts_unreadable") from exc
+        if pending:
+            raise ValueError("orca_work_not_drained")
+    # Native hooks can be cached by processes whose command line does not
+    # reveal the CLI; the explicit operator drain attestation remains required.
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal() or int(entry.name) == os.getpid():
+            continue
+        try:
+            if entry.joinpath("status").read_text().split("Uid:\t", 1)[1].split()[0] != str(os.getuid()):
+                continue
+            argv = entry.joinpath("cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+        except (OSError, IndexError):
+            continue
+        if re.search(r"(?:^|[ /])(?:claude|codex|copilot|kimi|gemini|antigravity)(?:\s|$)", argv) and any(cli in argv for cli in affected):
+            raise ValueError("native_clients_must_be_drained")
 
 
 def apply_changes(changes, backup_dir, codex_before=None):
@@ -261,6 +358,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, default=Path.home(), help="preview another home; apply is current-user only")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--drained-clients", action="store_true", help="operator attests affected native CLI sessions are closed and launches paused")
     parser.add_argument("--backup-dir", type=Path, help="new private directory under TMPDIR, required for apply")
     args = parser.parse_args()
     try:
@@ -284,6 +382,9 @@ def main():
                 raise ValueError("apply_requires_current_user_home")
             if ready_error:
                 raise ValueError(ready_error)
+            if changes and not args.drained_clients:
+                raise ValueError("explicit_drained_clients_required")
+            assert_quiescent(args.home, changes)
             scratch = Path(os.environ["TMPDIR"]).resolve()
             if not args.backup_dir or not args.backup_dir.resolve().is_relative_to(scratch):
                 raise ValueError("backup_dir_must_be_new_and_under_TMPDIR")

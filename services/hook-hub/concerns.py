@@ -204,7 +204,10 @@ def orca(payload: dict, cli: str, native: str) -> dict:
     # semantics in its own adapters. Only their native registrations retire.
     if cli in {"claude", "codex", "copilot", "kimi", "gemini", "antigravity"}:
         from orca_retirement import PROTECTED, COPILOT_NATIVE, direct_owner_present
-        if native in PROTECTED.get(cli, set()) or direct_owner_present(Path.home(), cli, native):
+        if native in PROTECTED.get(cli, set()) or (
+            os.environ.get("BB_HOOK_ORCA_DIRECT_OWNER") == "1" if "BB_HOOK_ORCA_DIRECT_OWNER" in os.environ
+            else direct_owner_present(Path.home(), cli, native)
+        ):
             return result("skipped", "orca_direct_owner_retained")
         script = Path.home() / ".orca/agent-hooks" / f"{cli}-hook.sh"
         if not script.is_file() or not os.access(script, os.X_OK):

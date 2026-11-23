@@ -333,6 +333,8 @@ def _child_env(req: dict[str, Any], role: str | None) -> dict[str, str]:
     # The agent process itself (bb-hook walks past the launcher shell): crank v2 binds by it.
     env["BB_HOOK_AGENT_PID"] = str(req.get("agent_pid", "") or "")
     env["BB_HOOK_AGENT_START"] = str(req.get("agent_start", "") or "")
+    if "orca_direct_owner" in req:
+        env["BB_HOOK_ORCA_DIRECT_OWNER"] = "1" if req["orca_direct_owner"] else "0"
     # Handlers that re-enter an agent CLI must not re-enter the hub.
     env["BB_HOOK_HUB"] = "off"
     return env
@@ -625,7 +627,7 @@ class Server:
                     stdin_bytes: bytes) -> None:
         key = (str(req.get("cli")), native_session_id(req) or str(req.get("cwd", "")))
         related = self.session_tasks.setdefault(key, {})
-        dependencies = [task for task, handler_id in related.items() if handler_id in h.after]
+        dependencies = [task for task, handler_id in related.items() if handler_id in h.after or (h.id == "orca-status" and handler_id == "orca-status")]
         async def work() -> None:
             slots = self.publish_slots if h.id == "bloodbank-publisher" else self.slots
             async with slots:
@@ -739,6 +741,11 @@ class Server:
             if native == "transition" and isinstance(payload, dict) and payload.get("to"):
                 transition = f"{payload.get('from', '')}->{payload['to']}"
             selections = self.cfg.selections(role, native, payload, env, transition, cli)
+            # Resolve ownership before acknowledging the native invocation. A
+            # queued async adapter must not reread config after a cutover.
+            if any(h.id == "orca-status" and reason is None for h, reason in selections):
+                from orca_retirement import direct_owner_present
+                req["orca_direct_owner"] = await asyncio.to_thread(direct_owner_present, Path.home(), cli, native)
             publisher = self.publisher(cli, native, binding)
             if publisher is not None:
                 selections.insert(0, (publisher, None))
