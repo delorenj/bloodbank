@@ -1,0 +1,28 @@
+{
+  "baseline_commit": "029c571b687c5790945002796643a31e95b0e33f",
+  "branch": "fix/bb63-native-turn-outcomes",
+  "candidate_identity": "commit containing this manifest, with exact source_sha256 below",
+  "evidence_sha256": {
+    "default.txt": "80299c1f9c8e814e27c752166c4558594ee6e30b218fdaff1a685200b666a4c6",
+    "expected-red.txt": "d2c0a3f8a3ef459c11393ba1756b91d64c90e449f6dc277de1f821b679048f94",
+    "native-platform-results.json": "ca0dcb37a5b7ff84a58ecb9bbfac1e5ac91d858626569021dcdaef1fc16354ae",
+    "pinned.txt": "20d5169c81104472c5f3141b4c93fe80e38d867c2d517b71d6fef778f58dacb1"
+  },
+  "gate_exits": {
+    "expected_red": 1,
+    "full_default": 0,
+    "full_pinned": 0,
+    "native_platform_probe": 0
+  },
+  "independent_final_reviews": "pending; implementation gates are not independent acceptance",
+  "live_recovery": "not executed; separate owner gate",
+  "native_pin": "0408fec7a153e6c32c064acd2b8053917f1525f1",
+  "source_delta_patch_sha256": "815e97ded8ba129c9e9d08fdf402bb2cb3389a631f11f9f8d9eb9e9c6265c3a8",
+  "source_sha256": {
+    "services/hermes-gateway/README.md": "02cd994d6a601c5fb9b9b61d978db237ea1783fc6d9031d80cfd34bbfca28466",
+    "services/hermes-gateway/bloodbank_hermes_gateway/adapter.py": "9ee3913c604d877c74a3315d486b8ce7f4076cfd822cccebd243c401aff20842",
+    "services/hermes-gateway/bloodbank_hermes_gateway/plugin.py": "cde6b9ceea06a34381f72e5fc12b300a52833dd489ad6987505ab1ed0bce87fe",
+    "services/hermes-gateway/bloodbank_hermes_gateway/refusals.py": "8c43fbf00dae5ca6d8d01844b2f66f146025947983f62e1245a4addf9263e2b8",
+    "services/hermes-gateway/tests/test_native_outcome.py": "0d18d87b17c848757dca9ce6601e5ff487878ba79c278fe9545a34d50557f018"
+  }
+}

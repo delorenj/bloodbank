@@ -59,6 +59,16 @@ NOT_RUN_ERRORS = frozenset(
 # Busy/drain/slash notices outside gateway.errors and their disposition, plus the
 # English copy of every notice the gateway knows by name.
 _ENGLISH: dict[str, tuple[str, str]] = {
+    # A failed-turn boundary is not an answer even when Hermes' carrier says
+    # SUCCESS. The installed runner may append this after sanitizing errors.
+    "gateway.errors.native_failed_turn_boundary": (
+        FAILED,
+        "Your request was not processed. Send it again if you still want me to carry it out.",
+    ),
+    "gateway.errors.native_partial_failed_turn_boundary": (
+        FAILED,
+        "This turn did not complete. Some actions may already have run; verify their effects before resending.",
+    ),
     # --- refused before a turn started: retry --------------------------------
     "gateway.busy.drain_rejected_new_work": (
         NOT_RUN,

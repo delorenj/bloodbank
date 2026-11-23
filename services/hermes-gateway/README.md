@@ -724,6 +724,46 @@ command carried none). The ticket workflows put `reason`
 finished ticket turn statelessly instead of remembering the correlation id.
 The `agent.turn.*` events do not carry it.
 
+## BB-63: supported context recovery and provider-outcome boundary
+
+A context-too-long failure is not repaired by editing `state.db`, transcript
+rows, or the gateway's routing index. Hermes' supported `/new` (alias `/reset`)
+creates a fresh active session for **the chat route where it is sent**; the
+previous session's transcript remains searchable/readable. `/compress` retains
+continuity while shortening context, but if the affected session cannot process
+it, use `/new` on the affected profile and chat route after confirming the
+current turn is idle. A CLI `/new` in a different view, a sibling subagent's
+turn, or a new Bloodbank `thread_id` does not rotate the existing affected
+route. A Bloodbank prompt beginning `/new` is explicitly refused by this adapter
+as a slash command rather than silently completing a lifecycle command. Route
+rotation should therefore be performed through the owning Hermes conversation
+surface, not by injecting an invocation command or changing a database. Verify
+that the old session is still readable and the new turn belongs to the same
+profile and route before claiming recovery. No gateway restart is needed for
+Hermes' supported conversation boundary; source changes in this directory
+remain uninstalled until the owner authorizes a separate deployment.
+
+The root native finalizer's explicit `completed`, `failed` and `interrupted`
+booleans are authoritative for model finalization. A successful answer may quote
+any provider error text, including a long `HTTP429:no eligible route` diagnostic;
+no provider-text classifier can demote that native success. The adapter's notice
+and interrupt-text fallbacks apply only when there is no native capture. A real
+runner shutdown interruption or later platform failure/cancellation can still
+exclude a captured answer.
+
+The supported owning native handler is preflighted for root finalizer hooks.
+An admitted agent turn that returns before its root end callback fails closed:
+the pinned retry-exhaustion path returns `failed=True, completed=False` before
+the finalizer. This guard does not depend on raw rejection text, sanitized display
+warnings, or appended failed-turn copy. An explicit failed root capture also
+closes failed with no answer; `hermes_turn_error` identifies these native failures,
+without guessing a provider-specific reason from prose. Existing pre-agent
+not-run notices retain their drain/busy retry behavior. Raised processing failure
+after successful capture closes failed without an answer, and redelivery replays
+immutable outbox bytes without running the model again. These are disposable
+offline fixtures, **not** a same-profile live native-tool turn, installed-source
+proof, provider route approval, or downstream delivery.
+
 ## Tests
 
 ```bash

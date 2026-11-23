@@ -1,0 +1,475 @@
+{
+  "candidate": "v3-uncommitted-source-sha256",
+  "source_hashes": {
+    "services/hermes-gateway/README.md": "02cd994d6a601c5fb9b9b61d978db237ea1783fc6d9031d80cfd34bbfca28466",
+    "services/hermes-gateway/bloodbank_hermes_gateway/adapter.py": "9ee3913c604d877c74a3315d486b8ce7f4076cfd822cccebd243c401aff20842",
+    "services/hermes-gateway/bloodbank_hermes_gateway/plugin.py": "cde6b9ceea06a34381f72e5fc12b300a52833dd489ad6987505ab1ed0bce87fe",
+    "services/hermes-gateway/bloodbank_hermes_gateway/refusals.py": "8c43fbf00dae5ca6d8d01844b2f66f146025947983f62e1245a4addf9263e2b8",
+    "services/hermes-gateway/tests/test_native_outcome.py": "0d18d87b17c848757dca9ce6601e5ff487878ba79c278fe9545a34d50557f018"
+  },
+  "native_pin": "0408fec7a153e6c32c064acd2b8053917f1525f1",
+  "adapter_module": "/home/delorenj/code/33GOD/bloodbank/.worktrees/fix-bb63-native-turn-outcomes/services/hermes-gateway/bloodbank_hermes_gateway/adapter.py",
+  "plugin_module": "/home/delorenj/code/33GOD/bloodbank/.worktrees/fix-bb63-native-turn-outcomes/services/hermes-gateway/bloodbank_hermes_gateway/plugin.py",
+  "results": {
+    "plain_success": {
+      "command_id": "6f886e2a-d5f0-4f02-a42f-4f57f8f07bfb",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "success",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.conversation.message.appended",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [
+        "The bounded check passed."
+      ],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [
+        "The bounded check passed."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "real_tool_success": {
+      "command_id": "d4989d56-0473-4e0c-bc6b-bb8119b5131d",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "success",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.conversation.message.appended",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [
+        "The bounded tool wrote and read its private marker."
+      ],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [
+        "The bounded tool wrote and read its private marker."
+      ],
+      "execution_count": 1,
+      "tool_executed": true,
+      "two_restart_replays_exact": true
+    },
+    "short_error": {
+      "command_id": "1b57ded9-425c-4ae2-8652-4270376f0bc0",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "failure",
+      "outcome": "failure",
+      "failure_code": "hermes_turn_error",
+      "terminal_types": [
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [],
+      "native_failed": true,
+      "native_completed": false,
+      "delivered": [
+        "⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "short_error_puback": {
+      "command_id": "07623896-9502-4553-822d-028976521c90",
+      "acked": 0,
+      "nacked": 1,
+      "native_capture": "failure",
+      "outcome": "failure",
+      "failure_code": "hermes_turn_error",
+      "terminal_types": [
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [],
+      "native_failed": true,
+      "native_completed": false,
+      "delivered": [
+        "⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "native_failed_finalizer": {
+      "command_id": "70d7fc84-6a2b-4218-b046-3d96168bae64",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "failure",
+      "outcome": "failure",
+      "failure_code": "hermes_turn_error",
+      "terminal_types": [
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [],
+      "native_failed": true,
+      "native_completed": false,
+      "delivered": [
+        "The provider did not answer."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "long_failed_finalizer": {
+      "command_id": "5eaa25f0-d751-41da-8b59-823fbe374013",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "failure",
+      "outcome": "failure",
+      "failure_code": "hermes_turn_error",
+      "terminal_types": [
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [],
+      "native_failed": true,
+      "native_completed": false,
+      "delivered": [
+        "HTTP 429: no eligible route; provider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details"
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "long_early_return": {
+      "command_id": "45757870-f930-4efc-9abc-3414a1578499",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": null,
+      "outcome": "failure",
+      "failure_code": "hermes_turn_error",
+      "terminal_types": [
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [],
+      "native_failed": true,
+      "native_completed": false,
+      "delivered": [
+        "HTTP 429: no eligible route; provider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details\nprovider details"
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "early_return_429": {
+      "command_id": "a07ad073-310a-415e-91e3-db5d0952fdc6",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": null,
+      "outcome": "failure",
+      "failure_code": "hermes_turn_error",
+      "terminal_types": [
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [],
+      "native_failed": true,
+      "native_completed": false,
+      "delivered": [
+        "⏱️ The model provider is rate-limiting requests. Please wait a moment and try again."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "early_return_429_notice": {
+      "command_id": "07c40434-4915-4abd-87d3-eeede08eca54",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": null,
+      "outcome": "failure",
+      "failure_code": "hermes_turn_error",
+      "terminal_types": [
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [],
+      "native_failed": true,
+      "native_completed": false,
+      "delivered": [
+        "⏱️ The model provider is rate-limiting requests. Please wait a moment and try again.\n\nYour request was not processed. Send it again if you still want me to carry it out."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "boundary_only": {
+      "command_id": "b8624e30-b8b9-4080-a7df-98b5721ad3cd",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": null,
+      "outcome": "failure",
+      "failure_code": "hermes_turn_error",
+      "terminal_types": [
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [],
+      "native_failed": true,
+      "native_completed": false,
+      "delivered": [
+        "Your request was not processed. Send it again if you still want me to carry it out."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "emoji_error": {
+      "command_id": "c88d7096-68bc-4fd2-8e2c-5c3151f82ac1",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "success",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.conversation.message.appended",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [
+        "❌ API call failed: HTTP 429 no eligible fast route"
+      ],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [
+        "⏱️ The model provider is rate-limiting requests. Please wait a moment and try again."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "http_compact_error": {
+      "command_id": "3f90ddeb-5808-4fe9-a6c9-068da667d9b3",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "success",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.conversation.message.appended",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [
+        "HTTP429: no eligible fast route"
+      ],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [
+        "⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "legitimate_http_prose": {
+      "command_id": "ced2c649-1657-4137-afda-1bdd57d209f5",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "success",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.conversation.message.appended",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [
+        "HTTP 404 means the requested resource does not exist."
+      ],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [
+        "⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "legitimate_api_prose": {
+      "command_id": "91db84ae-4793-4259-b177-b722ad685ab1",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "success",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.conversation.message.appended",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [
+        "API call failed yesterday; the configuration is fixed and the check now passes."
+      ],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [
+        "⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "legitimate_envelope_explanation": {
+      "command_id": "e638849a-d8af-4676-943a-9296ca08b918",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "success",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.conversation.message.appended",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [
+        "HTTP 429: no eligible route; this is the error we saw yesterday. The new route now works."
+      ],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [
+        "⏱️ The model provider is rate-limiting requests. Please wait a moment and try again."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "compact_envelope_explanation": {
+      "command_id": "ae79ee3f-b63d-416b-bea1-7908bf3a41d0",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "success",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.conversation.message.appended",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [
+        "HTTP429:no eligible route; this is the error we saw yesterday. The new route now works."
+      ],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [
+        "⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "legitimate_rejected_request_explanation": {
+      "command_id": "a54425d0-ca6a-4307-8e51-a8b64ff75241",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "success",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.conversation.message.appended",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [
+        "HTTP 400: provider rejected request was the old log entry. I fixed the configuration; the bounded tool now works."
+      ],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [
+        "⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "legitimate_api_explanation": {
+      "command_id": "19bb831f-1dbd-4e17-a4e5-aeb644965ac5",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "success",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.conversation.message.appended",
+        "bloodbank.agent.invocation.completed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [
+        "API call failed: HTTP 429 was yesterday. I retried the tool and it now succeeds."
+      ],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [
+        "⏱️ The model provider is rate-limiting requests. Please wait a moment and try again."
+      ],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "raised_processing": {
+      "command_id": "d3a835a7-ceb4-45ee-84f6-ad0a70bfe87c",
+      "acked": 1,
+      "nacked": 0,
+      "native_capture": "success",
+      "outcome": "failure",
+      "failure_code": null,
+      "terminal_types": [
+        "bloodbank.agent.invocation.failed",
+        "bloodbank.conversation.turn.completed"
+      ],
+      "answer_texts": [],
+      "native_failed": false,
+      "native_completed": true,
+      "delivered": [],
+      "execution_count": 1,
+      "tool_executed": false,
+      "two_restart_replays_exact": true
+    },
+    "isolation": {
+      "failed_route": {
+        "command_id": "7bc3846c-413b-45f1-b926-3270f5b2630a",
+        "acked": 1,
+        "nacked": 0,
+        "native_capture": "failure",
+        "outcome": "failure",
+        "failure_code": "hermes_turn_error",
+        "terminal_types": [
+          "bloodbank.agent.invocation.failed",
+          "bloodbank.conversation.turn.completed"
+        ],
+        "answer_texts": []
+      },
+      "success_route": {
+        "command_id": "37b61b4c-8f83-4b51-986d-3ac6b82b3869",
+        "acked": 1,
+        "nacked": 0,
+        "native_capture": "success",
+        "outcome": "success",
+        "failure_code": null,
+        "terminal_types": [
+          "bloodbank.conversation.message.appended",
+          "bloodbank.agent.invocation.completed",
+          "bloodbank.conversation.turn.completed"
+        ],
+        "answer_texts": [
+          "Research route successful answer."
+        ]
+      },
+      "shared_chat": true,
+      "shared_native_turn": true
+    }
+  }
+}

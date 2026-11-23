@@ -1,0 +1,52 @@
+F.F.F.F.F.......F.                                                       [100%]
+=================================== FAILURES ===================================
+_ test_owning_native_finalizer_flags_control_outcome_not_reply_text[HTTP429:no eligible route; this is the error we saw yesterday. The new route now works.-False] _
+tests/test_native_outcome.py:246: in test_owning_native_finalizer_flags_control_outcome_not_reply_text
+    assert row.outcome == row.capture_outcome == expected_outcome
+E   AssertionError: assert 'failure' == 'success'
+E
+E     - success
+E     + failure
+_ test_owning_native_finalizer_flags_control_outcome_not_reply_text[HTTP 429: no eligible route; this is the error we saw yesterday. The new route now works.-False] _
+tests/test_native_outcome.py:246: in test_owning_native_finalizer_flags_control_outcome_not_reply_text
+    assert row.outcome == row.capture_outcome == expected_outcome
+E   AssertionError: assert 'failure' == 'success'
+E
+E     - success
+E     + failure
+_ test_owning_native_finalizer_flags_control_outcome_not_reply_text[HTTP 400: provider rejected request was the old log entry. I fixed the configuration; the bounded tool now works.-False] _
+tests/test_native_outcome.py:246: in test_owning_native_finalizer_flags_control_outcome_not_reply_text
+    assert row.outcome == row.capture_outcome == expected_outcome
+E   AssertionError: assert 'failure' == 'success'
+E
+E     - success
+E     + failure
+_ test_owning_native_finalizer_flags_control_outcome_not_reply_text[API call failed: HTTP 429 was yesterday. I retried the tool and it now succeeds.-False] _
+tests/test_native_outcome.py:246: in test_owning_native_finalizer_flags_control_outcome_not_reply_text
+    assert row.outcome == row.capture_outcome == expected_outcome
+E   AssertionError: assert 'failure' == 'success'
+E
+E     - success
+E     + failure
+_ test_owning_native_finalizer_flags_control_outcome_not_reply_text[API call failed after 3 retries: HTTP 429 no eligible fast route\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\n-False] _
+tests/test_native_outcome.py:246: in test_owning_native_finalizer_flags_control_outcome_not_reply_text
+    assert row.outcome == row.capture_outcome == expected_outcome
+E   AssertionError: assert 'failure' == 'success'
+E
+E     - success
+E     + failure
+_ test_owning_native_finalizer_flags_control_outcome_not_reply_text[Operation interrupted: handling API error (12.3s elapsed).-False] _
+tests/test_native_outcome.py:246: in test_owning_native_finalizer_flags_control_outcome_not_reply_text
+    assert row.outcome == row.capture_outcome == expected_outcome
+E   AssertionError: assert 'failure' == 'success'
+E
+E     - success
+E     + failure
+=========================== short test summary info ============================
+FAILED tests/test_native_outcome.py::test_owning_native_finalizer_flags_control_outcome_not_reply_text[HTTP429:no eligible route; this is the error we saw yesterday. The new route now works.-False]
+FAILED tests/test_native_outcome.py::test_owning_native_finalizer_flags_control_outcome_not_reply_text[HTTP 429: no eligible route; this is the error we saw yesterday. The new route now works.-False]
+FAILED tests/test_native_outcome.py::test_owning_native_finalizer_flags_control_outcome_not_reply_text[HTTP 400: provider rejected request was the old log entry. I fixed the configuration; the bounded tool now works.-False]
+FAILED tests/test_native_outcome.py::test_owning_native_finalizer_flags_control_outcome_not_reply_text[API call failed: HTTP 429 was yesterday. I retried the tool and it now succeeds.-False]
+FAILED tests/test_native_outcome.py::test_owning_native_finalizer_flags_control_outcome_not_reply_text[API call failed after 3 retries: HTTP 429 no eligible fast route\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\ndetails\n-False]
+FAILED tests/test_native_outcome.py::test_owning_native_finalizer_flags_control_outcome_not_reply_text[Operation interrupted: handling API error (12.3s elapsed).-False]
+6 failed, 12 passed, 35 deselected in 12.18s
