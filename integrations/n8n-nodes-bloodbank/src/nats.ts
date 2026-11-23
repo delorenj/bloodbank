@@ -192,6 +192,11 @@ const ENTITY_BUCKET_RULES: Record<
       { sources, bucket: (id: string) => `messaging:${platform}:${id}` },
     ]),
   ).concat(
+    [[
+      'bloodbank.messaging.webform.received',
+      { sources: ['thread_id'], bucket: (id: string) => `messaging:webform:${id}` },
+    ]],
+  ).concat(
     Object.entries(CARRIER_TRANSPORTS).flatMap(([transport, actions]) =>
       actions.map((action) => [
         `bloodbank.messaging.${transport}.${action}`,
