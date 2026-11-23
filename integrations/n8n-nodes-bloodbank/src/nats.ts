@@ -192,6 +192,11 @@ const ENTITY_BUCKET_RULES: Record<
       { sources, bucket: (id: string) => `messaging:${platform}:${id}` },
     ]),
   ).concat(
+    [[
+      'bloodbank.messaging.webform.received',
+      { sources: ['thread_id'], bucket: (id: string) => `messaging:webform:${id}` },
+    ]],
+  ).concat(
     Object.entries(CARRIER_TRANSPORTS).flatMap(([transport, actions]) =>
       actions.map((action) => [
         `bloodbank.messaging.${transport}.${action}`,
@@ -220,6 +225,10 @@ function deriveOrderingKey(
   const rule = ENTITY_BUCKET_RULES[type];
   for (const source of rule?.sources ?? []) {
     const value = data[source];
+    if (type === 'bloodbank.messaging.webform.received' &&
+      typeof value === 'string' && value.length > 0) {
+      return rule!.bucket(value);
+    }
     const trimmed = typeof value === 'string' ? value.trim() : '';
     if (trimmed) return rule!.bucket(trimmed);
   }

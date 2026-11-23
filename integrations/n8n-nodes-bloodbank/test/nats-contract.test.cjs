@@ -205,6 +205,18 @@ const NOTIFIED_PAYLOAD = {
   message_id: 'msg-1',
   thread_id: 'thread-42',
 };
+const WEBFORM_PAYLOAD = {
+  schema_version: 1,
+  direction: 'inbound',
+  site: '33god.delo.sh',
+  form: 'briefing',
+  sender: { handle: 'person@example.test' },
+  content: { text: 'hello', format: 'plain' },
+  fields: { email: 'person@example.test' },
+  received_at: '2026-10-14T12:00:00.000Z',
+  message_id: 'submission-1',
+  thread_id: '33god.delo.sh:briefing',
+};
 const PAYLOAD_BY_ACTION = { received: MESSAGING_PAYLOAD, notified: NOTIFIED_PAYLOAD };
 
 const CARRIER_TRANSPORTS = ['sms', 'mms', 'rcs', 'imessage'];
@@ -264,18 +276,93 @@ for (const type of MESSAGING_TYPES) {
     continue;
   }
   test(`${type} derives a messaging:${platform}: ordering bucket`, () => {
+    const data = platform === 'webform' ? WEBFORM_PAYLOAD : PAYLOAD_BY_ACTION[action];
     const { subject, envelope } = buildEnvelope({
       type,
       kind: 'event',
-      data: PAYLOAD_BY_ACTION[action],
+      data,
       eventId: EVENT_ID,
       observedAt: '2026-10-14T12:00:00.000Z',
     });
     assert.equal(subject, `bloodbank.evt.${type.slice('bloodbank.'.length)}`);
-    assert.equal(envelope.ordering_key, `messaging:${platform}:thread-42`);
+    assert.equal(envelope.ordering_key, `messaging:${platform}:${data.thread_id}`);
     assert.doesNotThrow(() => validateEnvelope(type, envelope));
   });
 }
+
+test('webform uses the exact schema-valid thread id for its ordering bucket', () => {
+  const type = 'bloodbank.messaging.webform.received';
+  for (const threadId of [
+    ' ', '  ', '  thread-42  ', '0', 'é', 'x',
+    '\n', '\r', '\u2028', '\u2029', 'a\nb', 'a\rb', 'a\u2028b', 'a\u2029b',
+    '\u0000', '\ud800', '\udc00',
+  ]) {
+    const { envelope } = buildEnvelope({
+      type,
+      kind: 'event',
+      data: { ...WEBFORM_PAYLOAD, thread_id: threadId },
+      eventId: EVENT_ID,
+      observedAt: '2026-10-14T12:00:00.000Z',
+    });
+    assert.equal(envelope.ordering_key, `messaging:webform:${threadId}`, JSON.stringify(threadId));
+    assert.doesNotThrow(() => validateEnvelope(type, envelope), JSON.stringify(threadId));
+  }
+  const empty = buildEnvelope({
+    type, kind: 'event', data: { ...WEBFORM_PAYLOAD, thread_id: '' },
+    eventId: EVENT_ID, observedAt: '2026-10-14T12:00:00.000Z',
+  });
+  assert.throws(() => validateEnvelope(type, empty.envelope), /schema validation failed/);
+});
+
+test('webform ordering key requires its prefix and a nonempty suffix', () => {
+  const type = 'bloodbank.messaging.webform.received';
+  const { envelope } = buildEnvelope({
+    type, kind: 'event', data: WEBFORM_PAYLOAD,
+    eventId: EVENT_ID, observedAt: '2026-10-14T12:00:00.000Z',
+  });
+  for (const orderingKey of ['messaging:webform:', 'messaging:telegram:thread-42', 'thread-42', '']) {
+    assert.throws(
+      () => validateEnvelope(type, { ...envelope, ordering_key: orderingKey }),
+      /schema validation failed/,
+      JSON.stringify(orderingKey),
+    );
+  }
+  assert.throws(
+    () => validateEnvelope(type, { ...envelope, ordering_key: undefined }),
+    /schema validation failed/,
+  );
+});
+
+test('other messaging platforms keep trimmed ordering source behavior', () => {
+  const type = 'bloodbank.messaging.telegram.received';
+  for (const [threadId, expected] of [
+    ['  thread-42  ', 'messaging:telegram:thread-42'],
+    [' ', `messaging:${EVENT_ID}`],
+  ]) {
+    const { envelope } = buildEnvelope({
+      type, kind: 'event', data: { ...MESSAGING_PAYLOAD, thread_id: threadId },
+      eventId: EVENT_ID, observedAt: '2026-10-14T12:00:00.000Z',
+    });
+    assert.equal(envelope.ordering_key, expected);
+  }
+});
+
+test('webform preserves an explicit ordering key and rejects invalid payloads', () => {
+  const type = 'bloodbank.messaging.webform.received';
+  const options = { type, kind: 'event', eventId: EVENT_ID,
+    observedAt: '2026-10-14T12:00:00.000Z' };
+  const { envelope } = buildEnvelope({
+    ...options,
+    data: WEBFORM_PAYLOAD,
+    orderingKey: 'messaging:webform:operator-override',
+  });
+  assert.equal(envelope.ordering_key, 'messaging:webform:operator-override');
+  assert.doesNotThrow(() => validateEnvelope(type, envelope));
+
+  const invalid = buildEnvelope({ ...options, data: { ...WEBFORM_PAYLOAD, form: 'Not a slug' } });
+  assert.equal(invalid.envelope.ordering_key, 'messaging:webform:33god.delo.sh:briefing');
+  assert.throws(() => validateEnvelope(type, invalid.envelope), /schema validation failed/);
+});
 
 test('a threadless notification buckets on its notification_id and validates', () => {
   const { thread_id, message_id, sender, reaction, ...ping } = NOTIFIED_PAYLOAD;

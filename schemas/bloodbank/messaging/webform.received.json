@@ -20,7 +20,7 @@
     "domain": {"const": "messaging"},
     "ordering_key": {
       "type": "string",
-      "pattern": "^messaging:webform:.+$",
+      "pattern": "^messaging:webform:[\\s\\S]+$",
       "description": "Section 11.1 bucket 'messaging:webform:<site>:<form>', the same value as 'messaging:webform:' + data.thread_id."
     },
     "data": {
