@@ -83,7 +83,8 @@ function assertAuthorityContract(prompt) {
   assert.match(ordinaryExecution, /git pull --no-rebase origin main`, then push to main/);
   assert.match(ordinaryExecution, /conflicts in a file you did not write, abort it and hold with `lifecycle:blocked` naming the file/);
   assert.match(ordinaryExecution, /remove the worktree and delete the branch/);
-  assert.match(ordinaryExecution, /only within the live publication grant/);
+  assert.match(ordinaryExecution, /Unfinished ordinary work is a hold: push its worktree branch to origin only when the same verified applicable live-ticket or standing owner\/owning-repo source-delivery authority permits branch preservation within its scope, and no explicit live local-only \/ no-push restriction applies/);
+  assert.doesNotMatch(ordinaryExecution, /only within the live publication grant|push its worktree branch to origin only when a ticket-specific grant/);
   assert.match(ordinaryExecution, /Every other repo.*needs its own publication authority/);
   assert.match(ordinaryExecution, /Standing source delivery authority does not authorize spending, deletion, client sends, credential or permission changes; those remain reserved/);
   assert.match(ordinaryExecution, /`git unpushed`.*authorized paths only/);

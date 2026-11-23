@@ -425,7 +425,10 @@ export function delegationPrompt(
     '`lifecycle:blocked` naming the file. When landing from a worktree, merge ' +
     'into main, push, then remove the worktree and delete the branch. ' +
     'Unfinished ordinary work is a hold: push its worktree branch to origin ' +
-    'only within the live publication grant and name it in the hold comment. ' +
+    'only when the same verified applicable live-ticket or standing ' +
+    'owner/owning-repo source-delivery authority permits branch preservation ' +
+    'within its scope, and no explicit live local-only / no-push restriction ' +
+    'applies; name it in the hold comment. ' +
     'Every other repo a command of yours wrote to needs its own publication ' +
     'authority; never extend this ticket\'s grant to it. Standing source ' +
     'delivery authority does not authorize spending, deletion, client sends, ' +
