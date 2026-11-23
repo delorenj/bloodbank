@@ -724,6 +724,38 @@ command carried none). The ticket workflows put `reason`
 finished ticket turn statelessly instead of remembering the correlation id.
 The `agent.turn.*` events do not carry it.
 
+## BB-63: supported context recovery and provider-outcome boundary
+
+A context-too-long failure is not repaired by editing `state.db`, transcript
+rows, or the gateway's routing index. Hermes' supported `/new` (alias `/reset`)
+creates a fresh active session for **the chat route where it is sent**; the
+previous session's transcript remains searchable/readable. `/compress` retains
+continuity while shortening context, but if the affected session cannot process
+it, use `/new` on the affected profile and chat route after confirming the
+current turn is idle. A CLI `/new` in a different view, a sibling subagent's
+turn, or a new Bloodbank `thread_id` does not rotate the existing affected
+route. A Bloodbank prompt beginning `/new` is explicitly refused by this adapter
+as a slash command rather than silently completing a lifecycle command. Route
+rotation should therefore be performed through the owning Hermes conversation
+surface, not by injecting an invocation command or changing a database. Verify
+that the old session is still readable and the new turn belongs to the same
+profile and route before claiming recovery. No gateway restart is needed for
+Hermes' supported conversation boundary; source changes in this directory
+remain uninstalled until the owner authorizes a separate deployment.
+
+A provider rejection sometimes arrives as a short final string (`HTTP 400: ...`
+or `API call failed: ...`) with no Python exception. The finalizer's success
+flags alone are insufficient in that case: this plugin recognizes the bounded,
+leading provider-envelope shape, stores a failed native capture (without an
+assistant-answer fact), and closes the command with `hermes_turn_error` instead
+of `invocation.completed`. The failure event carries a machine refusal key,
+not the provider body. Ordinary prose that discusses a past HTTP error is not
+an envelope. Raised platform-processing failures after a successful native
+capture already close as failed with no answer; redelivery replays the immutable
+outbox rather than invoking the model again. These tests are disposable offline
+fixtures, **not** a same-profile live native-tool turn, installed-source proof,
+provider route approval, or delivery to downstream consumers.
+
 ## Tests
 
 ```bash

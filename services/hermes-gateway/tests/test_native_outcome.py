@@ -20,6 +20,7 @@ import pytest
 from bloodbank_hermes_gateway import plugin
 from bloodbank_hermes_gateway.adapter import BloodbankAdapter
 from bloodbank_hermes_gateway.contract import MESSAGE_APPENDED
+from bloodbank_hermes_gateway.refusals import returned_provider_rejection
 from conftest import FixtureRunner, SendResult
 from test_adapter import (
     FakeMessage,
@@ -399,3 +400,98 @@ asyncio.run(execute())
         assert not any(e["type"] == MESSAGE_APPENDED for e in restarted._js.events)
 
     asyncio.run(recover())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", [
+    "HTTP 400: provider rejected request",
+    "API call failed: provider rejected request",
+])
+async def test_returned_provider_rejection_never_completes_or_replays_answer(
+    tmp_path, valid_command, reply
+):
+    from bloodbank_hermes_gateway.plugin import pre_llm_call, post_llm_call, on_session_end
+
+    adapter = make_adapter(tmp_path)
+    executions = 0
+
+    async def execute(_event):
+        nonlocal executions
+        executions += 1
+        native = dict(session_id="disposable-session", turn_id="disposable-turn",
+                      task_id="disposable-task", platform="bloodbank")
+        pre_llm_call(**native, parent_session_id="")
+        post_llm_call(**native, assistant_response=reply)
+        on_session_end(**native, completed=True, failed=False, interrupted=False,
+                       turn_exit_reason="text_response(finish_reason=stop)")
+        return reply
+
+    adapter.set_message_handler(FixtureRunner(execute).handle_message)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    row = require_row(adapter, valid_command)
+    assert executions == message.acked == 1 and message.nacked == 0
+    assert row.capture_outcome == row.outcome == "failure"
+    assert row.captured_events == ()
+    assert row.failure_code == "hermes_turn_error"
+    assert row.terminal_events[0]["type"] == "bloodbank.agent.invocation.failed"
+    assert row.terminal_events[0]["data"]["refusal"] == "provider.rejected_response"
+    assert not any(event["type"] == MESSAGE_APPENDED for event in adapter._js.events)
+    await replay_exact(tmp_path, valid_command,
+                       [wire(event) for event in (*row.queued_events, *row.started_events, *row.terminal_events)])
+    assert executions == 1
+
+
+@pytest.mark.asyncio
+async def test_returned_provider_error_is_not_confused_with_ordinary_prose(tmp_path, valid_command):
+    reply = "I investigated the report. HTTP 400 was the old failure; the tool now works."
+    assert not returned_provider_rejection(reply)
+    adapter = make_adapter(tmp_path)
+
+    async def execute(_event):
+        native = dict(session_id="disposable-session", turn_id="disposable-turn",
+                      task_id="disposable-task", platform="bloodbank")
+        from bloodbank_hermes_gateway.plugin import pre_llm_call, post_llm_call, on_session_end
+        pre_llm_call(**native, parent_session_id="")
+        post_llm_call(**native, assistant_response=reply)
+        on_session_end(**native, completed=True, failed=False, interrupted=False,
+                       turn_exit_reason="text_response(finish_reason=stop)")
+        return reply
+
+    adapter.set_message_handler(FixtureRunner(execute).handle_message)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    row = require_row(adapter, valid_command)
+    assert message.acked == 1 and row.outcome == "success"
+    assert len([event for event in row.terminal_events if event["type"] == MESSAGE_APPENDED]) == 1
+
+
+@pytest.mark.asyncio
+async def test_raised_processing_failure_after_native_finalizer_cannot_complete(
+    tmp_path, valid_command
+):
+    from bloodbank_hermes_gateway.plugin import pre_llm_call, post_llm_call, on_session_end
+
+    adapter = make_adapter(tmp_path)
+    native = dict(session_id="disposable-session", turn_id="disposable-turn",
+                  task_id="disposable-task", platform="bloodbank")
+
+    async def execute(_event):
+        pre_llm_call(**native, parent_session_id="")
+        post_llm_call(**native, assistant_response=BODY)
+        on_session_end(**native, completed=True, failed=False, interrupted=False,
+                       turn_exit_reason="text_response(finish_reason=stop)")
+        raise RuntimeError("synthetic failure after native finalization")
+
+    adapter.set_message_handler(FixtureRunner(execute).handle_message)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    row = require_row(adapter, valid_command)
+    assert message.acked == 1 and row.capture_outcome == "success"
+    assert row.outcome == "failure" and row.captured_events[0]["data"]["text"] == BODY
+    assert not any(event["type"] == MESSAGE_APPENDED for event in adapter._js.events)
+    assert [event["type"] for event in row.terminal_events] == [
+        "bloodbank.agent.invocation.failed", "bloodbank.conversation.turn.completed"
+    ]
+    await replay_exact(tmp_path, valid_command,
+                       [wire(event) for event in (*row.queued_events, *row.started_events, *row.terminal_events)])

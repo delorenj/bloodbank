@@ -211,6 +211,26 @@ _ACTION_KEYS = (
 _INTERRUPT_TEXT = re.compile(r"\A\s*Operation interrupted\b[^\n]{0,280}\Z")
 
 
+# The short, leading envelope shape Hermes recognizes for returned provider
+# errors. A citation of HTTP status inside ordinary assistant prose is not one.
+_PROVIDER_FAILURE = re.compile(
+    r"\A\s*(?:api\s+(?:call\s+)?failed|provider\s+authentication\s+failed|"
+    r"non-retryable\s+error|rate\s+limited\s+after\s+\d+\s+retries|"
+    r"error\s+code\s*:|http\s+[45]\d{2}\b|"
+    r"incorrect\s+api\s+key|invalid\s+api\s+key)",
+    re.IGNORECASE,
+)
+PROVIDER_REJECTION_REFUSAL = "provider.rejected_response"
+
+def returned_provider_rejection(reply: Any) -> bool:
+    """A short provider rejection returned as text, rather than raised."""
+    return (
+        isinstance(reply, str)
+        and len(reply.strip()) <= 400
+        and reply.count("\n") <= 4
+        and bool(_PROVIDER_FAILURE.match(reply))
+    )
+
 @dataclass(frozen=True)
 class HermesNotice:
     """One recognised Hermes notice: its catalog key and what it means for a command."""
