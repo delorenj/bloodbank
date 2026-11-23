@@ -1,5 +1,11 @@
 # BB-60 execution record
 
+## Final synthetic handback acceptance (2026-11-22)
+
+**Scoped PASS on exact repaired candidate `a1040c4cec8ecc8674b5ee5d0d3843cb42c62953`.** [Verified sanitized evidence and all 30 full raw check logs](https://s3.delo.sh/projects/bloodbank/2026-11-22/bb60-final-handbacks/index.md) (188/188 objects anonymously SHA-256 verified). Independent SPEC and QUALITY reports match retained local-only checkpoints. `SYNBB60-186` (`ce6350a389e59e4b145eeb96fba194b027bdc553`) successfully commented evidence before adding `lifecycle:review`, remained In Progress. `SYNBB60-187` (`b656f43f7b2b00112d25499780b8cf8e1b9d9b84`) commented evidence and closed Done with no review label. Both preserve `agent:working`, clean worktrees and their checkpoints; each passed 15 unchanged required checks. No fixture repository had a remote or was pushed/merged. Default Krebs offline loader/command proof passed. The remote-dependent GH_TOKEN preflight was a supplemental failure, not a green required check.
+
+This final pinned-candidate proof supersedes the **historical blocked handback and known-red rehearsal** statements below, without rewriting their receipts. It does not make current main `0a142bf783fca32674cffed01169fdc70b4d9975` green: its separately observed webform test failure is preserved in the package. No ordinary publication, real provider/Plane/bus E2E, TOLT child restoration or BB-62 standing-authority policy is claimed. Board closure belongs to the parent.
+
 Ticket: [BB-60](https://plane.delo.sh/33god/browse/BB-60/).
 Evidence and delivery guide: [docs/evidence/BB60/README.md](../docs/evidence/BB60/README.md).
 Public evidence: [complete sanitized package](https://s3.delo.sh/projects/bloodbank/2026-11-21/bb60-local-checkpoints/index.md)

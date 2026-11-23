@@ -1,5 +1,11 @@
 # BB-60: local-only checkpoints in the shared Krebs contract
 
+## Final acceptance update (2026-11-22; supersedes historical blocked handback below)
+
+[Complete sanitized final exact-candidate evidence](https://s3.delo.sh/projects/bloodbank/2026-11-22/bb60-final-handbacks/index.md) (188/188 objects anonymously fetched and verified by SHA-256; [raw log inventory](https://s3.delo.sh/projects/bloodbank/2026-11-22/bb60-final-handbacks/inventory.json)). At reviewed/repaired candidate `a1040c4cec8ecc8674b5ee5d0d3843cb42c62953`, independent SPEC/QUALITY and actual disposable worker handbacks **PASS the scoped synthetic local-only acceptance slice**. Review-required `SYNBB60-186` retains clean checkpoint `ce6350a389e59e4b145eeb96fba194b027bdc553`: evidence comment, then `lifecycle:review`, still In Progress. No-review `SYNBB60-187` retains clean checkpoint `b656f43f7b2b00112d25499780b8cf8e1b9d9b84`: evidence comment and close receipt, Done without review label. Both leave `agent:working` untouched; no remote, push, merge or source publication of checkpoints. Each exact checkpoint passed all 15 unchanged required checks with full hash-matched logs (30 total). Default Krebs offline loader/dispatch/triage/review construction also passed without override. Supplemental GH_TOKEN-dependent preflight failed and is not counted as a required PASS.
+
+This replaces the earlier *unsuccessful handback / known-red rehearsal* conclusion **for this pinned candidate only**. Current main `0a142bf783fca32674cffed01169fdc70b4d9975` separately has a webform `npm test` regression; the evidence includes its raw failure and does not claim current-main green. Ordinary publication was decision-only, not exercised; live provider/Plane/bus E2E, real TOLT child restoration, BB-62 standing-authority follow-on and board disposition are out of scope. Historical receipts below remain intact as provenance.
+
 Ticket: [BB-60](https://plane.delo.sh/33god/browse/BB-60/).
 
 ## Published evidence
