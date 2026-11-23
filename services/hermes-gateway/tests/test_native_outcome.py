@@ -41,7 +41,7 @@ from test_hermes_seam import (
 )
 
 
-def native_finish(native, *, interrupted=False, failed=False):
+def native_finish(native, *, interrupted=False, failed=False, text=BODY):
     agent = agent_fixture()
     agent._interrupt_message = None
     params = {
@@ -50,7 +50,7 @@ def native_finish(native, *, interrupted=False, failed=False):
     }
     eval(native.pre, dict(params, _invoke_hook=native.ns["invoke_hook"]))
     return native.finalize(
-        **params, final_response=BODY, api_call_count=1,
+        **params, final_response=text, api_call_count=1,
         interrupted=interrupted, failed=failed, user_message="offline proof",
         _should_review_memory=False,
         _turn_exit_reason="text_response(finish_reason=stop)",
@@ -74,7 +74,10 @@ async def replay_exact(tmp_path, command, expected):
         redelivery = FakeMessage(command)
         await restarted._handle_broker_message(redelivery)
         assert redelivery.acked == 1 and redelivery.nacked == 0
-        assert [wire(e) for e in restarted._js.events] == expected
+        row = require_row(restarted, command)
+        assert [wire(e) for e in restarted._js.events] == [
+            wire(e) for e in row.queued_events
+        ] + expected
 
 
 @pytest.mark.asyncio
@@ -118,6 +121,111 @@ async def test_actual_primary_handler_closure_accepts_and_captures(native, relea
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reply", [
+    "HTTP 429: no eligible route; " + "provider details\n" * 40,
+    "Your request was not processed. Send it again if you still want me to carry it out.",
+])
+async def test_owning_native_early_return_without_finalizer_fails_closed(
+    native, release, tmp_path, valid_command, reply
+):
+    """The pinned retry-exhaustion result precedes all finalizer callbacks."""
+    import ast
+    from gateway import run
+    from test_hermes_seam import source
+
+    tree = ast.parse(source(release, "agent/conversation_loop.py"))
+    early = next(node for node in ast.walk(tree)
+                 if isinstance(node, ast.Return) and node.lineno == 6173)
+    assert early.value is not None
+    failed_expr = compile(ast.Expression(early.value), "pinned-native-early-return", "eval")
+    ns = {
+        "Path": Path, "get_hermes_home": native.constants.get_hermes_home,
+        "_profile_runtime_scope": run._profile_runtime_scope, "SessionSource": Any,
+        "Optional": Optional, "List": list, "Dict": dict, "Any": Any,
+    }
+    compile_nodes(release, "gateway/run.py",
+                  {"_primary_message_handler", "_make_default_profile_message_handler", "_run_agent"},
+                  ns, owner="GatewayRunner")
+    results = []
+
+    class Runner(FixtureRunner):
+        _primary_message_handler = ns["_primary_message_handler"]
+        _make_default_profile_message_handler = ns["_make_default_profile_message_handler"]
+        _run_agent = ns["_run_agent"]
+
+        async def _handle_message(self, event):
+            result = await self._run_agent(event.text, "", [], event.source, "proof-session")
+            results.append(result)
+            return "A sanitized provider warning." if reply.startswith("HTTP") else reply
+
+        async def _run_agent_inner(self, *args, **kwargs):
+            return eval(failed_expr, dict(
+                _final_response=reply, messages=[], api_call_count=1,
+                _final_summary=reply, classified=type("Reason", (), {
+                    "reason": type("Value", (), {"value": "rate_limit"})()
+                })(), _billing_unverified=False, _billing_block=None,
+            ))
+
+    adapter = make_adapter(tmp_path, target_profiles={"bloodbank-pm": "research"})
+    with home_scope(native.home, tmp_path / "research"):
+        native.register()
+    handler = Runner(None)._primary_message_handler()
+    handler.native_handler = True
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    row = require_row(adapter, valid_command)
+    assert results[0]["failed"] is True and results[0]["completed"] is False
+    assert message.acked == 1 and message.nacked == 0
+    assert row.capture_outcome is None and row.outcome == "failure"
+    assert row.failure_code == "hermes_turn_error"
+    assert not any(e["type"] == MESSAGE_APPENDED for e in adapter._js.events)
+    assert row.terminal_events[0]["type"] == "bloodbank.agent.invocation.failed"
+    await replay_exact(tmp_path, valid_command,
+                       [wire(e) for e in (*row.started_events, *row.terminal_events)])
+
+
+@pytest.mark.asyncio
+async def test_owning_native_success_prose_is_not_provider_failure(
+    native, release, tmp_path, valid_command
+):
+    from gateway import run
+    ns = {
+        "Path": Path, "get_hermes_home": native.constants.get_hermes_home,
+        "_profile_runtime_scope": run._profile_runtime_scope, "SessionSource": Any,
+        "Optional": Optional, "List": list, "Dict": dict, "Any": Any,
+    }
+    compile_nodes(release, "gateway/run.py",
+                  {"_primary_message_handler", "_make_default_profile_message_handler", "_run_agent"},
+                  ns, owner="GatewayRunner")
+    answer_text = "HTTP 404 means the resource does not exist."
+
+    class Runner(FixtureRunner):
+        _primary_message_handler = ns["_primary_message_handler"]
+        _make_default_profile_message_handler = ns["_make_default_profile_message_handler"]
+        _run_agent = ns["_run_agent"]
+
+        async def _handle_message(self, event):
+            result = await self._run_agent(event.text, "", [], event.source, "proof-session")
+            return result["final_response"]
+
+        async def _run_agent_inner(self, *args, **kwargs):
+            return native_finish(native, text=answer_text)
+
+    with home_scope(native.home, tmp_path / "research"):
+        native.register()
+    handler = Runner(None)._primary_message_handler()
+    handler.native_handler = True
+    adapter = make_adapter(tmp_path, target_profiles={"bloodbank-pm": "research"})
+    adapter.set_message_handler(handler)
+    message = FakeMessage(valid_command)
+    await adapter._handle_broker_message(message)
+    row = require_row(adapter, valid_command)
+    assert message.acked == 1 and row.outcome == row.capture_outcome == "success"
+    assert [e["data"]["text"] for e in row.terminal_events if e["type"] == MESSAGE_APPENDED] == [answer_text]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["send_failure", "send_cancel", "handler_failure", "handler_cancel"])
 @pytest.mark.parametrize("publication_failure", [False, True])
 async def test_native_capture_then_actual_failed_processing_never_replays_answer(
@@ -144,7 +252,7 @@ async def test_native_capture_then_actual_failed_processing_never_replays_answer
         assert row.state == "started" and row.outcome is None
         assert row.capture_outcome == "success" and row.terminal_events == ()
         assert row.captured_events[0]["data"]["text"] == response == BODY
-        assert len(adapter._js.events) == 2  # No answer or terminals yet.
+        assert len(adapter._js.events) == 3  # Queued and started, no answer or terminal yet.
         captured_bytes.extend(wire(e) for e in row.captured_events)
         if stage == "handler_failure":
             raise RuntimeError("platform handler failed after model finalized")
@@ -339,7 +447,7 @@ async def test_native_capture_then_wall_clock_timeout_excludes_answer(native, tm
     await restarted._handle_broker_message(replay, lane(restarted, "interactive"))
     assert replay.acked == 1
     assert [wire(e) for e in restarted._js.events] == [
-        wire(e) for e in (*row.started_events, *row.terminal_events)
+        wire(e) for e in (*row.queued_events, *row.started_events, *row.terminal_events)
     ]
 
 
@@ -406,6 +514,8 @@ asyncio.run(execute())
 @pytest.mark.parametrize("reply", [
     "HTTP 400: provider rejected request",
     "API call failed: provider rejected request",
+    "HTTP 429: no eligible route; " + ("provider details\n" * 35),
+    "API call failed after 3 retries: HTTP 429 no eligible fast route\n" + ("details\n" * 70),
 ])
 async def test_returned_provider_rejection_never_completes_or_replays_answer(
     tmp_path, valid_command, reply
@@ -438,13 +548,18 @@ async def test_returned_provider_rejection_never_completes_or_replays_answer(
     assert row.terminal_events[0]["data"]["refusal"] == "provider.rejected_response"
     assert not any(event["type"] == MESSAGE_APPENDED for event in adapter._js.events)
     await replay_exact(tmp_path, valid_command,
-                       [wire(event) for event in (*row.queued_events, *row.started_events, *row.terminal_events)])
+                       [wire(event) for event in (*row.started_events, *row.terminal_events)])
     assert executions == 1
 
 
 @pytest.mark.asyncio
-async def test_returned_provider_error_is_not_confused_with_ordinary_prose(tmp_path, valid_command):
-    reply = "I investigated the report. HTTP 400 was the old failure; the tool now works."
+@pytest.mark.parametrize("reply", [
+    "I investigated the report. HTTP 400 was the old failure; the tool now works.",
+    "HTTP 404 means the resource does not exist.",
+    "API call failed yesterday; fixed and verified today.",
+    "HTTP 400: This indicates an invalid request. Check the payload.",
+])
+async def test_returned_provider_error_is_not_confused_with_ordinary_prose(tmp_path, valid_command, reply):
     assert not returned_provider_rejection(reply)
     adapter = make_adapter(tmp_path)
 
@@ -494,4 +609,4 @@ async def test_raised_processing_failure_after_native_finalizer_cannot_complete(
         "bloodbank.agent.invocation.failed", "bloodbank.conversation.turn.completed"
     ]
     await replay_exact(tmp_path, valid_command,
-                       [wire(event) for event in (*row.queued_events, *row.started_events, *row.terminal_events)])
+                       [wire(event) for event in (*row.started_events, *row.terminal_events)])

@@ -743,18 +743,22 @@ profile and route before claiming recovery. No gateway restart is needed for
 Hermes' supported conversation boundary; source changes in this directory
 remain uninstalled until the owner authorizes a separate deployment.
 
-A provider rejection sometimes arrives as a short final string (`HTTP 400: ...`
-or `API call failed: ...`) with no Python exception. The finalizer's success
-flags alone are insufficient in that case: this plugin recognizes the bounded,
-leading provider-envelope shape, stores a failed native capture (without an
-assistant-answer fact), and closes the command with `hermes_turn_error` instead
-of `invocation.completed`. The failure event carries a machine refusal key,
-not the provider body. Ordinary prose that discusses a past HTTP error is not
-an envelope. Raised platform-processing failures after a successful native
-capture already close as failed with no answer; redelivery replays the immutable
-outbox rather than invoking the model again. These tests are disposable offline
-fixtures, **not** a same-profile live native-tool turn, installed-source proof,
-provider route approval, or delivery to downstream consumers.
+A provider diagnostic sometimes arrives as a final string with no Python
+exception. A finalizer success flag cannot by itself distinguish that diagnostic
+from assistant prose, so only unambiguous whole error envelopes are classified
+as returned rejections; their length and line count do not change the verdict.
+Ordinary prose beginning `HTTP 404 means` or `API call failed yesterday` remains
+an answer. The supported owning native handler is preflighted for root finalizer
+hooks: an admitted turn whose agent returns before its root end callback (the
+pinned retry-exhaustion path returns `failed=True, completed=False` before the
+finalizer) fails closed even when Hermes sanitizes its display text or appends
+failed-turn copy. A recognized native failed-turn notice is also not an answer.
+No answer fact is emitted for a failed capture; the failed terminal uses
+`hermes_turn_error` rather than `invocation.completed`. Raised processing failure
+after a successful capture likewise closes failed without an answer, and
+redelivery replays immutable outbox bytes without running the model again.
+These are disposable offline fixtures, **not** a same-profile live native-tool
+turn, installed-source proof, provider route approval, or downstream delivery.
 
 ## Tests
 

@@ -59,6 +59,16 @@ NOT_RUN_ERRORS = frozenset(
 # Busy/drain/slash notices outside gateway.errors and their disposition, plus the
 # English copy of every notice the gateway knows by name.
 _ENGLISH: dict[str, tuple[str, str]] = {
+    # A failed-turn boundary is not an answer even when Hermes' carrier says
+    # SUCCESS. The installed runner may append this after sanitizing errors.
+    "gateway.errors.native_failed_turn_boundary": (
+        FAILED,
+        "Your request was not processed. Send it again if you still want me to carry it out.",
+    ),
+    "gateway.errors.native_partial_failed_turn_boundary": (
+        FAILED,
+        "This turn did not complete. Some actions may already have run; verify their effects before resending.",
+    ),
     # --- refused before a turn started: retry --------------------------------
     "gateway.busy.drain_rejected_new_work": (
         NOT_RUN,
@@ -211,25 +221,25 @@ _ACTION_KEYS = (
 _INTERRUPT_TEXT = re.compile(r"\A\s*Operation interrupted\b[^\n]{0,280}\Z")
 
 
-# The short, leading envelope shape Hermes recognizes for returned provider
-# errors. A citation of HTTP status inside ordinary assistant prose is not one.
+# These are complete provider diagnostic envelopes, not generic HTTP prose.
+# A finalizer reports a returned SDK error as completed=True; absent an SDK
+# failure bit, only unambiguous whole-line error shapes can be classified here.
 _PROVIDER_FAILURE = re.compile(
-    r"\A\s*(?:api\s+(?:call\s+)?failed|provider\s+authentication\s+failed|"
-    r"non-retryable\s+error|rate\s+limited\s+after\s+\d+\s+retries|"
-    r"error\s+code\s*:|http\s+[45]\d{2}\b|"
-    r"incorrect\s+api\s+key|invalid\s+api\s+key)",
-    re.IGNORECASE,
+    r"\A\s*(?:"
+    r"api call failed(?: after \d+ retries)?\s*:\s*(?:provider rejected request|http\s*[45]\d{2}\b|no eligible route\b)"
+    r"|http\s*[45]\d{2}\s*:\s*(?:provider rejected request|no eligible (?:fast )?route\b)"
+    r"|provider authentication failed\s*:"
+    r"|non-retryable error\s*:"
+    r"|rate limited after \d+ retries\s*:"
+    r"|incorrect api key\s*:|invalid api key\s*:"
+    r").*\Z",
+    re.IGNORECASE | re.DOTALL,
 )
 PROVIDER_REJECTION_REFUSAL = "provider.rejected_response"
 
 def returned_provider_rejection(reply: Any) -> bool:
-    """A short provider rejection returned as text, rather than raised."""
-    return (
-        isinstance(reply, str)
-        and len(reply.strip()) <= 400
-        and reply.count("\n") <= 4
-        and bool(_PROVIDER_FAILURE.match(reply))
-    )
+    """Recognize an entire diagnostic envelope, independent of body length."""
+    return isinstance(reply, str) and bool(_PROVIDER_FAILURE.fullmatch(reply))
 
 @dataclass(frozen=True)
 class HermesNotice:

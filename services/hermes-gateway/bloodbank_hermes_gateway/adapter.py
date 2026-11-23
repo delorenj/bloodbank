@@ -308,6 +308,7 @@ class PendingInvocation:
     completion: asyncio.Future[None]
     envelope_digest: str
     binding: CommandBinding | None = None
+    binding_required: bool = False
     # The MessageEvent handed to Hermes (its source addresses the session a
     # timeout must stop).
     event: Any = None
@@ -1296,7 +1297,7 @@ class BloodbankAdapter(BasePlatformAdapter):
                         # claimed or restarted pending command must not execute on
                         # a route disabled while lifecycle publication was in flight.
                         await self._assert_dispatch_route(invocation)
-                        prepare_capture(self._capture_handler, event)
+                        record.binding_required = prepare_capture(self._capture_handler, event)
                         # Last look before the hand-off (no await from here on): a
                         # drain that began while the started facts were published.
                         self._refuse_if_not_accepting()
@@ -2133,6 +2134,16 @@ class BloodbankAdapter(BasePlatformAdapter):
         captured = binding.result if binding is not None else None
         if terminal_outcome == "success" and captured is not None:
             terminal_outcome = captured.capture_outcome or terminal_outcome
+        # An admitted owning agent turn must reach its root finalizer. The
+        # native retry-exhaustion return reports failed=True/completed=False
+        # before any end hook; gateway display sanitization can replace its
+        # error text, so neither final_reply nor the carrier SUCCESS is proof.
+        missing_native_terminal = (
+            terminal_outcome == "success" and record.binding_required
+            and (binding is None or binding.end_flags is None)
+        )
+        if missing_native_terminal:
+            terminal_outcome = "failure"
         # A turn Hermes' stop() cut off reports its partial text (or nothing, or
         # a cancellation at adapter teardown) like a finished one: not an answer.
         interrupted = self._shutdown_interruption(record, terminal_outcome)
@@ -2180,10 +2191,14 @@ class BloodbankAdapter(BasePlatformAdapter):
             # place of an answer) as SUCCESS: its notice is the "reply". Read it.
             notice = (
                 self._notices.classify(record.final_reply)
-                if terminal_outcome == "success"
+                if result == "success" and captured is None
                 else None
             )
             failure_code = failure_message = failure_data = None
+            if missing_native_terminal:
+                failure_code = HERMES_TURN_ERROR_CODE
+                failure_message = "Hermes did not finalize the root native turn"
+                failure_data = {"refusal": "native.terminal_missing"}
         if notice is not None and notice.disposition == NOT_RUN and captured is None:
             record.completion.set_exception(
                 TurnNotRun(

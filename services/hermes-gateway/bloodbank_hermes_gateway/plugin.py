@@ -167,7 +167,8 @@ class CaptureUnavailable(RouteInvalid):
     reason = "final_answer_capture_unavailable_before_dispatch"
 
 
-def prepare_capture(handler: Any, event: Any) -> None:
+def prepare_capture(handler: Any, event: Any) -> bool:
+    """Preflight the observer; return whether an owning native agent must finalize."""
     from gateway.run import _load_gateway_config, _profile_runtime_scope
     from hermes_cli.plugins import discover_plugins, get_plugin_manager
     from hermes_cli.profiles import get_profile_dir
@@ -222,6 +223,10 @@ def prepare_capture(handler: Any, event: Any) -> None:
                     f"{home / 'plugins' / 'bloodbank-platform'} is not loaded; "
                     "run hermes-plugin/install.sh --links-only, then restart the gateway"
                 )
+    # Fixture handlers and the owning GatewayRunner use the same hook preflight.
+    # Only the owning agent path requires a root finalizer terminal; a Hermes
+    # ingress refusal can legitimately answer without starting an agent turn.
+    return callable(getattr(owner, "_run_agent", None))
 
 
 def register_hooks(ctx: Any) -> None:
