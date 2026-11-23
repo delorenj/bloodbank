@@ -225,6 +225,10 @@ function deriveOrderingKey(
   const rule = ENTITY_BUCKET_RULES[type];
   for (const source of rule?.sources ?? []) {
     const value = data[source];
+    if (type === 'bloodbank.messaging.webform.received' &&
+      typeof value === 'string' && value.length > 0) {
+      return rule!.bucket(value);
+    }
     const trimmed = typeof value === 'string' ? value.trim() : '';
     if (trimmed) return rule!.bucket(trimmed);
   }

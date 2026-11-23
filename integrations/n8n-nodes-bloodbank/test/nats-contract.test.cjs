@@ -290,6 +290,40 @@ for (const type of MESSAGING_TYPES) {
   });
 }
 
+test('webform uses the exact schema-valid thread id for its ordering bucket', () => {
+  const type = 'bloodbank.messaging.webform.received';
+  for (const threadId of [' ', '  ', '  thread-42  ', '0', 'é', 'x']) {
+    const { envelope } = buildEnvelope({
+      type,
+      kind: 'event',
+      data: { ...WEBFORM_PAYLOAD, thread_id: threadId },
+      eventId: EVENT_ID,
+      observedAt: '2026-10-14T12:00:00.000Z',
+    });
+    assert.equal(envelope.ordering_key, `messaging:webform:${threadId}`, JSON.stringify(threadId));
+    assert.doesNotThrow(() => validateEnvelope(type, envelope), JSON.stringify(threadId));
+  }
+  const empty = buildEnvelope({
+    type, kind: 'event', data: { ...WEBFORM_PAYLOAD, thread_id: '' },
+    eventId: EVENT_ID, observedAt: '2026-10-14T12:00:00.000Z',
+  });
+  assert.throws(() => validateEnvelope(type, empty.envelope), /schema validation failed/);
+});
+
+test('other messaging platforms keep trimmed ordering source behavior', () => {
+  const type = 'bloodbank.messaging.telegram.received';
+  for (const [threadId, expected] of [
+    ['  thread-42  ', 'messaging:telegram:thread-42'],
+    [' ', `messaging:${EVENT_ID}`],
+  ]) {
+    const { envelope } = buildEnvelope({
+      type, kind: 'event', data: { ...MESSAGING_PAYLOAD, thread_id: threadId },
+      eventId: EVENT_ID, observedAt: '2026-10-14T12:00:00.000Z',
+    });
+    assert.equal(envelope.ordering_key, expected);
+  }
+});
+
 test('webform preserves an explicit ordering key and rejects invalid payloads', () => {
   const type = 'bloodbank.messaging.webform.received';
   const options = { type, kind: 'event', eventId: EVENT_ID,
