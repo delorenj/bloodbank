@@ -29,7 +29,7 @@ def test_notifier_install_dry_run_and_local_tarball(tmp_path):
     original = os.readlink(command)
     # Read-only npm pack into the fixture. The package source is never mutated.
     tarball = tmp_path / "notifier.tgz"
-    subprocess.run(["npm", "pack", "@delorenj/claude-notifications@2.2.1",
+    subprocess.run(["npm", "pack", "@delorenj/claude-notifications@2.2.2",
                     "--pack-destination", str(tmp_path), "--silent"], check=True, capture_output=True, text=True)
     packed = next(tmp_path.glob("*.tgz"))
     packed.rename(tarball)

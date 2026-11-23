@@ -13,7 +13,7 @@ import stat
 import subprocess
 from pathlib import Path
 
-PACKAGE = "@delorenj/claude-notifications@2.2.1"
+PACKAGE = "@delorenj/claude-notifications@2.2.2"
 
 
 def _move_noreplace(source: Path, destination: Path) -> None:
