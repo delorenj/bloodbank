@@ -438,7 +438,7 @@ export function delegationPrompt(
     'If one is ambiguous, ask in a comment (see waiting, below) rather than guess.\n' +
     execution +
     '     - if this scope requires review (the ticket needs a verdict from a ' +
-    'Launch Director or the PM), add the label `lifecycle:review`. The ticket ' +
+    'PM), add the label `lifecycle:review`. The ticket ' +
     'stays In Progress; the verdict giver moves it from there.\n' +
     '     - otherwise close the ticket Done, with the evidence comment.\n\n' +
     'Waiting: if you cannot proceed because you need an answer from a person, ' +
