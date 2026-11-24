@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://33god.dev/schemas/bloodbank/approval/approval_request.resolved.json",
+  "title": "Approval Request Resolved Event",
+  "description": "An approval request was decided (approved or rejected) or withdrawn. Same approval_id as its approval.approval_request.created.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../_common/cloudevent_base.v1.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "bloodbank.approval.approval_request.resolved"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "domain": {
+      "const": "approval"
+    },
+    "data": {
+      "type": "object",
+      "description": "Payload for bloodbank.approval.approval_request.resolved.",
+      "properties": {
+        "approval_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The requesting service's id for this one approval (e.g. a Voxxy consent record id)."
+        },
+        "service": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The service that is waiting on the operator, e.g. voxxy."
+        },
+        "approval_kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What is being approved, in the service's words, e.g. voice_consent."
+        },
+        "decision": {
+          "enum": [
+            "approved",
+            "rejected",
+            "withdrawn"
+          ],
+          "description": "How it ended."
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The operator's note, if any."
+        },
+        "resolved_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "approval_id",
+        "service",
+        "approval_kind",
+        "decision"
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "kind",
+    "domain",
+    "data"
+  ]
+}

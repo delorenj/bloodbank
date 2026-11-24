@@ -128,7 +128,7 @@ DEFAULT_MUTE = ("bloodbank.agent.hook.updated,bloodbank.system.hook.updated,"
                 "bloodbank.genesis.*")
 DEFAULT_DIGEST = "bloodbank.agent.tool.*"
 # Deploys, slop alerts, telephony, carrier texts and audio: rare, and wanted the moment they happen.
-DEFAULT_LOUD = "bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed,bloodbank.system.multiplexer.failed,bloodbank.system.multiplexer.resumed"
+DEFAULT_LOUD = "bloodbank.approval.approval_request.created,bloodbank.project.deployment.*,bloodbank.review.slop.*,bloodbank.telephony.*,bloodbank.messaging.sms.*,bloodbank.messaging.mms.*,bloodbank.messaging.rcs.*,bloodbank.messaging.imessage.*,bloodbank.audio.file.*,bloodbank.audio.memo.failed,bloodbank.billing.transaction.failed,bloodbank.system.multiplexer.failed,bloodbank.system.multiplexer.resumed"
 
 DEPLOYMENT_COMPLETED = "bloodbank.project.deployment.completed"
 DEPLOYMENT_FAILED = "bloodbank.project.deployment.failed"
@@ -263,6 +263,13 @@ def format_route(envelope: dict[str, Any], raw_subject: str) -> tuple[str, str]:
             lines.append(f"Event: {data['target_event_id']}")
         body = "\n".join(lines) if lines else f"src: {source}\n{json.dumps(data)}"
         return title, body
+
+    # A service waiting on the operator: its own title, what is waiting, and how to decide.
+    if event_type.startswith("bloodbank.approval.approval_request.") and isinstance(data, dict) and data.get("title"):
+        lines = [str(data.get("summary") or "")]
+        if data.get("decide"):
+            lines.append(f"Decide: {data['decide']}")
+        return header_text(str(data["title"]))[:120], "\n".join(l for l in lines if l)[:MAX_BODY_CHARS]
 
     # Body: surface the most useful 1-2 fields from `data`, fall back to a
     # truncated JSON dump.

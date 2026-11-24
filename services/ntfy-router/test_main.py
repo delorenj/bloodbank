@@ -931,3 +931,17 @@ class DomainMirrorTest(unittest.TestCase):
         self.assertEqual(len(ntfy.posts), 1)
         self.assertEqual(router.stats.get("domain_topic", 0), 0)
 
+
+
+class ApprovalRequestTests(unittest.TestCase):
+    def test_an_approval_request_pushes_its_own_title_summary_and_how_to_decide(self):
+        env = {"type": "bloodbank.approval.approval_request.created", "source": "urn:33god:voxxy:consent",
+               "data": {"approval_id": "6c15db7c3235", "service": "voxxy", "approval_kind": "voice_consent",
+                        "title": "Voxxy: “Jarad” needs your review", "summary": "A first voice is waiting.",
+                        "decide": "voxxy consent approve|reject 6c15db7c3235"}}
+        title, body = main.format_route(env, "")
+        self.assertEqual(title, "Voxxy: Jarad needs your review")
+        self.assertEqual(body, "A first voice is waiting.\nDecide: voxxy consent approve|reject 6c15db7c3235")
+
+    def test_an_approval_request_is_loud_by_default(self):
+        self.assertIn("bloodbank.approval.approval_request.created", main.DEFAULT_LOUD.split(","))
