@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://33god.dev/schemas/bloodbank/messaging/webform.received.json",
   "title": "Messaging Webform Received Event",
-  "description": "A person submitted a form on one of our web pages. Published by the form-intake service (33god-platform/form-intake), which serves POST /_forms/<form> on every *.delo.sh site and stores the submission in its own SQLite before it publishes, so the bus is the announcement and not the only copy. Site and form slug are data, never tokens. ordering_key is messaging:webform:<site>:<form> (the same value as 'messaging:webform:' + data.thread_id): submissions to one form order together. Consumers deduplicate on message_id (the intake's submission id). The sender shape matches the other messaging platforms, so watch targets match a form address like an email one. See bloodbank/docs/event-naming.md (messaging, webform).",
+  "description": "A person submitted a form on one of our web pages. Published by the form-intake service (33god-platform/form-intake), which serves POST /_forms/<form> on every *.delo.sh site (and, cross-origin, at forms.delo.sh for allow-listed sites off delo.sh such as store.automaticai.io) and stores the submission in its own SQLite before it publishes, so the bus is the announcement and not the only copy. Site and form slug are data, never tokens. ordering_key is messaging:webform:<site>:<form> (the same value as 'messaging:webform:' + data.thread_id): submissions to one form order together. Consumers deduplicate on message_id (the intake's submission id). The sender shape matches the other messaging platforms, so watch targets match a form address like an email one. See bloodbank/docs/event-naming.md (messaging, webform).",
   "x-sender": {
     "handle_paths": ["data.sender.handle"],
     "name_paths": ["data.sender.display_name"],
@@ -29,7 +29,7 @@
       "properties": {
         "schema_version": {"const": 1, "description": "Payload contract revision. Currently 1."},
         "direction": {"type": "string", "enum": ["inbound"], "description": "Always inbound: a visitor wrote to us."},
-        "site": {"type": "string", "minLength": 1, "description": "Hostname the form was posted to, e.g. 33god.delo.sh."},
+        "site": {"type": "string", "minLength": 1, "description": "The site the form was submitted from: the delo.sh host it was posted to (e.g. 33god.delo.sh), or for a cross-origin post the allow-listed Origin's host (e.g. store.automaticai.io)."},
         "form": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$", "description": "Form slug from the path /_forms/<form>, e.g. briefing."},
         "sender": {
           "type": "object",
@@ -56,6 +56,7 @@
           "description": "Every submitted field, as strings. Names starting with '_' (honeypots, page metadata) are dropped before this.",
           "additionalProperties": {"type": "string"}
         },
+        "withheld": {"type": "array", "items": {"type": "string"}, "description": "Only on submissions from sites off delo.sh: names of the fields left out of 'fields' (and of sender/content) because their values are personal. The intake's SQLite row is the only copy of them; the event carries id-like values only and sender.handle is 'anonymous'."},
         "page_url": {"type": "string", "description": "The page the form was on (Referer), when sent."},
         "received_at": {"type": "string", "format": "date-time", "description": "When the intake received it, RFC 3339."},
         "message_id": {"type": "string", "minLength": 1, "description": "The intake's submission id (uuid); consumers deduplicate on it."},
