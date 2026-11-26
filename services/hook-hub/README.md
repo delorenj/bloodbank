@@ -222,6 +222,41 @@ Candystore persistence acknowledgment. Durable delivery acceptance must separate
 look up the event ID in Candystore. Receipts do not store prompts, transcripts,
 stdout, stderr, or environment values.
 
+## Hindsight credentials (`hindsight_auth.py`)
+
+Every non-interactive Hindsight client on the machine resolves its API URL and
+key through `hindsight_auth.py`, linked as `~/.local/bin/hindsight-auth`: the
+recall, briefing, capture and jot-flush handlers here (through
+`hindsight.api_endpoint()` and `cli_environment()`), the write probe in
+`~/.agents/hooks/hindsight/`, and the server-side sweeps in DeLoContainers
+`stacks/ai/hindsight/scripts/` (through their `hindsight_client.py` shim). Do not
+write another config parser.
+
+| | first hit wins |
+| --- | --- |
+| URL | `HINDSIGHT_API_URL`, then `api_url` in `~/.hindsight/config`, then `https://hs-api.delo.sh` |
+| key | `HINDSIGHT_API_KEY`, then `api_key` in the config (literal = flagged plaintext; `op://` = read from the vault), then `HINDSIGHT_API_KEY_REF`, then `api_key_ref` in the config, then `op://DeLoSecrets/vgfndnrcupczmjs55nnyjmq2km/credential` (the "Hindsight" item) |
+
+- **The config holds an `op://` reference or no key, never a literal.** The
+  2026-11-26 00:53 removal of the plaintext `api_key` was right; what broke was that
+  every timer and hook read only that line, so they all went 401 while login shells
+  (which export `HINDSIGHT_API_KEY`) kept working.
+- **The vault default is built in on purpose.** The upstream `hindsight configure`
+  rewrites the file with only the keys it knows, so it drops `api_key_ref`. A wiped
+  config must not take the clients down. To change the config without losing keys:
+  `hindsight-auth configure --api-url URL --api-key-ref op://...` (it refuses a
+  literal key; `--drop-plaintext` removes one only after checking the vault holds
+  the same value).
+- **`hs-api.delo.sh` is the route.** `api.hs.delo.sh` is the nested legacy name; it
+  answers on the LAN only (Cloudflare Universal SSL covers one subdomain level, so
+  it fails TLS on the public edge). `hindsight-auth check` warns on it.
+- `op` is called as `~/.local/bin/op` (the op-router wrapper). Under a bare PATH
+  `which op` finds `/usr/bin/op`, which has no service-account token and hangs on
+  the desktop app.
+- `hindsight-auth check` makes one authenticated call and names each source;
+  `hindsight-auth exec -- CMD` runs a command (the `hindsight` CLI, a script) with
+  the resolved pair; `HINDSIGHT_API_KEY_REF=` (set, empty) switches the vault off.
+
 ## Hindsight recall and briefing
 
 `hindsight-recall` runs on every prompt, so it has to be fast and send the right
@@ -297,8 +332,7 @@ works like this:
 `hindsight-briefing` runs once at session start (not on `resume`). It GETs the
 primary bank's `briefing`, `pitfalls` and `rules` mental models in parallel from
 `/v1/default/banks/{bank}/mental-models/{id}`. The bank templates seed those ids.
-The URL and key come from `HINDSIGHT_API_URL`/`HINDSIGHT_API_KEY`, falling back to
-`~/.hindsight/config`, as the CLI does. A model that is missing (404), fails, or
+The URL and key come from `hindsight_auth.py` (see "Hindsight credentials"). A model that is missing (404), fails, or
 still says `Generating content...` is skipped silently. Whatever is ready is
 injected under a `# Hindsight briefing` header, capped at
 `HINDSIGHT_BRIEFING_MAX_CHARS` (6,000). The whole fetch has a 0.5s budget

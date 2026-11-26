@@ -15,7 +15,6 @@ import signal
 import subprocess
 import threading
 import time
-import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -23,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import hindsight_auth
 from concerns import context_output, invoke, repository, result
 
 # Deadlines are measured from here: the handler is a fresh process per hook, so
@@ -475,7 +475,9 @@ def binary() -> str | None:
 
 
 def cli_environment(cli: str) -> dict[str, str]:
-    return {**os.environ, "HINDSIGHT_AGENT": cli, "NO_COLOR": "1", "FORCE_COLOR": "0",
+    # The hub never forwards the caller's HINDSIGHT_API_KEY, and the config holds no
+    # literal key, so the CLI gets the resolved URL and key explicitly.
+    return {**hindsight_auth.environment(), "HINDSIGHT_AGENT": cli, "NO_COLOR": "1", "FORCE_COLOR": "0",
             "TERM": "dumb", "HINDSIGHT_NO_SPINNER": "1", "HINDSIGHT_DISABLE_SPINNER": "1"}
 
 
@@ -915,18 +917,8 @@ BRIEFING_MODELS = ("briefing", "pitfalls", "rules")
 
 
 def api_endpoint() -> tuple[str, str]:
-    """(base URL, key) from the environment, else ~/.hindsight/config -- as the CLI does."""
-    url = os.environ.get("HINDSIGHT_API_URL", "").strip()
-    key = os.environ.get("HINDSIGHT_API_KEY", "").strip()
-    if not (url and key):
-        path = Path(os.environ.get("HINDSIGHT_CONFIG", Path.home() / ".hindsight/config"))
-        try:
-            config = tomllib.loads(path.read_text())
-        except (OSError, ValueError):
-            config = {}
-        url = url or str(config.get("api_url") or "").strip()
-        key = key or str(config.get("api_key") or "").strip()
-    return url.rstrip("/"), key
+    """(base URL, key): env, then ~/.hindsight/config, then the vault (hindsight_auth.py)."""
+    return hindsight_auth.endpoint()
 
 
 def fetch_model(base: str, key: str, target: str, model: str, timeout: float) -> tuple[str, str, str]:

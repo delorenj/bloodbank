@@ -777,7 +777,7 @@ def dead_letter(state: dict, batch: dict, why: str) -> str:
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     name = f"{state['document_id']}-{batch['turns'][0]['n']}-{batch['turns'][-1]['n']}.json"
     target = folder / name
-    base, _ = hs.api_endpoint()
+    base = hs.hindsight_auth.url()
     target.touch(mode=0o600)
     target.write_text(json.dumps({
         "abandoned_at": _iso(_now()), "reason": why, "attempts": batch["attempt"],
