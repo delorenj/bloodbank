@@ -15,7 +15,7 @@
 # from the committed op:// reference in .env.op, rendered by ./render-env.sh into
 # the gitignored .env that compose loads by itself, so a bare
 # `docker compose up -d --force-recreate` just works (never commit the token).
-# docker-stack-ntfy-router.service (~/docker/systemd) renders it and brings the
+# docker-stack@ntfy-router.service (~/docker/systemd) renders it and brings the
 # router up at boot.
 #
 # Bring up (from this directory):
