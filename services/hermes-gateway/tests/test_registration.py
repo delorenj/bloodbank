@@ -31,3 +31,12 @@ def test_entrypoint_loads_module_with_register_function():
     )
     entrypoint = project["project"]["entry-points"]["hermes_agent.plugins"]
     assert entrypoint["bloodbank-platform"] == "bloodbank_hermes_gateway"
+
+
+def test_adapter_declares_nobody_answers_approvals():
+    # A Bloodbank command turn has no human reader: the gateway must reroute its approval
+    # prompts to the profile's home channel instead of posting them into send(), which
+    # delivers nothing (EARS-59: the prompt timed out unseen and the command was BLOCKED).
+    from bloodbank_hermes_gateway.adapter import BloodbankAdapter
+
+    assert BloodbankAdapter.answers_approvals is False

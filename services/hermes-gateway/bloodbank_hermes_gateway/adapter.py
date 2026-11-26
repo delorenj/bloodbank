@@ -342,6 +342,11 @@ class BloodbankAdapter(BasePlatformAdapter):
 
     supports_async_delivery = False
     interactive_resume = False
+    # Nobody reads this lane: send() delivers nothing, so a tool-approval prompt rendered
+    # here would sit for approvals.timeout and then BLOCK the command (EARS-59, 2026-11-25).
+    # Declaring it makes the Hermes gateway send the prompt to the profile's human home
+    # channel instead (gateway/approval_reroute.py), or fail loudly when none exists.
+    answers_approvals = False
     allow_update_command = False
     # Nothing this adapter "sends" can be edited (send() delivers nothing).
     # Declaring it makes Hermes skip token streaming for Bloodbank turns: an
