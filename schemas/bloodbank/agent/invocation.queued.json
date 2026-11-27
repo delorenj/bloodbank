@@ -55,9 +55,10 @@
           "enum": [
             "batch",
             "interactive",
+            "feedback",
             null
           ],
-          "description": "Delivery lane of the originating command: batch (bloodbank.agent.invocation.start) or interactive (bloodbank.agent.invocation.invoke). Stamped by the Hermes gateway on every lifecycle fact; absent on facts written before the interactive lane existed."
+          "description": "Delivery lane of the originating command: batch, interactive, or the opt-in BB-67 review feedback durable. Absent on facts written before the interactive lane existed."
         },
         "issuer": {
           "type": [

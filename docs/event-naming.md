@@ -202,10 +202,18 @@ slots, so interactive work never queues behind batch work:
 | `bloodbank.agent.invocation.start` | `bloodbank.cmd.agent.invocation.start` | Batch lane. Unattended or scheduled work: ticket grooming, delegation, PM fan-out. FIFO behind other batch work. Durable `bloodbank-hermes-gateway`, 4 slots. |
 | `bloodbank.agent.invocation.invoke` | `bloodbank.cmd.agent.invocation.invoke` | Interactive lane. A human is waiting on the answer (a voice memo, a chat nudge). Durable `bloodbank-hermes-gateway-interactive`, 2 reserved slots. |
 
+The BB-67 `bloodbank.review.feedback.send` command is an opt-in, dedicated
+feedback durable on `bloodbank.cmd.review.feedback.send`, **not** an alias of
+`agent.invocation.invoke`. It reuses the gateway's internal invocation and
+final-answer machinery but keeps the frozen review command and identity. Its
+lifecycle facts have `data.lane = feedback`. See `docs/review-feedback.md` for
+the retry, uncertain execution and Holocene owner contract.
+
 `invoke` is for commands where a human is waiting, nothing else. The gateway
 still emits `agent.invocation.queued/started/completed/failed` for both (not
 `agent.invocation.invoked`; Section 8.2 pairing is by review, not enforced),
-stamping `data.lane` (`batch` | `interactive`) on every lifecycle fact. Design:
+stamping `data.lane` (`batch` | `interactive`) on those invocation lanes' facts.
+The separate feedback command stamps `feedback`. Design:
 `docs/interactive-command-lane.md`.
 
 `agent.invocation.queued` is the gateway's durable-claim fact: exactly one per

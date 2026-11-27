@@ -11,7 +11,9 @@ This is the host-side seed of the future n8n-nodes-bloodbank node: same envelope
 construction, same subject binding.
 
 Fail-open by default — a dead bus must never break the calling pipeline. Pass
---strict to exit non-zero on publish failure.
+--strict to exit non-zero on publish failure. The explicit BB-67
+--feedback-submission path is an exception: it always validates and requires
+JetStream stream acceptance, regardless of --strict (see docs/review-feedback.md).
 
 Envelope contract: bloodbank/schemas/_common/cloudevent_base.v1.json
 Subject binding : type `bloodbank.<domain>.<entity>.<action>`     (4 tokens)
@@ -147,6 +149,63 @@ def _nats_publish(subject, body, host, port, timeout=3.0):
                 raise IOError("NATS -ERR: " + line.decode(errors="replace").strip())
 
 
+def _nats_publish_jetstream(subject, body, host, port, timeout=5.0):
+    """Return only after a BLOODBANK_COMMANDS PubAck, not a core NATS PONG."""
+    inbox = "_INBOX.bb67." + uuid.uuid4().hex
+    with socket.create_connection((host, port), timeout=timeout) as s:
+        s.settimeout(timeout)
+        # Buffered reads consume a complete MSG body even when TCP splits it.
+        f = s.makefile("rwb")
+        f.readline()
+        f.write(b'CONNECT {"verbose":false,"pedantic":false,"name":"bb-emit-feedback","lang":"py-stdlib"}\r\n')
+        f.write(b"SUB " + inbox.encode() + b" 1\r\nPING\r\n")
+        f.flush()
+        while True:
+            line = f.readline()
+            if not line:
+                raise IOError("NATS closed before subscription was ready")
+            if line.startswith(b"-ERR"):
+                raise IOError(line.decode(errors="replace").strip())
+            if line == b"PING\r\n":
+                f.write(b"PONG\r\n")
+                f.flush()
+            if line.startswith(b"PONG"):
+                break
+        f.write(b"PUB " + subject.encode() + b" " + inbox.encode() + b" " + str(len(body)).encode() + b"\r\n" + body + b"\r\n")
+        f.flush()
+        while True:
+            line = f.readline()
+            if not line:
+                raise IOError("NATS closed before JetStream PubAck")
+            if line.startswith(b"-ERR"):
+                raise IOError(line.decode(errors="replace").strip())
+            if line == b"PING\r\n":
+                f.write(b"PONG\r\n")
+                f.flush()
+            if line.startswith(b"MSG "):
+                parts = line.strip().split()
+                if len(parts) not in (4, 5) or parts[1] != inbox.encode():
+                    raise IOError("unexpected JetStream PubAck frame")
+                size = int(parts[-1])
+                if not 0 < size < 4096:
+                    raise IOError("invalid JetStream PubAck size")
+                ack = json.loads(f.read(size))
+                if f.read(2) != b"\r\n" or not isinstance(ack, dict):
+                    raise IOError("invalid JetStream PubAck")
+                if ack.get("stream") != "BLOODBANK_COMMANDS" or type(ack.get("seq")) is not int or ack["seq"] < 1 or "error" in ack:
+                    raise IOError("JetStream did not accept feedback in BLOODBANK_COMMANDS")
+                return {"stream": ack["stream"], "seq": ack["seq"], "duplicate": ack.get("duplicate") is True}
+
+
+def _feedback_command(data):
+    if _HOOKS_DIR.is_dir() and _VALIDATE_ENVELOPE is None:
+        raise RuntimeError("feedback validation unavailable")
+    if str(_HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(_HOOKS_DIR))
+    from core.review_feedback import build_command
+    return build_command(data)
+
+
 CARRIER_TRANSPORTS = frozenset({"sms", "mms", "rcs", "imessage"})
 
 
@@ -187,6 +246,8 @@ def main():
     ap.add_argument("--check", action="store_true",
                     help="dry run: validate and print the type/subject/schemaref/"
                          "dataschema that WOULD be published, then exit without publishing")
+    ap.add_argument("--feedback-submission", action="store_true",
+                    help="BB-67: use a persisted Holocene submission row; fail closed on validation or missing JetStream PubAck")
     ap.add_argument("--schema-version", type=int, default=1,
                     help="schema revision N for schemaref/dataschema (§13; default: 1)")
     ap.add_argument("--data", help="data JSON as a string (default: read from stdin)")
@@ -245,6 +306,37 @@ def main():
     if not isinstance(data, dict):
         print("bb-emit: data must be a JSON object", file=sys.stderr)
         return usage_rc
+    if a.feedback_submission or a.type in {
+        "bloodbank.review.feedback.send", "bloodbank.cmd.review.feedback.send"
+    }:
+        if not a.feedback_submission or a.type not in {
+            "bloodbank.review.feedback.send", "bloodbank.cmd.review.feedback.send"
+        } or a.kind not in (None, "command"):
+            print("bb-emit: feedback requires --feedback-submission --type bloodbank.review.feedback.send [--kind command]", file=sys.stderr)
+            return usage_rc
+        if any((a.command_id, a.correlation, a.causation, a.ordering_key, a.actor, a.actor_id)) or a.schema_version != 1:
+            print("bb-emit: feedback identities are frozen; do not override ids/actor/schema", file=sys.stderr)
+            return usage_rc
+        try:
+            envelope = _feedback_command(data)
+        except (ValueError, KeyError, TypeError, RuntimeError, OSError) as exc:
+            print(f"bb-emit: feedback validation failed ({type(exc).__name__}); keep the frozen row", file=sys.stderr)
+            return usage_rc
+        if a.check:
+            print(json.dumps({key: envelope[key] for key in (
+                "id", "type", "subject", "schemaref", "dataschema", "correlationid",
+                "causationid", "command_id", "idempotency_key"
+            )}, separators=(",", ":")))
+            print("bb-emit: validated feedback; --check, nothing published", file=sys.stderr)
+            return 0
+        body = json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        try:
+            receipt = _nats_publish_jetstream(envelope["subject"], body, a.host, a.port)
+        except Exception as exc:
+            print(f"bb-emit: feedback publication UNCONFIRMED ({type(exc).__name__}); reconcile by command_id before retry", file=sys.stderr)
+            return usage_rc
+        print(json.dumps({"command_id": envelope["command_id"], "submissionId": data["submissionId"], **receipt}, separators=(",", ":")))
+        return 0
 
     # Resolve (type, kind) from --type, which may be given as either the 4-token
     # type or the 5-token subject. The retired `bloodbank.v1.*` shape is still a

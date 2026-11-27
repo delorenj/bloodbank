@@ -8,6 +8,7 @@ the resolved immutable outbox without executing Hermes.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -73,6 +74,14 @@ class ExecutionRecord:
     # with the same id; empty for rows claimed before the column existed (their
     # lifecycle opened at started, so nothing closes a queued).
     queued_events: tuple[dict[str, Any], ...] = ()
+    # Feedback result publication receipt; additive to journal v5.
+    outbox_published_at: str | None = None
+    # Last-delivery evidence is atomic with claim, so a dead pending owner can
+    # be closed without assuming another broker delivery will arrive.
+    feedback_exhausted_at: str | None = None
+    # Pre-start rejection rows cannot hold terminal_events under the v5 CHECK.
+    # Keep their immutable publishable closure in an additive private column.
+    feedback_closure_events: tuple[dict[str, Any], ...] = ()
 
 
 class ExecutionStateStore:
@@ -118,12 +127,12 @@ class ExecutionStateStore:
             for column in (
                 "lane", "failure_code", "detached_at", "capture_outcome",
                 "captured_events", "capture_error", "queued_events",
+                "outbox_published_at", "feedback_exhausted_at", "feedback_closure_events",
             ):
                 if column not in columns:
                     db.execute(f"ALTER TABLE executions ADD COLUMN {column} TEXT")
-            # Older gateways must refuse this journal: v4 added capture state (a
-            # captured turn must never rerun); v5 builds started facts at the
-            # real start, so a pending row no longer carries them.
+            # Keep the v5 execution-state protocol: the additive receipt column
+            # changes no state/capture semantics and old rows retain their bytes.
             db.execute("PRAGMA user_version = 5")
         os.chmod(self.path, 0o600)
 
@@ -149,6 +158,7 @@ class ExecutionStateStore:
                 lane TEXT,
                 failure_code TEXT,
                 detached_at TEXT,
+                outbox_published_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 CHECK (
@@ -296,6 +306,9 @@ class ExecutionStateStore:
             captured_events=_decode_events(row[13]),
             capture_error=str(row[14]) if row[14] is not None else None,
             queued_events=_decode_events(row[15]),
+            outbox_published_at=str(row[16]) if row[16] is not None else None,
+            feedback_exhausted_at=str(row[17]) if row[17] is not None else None,
+            feedback_closure_events=_decode_events(row[18]),
         )
 
     @classmethod
@@ -304,7 +317,8 @@ class ExecutionStateStore:
             """SELECT command_id, envelope_digest, profile, state, outcome,
                       started_events, terminal_events, rejection_reason, rejected_at,
                       lane, failure_code, detached_at, capture_outcome,
-                      captured_events, capture_error, queued_events
+                      captured_events, capture_error, queued_events,
+                      outbox_published_at, feedback_exhausted_at, feedback_closure_events
                FROM executions WHERE command_id = ?""",
             (command_id,),
         ).fetchone()
@@ -322,9 +336,156 @@ class ExecutionStateStore:
             raise ValueError("execution rejection reason must be non-empty")
         return normalized
 
+    def try_feedback_lock(self, command_id: str) -> int | None:
+        """Own a feedback command through dispatch/reconciliation until close(fd).
+
+        Linux flock on independently opened file descriptions excludes even
+        another adapter in this PID. Kernel close/process death proves release;
+        no clock-based lease or PID-reacquisition permits takeover. Never unlink
+        lock files: waiters must keep using the same inode. Hash the untrusted ID.
+        """
+        directory = self.path.resolve().with_suffix(self.path.suffix + ".feedback-locks")
+        directory.mkdir(mode=0o700, exist_ok=True)
+        if directory.is_symlink():
+            raise ValueError("feedback lock directory must not be a symlink")
+        path = directory / hashlib.sha256(command_id.encode()).hexdigest()
+        fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            return None
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
     def get(self, command_id: str) -> ExecutionRecord | None:
         with self._connect() as db:
             return self._select(db, command_id)
+
+    def close_pending_feedback(
+        self, *, command_id: str, digest: str,
+        terminal_events: tuple[dict[str, Any], ...],
+    ) -> ExecutionRecord:
+        """Atomically close an exhausted pending claim without inventing a start."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None:
+                raise RuntimeError("feedback claim is missing")
+            self._require_digest(current, digest)
+            if current.state == "completed":
+                with_terminal = db.execute(
+                    "SELECT terminal_events FROM executions WHERE command_id = ?",
+                    (command_id,),
+                ).fetchone()[0]
+                if (
+                    current.failure_code != "feedback_delivery_exhausted"
+                    or current.outcome != "failure"
+                    or with_terminal != _events_json(terminal_events)
+                ):
+                    raise RuntimeError("completed feedback result is immutable")
+                return current
+            if current.state != "pending" or current.lane != "feedback":
+                raise RuntimeError("only pending feedback can exhaust before dispatch")
+            db.execute(
+                """UPDATE executions SET state = 'completed', outcome = 'failure',
+                       terminal_events = ?, failure_code = 'feedback_delivery_exhausted',
+                       updated_at = ? WHERE command_id = ? AND state = 'pending'""",
+                (_events_json(terminal_events), _now(), command_id),
+            )
+            record = self._select(db, command_id)
+        if record is None:
+            raise RuntimeError("feedback exhausted result is missing")
+        return record
+
+    def note_feedback_exhaustion(self, *, command_id: str, digest: str) -> None:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None or current.lane != "feedback":
+                raise RuntimeError("feedback claim is missing")
+            self._require_digest(current, digest)
+            db.execute(
+                """UPDATE executions SET feedback_exhausted_at = COALESCE(feedback_exhausted_at, ?)
+                   WHERE command_id = ?""", (_now(), command_id),
+            )
+
+    def store_feedback_closure(
+        self, *, command_id: str, digest: str,
+        events: tuple[dict[str, Any], ...],
+    ) -> ExecutionRecord:
+        """Persist immutable pre-start refusal bytes before any publish attempt."""
+        if len(events) != 1:
+            raise ValueError("pre-start feedback closure requires one failure")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None or current.lane != "feedback" or current.state != "rejected_pre_start":
+                raise RuntimeError("feedback is not rejected before start")
+            self._require_digest(current, digest)
+            if current.feedback_closure_events:
+                if _events_json(current.feedback_closure_events) != _events_json(events):
+                    raise RuntimeError("feedback rejection closure is immutable")
+                return current
+            db.execute(
+                "UPDATE executions SET feedback_closure_events = ? WHERE command_id = ?",
+                (_events_json(events), command_id),
+            )
+            record = self._select(db, command_id)
+        assert record is not None
+        return record
+
+    def unpublished_feedback_results(self, *, after_command_id: str = "") -> list[ExecutionRecord]:
+        """Feedback phases awaiting lock-aware recovery and terminal publication.
+
+        Pending claims are eligible only with durable last-delivery evidence.
+        Started and rejection phases must recover even if the process died before
+        persisting a terminal batch. Callers must acquire ownership and re-read.
+        """
+
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT command_id, envelope_digest, profile, state, outcome,
+                          started_events, terminal_events, rejection_reason,
+                          rejected_at, lane, failure_code, detached_at,
+                          capture_outcome, captured_events, capture_error,
+                          queued_events, outbox_published_at,
+                          feedback_exhausted_at, feedback_closure_events
+                   FROM executions
+                   WHERE lane = 'feedback' AND outbox_published_at IS NULL
+                     AND (state != 'pending' OR feedback_exhausted_at IS NOT NULL)
+                     AND command_id > ?
+                   ORDER BY command_id LIMIT 100""", (after_command_id,),
+            ).fetchall()
+        records = [self._record(row) for row in rows]
+        return [record for record in records if record is not None]
+
+    def mark_feedback_outbox_published(
+        self, *, command_id: str, digest: str
+    ) -> None:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None:
+                db.rollback()
+                raise RuntimeError("execution journal has no feedback outbox to mark")
+            self._require_digest(current, digest)
+            if (
+                current.lane != "feedback"
+                or current.state not in {"completed", "rejected_pre_start", "rejected_closed"}
+                or not (current.terminal_events or current.feedback_closure_events)
+            ):
+                db.rollback()
+                raise RuntimeError("feedback outbox has no durable terminal result")
+            db.execute(
+                """UPDATE executions SET outbox_published_at = ?, updated_at = ?
+                   WHERE command_id = ? AND lane = 'feedback'
+                     AND outbox_published_at IS NULL""",
+                (_now(), _now(), command_id),
+            )
+            db.commit()
 
     def claim_pending(
         self,
@@ -335,6 +496,7 @@ class ExecutionStateStore:
         started_events: tuple[dict[str, Any], ...] = (),
         queued_events: tuple[dict[str, Any], ...] = (),
         lane: str | None = None,
+        feedback_exhausted: bool = False,
     ) -> ExecutionRecord:
         """Durably claim a command as pending, with its queued fact.
 
@@ -361,6 +523,15 @@ class ExecutionStateStore:
                     now,
                 ),
             )
+            if feedback_exhausted:
+                current = self._select(db, command_id)
+                if current is None or current.lane != "feedback":
+                    raise RuntimeError("only feedback can record delivery exhaustion")
+                self._require_digest(current, digest)
+                db.execute(
+                    """UPDATE executions SET feedback_exhausted_at = COALESCE(feedback_exhausted_at, ?)
+                       WHERE command_id = ?""", (now, command_id),
+                )
             record = self._select(db, command_id)
             db.commit()
         if record is None:

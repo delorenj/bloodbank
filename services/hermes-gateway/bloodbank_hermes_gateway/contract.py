@@ -47,6 +47,9 @@ INTERACTIVE = LaneSpec(
     "bloodbank.agent.invocation.invoke",
     "bloodbank.cmd.agent.invocation.invoke",
 )
+FEEDBACK = LaneSpec("feedback", "bloodbank.review.feedback.send", "bloodbank.cmd.review.feedback.send")
+# LANES is the historical invocation-lane registry; feedback is a separate opt-in
+# adapter binding, not an invocation command alias.
 LANES = {lane.name: lane for lane in (BATCH, INTERACTIVE)}
 
 # The batch lane is the original single lane; keep these importable.
@@ -190,6 +193,19 @@ def decode_command(
         raise CommandInvalid("specversion must be '1.0'")
     if envelope["type"] != lane.command_type:
         raise CommandInvalid(f"type must be {lane.command_type!r}")
+    if lane == FEEDBACK:
+        # Validation runs on the actual command before projecting any prompt.
+        # A copied/type-shaped payload or a missing schema is not executable.
+        import sys
+        hooks = Path(__file__).resolve().parents[2] / "agent-hooks"
+        if str(hooks) not in sys.path:
+            sys.path.insert(0, str(hooks))
+        from core.validate import validate_envelope
+        try:
+            validate_envelope(envelope)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise CommandInvalid(f"invalid frozen feedback ({type(exc).__name__})") from exc
+        return envelope
     if envelope["kind"] != "command":
         raise CommandInvalid("kind must be 'command'")
     if envelope["domain"] != "agent":
@@ -349,6 +365,44 @@ class ProfileResolver:
         return normalized
 
 
+    def resolve_feedback_target(self, target_agent_id: str) -> str:
+        """Resolve the feedback lane only through the fleet registry.
+
+        ``target_profiles`` and direct-profile targets are documented generic
+        lane overrides. A frozen feedback submission is not generic work: its
+        recipient must exist, be explicitly eligible, and resolve to the exact
+        pilot profile even when one of those escape hatches is configured.
+        """
+
+        target = _nonempty_string(target_agent_id, "data.target_agent_id")
+        mapping, registered = self._fleet_mapping()
+        if target not in registered:
+            raise RouteInvalid(
+                f"feedback recipient {target!r} is absent from the fleet registry"
+            )
+        mapped = mapping.get(target)
+        if mapped is None:
+            raise RouteInvalid(
+                f"feedback recipient {target!r} is registry-defined but not eligible"
+            )
+        normalized = self.normalize_profile_name(mapped.strip())
+        try:
+            self.validate_profile_name(normalized)
+        except Exception as exc:
+            raise RouteInvalid(
+                f"feedback recipient {target!r} maps to an invalid profile"
+            ) from exc
+        if not self.profile_exists(normalized):
+            raise RouteInvalid(
+                f"feedback recipient {target!r} maps to a missing profile"
+            )
+        if normalized != "green-in-between-pm" or target != "green-in-between-pm":
+            raise RouteInvalid("feedback requires the exact green-in-between-pm registry route")
+        override = self.target_profiles.get(target)
+        if override is not None and override != normalized:
+            raise RouteInvalid("feedback static route conflicts with the registry recipient")
+        return normalized
+
 
 def registry_bloodbank_enabled(agent_id: str, bloodbank: Mapping[str, Any]) -> bool:
     """Return the effective activation of one registry row's Bloodbank block.
@@ -391,6 +445,9 @@ class Invocation:
         cls, envelope: dict[str, Any], profile: str, lane: str = BATCH.name
     ) -> "Invocation":
         data = envelope["data"]
+        if envelope["type"] == FEEDBACK.command_type:
+            from core.review_feedback import invocation_data
+            data = invocation_data(envelope)
         command_id = envelope["command_id"]
         correlation_id = envelope["correlationid"]
         return cls(
@@ -459,7 +516,21 @@ def lifecycle_event(
             "target_agent_id": invocation.target_agent_id,
             "profile_name": invocation.profile,
             "lane": invocation.lane,
+            **(_feedback_provenance(invocation)),
         },
+    }
+
+
+def _feedback_provenance(invocation: Invocation) -> dict[str, Any]:
+    if invocation.envelope["type"] != FEEDBACK.command_type:
+        return {}
+    from .execution_state import envelope_digest
+    return {
+        "command_type": FEEDBACK.command_type,
+        "command_digest": envelope_digest(invocation.envelope),
+        "command_event_id": invocation.envelope["id"],
+        "command_causationid": invocation.envelope["causationid"],
+        "issuer": invocation.envelope["actor"],
     }
 
 
@@ -473,6 +544,9 @@ def _command_context(invocation: Invocation) -> dict[str, Any]:
     Additive and only present when the command carried an object context.
     """
     context = invocation.envelope.get("data", {}).get("context")
+    if invocation.envelope["type"] == FEEDBACK.command_type:
+        from core.review_feedback import invocation_data
+        context = invocation_data(invocation.envelope)["context"]
     return {"context": context} if isinstance(context, dict) else {}
 
 
@@ -605,7 +679,7 @@ def started_events(invocation: Invocation) -> tuple[dict[str, Any], dict[str, An
         data={
             "thread_id": invocation.thread_id,
             "turn_id": invocation.turn_id,
-            "prompt_text": invocation.prompt,
+            **({} if invocation.envelope["type"] == FEEDBACK.command_type else {"prompt_text": invocation.prompt}),
         },
     )
     started = lifecycle_event(
@@ -714,6 +788,52 @@ def detached_event(
     )
     event["id"] = str(uuid.uuid4())
     return event
+
+
+def feedback_recovery_events(
+    record: Any, *, code: str, message: str, occurred_at: str,
+    pre_start: bool = False, reason: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Close a journaled phase using stored lineage, never reconstruct a prompt.
+
+    This also recovers v5 feedback rows written before command-independent
+    recovery existed. Their queued/started facts already bind the full command
+    digest, issuer and review identity; no original command redelivery is needed.
+    """
+    import copy
+
+    reference = (record.queued_events or record.started_events[-1:])[0]
+    stored = reference["data"]
+    common = {key: stored[key] for key in (
+        "command_id", "idempotency_key", "target_agent_id", "profile_name", "lane",
+        "command_type", "command_digest", "command_event_id", "command_causationid", "issuer",
+    )}
+    def event(event_type: str, cause: str, data: dict[str, Any]) -> dict[str, Any]:
+        result = copy.deepcopy(reference)
+        domain = event_type.split(".")[1]
+        result.update(type=event_type, id=event_id(event_type), domain=domain,
+            subject=_subject_for(event_type), time=occurred_at, causationid=cause,
+            dataschema=f"apicurio://holyfields/{event_type}/versions/1",
+            schemaref=f"{event_type}.v1", data={**data, **common})
+        validate_fact(result)
+        return result
+
+    def event_id(event_type: str) -> str:
+        return str(uuid.uuid5(_UUID_NAMESPACE, f"{record.command_id}:{event_type}"))
+
+    failure = event(INVOCATION_FAILED,
+        event_id(INVOCATION_QUEUED if pre_start else INVOCATION_STARTED), {
+            "invocation_id": record.command_id, "thread_id": stored["thread_id"],
+            "turn_id": stored["turn_id"], "error_code": code, "error_message": message,
+            **({"context": stored["context"]} if "context" in stored else {}),
+            **({"rejection_reason": reason} if reason is not None else {}),
+        })
+    if pre_start:
+        return (failure,)
+    turn = event(TURN_COMPLETED, failure["id"], {
+        "thread_id": stored["thread_id"], "turn_id": stored["turn_id"], "outcome": "failed",
+    })
+    return failure, turn
 
 
 def terminal_events(
