@@ -58,6 +58,8 @@ Given a persisted submission, when the same explicit send retries, then all wire
 - Parent has explicitly reserved independent review and combined live proof for follow-up. This spec records the already-dispatched ticket scope, not a new user approval gate.
 - Review repairs: bind feedback facts to full command provenance, feedback lane and exact phase lineage; require registry eligibility independently of generic overrides; hold a command-scoped kernel lock through processing; durably close exhausted deliveries and sweep completed feedback results without relying on redelivery. `test_review_feedback_regressions.py` promotes the accepted counterexamples and real-process lock release/recovery. Existing baseline tests remain unchanged.
 
+- Second-review repair: phase-wide lock-aware journal recovery closes abandoned started/captured, exhausted pending, and pre-/post-start rejection phases without command delivery or model replay. Store immutable pre-start closure bytes, preserve prior v5 lineage, rotate bounded scan pages past live owners, and continue publication during drain. Promoted faults cover both started PubAcks, both refusal closures, partial/lost PubAcks, crash-between-transactions, live owners, killed process and cursor starvation.
+
 ## Verification
 
 - `env -u PYTHONPATH BLOODBANK_SCHEMAS_DIR="$PWD/schemas" BB30_HERMES_RELEASE=/home/delorenj/.hermes/hermes-agent uv run --project services/hermes-gateway --extra test pytest services/hermes-gateway/tests -q --tb=short`

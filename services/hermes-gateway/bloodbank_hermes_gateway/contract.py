@@ -790,6 +790,52 @@ def detached_event(
     return event
 
 
+def feedback_recovery_events(
+    record: Any, *, code: str, message: str, occurred_at: str,
+    pre_start: bool = False, reason: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Close a journaled phase using stored lineage, never reconstruct a prompt.
+
+    This also recovers v5 feedback rows written before command-independent
+    recovery existed. Their queued/started facts already bind the full command
+    digest, issuer and review identity; no original command redelivery is needed.
+    """
+    import copy
+
+    reference = (record.queued_events or record.started_events[-1:])[0]
+    stored = reference["data"]
+    common = {key: stored[key] for key in (
+        "command_id", "idempotency_key", "target_agent_id", "profile_name", "lane",
+        "command_type", "command_digest", "command_event_id", "command_causationid", "issuer",
+    )}
+    def event(event_type: str, cause: str, data: dict[str, Any]) -> dict[str, Any]:
+        result = copy.deepcopy(reference)
+        domain = event_type.split(".")[1]
+        result.update(type=event_type, id=event_id(event_type), domain=domain,
+            subject=_subject_for(event_type), time=occurred_at, causationid=cause,
+            dataschema=f"apicurio://holyfields/{event_type}/versions/1",
+            schemaref=f"{event_type}.v1", data={**data, **common})
+        validate_fact(result)
+        return result
+
+    def event_id(event_type: str) -> str:
+        return str(uuid.uuid5(_UUID_NAMESPACE, f"{record.command_id}:{event_type}"))
+
+    failure = event(INVOCATION_FAILED,
+        event_id(INVOCATION_QUEUED if pre_start else INVOCATION_STARTED), {
+            "invocation_id": record.command_id, "thread_id": stored["thread_id"],
+            "turn_id": stored["turn_id"], "error_code": code, "error_message": message,
+            **({"context": stored["context"]} if "context" in stored else {}),
+            **({"rejection_reason": reason} if reason is not None else {}),
+        })
+    if pre_start:
+        return (failure,)
+    turn = event(TURN_COMPLETED, failure["id"], {
+        "thread_id": stored["thread_id"], "turn_id": stored["turn_id"], "outcome": "failed",
+    })
+    return failure, turn
+
+
 def terminal_events(
     invocation: Invocation,
     *,

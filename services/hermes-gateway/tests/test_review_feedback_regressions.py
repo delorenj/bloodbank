@@ -140,7 +140,7 @@ async def test_last_delivery_closes_and_outbox_recovers_without_redelivery(tmp_p
     async def forbidden(_): raise AssertionError("exhausted command must never dispatch")
     first.set_message_handler(forbidden)
     msg = FakeMessage(command)
-    msg.metadata = SimpleNamespace(num_delivered=first.lanes[-1].max_deliver)
+    setattr(msg, "metadata", SimpleNamespace(num_delivered=first.lanes[-1].max_deliver))
     await first._handle_broker_message(msg, first.lanes[-1])
     row = first.execution_state.get(command["command_id"])
     assert row is not None
@@ -247,11 +247,20 @@ sys.stdin.read()
         line = await asyncio.to_thread(child.stdout.readline)
         assert line == "owned\n", child.stderr.read() if not line else line
         assert gateway.execution_state.try_feedback_lock(command["command_id"]) is None
+        await gateway._reconcile_feedback_result_outbox()
+        alive = gateway.execution_state.get(command["command_id"])
+        assert alive is not None and alive.state == ("started" if started else "pending")
+        assert not gateway._js.events
         child.kill()
         assert await asyncio.to_thread(child.wait, 5) != 0
     finally:
         if child.poll() is None: child.kill(); child.wait()
         child.communicate()
+    if started:
+        await gateway._reconcile_feedback_result_outbox()
+        after_death = gateway.execution_state.get(command["command_id"])
+        assert after_death is not None and after_death.failure_code == "feedback_execution_uncertain"
+        assert after_death.outbox_published_at is not None
     calls = []
     async def handler(event): calls.append(event); capture(); return "local"
     gateway.set_message_handler(handler)
@@ -321,3 +330,227 @@ def test_exhausted_pending_result_is_byte_immutable(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="immutable"):
         gateway.execution_state.close_pending_feedback(command_id=command["command_id"],
             digest=digest, terminal_events=(changed,))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["queued", "turn_started", "invocation_started", "pre_start_refusal", "post_start_refusal", "turn_closure"])
+@pytest.mark.parametrize("puback_lost", [False, True])
+async def test_phase_wide_final_delivery_publication_recovery(tmp_path, monkeypatch, phase, puback_lost):
+    """Promoted rereview faults, plus acceptance-before-lost-receipt boundaries."""
+    command = build_command(frozen())
+    first = adapter(tmp_path, monkeypatch)
+    if phase == "pre_start_refusal":
+        registry(first, enabled=False)
+    original = first._js.publish
+    target = {
+        "queued": "bloodbank.agent.invocation.queued",
+        "turn_started": "bloodbank.conversation.turn.started",
+        "invocation_started": "bloodbank.agent.invocation.started",
+        "pre_start_refusal": "bloodbank.agent.invocation.failed",
+        "post_start_refusal": "bloodbank.agent.invocation.failed",
+        "turn_closure": "bloodbank.conversation.turn.completed",
+    }[phase]
+    async def fault(subject, payload, **kwargs):
+        kind = json.loads(payload)["type"]
+        if phase in {"post_start_refusal", "turn_closure"} and kind == "bloodbank.agent.invocation.started":
+            registry(first, enabled=False)
+        if kind == target:
+            if puback_lost:
+                await original(subject, payload, **kwargs)
+            raise RuntimeError("disposable terminal delivery PubAck fault")
+        await original(subject, payload, **kwargs)
+    first._js.publish = fault
+    calls = []
+    async def forbidden(event):
+        calls.append(event)
+        raise AssertionError("publication/refusal must precede dispatch")
+    first.set_message_handler(forbidden)
+    msg = FakeMessage(command)
+    setattr(msg, "metadata", SimpleNamespace(num_delivered=first.lanes[-1].max_deliver))
+    await first._handle_broker_message(msg, first.lanes[-1])
+    row = first.execution_state.get(command["command_id"])
+    assert row is not None and row.feedback_exhausted_at is not None
+    assert msg.nacked == 1 and not msg.acked and not msg.termed and not calls
+    stored = row.terminal_events or row.feedback_closure_events
+    assert stored
+    second = adapter(tmp_path, monkeypatch)
+    second.set_message_handler(forbidden)
+    class Empty:
+        async def fetch(self, *args, **kwargs): raise TimeoutError
+    second.lanes[-1].subscription = Empty()
+    await second._consume_once(second.lanes[-1])
+    after = second.execution_state.get(command["command_id"])
+    assert after is not None and after.outbox_published_at is not None
+    assert tuple(second._js.events) == row.queued_events + row.started_events + stored
+    expected = "failed" if "refusal" in phase or phase == "turn_closure" else "uncertain"
+    assert evidence_state(command, stored[0], profile=row.profile) == expected
+    assert bool(row.started_events) == (phase not in {"queued", "pre_start_refusal"})
+    assert (after.terminal_events or after.feedback_closure_events) == stored
+    await second._consume_once(second.lanes[-1])
+    assert len(second._js.events) == len(row.queued_events + row.started_events + stored)
+    assert not calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["pending", "pending_exhausted", "started", "captured", "rejected_pre_start", "rejected_closing", "rejected_closed"])
+async def test_startup_recovers_each_abandoned_phase_without_command(tmp_path, monkeypatch, phase):
+    """Simulate death between journal transactions, not an exception catch."""
+    command = build_command(frozen())
+    first = adapter(tmp_path, monkeypatch)
+    inv = Invocation.from_envelope(command, "green-in-between-pm", "feedback")
+    digest = envelope_digest(command)
+    store = first.execution_state
+    store.claim_pending(command_id=command["command_id"], digest=digest,
+        profile=inv.profile, lane="feedback", queued_events=(queued_event(inv),),
+        feedback_exhausted=phase == "pending_exhausted")
+    if phase not in {"pending", "pending_exhausted", "rejected_pre_start"}:
+        store.mark_started(command_id=command["command_id"], digest=digest, started_events=started_events(inv))
+    if phase == "captured":
+        store.mark_captured(command_id=command["command_id"], digest=digest, outcome="success",
+            events=(final_answer_event(inv, role="assistant", final_answer=True,
+                text="Private captured-only final", native_session_id="observed-session", native_turn_id="observed-turn"),))
+    if phase == "rejected_pre_start":
+        store.reject_pre_start(command_id=command["command_id"], digest=digest, reason="dispatch_route_invalid")
+    if phase in {"rejected_closing", "rejected_closed"}:
+        rejected = store.begin_rejection(command_id=command["command_id"], digest=digest, reason="dispatch_route_invalid")
+        if phase == "rejected_closed":
+            store.finalize_rejection(command_id=command["command_id"], digest=digest,
+                terminal_events=terminal_events(inv, outcome="failure", failure_code="dispatch_route_invalid",
+                    occurred_at=rejected.rejected_at))
+    before = store.get(command["command_id"])
+    assert before is not None
+    # Independent live descriptor prevents ALL phase recovery, not just dispatch.
+    fd = store.try_feedback_lock(command["command_id"])
+    assert fd is not None
+    second = adapter(tmp_path, monkeypatch)
+    async def forbidden(_): raise AssertionError("startup must never dispatch")
+    second.set_message_handler(forbidden)
+    try:
+        await second._reconcile_feedback_result_outbox()
+        assert second.execution_state.get(command["command_id"]) == before
+        assert not second._js.events
+    finally:
+        os.close(fd)
+    # Fresh process view and empty fetch, no manual command redelivery.
+    recovered = adapter(tmp_path, monkeypatch)
+    class Empty:
+        async def fetch(self, *args, **kwargs): raise TimeoutError
+    recovered.lanes[-1].subscription = Empty()
+    recovered.set_message_handler(forbidden)
+    await recovered._consume_once(recovered.lanes[-1])
+    after = recovered.execution_state.get(command["command_id"])
+    assert after is not None
+    if phase == "pending":
+        assert after == before and not recovered._js.events
+        return  # No start/exhaustion evidence: leave dispatchable, never invent failure.
+    assert after.outbox_published_at is not None
+    assert after.started_events == before.started_events
+    assert after.queued_events == before.queued_events
+    events = after.terminal_events or after.feedback_closure_events
+    assert tuple(recovered._js.events) == before.queued_events + before.started_events + events
+    assert evidence_state(command, events[0], profile=inv.profile) == ("failed" if phase.startswith("rejected") else "uncertain")
+    assert not any(e["type"] == "bloodbank.conversation.message.appended" for e in recovered._js.events)
+    if phase == "captured":
+        assert after.failure_code == "processing_outcome_unknown"
+        assert after.captured_events == before.captured_events
+    if before.terminal_events:
+        assert after.terminal_events == before.terminal_events
+    await recovered._consume_once(recovered.lanes[-1])
+    assert tuple(recovered._js.events) == before.queued_events + before.started_events + events
+
+
+@pytest.mark.asyncio
+async def test_recovery_retries_immutable_refusal_batch_after_partial_puback(tmp_path, monkeypatch):
+    command = build_command(frozen())
+    gateway = adapter(tmp_path, monkeypatch)
+    registry(gateway, enabled=False)
+    original = gateway._js.publish
+    async def outage(subject, payload, **kwargs):
+        if json.loads(payload)["type"] == "bloodbank.agent.invocation.failed":
+            raise RuntimeError("disposable closure outage")
+        await original(subject, payload, **kwargs)
+    gateway._js.publish = outage
+    await gateway._handle_broker_message(FakeMessage(command), gateway.lanes[-1])
+    row = gateway.execution_state.get(command["command_id"])
+    assert row is not None and row.feedback_closure_events
+    changed = copy.deepcopy(row.feedback_closure_events[0])
+    changed["data"]["context"]["annotations"] = True
+    with pytest.raises(RuntimeError, match="immutable"):
+        gateway.execution_state.store_feedback_closure(command_id=command["command_id"],
+            digest=envelope_digest(command), events=(changed,))
+    await gateway._reconcile_feedback_result_outbox()
+    unchanged = gateway.execution_state.get(command["command_id"])
+    assert unchanged is not None and unchanged.feedback_closure_events == row.feedback_closure_events
+    gateway._js.publish = original
+    # Cursor wraps after a failed page; a retry does not replace stored bytes.
+    for _ in range(2):
+        await gateway._reconcile_feedback_result_outbox()
+    after = gateway.execution_state.get(command["command_id"])
+    assert after is not None and after.outbox_published_at
+    published = [e for e in gateway._js.events if e["type"] == "bloodbank.agent.invocation.failed"]
+    assert published == list(row.feedback_closure_events)
+
+
+@pytest.mark.asyncio
+async def test_recovery_cursor_does_not_starve_rows_behind_live_owners(tmp_path, monkeypatch):
+    gateway = adapter(tmp_path, monkeypatch)
+    locks = []
+    commands = []
+    try:
+        for index in range(101):
+            row = frozen()
+            row["submissionId"] = f"00000000-0000-4000-8000-{index:012d}"
+            command = build_command(row)
+            inv = Invocation.from_envelope(command, "green-in-between-pm", "feedback")
+            gateway.execution_state.claim_pending(command_id=command["command_id"], digest=envelope_digest(command),
+                profile=inv.profile, lane="feedback", queued_events=(queued_event(inv),), feedback_exhausted=True)
+            commands.append(command)
+        commands.sort(key=lambda e: e["command_id"])
+        for command in commands[:100]:
+            fd = gateway.execution_state.try_feedback_lock(command["command_id"])
+            assert fd is not None
+            locks.append(fd)
+        await gateway._reconcile_feedback_result_outbox()
+        assert not gateway._js.events
+        await gateway._reconcile_feedback_result_outbox()
+        last = gateway.execution_state.get(commands[-1]["command_id"])
+        assert last is not None and last.outbox_published_at is not None
+        assert len(gateway._js.events) == 2
+    finally:
+        for fd in locks:
+            os.close(fd)
+
+
+@pytest.mark.asyncio
+async def test_recovery_continues_while_turn_admission_is_draining(tmp_path, monkeypatch):
+    command = build_command(frozen())
+    gateway = adapter(tmp_path, monkeypatch)
+    inv = Invocation.from_envelope(command, "green-in-between-pm", "feedback")
+    digest = envelope_digest(command)
+    gateway.execution_state.claim_pending(command_id=command["command_id"], digest=digest,
+        profile=inv.profile, lane="feedback", queued_events=(queued_event(inv),), feedback_exhausted=True)
+    monkeypatch.setattr(gateway, "_gateway_not_accepting", lambda: "external_drain")
+    gateway.drain_poll_seconds = 0
+    class NoFetch:
+        async def fetch(self, *args, **kwargs): raise AssertionError("must not admit commands")
+    gateway.lanes[-1].subscription = NoFetch()
+    await gateway._consume_once(gateway.lanes[-1])
+    result = gateway.execution_state.get(command["command_id"])
+    assert result is not None and result.outbox_published_at is not None
+    assert evidence_state(command, result.terminal_events[0], profile=inv.profile) == "uncertain"
+
+
+@pytest.mark.asyncio
+async def test_recovery_of_started_row_without_queued_uses_invocation_lineage(tmp_path, monkeypatch):
+    command = build_command(frozen())
+    gateway = adapter(tmp_path, monkeypatch)
+    inv = Invocation.from_envelope(command, "green-in-between-pm", "feedback")
+    digest = envelope_digest(command)
+    gateway.execution_state.claim_pending(command_id=command["command_id"], digest=digest,
+        profile=inv.profile, lane="feedback")
+    gateway.execution_state.mark_started(command_id=command["command_id"], digest=digest,
+        started_events=started_events(inv))
+    await gateway._reconcile_feedback_result_outbox()
+    result = gateway.execution_state.get(command["command_id"])
+    assert result is not None and result.outbox_published_at is not None
+    assert evidence_state(command, result.terminal_events[0], profile=inv.profile) == "uncertain"

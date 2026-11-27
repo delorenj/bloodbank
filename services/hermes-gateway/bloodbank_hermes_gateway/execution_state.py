@@ -76,6 +76,12 @@ class ExecutionRecord:
     queued_events: tuple[dict[str, Any], ...] = ()
     # Feedback result publication receipt; additive to journal v5.
     outbox_published_at: str | None = None
+    # Last-delivery evidence is atomic with claim, so a dead pending owner can
+    # be closed without assuming another broker delivery will arrive.
+    feedback_exhausted_at: str | None = None
+    # Pre-start rejection rows cannot hold terminal_events under the v5 CHECK.
+    # Keep their immutable publishable closure in an additive private column.
+    feedback_closure_events: tuple[dict[str, Any], ...] = ()
 
 
 class ExecutionStateStore:
@@ -121,7 +127,7 @@ class ExecutionStateStore:
             for column in (
                 "lane", "failure_code", "detached_at", "capture_outcome",
                 "captured_events", "capture_error", "queued_events",
-                "outbox_published_at",
+                "outbox_published_at", "feedback_exhausted_at", "feedback_closure_events",
             ):
                 if column not in columns:
                     db.execute(f"ALTER TABLE executions ADD COLUMN {column} TEXT")
@@ -301,6 +307,8 @@ class ExecutionStateStore:
             capture_error=str(row[14]) if row[14] is not None else None,
             queued_events=_decode_events(row[15]),
             outbox_published_at=str(row[16]) if row[16] is not None else None,
+            feedback_exhausted_at=str(row[17]) if row[17] is not None else None,
+            feedback_closure_events=_decode_events(row[18]),
         )
 
     @classmethod
@@ -310,7 +318,7 @@ class ExecutionStateStore:
                       started_events, terminal_events, rejection_reason, rejected_at,
                       lane, failure_code, detached_at, capture_outcome,
                       captured_events, capture_error, queued_events,
-                      outbox_published_at
+                      outbox_published_at, feedback_exhausted_at, feedback_closure_events
                FROM executions WHERE command_id = ?""",
             (command_id,),
         ).fetchone()
@@ -392,12 +400,49 @@ class ExecutionStateStore:
             raise RuntimeError("feedback exhausted result is missing")
         return record
 
-    def unpublished_feedback_results(self) -> list[ExecutionRecord]:
-        """Durable completed feedback results still awaiting projection.
+    def note_feedback_exhaustion(self, *, command_id: str, digest: str) -> None:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None or current.lane != "feedback":
+                raise RuntimeError("feedback claim is missing")
+            self._require_digest(current, digest)
+            db.execute(
+                """UPDATE executions SET feedback_exhausted_at = COALESCE(feedback_exhausted_at, ?)
+                   WHERE command_id = ?""", (_now(), command_id),
+            )
 
-        Replaying their deterministic queued/started/terminal facts is safe for
-        an ID-deduplicating consumer, even after the broker budget has expired.
-        The receipt changes only after every publish succeeds.
+    def store_feedback_closure(
+        self, *, command_id: str, digest: str,
+        events: tuple[dict[str, Any], ...],
+    ) -> ExecutionRecord:
+        """Persist immutable pre-start refusal bytes before any publish attempt."""
+        if len(events) != 1:
+            raise ValueError("pre-start feedback closure requires one failure")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self._select(db, command_id)
+            if current is None or current.lane != "feedback" or current.state != "rejected_pre_start":
+                raise RuntimeError("feedback is not rejected before start")
+            self._require_digest(current, digest)
+            if current.feedback_closure_events:
+                if _events_json(current.feedback_closure_events) != _events_json(events):
+                    raise RuntimeError("feedback rejection closure is immutable")
+                return current
+            db.execute(
+                "UPDATE executions SET feedback_closure_events = ? WHERE command_id = ?",
+                (_events_json(events), command_id),
+            )
+            record = self._select(db, command_id)
+        assert record is not None
+        return record
+
+    def unpublished_feedback_results(self, *, after_command_id: str = "") -> list[ExecutionRecord]:
+        """Feedback phases awaiting lock-aware recovery and terminal publication.
+
+        Pending claims are eligible only with durable last-delivery evidence.
+        Started and rejection phases must recover even if the process died before
+        persisting a terminal batch. Callers must acquire ownership and re-read.
         """
 
         with self._connect() as db:
@@ -406,12 +451,13 @@ class ExecutionStateStore:
                           started_events, terminal_events, rejection_reason,
                           rejected_at, lane, failure_code, detached_at,
                           capture_outcome, captured_events, capture_error,
-                          queued_events, outbox_published_at
+                          queued_events, outbox_published_at,
+                          feedback_exhausted_at, feedback_closure_events
                    FROM executions
-                   WHERE lane = 'feedback' AND state = 'completed'
-                     AND terminal_events IS NOT NULL
-                     AND outbox_published_at IS NULL
-                   ORDER BY created_at LIMIT 100"""
+                   WHERE lane = 'feedback' AND outbox_published_at IS NULL
+                     AND (state != 'pending' OR feedback_exhausted_at IS NOT NULL)
+                     AND command_id > ?
+                   ORDER BY command_id LIMIT 100""", (after_command_id,),
             ).fetchall()
         records = [self._record(row) for row in rows]
         return [record for record in records if record is not None]
@@ -427,15 +473,15 @@ class ExecutionStateStore:
                 raise RuntimeError("execution journal has no feedback outbox to mark")
             self._require_digest(current, digest)
             if (
-                current.state != "completed"
-                or current.lane != "feedback"
-                or not current.terminal_events
+                current.lane != "feedback"
+                or current.state not in {"completed", "rejected_pre_start", "rejected_closed"}
+                or not (current.terminal_events or current.feedback_closure_events)
             ):
                 db.rollback()
-                raise RuntimeError("feedback outbox has no durable completed result")
+                raise RuntimeError("feedback outbox has no durable terminal result")
             db.execute(
                 """UPDATE executions SET outbox_published_at = ?, updated_at = ?
-                   WHERE command_id = ? AND state = 'completed' AND lane = 'feedback'
+                   WHERE command_id = ? AND lane = 'feedback'
                      AND outbox_published_at IS NULL""",
                 (_now(), _now(), command_id),
             )
@@ -450,6 +496,7 @@ class ExecutionStateStore:
         started_events: tuple[dict[str, Any], ...] = (),
         queued_events: tuple[dict[str, Any], ...] = (),
         lane: str | None = None,
+        feedback_exhausted: bool = False,
     ) -> ExecutionRecord:
         """Durably claim a command as pending, with its queued fact.
 
@@ -476,6 +523,15 @@ class ExecutionStateStore:
                     now,
                 ),
             )
+            if feedback_exhausted:
+                current = self._select(db, command_id)
+                if current is None or current.lane != "feedback":
+                    raise RuntimeError("only feedback can record delivery exhaustion")
+                self._require_digest(current, digest)
+                db.execute(
+                    """UPDATE executions SET feedback_exhausted_at = COALESCE(feedback_exhausted_at, ?)
+                       WHERE command_id = ?""", (now, command_id),
+                )
             record = self._select(db, command_id)
             db.commit()
         if record is None:
