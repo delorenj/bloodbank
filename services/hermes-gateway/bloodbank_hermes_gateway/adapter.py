@@ -34,6 +34,7 @@ from .contract import (
     COMMAND_STREAM,
     DETACHED_CEILING_SOURCE,
     EVENT_STREAM,
+    FEEDBACK,
     INTERACTIVE,
     TURN_TIMEOUT_CODE,
     CommandInvalid,
@@ -431,6 +432,11 @@ class BloodbankAdapter(BasePlatformAdapter):
                     "the batch durable_name"
                 )
             self._lanes.append(interactive)
+        feedback = self._feedback_lane(extra.get("feedback"))
+        if feedback is not None:
+            if feedback.durable in {lane.durable for lane in self._lanes}:
+                raise ValueError("bloodbank.extra.feedback.durable_name must be unique")
+            self._lanes.append(feedback)
 
         target_profiles = extra.get("target_profiles", {}) or {}
         if not isinstance(target_profiles, dict) or any(
@@ -553,6 +559,35 @@ class BloodbankAdapter(BasePlatformAdapter):
                 SHUTDOWN_INTERRUPT_MODES,
                 prefix=prefix,
             ),
+        )
+
+    @staticmethod
+    def _feedback_lane(raw: Any) -> LaneRuntime | None:
+        """Dedicated opt-in durable; failure never borrows batch/interactive slots."""
+        if raw is None:
+            return None
+        if not isinstance(raw, dict):
+            raise ValueError("bloodbank.extra.feedback must be a mapping")
+        prefix = "bloodbank.extra.feedback"
+        if not _strict_bool(raw, "enabled", False, prefix=prefix):
+            return None
+        if raw.get("shutdown_interrupt", "fail") != "fail":
+            raise ValueError(f"{prefix}.shutdown_interrupt must be fail (no execution replay)")
+        durable = str(raw.get("durable_name", "bloodbank-hermes-gateway-feedback")).strip()
+        if not durable:
+            raise ValueError(f"{prefix}.durable_name must be non-empty")
+        ack_wait = _bounded_float(raw, "ack_wait_seconds", 180.0, 10.0, 3600.0, prefix=prefix)
+        ack_progress = _bounded_float(raw, "ack_progress_seconds", 30.0, 1.0, 1200.0, prefix=prefix)
+        if ack_progress >= ack_wait:
+            raise ValueError(f"{prefix}.ack_progress_seconds must be less than ack_wait_seconds")
+        return LaneRuntime(
+            spec=FEEDBACK, durable=durable,
+            max_inflight=_bounded_int(raw, "max_inflight", 1, 1, 8, prefix=prefix),
+            max_deliver=_bounded_int(raw, "max_deliver", 8, 1, 100, prefix=prefix),
+            ack_wait=ack_wait, ack_progress=ack_progress,
+            nak_delay=_bounded_float(raw, "nak_delay_seconds", 3.0, 0.0, 300.0, prefix=prefix),
+            turn_timeout=_turn_timeout(raw, DEFAULT_INTERACTIVE_TURN_TIMEOUT_SECONDS, prefix=prefix),
+            shutdown_interrupt="fail",
         )
 
     @property
@@ -1127,10 +1162,16 @@ class BloodbankAdapter(BasePlatformAdapter):
                         "command_id collides with a different command envelope"
                     )
                 if persisted is None:
-                    profile = await asyncio.to_thread(
-                        self.profile_resolver.resolve,
-                        envelope["data"]["target_agent_id"],
-                    )
+                    if lane.spec == FEEDBACK:
+                        # The pilot has one immutable target. Claim it before
+                        # route validation so missing/disabled routes close a
+                        # durable queued fact instead of disappearing at TERM.
+                        profile = "green-in-between-pm"
+                    else:
+                        profile = await asyncio.to_thread(
+                            self.profile_resolver.resolve,
+                            envelope["data"]["target_agent_id"],
+                        )
                     invocation = Invocation.from_envelope(envelope, profile, lane.name)
                     # The queued fact is built and stored in the same INSERT as the
                     # claim; started facts wait for mark_started so their time is
@@ -1191,6 +1232,20 @@ class BloodbankAdapter(BasePlatformAdapter):
                         ),
                         failure_code=code,
                     )
+                if lane.spec == FEEDBACK and persisted.state == "started" and persisted.capture_outcome is None:
+                    # Started was durable before handoff; a crash may have
+                    # occurred after Hermes acted. Never rerun a feedback turn.
+                    invocation = Invocation.from_envelope(envelope, persisted.profile, lane.name)
+                    persisted = await asyncio.to_thread(
+                        self.execution_state.mark_completed,
+                        command_id=command_id, digest=digest, outcome="failure",
+                        terminal_events=terminal_events(
+                            invocation, outcome="failure",
+                            failure_code="feedback_execution_uncertain",
+                            failure_message="Feedback turn may have executed; no durable final capture survived",
+                        ),
+                        failure_code="feedback_execution_uncertain",
+                    )
                 if persisted.state in {"pending", "started"}:
                     invocation = Invocation.from_envelope(
                         envelope, persisted.profile, lane.name
@@ -1245,10 +1300,10 @@ class BloodbankAdapter(BasePlatformAdapter):
                     self._refuse_if_not_accepting()
                     await self._assert_dispatch_route(invocation)
                     if persisted.state in {"pending", "started"}:
-                        # A 'started' row here is a new attempt (a redelivery after
-                        # a NAK or an unclean exit): mark_started clears the last
-                        # attempt's detached_at, so the journal never reports a
-                        # re-run as detached from its first second.
+                        # For invocation lanes a 'started' row can be retried
+                        # after NAK/unclean exit. Feedback's prior started row
+                        # is closed as uncertain in the durable-claim path.
+                        # mark_started clears a previous detached marker.
                         persisted = await asyncio.to_thread(
                             self.execution_state.mark_started,
                             command_id=invocation.invocation_id,
@@ -1540,7 +1595,10 @@ class BloodbankAdapter(BasePlatformAdapter):
             self.profile_resolver.resolve,
             invocation.target_agent_id,
         )
-        if resolved_profile != invocation.profile:
+        if resolved_profile != invocation.profile or (
+            invocation.envelope["type"] == FEEDBACK.command_type
+            and resolved_profile != "green-in-between-pm"
+        ):
             raise RouteInvalid(
                 f"target_agent_id {invocation.target_agent_id!r} changed profile "
                 "after durable claim"
@@ -2241,6 +2299,20 @@ class BloodbankAdapter(BasePlatformAdapter):
                 HermesNotice(OPERATION_INTERRUPTED_REFUSAL, "failed"),
                 record.final_reply,
             )
+        if (
+            record.invocation.lane == FEEDBACK.name and terminal_outcome == "success"
+            and (
+                captured is None or not captured.captured_events
+                or any(
+                    not answer.get("data", {}).get(key)
+                    for answer in captured.captured_events
+                    for key in ("native_session_id", "native_turn_id")
+                )
+            )
+        ):
+            terminal_outcome = "failure"
+            failure_code = "feedback_final_answer_missing"
+            failure_message = "Feedback turn produced no qualified native final assistant answer"
         try:
             if binding is not None and binding.error is not None:
                 raise binding.error

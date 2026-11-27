@@ -82,6 +82,22 @@ def minimal_envelope(ce_type: str, kind: str) -> dict:
         env["command_id"] = str(uuid.uuid4())
         env["idempotency_key"] = "test:1"
         env["delivery"] = "single_consumer"
+    if ce_type == "bloodbank.review.feedback.send":
+        from core.review_feedback import build_command, feedback_digest
+        row = {
+            "submissionId": "d527db73-4ac3-44d8-a869-636389558b1c",
+            "projectId": "greeninbetween", "revisionId": "a" * 64,
+            "artifactId": "test-artifact", "author": "reviewer@example.com",
+            "recipient": "green-in-between-pm", "note": "Saved note",
+            "annotations": [{"id": "saved-1", "version": 1,
+                             "author": "reviewer@example.com", "kind": "text",
+                             "anchor": {}, "comment": "Saved comment",
+                             "updatedAt": "2026-01-01T00:00:00Z"}],
+            "correlationId": "45bdbbab-7fcb-431c-8481-e39ec0c21080",
+            "createdAt": "2026-01-01T00:00:00Z",
+        }
+        row["digest"] = feedback_digest(row)
+        return build_command(row)
     if domain == "portfolio":
         fixtures = json.loads(Path("ops/fixtures/portfolio-contracts.v1.json").read_text())
         payload = fixtures[ce_type]

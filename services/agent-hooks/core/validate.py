@@ -125,7 +125,7 @@ ALLOWED_ENTITIES = frozenset({
     "target",
     "implementation", "pack", "concept_pool", "item", "app_launch",
     # audio: one transcript harvest (wax note -> px harvest -> review form -> published tickets)
-    "harvest",
+    "harvest", "feedback",
 })
 
 GAME_ENTITY_ACTIONS = {
@@ -137,6 +137,7 @@ GAME_ENTITY_ACTIONS = {
 # New pairs are closed without retroactively changing legacy domain pairings.
 ENTITY_DOMAINS = {entity: frozenset({"game"}) for entity in GAME_ENTITY_ACTIONS}
 ENTITY_DOMAINS["app_launch"] = frozenset({"project"})
+ENTITY_DOMAINS["feedback"] = frozenset({"review"})
 APP_LAUNCH_TYPE = "bloodbank.project.app_launch.recorded"
 GAME_EVENT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://33god.dev/bloodbank/game")
 
@@ -281,6 +282,8 @@ def assert_type_shape(ce_type: str) -> tuple[str, str, str]:
         raise ContractViolation(f"unregistered game entity/action pair {entity}.{action} (§11.5)")
     if entity == "app_launch" and action != "recorded":
         raise ContractViolation("unregistered project.app_launch action (§11.5)")
+    if entity == "feedback" and action != "send":
+        raise ContractViolation("review.feedback registers only the send command")
     return domain, entity, action
 
 
@@ -1105,6 +1108,12 @@ def assert_contract(envelope: dict) -> None:
     assert_project_invariants(envelope)
     assert_watch_invariants(envelope)
     assert_game_invariants(envelope)
+    if ce_type == "bloodbank.review.feedback.send":
+        from .review_feedback import assert_invariants
+        try:
+            assert_invariants(envelope)
+        except (ValueError, TypeError, KeyError, OverflowError, UnicodeError) as exc:
+            raise ContractViolation(f"review feedback invariant: {exc}") from exc
 
 
 # --------------------------------------------------------------------------

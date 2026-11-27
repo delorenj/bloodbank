@@ -47,6 +47,9 @@ INTERACTIVE = LaneSpec(
     "bloodbank.agent.invocation.invoke",
     "bloodbank.cmd.agent.invocation.invoke",
 )
+FEEDBACK = LaneSpec("feedback", "bloodbank.review.feedback.send", "bloodbank.cmd.review.feedback.send")
+# LANES is the historical invocation-lane registry; feedback is a separate opt-in
+# adapter binding, not an invocation command alias.
 LANES = {lane.name: lane for lane in (BATCH, INTERACTIVE)}
 
 # The batch lane is the original single lane; keep these importable.
@@ -190,6 +193,19 @@ def decode_command(
         raise CommandInvalid("specversion must be '1.0'")
     if envelope["type"] != lane.command_type:
         raise CommandInvalid(f"type must be {lane.command_type!r}")
+    if lane == FEEDBACK:
+        # Validation runs on the actual command before projecting any prompt.
+        # A copied/type-shaped payload or a missing schema is not executable.
+        import sys
+        hooks = Path(__file__).resolve().parents[2] / "agent-hooks"
+        if str(hooks) not in sys.path:
+            sys.path.insert(0, str(hooks))
+        from core.validate import validate_envelope
+        try:
+            validate_envelope(envelope)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise CommandInvalid(f"invalid frozen feedback ({type(exc).__name__})") from exc
+        return envelope
     if envelope["kind"] != "command":
         raise CommandInvalid("kind must be 'command'")
     if envelope["domain"] != "agent":
@@ -391,6 +407,9 @@ class Invocation:
         cls, envelope: dict[str, Any], profile: str, lane: str = BATCH.name
     ) -> "Invocation":
         data = envelope["data"]
+        if envelope["type"] == FEEDBACK.command_type:
+            from core.review_feedback import invocation_data
+            data = invocation_data(envelope)
         command_id = envelope["command_id"]
         correlation_id = envelope["correlationid"]
         return cls(
@@ -473,6 +492,9 @@ def _command_context(invocation: Invocation) -> dict[str, Any]:
     Additive and only present when the command carried an object context.
     """
     context = invocation.envelope.get("data", {}).get("context")
+    if invocation.envelope["type"] == FEEDBACK.command_type:
+        from core.review_feedback import invocation_data
+        context = invocation_data(invocation.envelope)["context"]
     return {"context": context} if isinstance(context, dict) else {}
 
 
@@ -605,7 +627,7 @@ def started_events(invocation: Invocation) -> tuple[dict[str, Any], dict[str, An
         data={
             "thread_id": invocation.thread_id,
             "turn_id": invocation.turn_id,
-            "prompt_text": invocation.prompt,
+            **({} if invocation.envelope["type"] == FEEDBACK.command_type else {"prompt_text": invocation.prompt}),
         },
     )
     started = lifecycle_event(
