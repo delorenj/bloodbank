@@ -56,6 +56,7 @@ Given a persisted submission, when the same explicit send retries, then all wire
 
 - Baseline unchanged gateway: 344 passed, zero skips with PYTHONPATH unset, BLOODBANK_SCHEMAS_DIR pointing at this tree, and BB30_HERMES_RELEASE=/home/delorenj/.hermes/hermes-agent. Inherited Hermes Python 3.14 site-packages in PYTHONPATH broke the project's 3.12 rpds import in initial attempts; no source defect or gate relaxation.
 - Parent has explicitly reserved independent review and combined live proof for follow-up. This spec records the already-dispatched ticket scope, not a new user approval gate.
+- Review repairs: bind feedback facts to full command provenance, feedback lane and exact phase lineage; require registry eligibility independently of generic overrides; hold a command-scoped kernel lock through processing; durably close exhausted deliveries and sweep completed feedback results without relying on redelivery. `test_review_feedback_regressions.py` promotes the accepted counterexamples and real-process lock release/recovery. Existing baseline tests remain unchanged.
 
 ## Verification
 

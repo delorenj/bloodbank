@@ -365,6 +365,44 @@ class ProfileResolver:
         return normalized
 
 
+    def resolve_feedback_target(self, target_agent_id: str) -> str:
+        """Resolve the feedback lane only through the fleet registry.
+
+        ``target_profiles`` and direct-profile targets are documented generic
+        lane overrides. A frozen feedback submission is not generic work: its
+        recipient must exist, be explicitly eligible, and resolve to the exact
+        pilot profile even when one of those escape hatches is configured.
+        """
+
+        target = _nonempty_string(target_agent_id, "data.target_agent_id")
+        mapping, registered = self._fleet_mapping()
+        if target not in registered:
+            raise RouteInvalid(
+                f"feedback recipient {target!r} is absent from the fleet registry"
+            )
+        mapped = mapping.get(target)
+        if mapped is None:
+            raise RouteInvalid(
+                f"feedback recipient {target!r} is registry-defined but not eligible"
+            )
+        normalized = self.normalize_profile_name(mapped.strip())
+        try:
+            self.validate_profile_name(normalized)
+        except Exception as exc:
+            raise RouteInvalid(
+                f"feedback recipient {target!r} maps to an invalid profile"
+            ) from exc
+        if not self.profile_exists(normalized):
+            raise RouteInvalid(
+                f"feedback recipient {target!r} maps to a missing profile"
+            )
+        if normalized != "green-in-between-pm" or target != "green-in-between-pm":
+            raise RouteInvalid("feedback requires the exact green-in-between-pm registry route")
+        override = self.target_profiles.get(target)
+        if override is not None and override != normalized:
+            raise RouteInvalid("feedback static route conflicts with the registry recipient")
+        return normalized
+
 
 def registry_bloodbank_enabled(agent_id: str, bloodbank: Mapping[str, Any]) -> bool:
     """Return the effective activation of one registry row's Bloodbank block.
@@ -478,7 +516,21 @@ def lifecycle_event(
             "target_agent_id": invocation.target_agent_id,
             "profile_name": invocation.profile,
             "lane": invocation.lane,
+            **(_feedback_provenance(invocation)),
         },
+    }
+
+
+def _feedback_provenance(invocation: Invocation) -> dict[str, Any]:
+    if invocation.envelope["type"] != FEEDBACK.command_type:
+        return {}
+    from .execution_state import envelope_digest
+    return {
+        "command_type": FEEDBACK.command_type,
+        "command_digest": envelope_digest(invocation.envelope),
+        "command_event_id": invocation.envelope["id"],
+        "command_causationid": invocation.envelope["causationid"],
+        "issuer": invocation.envelope["actor"],
     }
 
 

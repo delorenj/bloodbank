@@ -19,6 +19,10 @@ FIELDS = (
 )
 SOURCE = "urn:33god:service:holocene-review-feedback"
 SERVICE = "holocene-review-feedback"
+# The gateway's deterministic lifecycle namespace (contract.py's private
+# _UUID_NAMESPACE). Duplicated here so the owner-side projection has no import
+# dependency on gateway internals while the values remain byte-identical.
+_UUID_NAMESPACE = uuid.UUID("633de934-f359-50f8-978f-3ef4ebbdac69")
 
 
 def compact(value: Any) -> str:
@@ -180,20 +184,37 @@ def evidence_state(
             "idempotency_key": envelope["idempotency_key"],
             "target_agent_id": command["target_agent_id"], "profile_name": profile,
             "thread_id": command["thread_id"], "turn_id": command["turn_id"],
-            "context": command["context"],
+            "context": command["context"], "lane": "feedback",
+            "command_type": TYPE,
+            "command_event_id": envelope["id"],
+            "command_causationid": envelope["causationid"],
+            "issuer": envelope["actor"],
+            "command_digest": hashlib.sha256(json.dumps(
+                envelope, separators=(",", ":"), sort_keys=True
+            ).encode()).hexdigest(),
         }
         if any(data.get(key) != value for key, value in expected.items()):
             return None
+        if envelope["type"] != "bloodbank.review.feedback.send":
+            return None
+        queued_id = str(uuid.uuid5(_UUID_NAMESPACE, envelope["command_id"] + ":bloodbank.agent.invocation.queued"))
+        started_id = str(uuid.uuid5(_UUID_NAMESPACE, envelope["command_id"] + ":bloodbank.agent.invocation.started"))
         if (
             event["correlationid"] != envelope["correlationid"]
+            or event["ordering_key"] != f"turn:{command['turn_id']}"
             or event["source"] != "urn:33god:service:bloodbank-hermes-gateway"
             or event["service"] != "bloodbank-hermes-gateway"
             or event["producer"] != f"hermes-agent:{profile}"
             or event["actor"]["agent_id"] != command["target_agent_id"]
+            or event["actor"].get("type") != "agent_api"
             or event["actor"].get("cli") != "hermes"
+            or event.get("schemaref") != f"{event['type']}.v1"
+            or event.get("dataschema") != f"apicurio://holyfields/{event['type']}/versions/1"
         ):
             return None
         event_type = event["type"]
+        if event_type.startswith("bloodbank.agent.invocation.") and data.get("invocation_id") != envelope["command_id"]:
+            return None
         if event_type == "bloodbank.conversation.message.appended":
             if (
                 data.get("role") != "assistant" or data.get("final_answer") is not True
@@ -204,21 +225,33 @@ def evidence_state(
                 or data.get("command_causationid") != envelope["causationid"]
                 or data.get("issuer") != envelope["actor"]
                 or event.get("causationid") != envelope["id"]
+                or event["id"] != str(uuid.uuid5(_UUID_NAMESPACE, envelope["command_id"] + ":bloodbank.conversation.message.appended"))
+                or data.get("message_id") != str(uuid.uuid5(_UUID_NAMESPACE, envelope["command_id"] + ":final-answer"))
                 or any(not isinstance(data.get(key), str) or not data[key].strip()
                        for key in ("native_session_id", "native_turn_id"))
             ):
                 return None
             return "answered"
-        if event_type == "bloodbank.agent.invocation.failed":
-            return "uncertain" if data.get("error_code") in {
-                "feedback_execution_uncertain", "processing_outcome_unknown"
-            } else "failed"
         if event_type == "bloodbank.agent.invocation.queued":
-            if event.get("causationid") != envelope["id"]:
+            if event.get("causationid") != envelope["id"] or event["id"] != queued_id:
                 return None
             return "queued"
         if event_type == "bloodbank.agent.invocation.started":
+            if event.get("causationid") != str(uuid.uuid5(_UUID_NAMESPACE, envelope["command_id"] + ":bloodbank.conversation.turn.started")) or event["id"] != started_id:
+                return None
             return "running"
+        if event_type == "bloodbank.agent.invocation.failed":
+            pre_start = data.get("error_code") == "rejected_pre_start" or (
+                data.get("error_code") == "feedback_delivery_exhausted"
+                and data.get("rejection_reason") == "delivery_exhausted"
+            )
+            expected_cause = queued_id if pre_start else started_id
+            if event.get("causationid") != expected_cause or event["id"] != str(uuid.uuid5(_UUID_NAMESPACE, envelope["command_id"] + ":bloodbank.agent.invocation.failed")):
+                return None
+            return "uncertain" if data.get("error_code") in {
+                "feedback_execution_uncertain", "processing_outcome_unknown",
+                "feedback_delivery_exhausted"
+            } else "failed"
         if event_type == "bloodbank.agent.invocation.completed":
             return None  # completion cannot overwrite answered or imply an answer
     except (ValueError, TypeError, KeyError, OverflowError):

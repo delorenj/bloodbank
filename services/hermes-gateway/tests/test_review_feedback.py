@@ -45,6 +45,13 @@ def frozen():
 def adapter(tmp_path, monkeypatch, *, target="green-in-between-pm"):
     import bloodbank_hermes_gateway.adapter as adapter_module
     monkeypatch.setattr(adapter_module, "profile_exists", lambda p: p == "green-in-between-pm")
+    path = tmp_path / "absent.yaml"
+    if not path.exists():
+        path.write_text(json.dumps({"schema_version": 1, "agents": {
+            "green-in-between-pm": {"profile_name": "green-in-between-pm", "bloodbank": {
+                "enabled": True, "gateway_scope": "fleet", "target_agent_id": "green-in-between-pm",
+            }}
+        }}))
     config = SimpleNamespace(enabled=True, extra={
         "target_profiles": {"green-in-between-pm": target},
         "fleet_registry": str(tmp_path / "absent.yaml"),
@@ -456,6 +463,15 @@ async def test_feedback_capture_before_processing_crash_is_uncertain(tmp_path, m
     await asyncio.wait_for(captured.wait(), 5)
     stored = first.execution_state.get(command["command_id"])
     assert stored is not None and stored.capture_outcome == "success" and stored.state == "started"
+    # Model abrupt process loss, not a second adapter stealing a live turn.
+    async def lost_processing_callback(*_args, **_kwargs):
+        pass
+    first.on_processing_complete = lost_processing_callback
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    for background in tuple(first._background_tasks):
+        background.cancel()
+    await asyncio.gather(*tuple(first._background_tasks), return_exceptions=True)
     second = adapter(tmp_path, monkeypatch)
     async def forbidden(_event):
         raise AssertionError("must not execute after captured turn")
@@ -469,7 +485,7 @@ async def test_feedback_capture_before_processing_crash_is_uncertain(tmp_path, m
         assert not any(e["type"] == "bloodbank.conversation.message.appended" for e in second._js.events)
     finally:
         pause.set()
-        await asyncio.wait_for(task, 5)
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def test_opt_in_lane_and_wrong_profile_refused(tmp_path, monkeypatch):

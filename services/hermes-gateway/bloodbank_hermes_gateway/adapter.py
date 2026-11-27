@@ -76,6 +76,9 @@ INTERRUPTED_BY_SHUTDOWN_CODE = "interrupted_by_shutdown"
 # process re-dispatches the same thread (its Hermes session keeps the partial
 # transcript, but tool side effects of the cut-off attempt can repeat).
 SHUTDOWN_INTERRUPT_MODES = ("fail", "retry")
+# A feedback delivery fault on JetStream's final delivery gets a durable
+# uncertain closure and an independently recoverable feedback outbox.
+FEEDBACK_DELIVERY_EXHAUSTED_CODE = "feedback_delivery_exhausted"
 # Refusal key for the agent loop's "Operation interrupted ..." text in place of an answer.
 OPERATION_INTERRUPTED_REFUSAL = "agent.operation_interrupted"
 # How often a lane paused by a Hermes drain re-reads the runner's state, and how
@@ -718,6 +721,8 @@ class BloodbankAdapter(BasePlatformAdapter):
 
         self._running = True
         self._mark_connected()
+        if any(lane.spec == FEEDBACK for lane in self._lanes):
+            await self._reconcile_feedback_result_outbox()
         for lane in self._lanes:
             lane.task = asyncio.create_task(
                 self._consume_loop(lane),
@@ -1009,6 +1014,8 @@ class BloodbankAdapter(BasePlatformAdapter):
             await asyncio.sleep(self.drain_poll_seconds)
             return
         self._resume_lane(lane)
+        if lane.spec == FEEDBACK:
+            await self._reconcile_feedback_result_outbox()
         capacity = (
             lane.max_ack_pending - len(lane.inflight) - len(lane.queued) - len(lane.detached)
             if lane.queued_capacity else lane.max_inflight - len(lane.inflight)
@@ -1124,12 +1131,25 @@ class BloodbankAdapter(BasePlatformAdapter):
         record: PendingInvocation | None = None
         persisted: ExecutionRecord | None = None
         started_publish_complete = False
+        feedback_lock: int | None = None
+        envelope: dict[str, Any] | None = None
+        digest: str | None = None
         try:
             envelope = decode_command(
                 message.data, max_bytes=self.max_command_bytes, lane=lane.spec
             )
             command_id = envelope["command_id"]
             digest = envelope_digest(envelope)
+            if lane.spec == FEEDBACK:
+                # Hold across awaits, capture and reconciliation. A nonowner
+                # cannot dispatch OR mark a live owner's row uncertain.
+                feedback_lock = self.execution_state.try_feedback_lock(command_id)
+                if feedback_lock is None:
+                    existing = await asyncio.to_thread(self.execution_state.get, command_id)
+                    if existing is not None and existing.envelope_digest != digest:
+                        raise CommandInvalid("command_id collides with a different command envelope")
+                    await message.nak(delay=lane.nak_delay)
+                    return
             # Broker ownership starts at fetch, before a hot conversation lock.
             progress_task = asyncio.create_task(self._ack_progress(message, lane))
             # Serialize the short durable-claim section so a concurrent local
@@ -1163,10 +1183,17 @@ class BloodbankAdapter(BasePlatformAdapter):
                     )
                 if persisted is None:
                     if lane.spec == FEEDBACK:
-                        # The pilot has one immutable target. Claim it before
-                        # route validation so missing/disabled routes close a
-                        # durable queued fact instead of disappearing at TERM.
-                        profile = "green-in-between-pm"
+                        # Feedback never uses the generic static/direct escape
+                        # hatches. Resolve eligibility from the registry first;
+                        # a registry-defined refusal still gets a durable claim so
+                        # its announced queued fact can be closed truthfully.
+                        try:
+                            profile = await asyncio.to_thread(
+                                self.profile_resolver.resolve_feedback_target,
+                                envelope["data"]["recipient"],
+                            )
+                        except RouteInvalid:
+                            profile = "green-in-between-pm"
                     else:
                         profile = await asyncio.to_thread(
                             self.profile_resolver.resolve,
@@ -1257,7 +1284,18 @@ class BloodbankAdapter(BasePlatformAdapter):
             # The queued fact goes out at claim, before the command waits for a
             # conversation lock or an execution slot. A publish failure NAKs and
             # the row stays pending; a redelivery replays the stored fact (same id).
-            await self._publish_many(persisted.queued_events)
+            try:
+                await self._publish_many(persisted.queued_events)
+            except Exception:
+                if lane.spec == FEEDBACK and self._last_delivery(message, lane):
+                    await self._close_exhausted_feedback(
+                        envelope,
+                        digest,
+                        reason="feedback queued publication failed on final delivery",
+                    )
+                    await message.nak(delay=lane.nak_delay)
+                    return
+                raise
             if persisted.state == "completed":
                 await self._publish_many(persisted.started_events)
                 await self._publish_many(persisted.terminal_events)
@@ -1425,6 +1463,23 @@ class BloodbankAdapter(BasePlatformAdapter):
             await message.term()
         except RegistryInvalid as exc:
             logger.error("Bloodbank fleet routing is unavailable: %s", exc)
+            if (
+                lane.spec == FEEDBACK
+                and self._last_delivery(message, lane)
+                and envelope is not None
+                and digest is not None
+            ):
+                try:
+                    await self._close_exhausted_feedback(
+                        envelope,
+                        digest,
+                        reason="fleet registry unavailable on final delivery",
+                    )
+                except Exception:
+                    logger.error(
+                        "Bloodbank feedback exhausted closure could not be persisted",
+                        exc_info=True,
+                    )
             await message.nak(delay=lane.nak_delay)
         except asyncio.CancelledError:
             try:
@@ -1443,6 +1498,8 @@ class BloodbankAdapter(BasePlatformAdapter):
             except Exception:
                 logger.warning("Bloodbank command NAK failed", exc_info=True)
         finally:
+            if feedback_lock is not None:
+                os.close(feedback_lock)
             if progress_task is not None:
                 progress_task.cancel()
                 await asyncio.gather(progress_task, return_exceptions=True)
@@ -1591,11 +1648,19 @@ class BloodbankAdapter(BasePlatformAdapter):
         )
 
     async def _assert_dispatch_route(self, invocation: Invocation) -> None:
-        resolved_profile = await asyncio.to_thread(
-            self.profile_resolver.resolve,
-            invocation.target_agent_id,
-        )
-        if resolved_profile != invocation.profile or (
+        if invocation.envelope["type"] == FEEDBACK.command_type:
+            resolved_profile = await asyncio.to_thread(
+                self.profile_resolver.resolve_feedback_target,
+                invocation.target_agent_id,
+            )
+            expected_profile = "green-in-between-pm"
+        else:
+            resolved_profile = await asyncio.to_thread(
+                self.profile_resolver.resolve,
+                invocation.target_agent_id,
+            )
+            expected_profile = invocation.profile
+        if resolved_profile != expected_profile or (
             invocation.envelope["type"] == FEEDBACK.command_type
             and resolved_profile != "green-in-between-pm"
         ):
@@ -1603,6 +1668,94 @@ class BloodbankAdapter(BasePlatformAdapter):
                 f"target_agent_id {invocation.target_agent_id!r} changed profile "
                 "after durable claim"
             )
+
+    async def _close_exhausted_feedback(
+        self, envelope: dict[str, Any], digest: str, *, reason: str
+    ) -> ExecutionRecord:
+        """Persist a truthful uncertain outcome when the delivery budget is gone.
+
+        This never dispatches Hermes. An unstarted claim gets a queued-caused
+        failure without an invented start; a started claim remains uncertain.
+        Store the exact events for replay after publication recovers.
+        """
+
+        command_id = envelope["command_id"]
+        profile = envelope["data"]["recipient"]
+        invocation = Invocation.from_envelope(envelope, profile, FEEDBACK.name)
+        persisted = await asyncio.to_thread(self.execution_state.get, command_id)
+        if persisted is None:
+            persisted = await asyncio.to_thread(
+                self.execution_state.claim_pending,
+                command_id=command_id,
+                digest=digest,
+                profile=profile,
+                queued_events=(queued_event(invocation),),
+                lane=FEEDBACK.name,
+            )
+        if persisted.envelope_digest != digest:
+            raise CommandInvalid("command_id collides with a different command envelope")
+        if persisted.state == "pending":
+            failure = rejected_pre_start_event(
+                invocation, reason="delivery_exhausted",
+                message="Feedback delivery exhausted before dispatch; no Hermes turn ran",
+                occurred_at=envelope["time"],
+            )
+            failure["data"]["error_code"] = FEEDBACK_DELIVERY_EXHAUSTED_CODE
+            persisted = await asyncio.to_thread(
+                self.execution_state.close_pending_feedback,
+                command_id=command_id, digest=digest, terminal_events=(failure,),
+            )
+        elif persisted.state == "started":
+            persisted = await asyncio.to_thread(
+                self.execution_state.mark_completed,
+                command_id=command_id, digest=digest, outcome="failure",
+                terminal_events=terminal_events(
+                    invocation, outcome="failure", failure_code=FEEDBACK_DELIVERY_EXHAUSTED_CODE,
+                    failure_message="Feedback delivery exhausted after start; execution outcome is uncertain; do not automatically retry",
+                ),
+                failure_code=FEEDBACK_DELIVERY_EXHAUSTED_CODE,
+            )
+        elif persisted.state != "completed":
+            raise RuntimeError("feedback exhausted closure requires pending or started state")
+        logger.error(
+            "Bloodbank feedback delivery exhausted command_id=%s: %s; "
+            "durable uncertain closure retained for outbox publication",
+            command_id,
+            reason,
+        )
+        await self._publish_feedback_result_outbox(persisted)
+        return persisted
+
+    async def _publish_feedback_result_outbox(
+        self, persisted: ExecutionRecord
+    ) -> None:
+        """Publish a durable feedback result; retain it for recovery on failure."""
+
+        try:
+            await self._publish_many(persisted.queued_events)
+            await self._publish_many(persisted.started_events)
+            await self._publish_many(persisted.terminal_events)
+        except Exception:
+            logger.error(
+                "Bloodbank feedback result outbox publication deferred command_id=%s",
+                persisted.command_id,
+                exc_info=True,
+            )
+            return
+        await asyncio.to_thread(
+            self.execution_state.mark_feedback_outbox_published,
+            command_id=persisted.command_id,
+            digest=persisted.envelope_digest,
+        )
+
+    async def _reconcile_feedback_result_outbox(self) -> None:
+        """Replay completed feedback independently of another broker delivery."""
+
+        records = await asyncio.to_thread(
+            self.execution_state.unpublished_feedback_results
+        )
+        for persisted in records:
+            await self._publish_feedback_result_outbox(persisted)
 
     @staticmethod
     def _last_delivery(message: Any, lane: LaneRuntime) -> bool:
